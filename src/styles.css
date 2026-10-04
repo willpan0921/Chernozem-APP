@@ -1,0 +1,464 @@
+/*
+  WHAT THIS FILE DOES
+  All the styling for the app: colours, spacing and layout. It is deliberately
+  plain. The real design can come later.
+
+  WHO EDITS IT
+  Whoever works on the design. The colours are listed once, just below, so
+  they can be changed in one place.
+*/
+
+:root {
+  --color-background: #f6f5f1;
+  --color-surface: #ffffff;
+  --color-border: #d9d6cd;
+  --color-text: #22201c;
+  --color-muted: #6b675f;
+  --color-accent: #3d5a34;
+  --color-cream: #f3ead3;
+
+  /* Height of the top bar. The Home photo area uses it to fill the screen. */
+  --nav-height: 58px;
+
+  /* The three fonts. Mixing them gives the page more texture.
+     serif  - headings and reading text
+     script - handwritten accents (loaded from Google Fonts in index.html)
+     ui     - small working parts: tabs, the search bar, the examples */
+  --font-serif: "Times New Roman", Times, serif;
+  --font-script: "Caveat", "Times New Roman", cursive;
+  --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--color-background);
+  color: var(--color-text);
+  font-family: var(--font-serif);
+  line-height: 1.5;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+/* ---------- Navigation bar ---------- */
+
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: var(--nav-height);
+  padding: 8px 24px;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.nav-brand {
+  font-family: var(--font-script);
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.nav-tabs {
+  display: flex;
+  gap: 4px;
+  font-family: var(--font-ui);
+}
+
+.nav-tab {
+  padding: 6px 14px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--color-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.nav-tab-active {
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
+  font-weight: 600;
+}
+
+/* ---------- Shared pieces ---------- */
+
+.page {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 32px 24px;
+}
+
+.button {
+  padding: 10px 18px;
+  border: none;
+  border-radius: 6px;
+  background: var(--color-accent);
+  color: #ffffff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chat-input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+}
+
+/* ---------- Home screen ---------- */
+
+/* The big photo area. The photo itself is set in src/pages/HomePage.jsx.
+   The green colour shows if the photo is missing. */
+.hero {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 48px;
+  /* Fills the whole screen below the top bar, so nothing peeks in underneath. */
+  min-height: calc(100vh - var(--nav-height));
+  min-height: calc(100dvh - var(--nav-height));
+  padding: 88px 24px 56px;
+  background-color: var(--color-accent);
+  background-size: cover;
+  background-position: center;
+  color: #ffffff;
+  text-align: center;
+}
+
+/* A dark see-through layer over the photo so the white text stays readable. */
+.hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.hero-heading,
+.hero-search {
+  position: relative;
+  width: 100%;
+  max-width: 640px;
+}
+
+.home-title {
+  font-size: clamp(2.5rem, 7vw, 4.25rem);
+  font-weight: 400;
+  line-height: 1.05;
+}
+
+/* The handwritten word in the app name, on its own line. */
+.home-title-script {
+  display: block;
+  font-family: var(--font-script);
+  font-size: 1.35em;
+  font-weight: 600;
+}
+
+.home-description {
+  margin-top: 16px;
+  font-size: 1.15rem;
+}
+
+/* The search bar: one rounded white bar holding the icon, the text box and
+   the button. */
+.search-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 18px;
+  border-radius: 999px;
+  background: var(--color-surface);
+  font-family: var(--font-ui);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+}
+
+.search-form:focus-within {
+  outline: 3px solid var(--color-cream);
+}
+
+.search-icon {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  color: var(--color-muted);
+}
+
+.search-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 0;
+  border: none;
+  outline: none;
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+}
+
+.search-button {
+  flex: none;
+  padding: 10px 22px;
+  border: none;
+  border-radius: 999px;
+  background: var(--color-cream);
+  color: var(--color-accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.search-button:hover {
+  background: #e9dcb8;
+}
+
+/* The small clickable examples under the search bar. */
+.search-examples {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 16px;
+  font-family: var(--font-ui);
+  font-size: 0.85rem;
+}
+
+.search-example {
+  padding: 4px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.search-example:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.how-it-works {
+  text-align: center;
+}
+
+.steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin: 24px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step {
+  padding: 20px 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.step-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.step-title {
+  margin-top: 8px;
+  font-size: 1.1rem;
+}
+
+.step-text {
+  margin-top: 4px;
+  color: var(--color-muted);
+  font-size: 0.9rem;
+}
+
+/* ---------- Field page ---------- */
+
+/* The whole page sits on a background photo and fills the screen below the
+   top bar. The photo is set in src/pages/FieldPage.jsx. */
+.field-page {
+  position: relative;
+  display: flex;
+  min-height: calc(100vh - var(--nav-height));
+  min-height: calc(100dvh - var(--nav-height));
+  padding: 32px 24px;
+  background-color: var(--color-accent);
+  background-size: cover;
+  background-position: center;
+  color: #ffffff;
+}
+
+/* A dark see-through layer over the photo so the page stays readable. */
+.field-page::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.field-inner {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  width: 100%;
+  max-width: 1500px;
+  margin: 0 auto;
+}
+
+.back-link {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-cream);
+  font: inherit;
+  font-family: var(--font-ui);
+  cursor: pointer;
+}
+
+.field-name {
+  margin: 8px 0 24px;
+  font-size: clamp(2rem, 4vw, 3rem);
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
+/* Tiles on the left, chat on the right. Both stretch to the bottom of the
+   screen. */
+.field-layout {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 24px;
+}
+
+/* Three tiles across, two rows, sharing the height equally. */
+.tile-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
+  gap: 16px;
+}
+
+.tile {
+  min-height: 150px;
+  padding: 24px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  color: var(--color-text);
+}
+
+.tile-title {
+  margin-bottom: 12px;
+  font-size: 1.35rem;
+}
+
+.coming-soon,
+.soil-family {
+  color: var(--color-muted);
+}
+
+.soil-name {
+  font-weight: 600;
+}
+
+.soil-description {
+  margin-top: 8px;
+  font-size: 0.9rem;
+}
+
+/* ---------- Chat panel ---------- */
+
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 420px;
+  padding: 24px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  color: var(--color-text);
+}
+
+.chat-title {
+  font-size: 1.35rem;
+}
+
+.chat-messages {
+  flex: 1;
+  margin: 12px 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.chat-message {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--color-background);
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.chat-form {
+  display: flex;
+  gap: 8px;
+}
+
+/* ---------- Atlas page ---------- */
+
+.atlas-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 360px;
+  margin-top: 24px;
+  border: 2px dashed var(--color-border);
+  border-radius: 8px;
+  color: var(--color-muted);
+}
+
+/* ---------- Small screens: chat drops below the tiles ---------- */
+
+@media (max-width: 1000px) {
+  .tile-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 800px) {
+  .field-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .hero {
+    padding-top: 56px;
+  }
+}

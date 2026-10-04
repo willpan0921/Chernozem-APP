@@ -1,0 +1,13 @@
+# Files Git should NOT save or upload to GitHub.
+
+# Downloaded libraries. Anyone can recreate this folder with "npm install".
+node_modules
+
+# The built version of the app, created by "npm run build".
+dist
+
+# Private settings and computer-specific clutter.
+.env
+.env.local
+.DS_Store
+*.log
