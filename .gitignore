@@ -6,11 +6,6 @@ node_modules
 # The built version of the app, created by "npm run build".
 dist
 
-# Background photos. They stay on each person's own computer and are not
-# uploaded, because the repo is public and we only upload pictures we have
-# the rights to share.
-public/images/
-
 # Private settings and computer-specific clutter.
 .env
 .env.local

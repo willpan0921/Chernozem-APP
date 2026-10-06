@@ -58,7 +58,7 @@ chernozem-field/
 ├── package.json            The libraries the app uses and the run commands
 ├── vite.config.js          Settings for Vite, the tool that runs the app
 ├── index.html              The single web page the app loads into
-├── public/images/          Background photos (on your computer only)
+├── public/images/          Background photos
 └── src/
     ├── main.jsx            Starts the app
     ├── App.jsx             Navigation bar; decides which page is showing
@@ -83,12 +83,12 @@ chernozem-field/
 
 ## Background photos
 
-The photos are **not in this repo**. The repo is public, so we only upload
-pictures we have the rights to share. Without photos the app still works and
-shows a plain dark background.
+The photos are in `public/images`. To add one, put the picture file in that
+folder and add its name to the list in `src/config/photos.js`.
 
-To see photos on your own computer, put picture files in `public/images` and
-list their names in `src/config/photos.js`.
+Several of the current photos come from news sites. This repo is public, so
+replace them with pictures the team has the rights to use before the site
+goes live.
 
 ## Known limits of the skeleton
 
