@@ -31,7 +31,8 @@ Each teammate works in one file and does not need to touch the others.
 
 | File | Who | What it is |
 | --- | --- | --- |
-| `src/components/ChatPanel.jsx` | Danny | The chat panel. Replace the inside with the real AI chat. |
+| `src/components/ChatPanel.jsx` | Danny | The chat panel: the bubbles and the input box. |
+| `src/api/chatApi.js` | Danny | Where the chat gets its reply. It is a fake for now; connect the real AI here. |
 | `src/data/soilTypes.js` | Shirley | The list of soil types. Instructions are at the top of the file. |
 | `src/config/tiles.js` | Anyone | The titles and order of the 6 tiles on the Field page. |
 
@@ -57,6 +58,7 @@ chernozem-field/
 ├── package.json            The libraries the app uses and the run commands
 ├── vite.config.js          Settings for Vite, the tool that runs the app
 ├── index.html              The single web page the app loads into
+├── public/images/          Background photos (on your computer only)
 └── src/
     ├── main.jsx            Starts the app
     ├── App.jsx             Navigation bar; decides which page is showing
@@ -68,10 +70,15 @@ chernozem-field/
     ├── components/
     │   ├── Tile.jsx        One tile
     │   └── ChatPanel.jsx   Danny's file
+    ├── api/
+    │   └── chatApi.js      Where the chat gets its reply (a fake for now)
     ├── data/
     │   └── soilTypes.js    Shirley's file
-    └── config/
-        └── tiles.js        Tile titles and order
+    ├── config/
+    │   ├── tiles.js        Tile titles and order
+    │   └── photos.js       List of background photos
+    └── utils/
+        └── photoColor.js   Picks a colour from the background photo
 ```
 
 ## Background photos
@@ -87,4 +94,4 @@ list their names in `src/config/photos.js`.
 
 - Pages are switched without a routing library, so the browser's Back button and
   links to a specific field do not work yet.
-- The chat input and Send button do nothing.
+- The chat replies with a placeholder answer. No real AI is connected.
