@@ -74,6 +74,15 @@ chernozem-field/
         └── tiles.js        Tile titles and order
 ```
 
+## Background photos
+
+The photos are **not in this repo**. The repo is public, so we only upload
+pictures we have the rights to share. Without photos the app still works and
+shows a plain dark background.
+
+To see photos on your own computer, put picture files in `public/images` and
+list their names in `src/config/photos.js`.
+
 ## Known limits of the skeleton
 
 - Pages are switched without a routing library, so the browser's Back button and
