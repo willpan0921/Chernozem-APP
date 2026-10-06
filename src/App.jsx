@@ -11,16 +11,34 @@
 // routing library. This means the browser's Back button and links to a
 // specific field do not work yet. A router can be added here later.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import HomePage from "./pages/HomePage.jsx";
 import FieldPage from "./pages/FieldPage.jsx";
 import AtlasPage from "./pages/AtlasPage.jsx";
+import { currentPhoto } from "./config/photos.js";
+import { getPhotoAccent } from "./utils/photoColor.js";
 
 export default function App() {
   // Which page is showing: "home", "field" or "atlas".
   const [page, setPage] = useState("home");
   // The name shown at the top of the Field page.
   const [fieldName, setFieldName] = useState("");
+
+  // The main colour of the background photo. Pages use it to tint themselves
+  // so they match the picture. Empty until the photo has been examined, and
+  // the pages use their usual teal.
+  const [photoAccent, setPhotoAccent] = useState(null);
+
+  // When the app opens, work out the photo's main colour.
+  useEffect(() => {
+    let stillOpen = true;
+    getPhotoAccent(currentPhoto).then((colour) => {
+      if (stillOpen) setPhotoAccent(colour);
+    });
+    return () => {
+      stillOpen = false;
+    };
+  }, []);
 
   // Runs when someone clicks Search on the Home screen.
   function handleSearch(text) {
@@ -32,7 +50,7 @@ export default function App() {
   const onHomeTab = page === "home" || page === "field";
 
   return (
-    <div className="app">
+    <div className="app" style={photoAccent ? { "--photo-accent": photoAccent } : undefined}>
       <header className="nav">
         <span className="nav-brand">Chernozem Field</span>
         <nav className="nav-tabs">

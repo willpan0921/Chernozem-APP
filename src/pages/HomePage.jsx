@@ -106,17 +106,21 @@ export default function HomePage({ onSearch }) {
         </div>
       </section>
 
-      <section className="page how-it-works">
-        <h2>How it works</h2>
-        <ol className="steps">
-          {steps.map((step, index) => (
-            <li key={step.title} className="step">
-              <span className="step-number">{index + 1}</span>
-              <h3 className="step-title">{step.title}</h3>
-              <p className="step-text">{step.text}</p>
-            </li>
-          ))}
-        </ol>
+      <section className="how-it-works">
+        <div className="page">
+          <h2>How it works</h2>
+          <ol className="steps">
+            {steps.map((step, index) => (
+              <li key={step.title} className="step">
+                <div className="step-head">
+                  <h3 className="step-title">{step.title}</h3>
+                  <span className="step-number">0{index + 1}</span>
+                </div>
+                <p className="step-text">{step.text}</p>
+              </li>
+            ))}
+          </ol>
+        </div>
       </section>
     </main>
   );
