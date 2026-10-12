@@ -1,0 +1,213 @@
+/*
+  WHAT THIS FILE DOES
+  The styling for the Field "Data" page only: the chart, the readings table
+  and the download rows. Every class starts with "fd-" so it never clashes
+  with another page. Shared blocks (cards, tabs, badges) are styled in
+  src/styles/components.css.
+
+  WHO EDITS IT
+  Whoever changes how the Data page looks. Colours and spacing come from
+  src/styles/tokens.css.
+*/
+
+/* ---------- Page layout ---------- */
+
+/* The two bottom cards stand the same height, as on the mockup. */
+.fd-page .two-col {
+  align-items: stretch;
+}
+
+/* ---------- Layer tabs ---------- */
+
+/* The five layer tabs sit on one line on a desktop and wrap onto a second
+   line on a phone, so none of them is hidden. */
+.fd-tabs .tabs-bar {
+  flex-wrap: wrap;
+}
+
+.fd-tabs .tab {
+  white-space: nowrap;
+}
+
+/* ---------- Chart card ---------- */
+
+/* The legend on the right of the chart heading. */
+.fd-legend {
+  gap: var(--s-4);
+  font-size: 12px;
+}
+
+/* A short coloured line, used as the legend swatch. */
+.fd-line-swatch {
+  width: 14px;
+  height: 2.5px;
+  border-radius: 2px;
+  background: var(--swatch);
+  flex: 0 0 auto;
+}
+
+/* The chart scrolls sideways on narrow screens so the labels stay readable.
+   The outer box only exists to hold the edge fade (below). */
+.fd-chart-wrap {
+  position: relative;
+}
+
+.fd-chart-scroll {
+  overflow-x: auto;
+}
+
+.fd-chart {
+  display: block;
+  width: 100%;
+  min-width: 600px;
+  height: auto;
+}
+
+/* "Scroll sideways to see more": hidden unless the chart really scrolls. */
+.fd-scroll-hint {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  /* A soft fade on the right edge shows the chart continues off-screen. */
+  .fd-chart-wrap::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 48px;
+    background: linear-gradient(to right, transparent, var(--c-surface));
+    pointer-events: none;
+  }
+
+  .fd-scroll-hint {
+    display: block;
+    margin-top: calc(-1 * var(--s-2));
+  }
+}
+
+/* Text inside the chart. SVG text does not use the usual CSS sizes, so
+   these are set here. */
+.fd-tick {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  fill: var(--c-muted);
+}
+
+.fd-year {
+  font-size: 11px;
+  fill: var(--c-text-2);
+}
+
+.fd-marker line {
+  stroke: var(--c-border-strong);
+}
+
+.fd-marker text {
+  font-size: 10px;
+  font-weight: 600;
+  fill: var(--c-text-2);
+}
+
+.fd-marker-red line {
+  stroke: var(--c-red);
+  opacity: 0.6;
+}
+
+.fd-marker-red text {
+  fill: var(--c-red);
+}
+
+.fd-line-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  fill: var(--c-text-2);
+}
+
+.fd-tip-title {
+  font-size: 10px;
+  font-weight: 650;
+  fill: var(--c-on-dark);
+}
+
+.fd-tip-text {
+  font-size: 9.5px;
+  fill: var(--c-on-dark);
+  opacity: 0.85;
+}
+
+/* The sentence under the chart. */
+.fd-caption {
+  font-size: 13px;
+  color: var(--c-text-2);
+}
+
+/* ---------- Readings table ---------- */
+
+/* A green text link that is really a button, like "See all 412" or "View". */
+.fd-link {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-green);
+  white-space: nowrap;
+}
+
+.fd-link:hover {
+  text-decoration: underline;
+}
+
+.fd-table td {
+  white-space: nowrap;
+}
+
+.fd-table .fd-date {
+  font-size: 12.5px;
+}
+
+/* "What changed" cell: the "New" pill sits before the text. */
+.fd-change {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fd-open {
+  text-align: right;
+}
+
+/* ---------- Download rows ---------- */
+
+.fd-downloads {
+  display: flex;
+  flex-direction: column;
+}
+
+/* One outlined row: icon, file name, format on the right. */
+.fd-download-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+  background: var(--c-surface);
+  text-align: left;
+  color: var(--c-text);
+}
+
+.fd-download-row:hover {
+  background: var(--c-surface-2);
+}
+
+.fd-download-row svg {
+  color: var(--c-text-2);
+  flex: 0 0 auto;
+}
+
+.fd-download-name {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+}

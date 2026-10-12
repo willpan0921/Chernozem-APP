@@ -1,0 +1,650 @@
+/*
+  WHAT THIS FILE DOES
+  The layout and styling for the Fields page (src/pages/field/FieldsPage.jsx):
+  the full-height map on the left with its floating controls, and the
+  scrolling detail panel on the right. Every class starts with "ff-" so it
+  never clashes with another page.
+
+  WHO EDITS IT
+  Whoever changes how the Fields page looks. Colours, spacing and corner
+  sizes come from src/styles/tokens.css.
+*/
+
+/* ---------- The two halves ---------- */
+
+.ff-page {
+  background: var(--c-bg);
+}
+
+/* The map fills whatever width the panel leaves. */
+.ff-map {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--c-ink-2);
+}
+
+.ff-map-svg {
+  width: 100%;
+  height: 100%;
+  transform-origin: center;
+  transition: transform 0.2s ease;
+}
+
+/* The Satellite view: same map, duller and browner, like a photo. */
+.ff-map-satellite .ff-map-svg {
+  filter: saturate(0.55) sepia(0.3) contrast(1.05);
+}
+
+.ff-field {
+  cursor: pointer;
+}
+
+.ff-field:hover rect:first-of-type {
+  filter: brightness(1.05);
+}
+
+/* ---------- Floating controls on the map ---------- */
+
+.ff-controls {
+  position: absolute;
+  top: var(--s-3);
+  left: var(--s-3);
+  right: 64px;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  z-index: 2;
+}
+
+/* The Zones | Satellite switch sits on a dark pill over the map. */
+.ff-controls .segmented {
+  background: color-mix(in srgb, var(--c-ink) 78%, transparent);
+  box-shadow: var(--shadow-pop);
+  padding: 4px;
+}
+
+.ff-controls .segmented-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  color: color-mix(in srgb, var(--c-on-dark) 85%, transparent);
+}
+
+.ff-controls .segmented-option.is-active {
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+}
+
+.ff-controls .chip-select {
+  padding: 9px 12px;
+  font-size: 13px;
+  box-shadow: var(--shadow-pop);
+}
+
+.ff-date-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 9px 12px;
+  border-radius: var(--r-sm);
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: var(--shadow-pop);
+}
+
+/* Round buttons at the top right: search, zoom in, zoom out, layers. */
+.ff-map-buttons {
+  position: absolute;
+  top: var(--s-3);
+  right: var(--s-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  z-index: 2;
+}
+
+.ff-round-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ff-round-btn {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--c-surface);
+  color: var(--c-text);
+  box-shadow: var(--shadow-pop);
+}
+
+.ff-round-btn:hover {
+  background: var(--c-surface-2);
+}
+
+/* ---------- Legend, Satellite thumbnail and the call-out ---------- */
+
+.ff-map-bottom {
+  position: absolute;
+  left: var(--s-3);
+  right: var(--s-3);
+  bottom: var(--s-3);
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.ff-map-bottom > * {
+  pointer-events: auto;
+}
+
+.ff-legend-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s-2);
+}
+
+.ff-legend-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--c-surface);
+  box-shadow: var(--shadow-pop);
+  font-size: 11px;
+  color: var(--c-text-2);
+}
+
+.ff-legend-card strong {
+  font-size: 12px;
+  color: var(--c-text);
+}
+
+.ff-legend-scale {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.ff-legend-scale span:first-child {
+  margin-right: 3px;
+}
+
+.ff-legend-scale span:last-child {
+  margin-left: 3px;
+}
+
+.ff-legend-scale .swatch {
+  width: 14px;
+  height: 10px;
+}
+
+.ff-legend-card .swatch-striped {
+  width: 14px;
+}
+
+/* The small "Satellite" preview button next to the legend. */
+.ff-sat-thumb {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 6px 5px;
+  border-radius: var(--r-md);
+  background: var(--c-surface);
+  box-shadow: var(--shadow-pop);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--c-text);
+}
+
+.ff-sat-thumb svg {
+  border-radius: 5px;
+}
+
+.ff-sat-thumb.is-active {
+  box-shadow: 0 0 0 2px var(--c-ink);
+}
+
+/* The "Field 7 needs recovery" card. */
+.ff-callout {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 240px;
+  max-width: 100%;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: var(--c-surface);
+  box-shadow: var(--shadow-pop);
+}
+
+.ff-callout-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--c-red-text);
+  text-align: left;
+}
+
+.ff-callout-text {
+  font-size: 12px;
+  color: var(--c-text-2);
+  line-height: 1.35;
+}
+
+.ff-callout .ff-callout-link {
+  justify-content: flex-start;
+  padding-left: 0;
+  margin-top: 2px;
+}
+
+/* ---------- The detail panel ---------- */
+
+/* 316px wide so the metric labels and the What-if rows fit like the mockup. */
+.ff-panel {
+  flex: 0 0 316px;
+  width: 316px;
+  height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-4) 14px;
+  background: var(--c-bg);
+  border-left: 1px solid var(--c-border);
+}
+
+.ff-panel-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ff-panel-title {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.ff-panel-title h2 {
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+
+.ff-panel-title .badge {
+  font-size: 10px;
+}
+
+/* The small "next field" button on the right of the title. */
+.ff-switch-btn {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-left: auto;
+  border-radius: var(--r-sm);
+  background: var(--c-surface);
+  box-shadow: inset 0 0 0 1px var(--c-border-strong);
+  color: var(--c-text);
+  flex: 0 0 auto;
+}
+
+.ff-switch-btn:hover {
+  background: var(--c-surface-2);
+}
+
+.ff-panel-sub {
+  font-size: 12px;
+  color: var(--c-text-2);
+}
+
+/* The 2 x 2 metric tiles. */
+.ff-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-2);
+}
+
+.ff-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 9px 11px;
+  border-radius: var(--r-md);
+  background: var(--c-surface);
+  box-shadow: var(--shadow-card);
+  min-width: 0;
+}
+
+.ff-metric-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.ff-metric-label {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--c-text);
+}
+
+.ff-metric-label svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--c-text-2);
+}
+
+/* Long badge words ("On track") wrap onto two lines, like the mockup. */
+.ff-metric-top .badge {
+  flex: 0 1 auto;
+  max-width: 44px;
+  font-size: 9.5px;
+  padding: 1px 5px;
+  white-space: normal;
+  text-align: center;
+  line-height: 1.3;
+}
+
+.ff-metric-value {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.ff-metric-text {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--c-text-2);
+}
+
+/* The thin bars under a value: a position marker or a filled bar. */
+.ff-bar {
+  position: relative;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--c-surface-3);
+  overflow: hidden;
+}
+
+.ff-bar-marker {
+  background: linear-gradient(90deg, var(--c-green-soft), var(--c-surface-3));
+  overflow: visible;
+}
+
+.ff-bar-tick {
+  position: absolute;
+  top: -2px;
+  width: 3px;
+  height: 10px;
+  margin-left: -1.5px;
+  border-radius: 2px;
+  background: var(--c-ink);
+}
+
+.ff-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--c-green);
+}
+
+.ff-bar-fill-amber {
+  background: var(--c-amber);
+}
+
+.ff-bar-fill-red {
+  background: var(--c-red);
+}
+
+/* The season chart card. */
+.ff-chart-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: 12px;
+  border-radius: var(--r-md);
+  background: var(--c-surface);
+  box-shadow: var(--shadow-card);
+}
+
+.ff-chart-title {
+  font-size: 12px;
+}
+
+.ff-chart-sub {
+  font-size: 10px;
+  color: var(--c-muted);
+}
+
+.ff-chart {
+  width: 100%;
+  height: auto;
+}
+
+.ff-chart-card .legend {
+  font-size: 10px;
+  gap: 8px;
+}
+
+.ff-legend-line {
+  display: inline-block;
+  width: 14px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--c-green);
+}
+
+/* The "What if" card: grey box with chips and three result rows. */
+.ff-whatif {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: 10px;
+  border-radius: var(--r-md);
+  background: var(--c-surface-2);
+  box-shadow: var(--shadow-card);
+}
+
+.ff-whatif-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.ff-whatif-sub {
+  font-size: 11px;
+  color: var(--c-text-2);
+  margin-top: -4px;
+}
+
+.ff-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.ff-chip {
+  padding: 7px 12px;
+  border-radius: var(--r-pill);
+  background: var(--c-surface);
+  box-shadow: inset 0 0 0 1px var(--c-border-strong);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--c-text);
+}
+
+.ff-chip:hover {
+  background: var(--c-surface-3);
+}
+
+.ff-chip.is-active {
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+  box-shadow: none;
+}
+
+.ff-whatif-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.ff-whatif-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  padding: 7px 8px;
+  border-radius: var(--r-sm);
+  background: var(--c-surface);
+}
+
+.ff-whatif-label {
+  font-size: 12px;
+  color: var(--c-text-2);
+  flex: 0 0 auto;
+}
+
+.ff-whatif-value {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  gap: 3px;
+  font-size: 12px;
+  font-weight: 650;
+  text-align: right;
+}
+
+/* The "Why" sentence is long, so it is a touch smaller to stay on one line. */
+.ff-whatif-why {
+  font-weight: 500;
+  font-size: 11px;
+}
+
+.ff-whatif-foot {
+  font-size: 10px;
+  color: var(--c-muted);
+}
+
+/* The next steps checklist. */
+.ff-steps {
+  display: flex;
+  flex-direction: column;
+}
+
+.ff-steps-title {
+  font-size: 14px;
+  font-weight: 650;
+  padding-bottom: 8px;
+}
+
+.ff-step {
+  width: 100%;
+  text-align: left;
+}
+
+.ff-step .row-title {
+  font-size: 13px;
+}
+
+.ff-step .row-help {
+  font-size: 11px;
+}
+
+.ff-step.is-done .row-title {
+  color: var(--c-muted);
+  text-decoration: line-through;
+}
+
+/* The two buttons at the bottom of the panel. */
+.ff-actions {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr;
+  gap: var(--s-2);
+  margin-top: var(--s-1);
+}
+
+.ff-actions .btn {
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+/* ---------- Small screens: map on top, panel underneath ---------- */
+
+@media (max-width: 860px) {
+  .ff-map {
+    flex: 0 0 auto;
+    height: 560px;
+  }
+
+  .ff-panel {
+    flex: 0 0 auto;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    border-left: 0;
+    border-top: 1px solid var(--c-border);
+  }
+}
+
+@media (max-width: 480px) {
+  /* Taller map so the fields stay visible under the stacked controls. */
+  .ff-map {
+    height: 640px;
+  }
+
+  .ff-controls {
+    right: 50px;
+  }
+
+  /* Smaller controls so the switch and the layer chip share one row. */
+  .ff-controls .segmented-option {
+    padding: 6px 8px;
+  }
+
+  .ff-controls .chip-select,
+  .ff-date-chip {
+    padding: 7px 8px;
+    font-size: 12px;
+  }
+
+  .ff-callout {
+    width: 100%;
+  }
+
+  .ff-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .ff-actions .btn {
+    white-space: normal;
+  }
+}

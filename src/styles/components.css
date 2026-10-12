@@ -1,0 +1,833 @@
+/*
+  WHAT THIS FILE DOES
+  The styling for the shared building blocks in src/components/ui: cards,
+  stat tiles, badges, buttons, tabs, score bars, toggles and so on. Each
+  block's class names match its component file.
+
+  WHO EDITS IT
+  Whoever changes how a shared block looks. Page-specific styling lives next
+  to the page, in src/pages/<product>/<Page>.css.
+*/
+
+/* ---------- PageHeader ---------- */
+
+.page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+}
+
+.page-header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.page-header-subtitle {
+  font-size: 12px;
+  color: var(--c-muted);
+}
+
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+/* ---------- Card ---------- */
+
+.card {
+  background: var(--c-surface);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-card);
+  padding: var(--s-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-width: 0;
+}
+
+.card-flush {
+  padding: 0;
+  gap: 0;
+}
+
+.card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.card-header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.card-subtitle {
+  font-size: 12px;
+  color: var(--c-muted);
+}
+
+.card-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex: 0 0 auto;
+}
+
+/* A panel inside a card: light fill, no shadow. */
+.panel {
+  background: var(--c-surface-2);
+  border-radius: var(--r-sm);
+  padding: var(--s-4);
+}
+
+.panel-outline {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+}
+
+.panel-selected {
+  border: 1.5px solid var(--c-ink);
+}
+
+.panel-dark {
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+}
+
+.panel-dark .muted {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.panel-red {
+  background: var(--c-red-soft);
+}
+
+.panel-amber {
+  background: var(--c-amber-soft);
+}
+
+.panel-blue {
+  background: var(--c-blue-soft);
+}
+
+.panel-green {
+  background: var(--c-green-soft);
+}
+
+/* ---------- Stat ---------- */
+
+.stat {
+  background: var(--c-surface);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-card);
+  padding: var(--s-4) var(--s-5);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.stat-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--c-muted);
+}
+
+.stat-label svg {
+  flex: 0 0 auto;
+}
+
+.stat-value {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.stat-note {
+  font-size: 12px;
+  color: var(--c-muted);
+}
+
+.stat-green .stat-label,
+.stat-green .stat-value {
+  color: var(--c-green);
+}
+
+.stat-red .stat-label,
+.stat-red .stat-value {
+  color: var(--c-red);
+}
+
+.stat-amber .stat-label {
+  color: var(--c-amber-text);
+}
+
+.stat-dark {
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+}
+
+.stat-dark .stat-label,
+.stat-dark .stat-note {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+/* A row of stats that wraps on small screens. */
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--s-3);
+}
+
+/* ---------- Badge ---------- */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+  background: var(--c-surface-3);
+  color: var(--c-text-2);
+}
+
+.badge-green {
+  background: var(--c-green-soft);
+  color: var(--c-green);
+}
+
+.badge-red {
+  background: var(--c-red-soft);
+  color: var(--c-red-text);
+}
+
+.badge-amber {
+  background: var(--c-amber-soft);
+  color: var(--c-amber-text);
+}
+
+.badge-blue {
+  background: var(--c-blue-soft);
+  color: var(--c-blue-text);
+}
+
+.badge-ink {
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+}
+
+.badge-outline {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--c-border-strong);
+}
+
+.badge-dot::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* ---------- Button ---------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  transition: background 0.12s;
+}
+
+.btn:hover {
+  text-decoration: none;
+}
+
+.btn-primary {
+  background: var(--c-green);
+  color: var(--c-on-dark);
+}
+
+.btn-primary:hover {
+  background: var(--c-green-strong);
+}
+
+.btn-ink {
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+}
+
+.btn-ink:hover {
+  background: var(--c-ink-2);
+}
+
+.btn-secondary {
+  background: var(--c-surface);
+  color: var(--c-text);
+  box-shadow: inset 0 0 0 1px var(--c-border-strong);
+}
+
+.btn-secondary:hover {
+  background: var(--c-surface-2);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--c-green);
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.btn-ghost:hover {
+  background: var(--c-green-soft);
+}
+
+.btn-danger {
+  background: transparent;
+  color: var(--c-red);
+}
+
+.btn-danger:hover {
+  background: var(--c-red-soft);
+}
+
+.btn-sm {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+.btn-lg {
+  padding: 11px 18px;
+  font-size: 14px;
+}
+
+.btn-icon {
+  padding: 8px;
+}
+
+.btn-block {
+  width: 100%;
+}
+
+/* A text link with a chevron, like "Open the Atlas >" */
+.link-arrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-green);
+}
+
+/* ---------- Segmented (Near term | Postwar) ---------- */
+
+.segmented {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: var(--r-sm);
+  background: var(--c-surface-3);
+}
+
+.segmented-option {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--c-text-2);
+}
+
+.segmented-option.is-active {
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+  font-weight: 600;
+}
+
+.segmented-light .segmented-option.is-active {
+  background: var(--c-surface);
+  color: var(--c-text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+/* ---------- Tabs (pill tabs with optional counts) ---------- */
+
+.tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--r-pill);
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--c-text-2);
+  box-shadow: inset 0 0 0 1px var(--c-border);
+  background: var(--c-surface);
+}
+
+.tab:hover {
+  background: var(--c-surface-2);
+}
+
+.tab.is-active {
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+  box-shadow: none;
+}
+
+.tab-count {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+/* A bar of tabs with a grey track behind, like the Settings and Data pages. */
+.tabs-bar {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--r-sm);
+  background: var(--c-surface-3);
+}
+
+.tabs-bar .tab {
+  box-shadow: none;
+  background: transparent;
+  border-radius: 6px;
+}
+
+.tabs-bar .tab.is-active {
+  background: var(--c-surface);
+  color: var(--c-text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+/* ---------- ScoreBar ---------- */
+
+.score-bar {
+  display: grid;
+  grid-template-columns: minmax(80px, 110px) 1fr auto;
+  align-items: center;
+  gap: var(--s-3);
+  font-size: 13px;
+}
+
+.score-bar-track {
+  height: 7px;
+  border-radius: var(--r-pill);
+  background: var(--c-surface-3);
+  overflow: hidden;
+}
+
+.score-bar-fill {
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--c-green);
+}
+
+.score-bar-red .score-bar-fill {
+  background: var(--c-red);
+}
+
+.score-bar-blue .score-bar-fill {
+  background: var(--c-blue);
+}
+
+.score-bar-amber .score-bar-fill {
+  background: var(--c-amber);
+}
+
+.score-bar-value {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  min-width: 36px;
+  text-align: right;
+}
+
+/* ---------- Toggle ---------- */
+
+.toggle {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  border-radius: var(--r-pill);
+  background: var(--c-border-strong);
+  flex: 0 0 auto;
+  transition: background 0.15s;
+}
+
+.toggle::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--c-surface);
+  transition: transform 0.15s;
+}
+
+.toggle.is-on {
+  background: var(--c-green);
+}
+
+.toggle.is-on::after {
+  transform: translateX(18px);
+}
+
+/* A row with a label on the left and a toggle on the right. */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4);
+}
+
+.toggle-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.toggle-row-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.toggle-row-help {
+  font-size: 12px;
+  color: var(--c-muted);
+}
+
+/* ---------- Form controls ---------- */
+
+.field-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--c-text-2);
+  margin-bottom: 5px;
+}
+
+.input,
+.select,
+.textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--r-sm);
+  background: var(--c-surface);
+  font-size: 13px;
+}
+
+.select {
+  appearance: none;
+  padding-right: 28px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237b7a72' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+
+.textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.input:focus,
+.select:focus,
+.textarea:focus {
+  outline: 2px solid var(--c-green);
+  outline-offset: -1px;
+  border-color: transparent;
+}
+
+/* A small dropdown-looking button, like "Field 7 v" or "All regions v". */
+.chip-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  font-weight: 550;
+  background: var(--c-surface);
+  box-shadow: inset 0 0 0 1px var(--c-border-strong);
+}
+
+.chip-select .chip-select-prefix {
+  color: var(--c-muted);
+  font-weight: 400;
+}
+
+/* ---------- Tables ---------- */
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--c-muted);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--c-border);
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--c-border);
+  vertical-align: middle;
+}
+
+.table tr:last-child td {
+  border-bottom: 0;
+}
+
+.table .num {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+/* ---------- List rows (next steps, alerts, field list) ---------- */
+
+.row-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.row-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--c-border);
+}
+
+.row-item:first-child {
+  padding-top: 0;
+}
+
+.row-item:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.row-icon {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: var(--c-surface-2);
+  color: var(--c-text-2);
+  flex: 0 0 auto;
+}
+
+.row-icon-green {
+  background: var(--c-green-soft);
+  color: var(--c-green);
+}
+
+.row-icon-red {
+  background: var(--c-red-soft);
+  color: var(--c-red);
+}
+
+.row-icon-amber {
+  background: var(--c-amber-soft);
+  color: var(--c-amber-text);
+}
+
+.row-icon-blue {
+  background: var(--c-blue-soft);
+  color: var(--c-blue);
+}
+
+.row-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.row-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.row-help {
+  font-size: 12px;
+  color: var(--c-muted);
+  line-height: 1.35;
+}
+
+.row-when {
+  font-size: 11px;
+  color: var(--c-muted);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.row-when-urgent {
+  color: var(--c-red);
+  font-weight: 600;
+}
+
+/* ---------- Layout helpers ---------- */
+
+/* Main column plus a narrower right column, like most Overview pages. */
+.two-col {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: var(--s-4);
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .two-col {
+    grid-template-columns: 1fr;
+  }
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.stack-sm {
+  gap: var(--s-2);
+}
+
+.cluster {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.spread {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.divider {
+  height: 1px;
+  background: var(--c-border);
+}
+
+/* The warning note under a chat box or a map. */
+.disclaimer {
+  font-size: 11px;
+  color: var(--c-muted);
+}
+
+/* ---------- Checklist item (Next steps on Fields page) ---------- */
+
+.check-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--c-border);
+}
+
+.check-item:last-child {
+  border-bottom: 0;
+}
+
+.check-box {
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  border-radius: 4px;
+  border: 1.5px solid var(--c-border-strong);
+  background: var(--c-surface);
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: var(--c-on-dark);
+}
+
+.check-box.is-checked {
+  background: var(--c-green);
+  border-color: var(--c-green);
+}
+
+/* ---------- Legend swatches ---------- */
+
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--c-text-2);
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--swatch, var(--c-scale-3));
+  flex: 0 0 auto;
+}
+
+.swatch-round {
+  border-radius: 50%;
+}
+
+.swatch-dashed {
+  background: transparent;
+  border: 1px dashed var(--c-border-strong);
+}
+
+.swatch-striped {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--c-red) 0 2px,
+    var(--c-red-soft) 2px 4px
+  );
+}

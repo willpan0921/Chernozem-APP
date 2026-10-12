@@ -1,0 +1,402 @@
+/*
+  WHAT THIS FILE DOES
+  The layout for the Field Overview page (OverviewPage.jsx): the weather
+  tile, the Recovery card with its two paths, the event form, and the
+  "Your fields" list. Every class starts with "fo-" (field overview) so it
+  never clashes with another page.
+
+  WHO EDITS IT
+  Whoever changes how the Overview looks. Colours, spacing and radii come
+  from src/styles/tokens.css; shared blocks are styled in
+  src/styles/components.css.
+*/
+
+/* ---------- Header ---------- */
+
+/* The grey date line above the "My farm" title. It goes through the
+   PageHeader "eyebrow" slot, so this undoes the eyebrow look (small caps,
+   green, letter-spaced) and makes it plain grey text instead. */
+.fo-dateline {
+  display: block;
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--c-muted);
+}
+
+/* ---------- Stat tiles ---------- */
+
+/* Four equal tiles plus a wider weather tile on the right.
+   (The shared stylesheet loads after this one, so the selectors below add
+   ".stat-row" or name ".stat" twice to win over the shared rules.) */
+.stat-row.fo-stats {
+  grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(270px, 1.5fr);
+}
+
+/* The tiles are a little tighter than the shared default, so the label and
+   the big number sit close together like the mockup. */
+.fo-stats .stat {
+  padding: var(--s-3) var(--s-4);
+  gap: 4px;
+}
+
+/* On the mockup the big numbers are dark; only the label is coloured. */
+.fo-stats .stat .stat-value {
+  color: var(--c-text);
+  font-size: 24px;
+}
+
+.fo-stats .stat .stat-label {
+  font-weight: 600;
+}
+
+/* The dark weather tile: sun on the left, two lines of text on the right. */
+.fo-stats .stat.fo-weather {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+}
+
+.fo-stats .fo-weather .stat-note {
+  font-size: 11px;
+}
+
+.fo-weather-icon {
+  color: var(--c-amber);
+  flex: 0 0 auto;
+}
+
+.fo-weather-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.fo-weather-summary {
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+@media (max-width: 1100px) {
+  .stat-row.fo-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .fo-stats .stat.fo-weather {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 480px) {
+  .stat-row.fo-stats {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- Recovery card ---------- */
+
+.fo-recovery-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+}
+
+.fo-recovery-title {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.fo-recovery-headline {
+  font-size: 18px;
+}
+
+.fo-recovery-maplink {
+  margin-top: 18px;
+}
+
+/* The red warning: a dark red icon box and the text beside it. */
+.fo-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  border-radius: var(--r-md);
+}
+
+.fo-warning-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--c-red);
+  color: var(--c-on-dark);
+  flex: 0 0 auto;
+}
+
+.fo-warning-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.fo-warning-text strong {
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--c-red-text);
+}
+
+/* The two paths side by side. */
+.fo-paths {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s-4);
+}
+
+.fo-path {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-radius: var(--r-md);
+}
+
+.fo-path.is-selected {
+  border-width: 2px;
+}
+
+.fo-path-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+
+.fo-path-head h3 {
+  font-size: 15px;
+}
+
+.fo-path-tagline {
+  color: var(--c-text-2);
+}
+
+/* The checklist of steps, with a green tick before each. */
+.fo-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.fo-steps li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fo-steps svg {
+  color: var(--c-green);
+  flex: 0 0 auto;
+}
+
+.fo-cost {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.fo-cost-amount {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.fo-cost-total {
+  margin-top: -6px;
+}
+
+.fo-path-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.fo-replant {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* The row under the paths: progress on the left, links and buttons right. */
+.fo-recovery-foot {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+}
+
+.fo-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 200px;
+  max-width: 220px;
+}
+
+.fo-progress-label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.fo-progress-track {
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--c-surface-3);
+  overflow: hidden;
+}
+
+.fo-progress-fill {
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--c-amber);
+}
+
+.fo-recovery-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+}
+
+.fo-programs {
+  font-size: 12px;
+  gap: 6px;
+}
+
+@media (max-width: 760px) {
+  .fo-paths {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- Event form ---------- */
+
+.fo-event-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+}
+
+.fo-event-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--c-green-soft);
+  color: var(--c-green);
+  flex: 0 0 auto;
+}
+
+/* "Field [Field 7 v] | Shelling Fire Flood Hail Pests" */
+.fo-event-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.fo-event-controls .chip-select {
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.fo-event-controls .tab {
+  padding: 8px 14px;
+}
+
+.fo-vdivider {
+  width: 1px;
+  height: 24px;
+  background: var(--c-border);
+  margin: 0 4px;
+}
+
+/* When the event-type pills wrap onto their own line (narrow screens) the
+   divider would be a stray line on its own, so hide it. */
+@media (max-width: 760px) {
+  .fo-vdivider {
+    display: none;
+  }
+}
+
+.fo-event-textarea {
+  min-height: 68px;
+}
+
+.fo-event-foot {
+  flex-wrap: wrap;
+}
+
+/* ---------- Next steps ---------- */
+
+.fo-next-link {
+  margin-top: 4px;
+}
+
+/* ---------- Your fields ---------- */
+
+.fo-field-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fo-field-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 0;
+}
+
+/* The small coloured square. "--swatch" is set per field in the JSX. */
+.fo-field-swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: var(--swatch, var(--c-field-healthy));
+  flex: 0 0 auto;
+}
+
+/* Field 7: red diagonal stripes on a light ground. */
+.fo-field-swatch.is-striped {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--c-red) 0 3px,
+    var(--c-amber-soft) 3px 7px
+  );
+}
+
+.fo-field-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.fo-field-name {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+}

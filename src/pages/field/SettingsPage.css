@@ -1,0 +1,382 @@
+/*
+  WHAT THIS FILE DOES
+  The layout of the Field Settings page: the scrolling form on the left and
+  the full-height satellite map on the right, plus the small labels, chips
+  and legend drawn on top of the map. Every class starts with "fs-" so it
+  never clashes with another page.
+
+  WHO EDITS IT
+  Whoever changes how the Settings page looks. Colours, spacing and corners
+  come from src/styles/tokens.css. The shared blocks (cards, buttons, tabs)
+  are styled in src/styles/components.css, not here.
+*/
+
+/* ---------- The two halves ---------- */
+
+.fs-page {
+  align-items: stretch;
+}
+
+/* The form column scrolls on its own; the map stays put. */
+.fs-left {
+  flex: 0 0 520px;
+  max-width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--s-5) var(--page-pad) var(--s-6);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-3);
+}
+
+.fs-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+/* The cards and inputs on this page sit a little tighter than the default
+   so the whole form (title through Save) fits on one screen next to the
+   map, as in the mockup, instead of scrolling. */
+.fs-page .card {
+  padding: 14px var(--s-4);
+  gap: 10px;
+}
+
+.fs-page .input,
+.fs-page .select {
+  padding: 7px 10px;
+}
+
+/* ---------- Field picker row ---------- */
+
+.fs-field-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+}
+
+.fs-rename-input {
+  width: auto;
+  max-width: 200px;
+}
+
+/* A green text link inside a sentence, like "Rename" or "Reset to detected". */
+.fs-link {
+  color: var(--c-green);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ---------- Cards ---------- */
+
+/* Card heading with a small icon before the words. */
+.fs-card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.fs-card-title svg {
+  color: var(--c-green);
+}
+
+/* Two inputs side by side (Latitude / Longitude, the two soil dropdowns). */
+.fs-two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-4);
+}
+
+/* The two soil dropdowns sit a little closer together. */
+.fs-two-wide {
+  gap: var(--s-3);
+}
+
+.fs-stack {
+  display: flex;
+  flex-direction: column;
+}
+
+.fs-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* ---------- Field area ---------- */
+
+/* The "Square around pin | Traced edges | Upload a file" switch fills the
+   card, each option the same width. */
+.fs-area-modes .segmented {
+  display: flex;
+  width: 100%;
+}
+
+.fs-area-modes .segmented-option {
+  flex: 1;
+  text-align: center;
+  padding-left: 6px;
+  padding-right: 6px;
+  white-space: nowrap;
+}
+
+/* The hints under the two soil dropdowns are drawn one step smaller than
+   other small text, as in the mockup, so "Found on the global soil map,
+   82% likely." reads as one line. */
+.fs-two-wide .small {
+  font-size: 11px;
+}
+
+.fs-area-panel {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+  padding: var(--s-3) 14px;
+}
+
+.fs-area-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fs-area-main .field-label {
+  margin-bottom: 0;
+}
+
+.fs-area-value {
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.15;
+}
+
+/* Corners 4 / Edge length 2.9 km: a small label-value table. */
+.fs-area-facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto auto;
+  column-gap: var(--s-6);
+  row-gap: 4px;
+  font-size: 12px;
+  color: var(--c-text-2);
+  align-self: flex-end;
+}
+
+.fs-area-facts dd {
+  margin: 0;
+  text-align: right;
+  color: var(--c-text);
+}
+
+/* "Edit edges on map": white with a green outline and green text. */
+.fs-btn-green {
+  color: var(--c-green);
+  box-shadow: inset 0 0 0 1.5px var(--c-green);
+}
+
+.fs-btn-green:hover {
+  background: var(--c-green-soft);
+}
+
+/* "Start over from the pin": soft grey, no border. */
+.fs-btn-soft {
+  background: var(--c-surface-3);
+  box-shadow: none;
+}
+
+/* ---------- Save / Cancel / Delete ---------- */
+
+.fs-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+}
+
+.fs-delete {
+  margin-left: auto;
+}
+
+/* ---------- The map ---------- */
+
+.fs-map {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+  background: var(--c-ink);
+}
+
+.fs-map-svg {
+  position: absolute;
+  inset: 0;
+}
+
+.fs-handle {
+  cursor: grab;
+}
+
+.fs-handle-small {
+  cursor: pointer;
+}
+
+/* Top-left: the date chip and the tip. */
+.fs-map-top {
+  position: absolute;
+  top: var(--s-4);
+  left: var(--s-4);
+  right: 72px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-2);
+}
+
+.fs-map-chip {
+  display: inline-block;
+  padding: 5px 10px;
+  border-radius: var(--r-sm);
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.fs-map-tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 300px;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: var(--c-surface);
+  box-shadow: var(--shadow-pop);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.fs-map-tip svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--c-green);
+}
+
+/* Top-right: + / - / layers. */
+.fs-map-zoom {
+  position: absolute;
+  top: var(--s-4);
+  right: var(--s-4);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fs-map-round {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--r-sm);
+  background: var(--c-surface);
+  box-shadow: var(--shadow-pop);
+  color: var(--c-text);
+}
+
+.fs-map-round:hover {
+  background: var(--c-surface-2);
+}
+
+/* The "48.6 ha" pill in the middle of the field. */
+.fs-map-area {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 8px 16px;
+  border-radius: var(--r-sm);
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+  font-size: 18px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Bottom-left legend. */
+.fs-map-legend {
+  position: absolute;
+  left: var(--s-4);
+  bottom: var(--s-4);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: var(--c-surface);
+  box-shadow: var(--shadow-pop);
+  font-size: 12px;
+}
+
+.fs-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.fs-legend-row .mono {
+  font-size: 11px;
+}
+
+.fs-legend-pin {
+  color: var(--c-amber);
+  flex: 0 0 auto;
+}
+
+.fs-legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}
+
+.fs-legend-dashed {
+  border: 1.5px dashed var(--c-ink);
+}
+
+.fs-legend-traced {
+  box-shadow: 0 0 0 1.5px var(--c-ink);
+}
+
+/* ---------- Small screens ---------- */
+
+@media (max-width: 860px) {
+  .fs-left {
+    flex: 0 0 auto;
+    height: auto;
+    overflow: visible;
+    padding-left: var(--s-4);
+    padding-right: var(--s-4);
+  }
+
+  .fs-map {
+    flex: 0 0 520px;
+    min-height: 520px;
+  }
+}
+
+@media (max-width: 520px) {
+  .fs-two {
+    grid-template-columns: 1fr;
+  }
+
+  .fs-map-tip {
+    max-width: 100%;
+  }
+
+  .fs-delete {
+    margin-left: 0;
+  }
+}

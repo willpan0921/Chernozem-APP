@@ -1,0 +1,783 @@
+/*
+  WHAT THIS FILE DOES
+  The styling for the Atlas map page (src/pages/atlas/MapPage.jsx): the map
+  area, the floating cards over it, the legend and mini-map, the tooltip, and
+  the "Selected area" panel on the right. Every class starts with "am-" so
+  it never clashes with another page.
+
+  WHO EDITS IT
+  Whoever changes how the Atlas map page looks. Colours, fonts and spacing
+  come from src/styles/tokens.css.
+*/
+
+/* ---------- The two halves: map on the left, panel on the right ---------- */
+
+.am-page {
+  background: var(--c-surface-2);
+}
+
+/* The map column. On wide screens it holds only the map; on narrow screens
+   the controls card sits above the map and the legend below it. */
+.am-map-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.am-map {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--c-surface-2);
+}
+
+/* The drawing itself, which the zoom buttons scale. */
+.am-map-layer {
+  position: absolute;
+  inset: 0;
+  transform-origin: center center;
+  transition: transform 0.2s ease;
+}
+
+.am-svg {
+  position: absolute;
+  inset: 0;
+}
+
+.am-outline {
+  cursor: pointer;
+}
+
+/* Labels drawn inside the SVG. */
+.am-place-label {
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--font-sans);
+  /* A pale halo so roads and cells do not cut through the words. */
+  paint-order: stroke;
+  stroke: var(--c-surface-2);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+.am-place-label-city {
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.am-river-label {
+  font-size: 12px;
+  font-style: italic;
+  font-family: var(--font-sans);
+}
+
+/* The ink pill under the cluster. */
+.am-cluster-pill {
+  position: absolute;
+  transform: translate(-50%, 0);
+  padding: 8px 16px;
+  border-radius: var(--r-sm);
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: var(--shadow-pop);
+}
+
+/* The dark tooltip card. */
+.am-tooltip {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 180px;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+  font-size: 12px;
+  box-shadow: var(--shadow-pop);
+}
+
+.am-tooltip-coords {
+  font-size: 11px;
+  color: var(--c-on-dark);
+  opacity: 0.75;
+}
+
+.am-tooltip-tier {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 650;
+  margin-bottom: 3px;
+}
+
+.am-tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-3);
+  color: var(--c-on-dark);
+  opacity: 0.85;
+}
+
+/* A small coloured square used in the tooltip and the status boxes. */
+.am-square {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+  background: var(--c-scale-5);
+}
+
+.am-tooltip .am-square {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--c-on-dark);
+}
+
+.am-square-striped {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--c-border-strong) 0 2px,
+    var(--c-scale-0) 2px 5px
+  );
+}
+
+/* ---------- Floating cards over the map ---------- */
+
+.am-float {
+  background: var(--c-surface);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-card);
+}
+
+.am-top-left {
+  position: absolute;
+  top: var(--s-4);
+  left: var(--s-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  max-width: calc(100% - 96px);
+}
+
+.am-top-row {
+  display: flex;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+/* Breadcrumb card: Ukraine > Kharkiv > Kupiansk cluster */
+.am-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 14px;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.am-crumb-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.am-crumb {
+  color: var(--c-text);
+}
+
+.am-crumb:hover {
+  text-decoration: none;
+}
+
+.am-crumb-current {
+  font-weight: 650;
+}
+
+.am-crumb-sep {
+  color: var(--c-muted);
+  margin-right: 8px;
+}
+
+/* The Near term / Postwar switch sits in a white card. */
+.am-timeframe {
+  padding: 4px;
+}
+
+.am-timeframe .segmented {
+  background: transparent;
+  padding: 0;
+}
+
+.am-timeframe .segmented-option {
+  padding: 7px 16px;
+  font-size: 14px;
+}
+
+/* "Color the map by" card */
+.am-controls {
+  width: 224px;
+  padding: var(--s-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.am-controls-title {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.am-mode-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.am-mode {
+  padding: 11px 8px;
+  border-radius: var(--r-sm);
+  background: var(--c-surface-2);
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--c-text);
+  text-align: center;
+}
+
+.am-mode:hover {
+  background: var(--c-surface-3);
+}
+
+.am-mode.is-active {
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+  font-weight: 600;
+}
+
+/* The two checkbox rows. */
+.am-layers {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--c-border);
+  padding-top: 4px;
+}
+
+.am-layer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--c-border);
+  text-align: left;
+  font-size: 13px;
+}
+
+.am-layer:last-child {
+  border-bottom: 0;
+}
+
+.am-layer .check-box {
+  width: 18px;
+  height: 18px;
+  margin-top: 0;
+}
+
+.am-layer-label {
+  flex: 1;
+  font-weight: 500;
+}
+
+.am-layer-meta {
+  font-size: 11px;
+  color: var(--c-muted);
+}
+
+/* The grey weights box with the Adjust link. */
+.am-weights {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+  padding: 10px 12px;
+}
+
+.am-weights-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.am-weights-title {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.am-weights-summary {
+  font-size: 12px;
+  color: var(--c-text-2);
+}
+
+.am-weights-link {
+  font-size: 13px;
+  font-weight: 650;
+  flex: 0 0 auto;
+}
+
+/* ---------- Round buttons, top right ---------- */
+
+.am-top-right {
+  position: absolute;
+  top: var(--s-4);
+  right: var(--s-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  align-items: center;
+}
+
+.am-round {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--c-surface);
+  box-shadow: var(--shadow-card);
+  color: var(--c-text);
+}
+
+.am-round:hover {
+  background: var(--c-surface-2);
+}
+
+/* ---------- Legend and mini-map, bottom left ---------- */
+
+.am-bottom-left {
+  position: absolute;
+  left: var(--s-4);
+  bottom: var(--s-4);
+  display: flex;
+  gap: var(--s-3);
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.am-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 236px;
+  padding: var(--s-3) var(--s-4);
+  font-size: 12px;
+  color: var(--c-text-2);
+}
+
+.am-legend-title {
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--c-text);
+}
+
+.am-legend-scale {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.am-legend-scale > span:first-child {
+  margin-right: 5px;
+}
+
+.am-legend-scale > span:last-child {
+  margin-left: 5px;
+}
+
+.am-legend-swatch {
+  width: 18px;
+  height: 11px;
+  border-radius: 2px;
+}
+
+.am-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.am-legend-dash {
+  width: 20px;
+  border-top: 2px dashed var(--c-ink);
+}
+
+.am-legend-pin {
+  margin-left: 2px;
+}
+
+.am-scalebar {
+  width: 120px;
+  height: 7px;
+  border: 1.5px solid var(--c-text-2);
+  border-top: 0;
+}
+
+.am-legend-footer {
+  font-size: 11px;
+  color: var(--c-muted);
+}
+
+.am-minimap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: var(--s-3) var(--s-4);
+}
+
+.am-minimap-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 12px);
+  gap: 3px;
+  padding: 2px 0;
+}
+
+.am-minicell {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.am-minicell-1 {
+  background: var(--c-border);
+}
+
+.am-minicell-2 {
+  background: var(--c-ink);
+}
+
+.am-minicell-3 {
+  border: 1px dashed var(--c-border-strong);
+}
+
+.am-minimap-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+/* ---------- The "Selected area" panel ---------- */
+
+.am-panel {
+  flex: 0 0 380px;
+  width: 380px;
+  display: flex;
+  flex-direction: column;
+  background: var(--c-surface);
+  border-left: 1px solid var(--c-border);
+  min-height: 0;
+}
+
+.am-panel-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--s-5) var(--s-4) var(--s-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+}
+
+.am-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.am-panel-head-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.am-panel-title {
+  font-size: 24px;
+}
+
+.am-panel-subtitle {
+  font-size: 12px;
+  color: var(--c-text-2);
+}
+
+.am-close {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px var(--c-border-strong);
+  flex: 0 0 auto;
+}
+
+.am-close:hover {
+  background: var(--c-surface-2);
+}
+
+/* The two status boxes side by side. */
+.am-status-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-2);
+}
+
+.am-status {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  text-align: left;
+  border-radius: var(--r-md);
+  min-width: 0;
+}
+
+.am-status.panel-selected {
+  padding: 9.5px;
+}
+
+.am-status-label {
+  font-size: 12px;
+  color: var(--c-text-2);
+}
+
+.am-status-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.am-status-why {
+  font-size: 11px;
+  color: var(--c-muted);
+  line-height: 1.35;
+}
+
+/* A titled section of the panel. */
+.am-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.am-section h3 {
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.am-scores {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.am-scores .score-bar {
+  grid-template-columns: 100px 1fr auto;
+}
+
+/* "What the satellites found" tiles. */
+.am-sat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s-2);
+}
+
+.panel.am-sat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 8px;
+  min-width: 0;
+}
+
+.am-sat-value {
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.am-sat-label {
+  font-size: 10.5px;
+  color: var(--c-muted);
+  line-height: 1.3;
+}
+
+/* "Recovery cost" tiles. */
+.am-cost-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-2);
+}
+
+.panel.am-cost {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  min-width: 0;
+}
+
+.am-cost-label {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.am-cost-amount {
+  font-size: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.am-cost-text {
+  font-size: 11px;
+  color: var(--c-muted);
+  line-height: 1.3;
+}
+
+/* "Help requests from farms" */
+.am-new {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.am-help-sub {
+  margin-top: -6px;
+}
+
+.am-request {
+  width: 100%;
+  align-items: center;
+  text-align: left;
+  padding: 12px 0;
+}
+
+.am-request:hover .row-title {
+  text-decoration: underline;
+}
+
+.am-request-number {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--c-amber-soft);
+  box-shadow: inset 0 0 0 1.5px var(--c-amber);
+  color: var(--c-amber-text);
+  font-size: 12px;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+
+.am-request-chevron {
+  color: var(--c-muted);
+  flex: 0 0 auto;
+}
+
+/* The two buttons pinned to the bottom of the panel. */
+.am-panel-actions {
+  display: flex;
+  gap: 6px;
+  padding: var(--s-3) var(--s-4) var(--s-4);
+  background: var(--c-surface);
+  border-top: 1px solid var(--c-border);
+}
+
+.am-panel-actions .btn {
+  flex: 1;
+  min-width: 0;
+  padding: 11px 6px;
+  gap: 5px;
+}
+
+/* ---------- Small screens ---------- */
+
+@media (max-width: 860px) {
+  .am-map-col {
+    flex: 0 0 auto;
+  }
+
+  .am-map {
+    flex: 0 0 auto;
+    height: 620px;
+  }
+
+  .am-panel {
+    flex: 0 0 auto;
+    width: 100%;
+    border-left: 0;
+    border-top: 1px solid var(--c-border);
+  }
+
+  .am-panel-scroll {
+    overflow: visible;
+  }
+}
+
+/* Phone-sized screens: the controls card sits above the map and the legend
+   and mini-map below it (MapPage.jsx moves them there), so nothing floats
+   over the drawing. */
+@media (max-width: 520px) {
+  .am-top-left {
+    max-width: calc(100% - 72px);
+  }
+
+  .am-map {
+    height: 560px;
+  }
+
+  /* The controls card, now a full-width card above the map. */
+  .am-map-col > .am-controls {
+    width: auto;
+    margin: var(--s-4) var(--s-4) 0;
+  }
+
+  .am-map-col > .am-controls .am-mode-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* The legend and mini-map, now a row below the map. */
+  .am-bottom-static {
+    position: static;
+    padding: var(--s-4);
+    align-items: stretch;
+  }
+
+  .am-bottom-static .am-legend {
+    flex: 1 1 200px;
+    width: auto;
+  }
+
+  /* The tooltip hugs the right edge so it is never cut off. */
+  .am-tooltip {
+    max-width: calc(100% - 24px);
+  }
+
+  .am-sat-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .am-panel-actions {
+    flex-direction: column;
+  }
+}

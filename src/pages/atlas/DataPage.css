@@ -1,0 +1,390 @@
+/*
+  WHAT THIS FILE DOES
+  The styling for the Atlas "Data archive" page (DataPage.jsx): the bar
+  chart, the runs and sources tables, the validation rows, the download
+  rows and the dark citation box. Every class starts with "ad-" so it never
+  clashes with another page.
+
+  WHO EDITS IT
+  Whoever changes how the Data archive page looks. Colours, spacing and
+  fonts come from src/styles/tokens.css.
+*/
+
+/* The page is a column: header, then the card grid. */
+.ad-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+}
+
+/* Both cards in a row stretch to the same height, like the mockup. */
+.ad-grid {
+  align-items: stretch;
+}
+
+.ad-grid > .card {
+  align-self: stretch;
+}
+
+/* ---------- Bar chart ---------- */
+
+.ad-chart-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+}
+
+.ad-chart-title {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.ad-chart-subtitle {
+  font-size: 11px;
+  color: var(--c-muted);
+}
+
+.ad-chart {
+  width: 100%;
+  height: auto;
+  max-height: 170px;
+}
+
+.ad-chart-grid {
+  stroke: var(--c-border);
+  stroke-width: 1;
+}
+
+.ad-chart-tick {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  fill: var(--c-muted);
+}
+
+/* Past runs are a dusty, washed-out version of the damage red (the red
+   mixed 60/40 with the card white); the current run is the strong red. */
+.ad-bar {
+  fill: color-mix(in srgb, var(--c-red) 60%, var(--c-surface));
+}
+
+.ad-bar-current {
+  fill: var(--c-red);
+}
+
+.ad-chart-value {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  fill: var(--c-text);
+}
+
+.ad-chart-month {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  fill: var(--c-text-2);
+}
+
+.ad-chart-month-current {
+  font-weight: 650;
+  fill: var(--c-text);
+}
+
+/* ---------- Saved runs table ---------- */
+
+.ad-run-name {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ad-run-badges {
+  gap: 4px;
+}
+
+.ad-th-right,
+.ad-td-right {
+  text-align: right;
+}
+
+.ad-runs-table td {
+  white-space: nowrap;
+}
+
+/* The tick or warning plus "126 of 126". */
+.ad-checks {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.ad-checks-ok {
+  color: var(--c-green);
+}
+
+.ad-checks-warn {
+  color: var(--c-amber);
+}
+
+.ad-checks-reason {
+  color: var(--c-amber-text);
+}
+
+/* ---------- Data sources table ---------- */
+
+.ad-sources-table .ad-detail {
+  white-space: nowrap;
+}
+
+/* ---------- "How we know it works" ---------- */
+
+.ad-checks-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.ad-check-row {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: var(--s-3);
+  align-items: start;
+  padding: var(--s-3) 0;
+  border-bottom: 1px solid var(--c-border);
+}
+
+.ad-check-row:first-child {
+  padding-top: 0;
+}
+
+.ad-check-value {
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.ad-check-text {
+  font-size: 12px;
+  color: var(--c-text-2);
+  line-height: 1.4;
+}
+
+/* The pale amber "Still open" note. */
+.ad-open-note {
+  display: flex;
+  gap: var(--s-2);
+  align-items: flex-start;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--c-text-2);
+  padding: var(--s-3);
+}
+
+.ad-open-note-icon {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--c-amber-text);
+}
+
+.ad-open-note strong {
+  color: var(--c-text);
+}
+
+.ad-method-link {
+  align-self: flex-start;
+}
+
+/* ---------- Download rows ---------- */
+
+/* One outlined row: icon box, file name, format on the right. */
+.ad-file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: var(--c-surface);
+  box-shadow: inset 0 0 0 1px var(--c-border);
+  text-align: left;
+}
+
+.ad-file:hover {
+  background: var(--c-surface-2);
+}
+
+.ad-file-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.ad-file-format {
+  font-size: 11px;
+  color: var(--c-muted);
+  flex: 0 0 auto;
+}
+
+/* ---------- Citation box ---------- */
+
+.ad-cite {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--s-3) 14px;
+}
+
+.ad-cite-title {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.ad-cite-text {
+  font-size: 13px;
+  line-height: 1.4;
+  margin-bottom: var(--s-2);
+}
+
+.ad-cite-doi {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+/* The Copy button sits on the dark box, so it is dark with a light edge. */
+.ad-copy {
+  padding: 4px 8px;
+  gap: 5px;
+  background: var(--c-ink-2);
+  color: var(--c-on-dark);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+}
+
+.ad-copy:hover {
+  background: var(--c-ink);
+}
+
+/* ---------- Small screens ---------- */
+
+@media (max-width: 520px) {
+  .ad-check-row {
+    grid-template-columns: 64px 1fr;
+  }
+
+  /* Saved runs: the table is too wide for a phone, so each run becomes a
+     stacked block instead. Line one is the run name and its badges; line
+     two is Images used, Heavy damage and Checks, each with its column name
+     written above it in small grey text, and the download button on the
+     right. ("tbody td" is written out so these rules beat the shared
+     ".table td" rules.) */
+  .ad-runs-table thead {
+    display: none;
+  }
+
+  .ad-runs-table,
+  .ad-runs-table tbody {
+    display: block;
+  }
+
+  .ad-runs-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.3fr) auto;
+    gap: var(--s-2) var(--s-3);
+    align-items: start;
+    padding: var(--s-3) 0;
+    border-bottom: 1px solid var(--c-border);
+  }
+
+  .ad-runs-table tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .ad-runs-table tbody td {
+    display: block;
+    padding: 0;
+    border-bottom: 0;
+    white-space: normal;
+  }
+
+  /* Line one: the run name spans the whole width. */
+  .ad-runs-table tbody .ad-td-run {
+    grid-column: 1 / -1;
+  }
+
+  /* Line two: the three detail cells, name above value, then the button. */
+  .ad-runs-table tbody .ad-td-detail {
+    text-align: left;
+  }
+
+  .ad-runs-table .ad-td-detail::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 2px;
+    font-family: var(--font-sans);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--c-muted);
+  }
+
+  .ad-runs-table tbody .ad-td-files {
+    align-self: end;
+  }
+
+  /* The checks cell may wrap "Cloud gap" onto a second line here. */
+  .ad-runs-table .ad-checks {
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+
+  /* Data sources: four columns do not fit either. Each source becomes a
+     block of three lines: the name, the "What it tells us" sentence, then
+     Detail on the left and Updated on the right. */
+  .ad-sources-table thead {
+    display: none;
+  }
+
+  .ad-sources-table,
+  .ad-sources-table tbody {
+    display: block;
+  }
+
+  .ad-sources-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: var(--s-3);
+    row-gap: 3px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--c-border);
+  }
+
+  .ad-sources-table tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .ad-sources-table tbody td {
+    display: block;
+    padding: 0;
+    border-bottom: 0;
+  }
+
+  .ad-sources-table tbody .ad-src-name,
+  .ad-sources-table tbody .ad-src-tells {
+    grid-column: 1 / -1;
+  }
+
+  .ad-sources-table tbody .ad-src-tells {
+    color: var(--c-text-2);
+  }
+
+  .ad-sources-table tbody .ad-src-detail,
+  .ad-sources-table tbody .ad-src-updated {
+    font-size: 12px;
+    color: var(--c-text-2);
+    white-space: nowrap;
+  }
+
+  .ad-sources-table tbody .ad-src-updated {
+    text-align: right;
+  }
+}

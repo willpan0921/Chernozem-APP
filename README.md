@@ -1,10 +1,17 @@
-# Chernozem Field
+# Chernozem
 
-The farmer-facing part of Chernozem, a satellite tool that assesses war-damaged
-farmland in Ukraine. Someone searches for a field and sees information about it.
+A satellite tool that assesses war-damaged black-soil farmland in Ukraine. The
+app has two products that share one codebase and one sidebar:
 
-**This is a skeleton.** There is no real data, no real search and no working AI
-yet. The structure is in place so each teammate can plug their part in.
+- **Field** — what a farmer sees: their own farm. Overview, Fields (map),
+  Notes, AI, Data, Settings.
+- **Atlas** — what a regional office sees: the whole country. Overview, Atlas
+  (map), AI, Data, Settings.
+
+**This is the foundation.** Every screen from the design mockups is built and
+works with placeholder data. There is no real satellite data, no real map
+tiles and no real AI yet. The structure is in place so each teammate can plug
+their part in without touching anyone else's files.
 
 ## How to run it
 
@@ -25,73 +32,115 @@ npm run dev
 The page refreshes by itself whenever you save a file. To stop the app, press
 `Ctrl + C` in the terminal.
 
+`npm run build` makes the finished version in a `dist` folder, ready to put on
+a web server. You do not need it while working.
+
 ## Who edits which file
 
-Each teammate works in one file and does not need to touch the others.
-
-| File | Who | What it is |
+| File or folder | Who | What it is |
 | --- | --- | --- |
-| `src/components/ChatPanel.jsx` | Danny | The chat panel: the bubbles and the input box. |
-| `src/api/chatApi.js` | Danny | Where the chat gets its reply. It is a fake for now; connect the real AI here. |
-| `src/data/soilTypes.js` | Shirley | The list of soil types. Instructions are at the top of the file. |
-| `src/config/tiles.js` | Anyone | The titles and order of the 6 tiles on the Field page. |
+| `src/components/chat/` | Danny | The chat: thread list, bubbles, cards, input box. Used by both AI pages. |
+| `src/api/chatApi.js` | Danny | Where the chat gets its reply. A fake for now; connect the real AI here. |
+| `src/data/soilTypes.js` | Shirley | The list of soil types. Instructions are at the top of the file. Shown in Field → Settings. |
+| `src/data/farm.js` | Anyone | Every number and sentence on the Field pages. Replace with real data here. |
+| `src/data/atlas.js` | Anyone | Every number and sentence on the Atlas pages. |
+| `src/data/chats.js` | Danny | The example chat conversations. |
+| `src/pages/field/*` | Page owners | One file per Field page, with its own `.css` next to it. |
+| `src/pages/atlas/*` | Page owners | One file per Atlas page, with its own `.css` next to it. |
+| `src/styles/tokens.css` | Design | Every colour, font and spacing, defined once. |
 
-Every file starts with a plain-English note saying what it does and who edits it.
+Every file starts with a plain-English note saying what it does and who edits
+it. Read that note before changing a file.
 
-## What is in the app
-
-- **Home**: a large field photo with the app name, a search box and a Search
-  button on top, then a "How it works" section. Searching opens the Field page
-  and shows whatever was typed as the field name. The background
-  photo changes on every refresh. The photos are in `public/images` and are
-  listed in `src/config/photos.js`. The Field page uses the same photo.
-- **Field**: the field name, a link back to Home, six tiles and the chat panel.
-  The Soil Type tile shows the first entry in `src/data/soilTypes.js`. The other
-  tiles say "Coming soon".
-- **Atlas**: a placeholder for the Chernozem Atlas.
-
-## Folder structure
+## How the app is put together
 
 ```
-chernozem-field/
-├── README.md               This file
-├── package.json            The libraries the app uses and the run commands
-├── vite.config.js          Settings for Vite, the tool that runs the app
-├── index.html              The single web page the app loads into
-├── public/images/          Background photos
-└── src/
-    ├── main.jsx            Starts the app
-    ├── App.jsx             Navigation bar; decides which page is showing
-    ├── styles.css          All the styling
-    ├── pages/
-    │   ├── HomePage.jsx    Home screen
-    │   ├── FieldPage.jsx   Field page
-    │   └── AtlasPage.jsx   Atlas page
-    ├── components/
-    │   ├── Tile.jsx        One tile
-    │   └── ChatPanel.jsx   Danny's file
-    ├── api/
-    │   └── chatApi.js      Where the chat gets its reply (a fake for now)
-    ├── data/
-    │   └── soilTypes.js    Shirley's file
-    ├── config/
-    │   ├── tiles.js        Tile titles and order
-    │   └── photos.js       List of background photos
-    └── utils/
-        └── photoColor.js   Picks a colour from the background photo
+src/
+├── main.jsx                 Starts the app and switches on page routing
+├── App.jsx                  The list of pages and their web addresses
+├── styles.css               Loads the shared stylesheets below
+├── styles/
+│   ├── tokens.css           Colours, fonts, spacing, corner radii (change here first)
+│   ├── base.css             Page reset and typography
+│   ├── shell.css            The sidebar and page frame
+│   └── components.css       Styling for the shared building blocks
+├── layout/
+│   ├── AppShell.jsx         Sidebar on the left, the current page on the right
+│   └── Sidebar.jsx          Logo, Field/Atlas switch, page list, account
+├── config/
+│   └── navigation.js        The two products and their pages (add a page here)
+├── components/
+│   ├── ui/                  Shared blocks: Card, Stat, Badge, Button, Tabs, Toggle...
+│   └── chat/                Danny's chat blocks, used by both AI pages
+├── api/
+│   └── chatApi.js           Danny's file: where the chat gets its reply
+├── data/
+│   ├── farm.js              Placeholder data for the Field product
+│   ├── atlas.js             Placeholder data for the Atlas product
+│   ├── chats.js             Placeholder chat conversations
+│   └── soilTypes.js         Shirley's file
+└── pages/
+    ├── field/               OverviewPage, FieldsPage, NotesPage, AiPage, DataPage, SettingsPage
+    └── atlas/               OverviewPage, MapPage, AiPage, DataPage, SettingsPage
 ```
+
+### Pages and their addresses
+
+| Address | Page |
+| --- | --- |
+| `/field` | Field: Overview (My farm) |
+| `/field/fields` | Field: Fields map and field detail |
+| `/field/notes` | Field: Notes |
+| `/field/ai` | Field: AI chat |
+| `/field/data` | Field: Data (satellite readings) |
+| `/field/settings` | Field: Settings |
+| `/atlas` | Atlas: Recovery overview |
+| `/atlas/map` | Atlas: the map (Kupiansk cluster) |
+| `/atlas/ai` | Atlas: AI chat |
+| `/atlas/data` | Atlas: Data archive |
+| `/atlas/settings` | Atlas: Settings |
+
+Opening `/` goes to `/field`. The browser's Back button works, and every page
+can be linked to directly.
+
+### The rules the code follows
+
+- **Data lives in `src/data`, not in pages.** A page reads from the data file
+  and draws it. To change a number or a sentence, change the data file. To
+  connect real data later, replace the data file and the pages keep working.
+- **Colours come from `src/styles/tokens.css`.** Pages never type a raw colour
+  except inside hand-drawn pictures (the maps and chart illustrations).
+- **Each page owns its own `.css` file**, and its class names start with a
+  short prefix (for example `.fo-` on the Field Overview) so two pages never
+  clash.
+- **Shared blocks live in `src/components/ui`.** Before drawing a new card,
+  button or badge, check whether one already exists there.
+
+## Adding a page
+
+1. Add it to the product's `pages` list in `src/config/navigation.js`. The
+   sidebar updates by itself.
+2. Create `src/pages/<product>/<Name>Page.jsx` and `<Name>Page.css`. Copy an
+   existing page to start.
+3. Add a `<Route>` for it in `src/App.jsx`.
+
+## What is placeholder and what is real
+
+Real and working: navigation, every layout, switching tabs and filters,
+selecting fields and notes, the Near term / Postwar switch, the weight sliders,
+the unit switch, sending a chat message (it gets a fake reply).
+
+Placeholder: all numbers and text (from the mockups), the maps (drawn by hand
+in SVG, not map tiles), the charts' data, the AI replies, and every Download,
+Export, Save, Invite and Share button (they do nothing yet and say
+"Not connected yet" when you hover).
+
+A few pages keep small bits of data in a `const` at the top of the file,
+marked `// TODO move to src/data/...`. Those are fine to leave until the real
+data arrives.
 
 ## Background photos
 
-The photos are in `public/images`. To add one, put the picture file in that
-folder and add its name to the list in `src/config/photos.js`.
-
-Several of the current photos come from news sites. This repo is public, so
-replace them with pictures the team has the rights to use before the site
-goes live.
-
-## Known limits of the skeleton
-
-- Pages are switched without a routing library, so the browser's Back button and
-  links to a specific field do not work yet.
-- The chat replies with a placeholder answer. No real AI is connected.
+`public/images` holds photos from an earlier version of the app. Nothing uses
+them now. Several come from news sites, so delete them or replace them with
+pictures the team has the rights to use before the site goes live.

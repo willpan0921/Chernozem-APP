@@ -1,0 +1,98 @@
+/*
+  WHAT THIS FILE DOES
+  The design tokens: every colour, font, spacing and corner radius the app
+  uses, defined once. Pages and components refer to these names instead of
+  typing raw values, so a change here changes the whole app.
+
+  WHO EDITS IT
+  Whoever works on the design. Change a value here rather than in a page's
+  CSS when the change should apply everywhere.
+
+  NAMING
+  --c-*      colours        (c = colour)
+  --font-*   font families
+  --r-*      corner radii   (r = radius)
+  --s-*      spacing steps  (s = space)
+*/
+
+:root {
+  /* ---- Surfaces ---- */
+  --c-bg: #f4f3ee;            /* page background, warm off-white */
+  --c-surface: #ffffff;       /* cards */
+  --c-surface-2: #f7f6f2;     /* panels inside cards, table header rows */
+  --c-surface-3: #efede7;     /* pressed / hover fill, map legend boxes */
+  --c-sidebar: #fbfaf7;
+  --c-border: #e6e3db;
+  --c-border-strong: #cfcbc0;
+  --c-ink: #1c1c1a;           /* near-black: dark buttons, selected toggles */
+  --c-ink-2: #2d2d2a;
+
+  /* ---- Text ---- */
+  --c-text: #1b1b19;
+  --c-text-2: #4f4f49;        /* secondary text */
+  --c-muted: #7b7a72;         /* captions, helper text */
+  --c-on-dark: #ffffff;
+
+  /* ---- Brand green ---- */
+  --c-green: #1f5c3a;         /* primary buttons, links, active nav text */
+  --c-green-strong: #174630;  /* hover */
+  --c-green-soft: #e7efe9;    /* active nav background, soft green pills */
+  --c-green-text: #1f5c3a;
+
+  /* ---- Signal colours ---- */
+  --c-red: #b5452d;           /* damage, recovery, danger */
+  --c-red-soft: #fbe9e4;
+  --c-red-text: #9c3a24;
+  --c-amber: #e3a23a;         /* farm help pins, "to watch" */
+  --c-amber-soft: #fbf3d9;
+  --c-amber-text: #8a5a12;
+  --c-blue: #3b6fb6;          /* safe access */
+  --c-blue-soft: #e6eef8;
+  --c-blue-text: #2c5a9a;
+  --c-yellow-avatar: #e7b83a; /* farmer avatar "MF" */
+
+  /* ---- Priority scale, lightest to darkest (Atlas maps, score bars) ---- */
+  --c-scale-0: #e9eee8;       /* set aside / not analysed */
+  --c-scale-1: #d4e3d6;       /* lower */
+  --c-scale-2: #a9c9b1;       /* medium */
+  --c-scale-3: #5f9a74;       /* high */
+  --c-scale-4: #2f6f4b;       /* highest */
+  --c-scale-5: #1b4a31;
+
+  /* ---- Field health colours (farm map, field list icons) ---- */
+  --c-field-healthy: #8fbf6a;
+  --c-field-harvest: #e3c95a;
+  --c-field-watch: #cfe08a;
+  --c-field-harvested: #efe3b0;
+  --c-field-recovery: #d98a6a;
+
+  /* ---- Fonts ----
+     sans  - everything, loaded from Google Fonts in index.html
+     mono  - numbers that should line up: hectares, dollars, scores */
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* ---- Radii ---- */
+  --r-sm: 8px;                /* buttons, inputs, small boxes */
+  --r-md: 12px;               /* cards */
+  --r-lg: 16px;               /* big panels */
+  --r-pill: 999px;
+
+  /* ---- Spacing scale ---- */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+
+  /* ---- Elevation ---- */
+  --shadow-card: 0 1px 2px rgba(25, 25, 15, 0.04), 0 0 0 1px var(--c-border);
+  --shadow-pop: 0 8px 24px rgba(25, 25, 15, 0.12), 0 0 0 1px var(--c-border);
+
+  /* ---- Layout ---- */
+  --sidebar-w: 184px;
+  --page-max: 1320px;
+  --page-pad: 24px;
+}

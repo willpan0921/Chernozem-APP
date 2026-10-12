@@ -5,21 +5,23 @@
   app draws itself inside the "root" box below, starting from src/main.jsx.
 
   WHO EDITS IT
-  Nobody, normally. Edit it only to change the browser tab title.
+  Nobody, normally. Edit it only to change the browser tab title or the
+  fonts loaded from Google Fonts.
 -->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Chernozem Field</title>
-    <!-- Loads Caveat, the handwritten font, from Google Fonts. The fonts are
-         listed in src/styles.css. -->
+    <title>Chernozem</title>
+    <!-- The two fonts: Inter for text and JetBrains Mono for numbers. They
+         are named in src/styles/tokens.css. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
       rel="stylesheet"
-    />  </head>
+    />
+  </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>

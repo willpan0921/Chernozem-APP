@@ -1,0 +1,12 @@
+/*
+  WHAT THIS FILE DOES
+  Styling that belongs only to the Atlas AI page (/atlas/ai). The chat
+  itself is styled in src/components/chat/chat.css; this file only wraps it.
+
+  WHO EDITS IT
+  Danny.
+*/
+
+.ai-page {
+  min-width: 0;
+}

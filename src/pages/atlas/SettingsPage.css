@@ -1,0 +1,404 @@
+/*
+  WHAT THIS FILE DOES
+  The layout for the Atlas Settings page (src/pages/atlas/SettingsPage.jsx):
+  the Near term and Postwar panels, the weight sliders, the baseline row,
+  the Region row, the dark "With these settings" box and the small row
+  lists on the right. Every class starts with "as-" so it cannot clash with
+  another page.
+
+  WHO EDITS IT
+  Whoever changes how the Atlas Settings page looks. Colours, spacing and
+  radii come from src/styles/tokens.css.
+*/
+
+/* ---------- Card titles with a small icon before them ---------- */
+
+.as-card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.as-card-title svg {
+  color: var(--c-green);
+}
+
+/* Keeps the grey tabs track as wide as its tabs, not the whole page. */
+.as-tabs {
+  display: flex;
+}
+
+/* On a phone the track stays on one line and scrolls sideways instead of
+   wrapping onto two lines. */
+@media (max-width: 480px) {
+  .as-tabs {
+    overflow-x: auto;
+    max-width: 100%;
+  }
+
+  .as-tabs .tabs {
+    flex-wrap: nowrap;
+    white-space: nowrap;
+  }
+}
+
+/* Lets a tab scroll to a card without hiding its top under the edge. */
+.as-section {
+  scroll-margin-top: var(--s-4);
+}
+
+/* ---------- Near term / Postwar panels ---------- */
+
+.as-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  border-radius: var(--r-md);
+}
+
+.as-panel-text {
+  font-size: 13px;
+  color: var(--c-text-2);
+}
+
+/* Two selects side by side; one under the other on narrow screens. */
+.as-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-3);
+}
+
+@media (max-width: 640px) {
+  .as-grid-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* A grey line with an "i" icon before it. */
+.as-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--c-muted);
+}
+
+.as-info svg {
+  flex: 0 0 auto;
+}
+
+.as-note {
+  font-size: 12px;
+  color: var(--c-muted);
+  max-width: 440px;
+}
+
+.as-blend {
+  display: block;
+  max-width: 320px;
+}
+
+/* ---------- Postwar weight sliders ---------- */
+
+.as-weights {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: var(--s-1) 0;
+}
+
+/* name | slider | percentage */
+.as-weight {
+  display: grid;
+  grid-template-columns: 96px 1fr 44px;
+  align-items: center;
+  gap: var(--s-3);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+@media (max-width: 480px) {
+  .as-weight {
+    grid-template-columns: 80px 1fr 40px;
+    gap: var(--s-2);
+  }
+}
+
+.as-weight-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The small coloured square before each weight name. */
+.as-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+  background: var(--c-green);
+}
+
+.as-dot-red {
+  background: var(--c-red);
+}
+
+.as-dot-blue {
+  background: var(--c-blue);
+}
+
+.as-weight-value {
+  font-size: 12px;
+  text-align: right;
+}
+
+/* The slider itself: a thin grey track, filled green up to the handle.
+   --pct is set from the page for each slider. */
+.as-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  margin: 0;
+  border-radius: var(--r-pill);
+  background: linear-gradient(
+    to right,
+    var(--c-green) 0 var(--pct, 0%),
+    var(--c-surface-3) var(--pct, 0%) 100%
+  );
+  cursor: pointer;
+}
+
+/* The handle: a plain solid green dot sitting on the track. */
+.as-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--c-green);
+  border: 0;
+}
+
+.as-range::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--c-green);
+  border: 0;
+}
+
+.as-range::-moz-range-track {
+  background: transparent;
+}
+
+/* "Adds up to 100%" under the sliders, right-aligned. */
+.as-sum {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.as-sum-ok {
+  color: var(--c-green);
+}
+
+.as-sum-bad {
+  color: var(--c-red);
+}
+
+/* ---------- Baseline years + Save / Reset ---------- */
+
+.as-baseline-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+}
+
+.as-baseline {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+/* ---------- Region card ---------- */
+
+/* Country select | Boundaries chip | Upload button */
+.as-region-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) auto;
+  align-items: end;
+  gap: var(--s-3);
+}
+
+@media (max-width: 760px) {
+  .as-region-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* The read-only "FAO GAUL, level 1 · 24 regions" box. */
+.as-readonly {
+  padding: 8px 10px;
+  border: 1px solid transparent; /* same height as the select beside it */
+  border-radius: var(--r-sm);
+  background: var(--c-surface-2);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The green "same method works on any black soil" box. */
+.as-expand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4);
+  font-size: 13px;
+}
+
+.as-expand p {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .as-expand {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+/* A plain underlined green link that is really a button. */
+.as-text-link {
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-green);
+  text-decoration: underline;
+  white-space: nowrap;
+}
+
+/* ---------- "With these settings" dark box ---------- */
+
+.card.as-dark {
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+  box-shadow: none;
+}
+
+.as-dark .spread {
+  align-items: center;
+}
+
+/* A touch smaller so the title and the badge fit on one line. */
+.as-dark h2 {
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+/* The solid green "Research result" badge. */
+.badge.as-badge-solid {
+  background: var(--c-green);
+  color: var(--c-on-dark);
+  font-size: 10px;
+  padding: 2px 7px;
+}
+
+/* Muted text on the dark box: the on-dark token, faded with opacity,
+   because tokens.css has no separate muted-on-dark colour. */
+.as-dark-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--c-on-dark);
+  opacity: 0.65;
+  margin-bottom: 6px;
+}
+
+.as-ranked {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.as-ranked li {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.as-rank {
+  font-size: 11px;
+  color: var(--c-on-dark);
+  opacity: 0.55;
+  min-width: 10px;
+}
+
+.as-dark-line {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.as-dark-note {
+  font-size: 12px;
+  color: var(--c-on-dark);
+  opacity: 0.65;
+}
+
+/* ---------- Row lists on the right (toggles, team, farm data) ---------- */
+
+.as-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.as-row {
+  padding: var(--s-3) 0;
+  border-top: 1px solid var(--c-border);
+}
+
+.as-row:last-child {
+  padding-bottom: 0;
+}
+
+/* The Team rows: avatar, name, role at the right. */
+.as-member {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.as-member-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.as-avatar {
+  width: 26px;
+  height: 26px;
+  font-size: 10px;
+}
+
+.as-avatar-green {
+  background: var(--c-green-soft);
+  color: var(--c-green);
+}
+
+.as-avatar-amber {
+  background: var(--c-amber);
+  color: var(--c-ink);
+}
+
+.as-avatar-blue {
+  background: var(--c-blue-soft);
+  color: var(--c-blue-text);
+}

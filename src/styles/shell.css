@@ -1,0 +1,305 @@
+/*
+  WHAT THIS FILE DOES
+  The frame around every page: the left sidebar and the main area the page
+  sits in. The sidebar is drawn by src/layout/Sidebar.jsx.
+
+  WHO EDITS IT
+  Whoever changes the sidebar or the overall page layout.
+*/
+
+.shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+/* ---------- Sidebar ---------- */
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  flex: 0 0 var(--sidebar-w);
+  width: var(--sidebar-w);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-4) var(--s-3);
+  background: var(--c-sidebar);
+  border-right: 1px solid var(--c-border);
+  overflow-y: auto;
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 4px 6px;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--c-text);
+}
+
+.sidebar-brand:hover {
+  text-decoration: none;
+}
+
+.sidebar-logo {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+}
+
+/* The Field / Atlas switch. */
+.product-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--r-sm);
+  background: var(--c-surface-3);
+}
+
+.product-switch-option {
+  padding: 7px 0;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 550;
+  text-align: center;
+  color: var(--c-text-2);
+}
+
+.product-switch-option:hover {
+  color: var(--c-text);
+  text-decoration: none;
+}
+
+.product-switch-option.is-active {
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+  font-weight: 600;
+}
+
+/* The "My farm · 7 fields" / "Ukraine · 24 regions" box. */
+.scope-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: var(--r-sm);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  text-align: left;
+}
+
+.scope-card-icon {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: var(--c-green-soft);
+  color: var(--c-green);
+  flex: 0 0 auto;
+}
+
+.scope-card-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.scope-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.scope-card-subtitle {
+  font-size: 11px;
+  color: var(--c-muted);
+  line-height: 1.3;
+}
+
+.scope-card-chevron {
+  color: var(--c-muted);
+}
+
+/* The page list. */
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--c-text-2);
+}
+
+.nav-item:hover {
+  background: var(--c-surface-3);
+  color: var(--c-text);
+  text-decoration: none;
+}
+
+.nav-item.is-active {
+  background: var(--c-green-soft);
+  color: var(--c-green);
+  font-weight: 600;
+}
+
+.nav-item svg {
+  flex: 0 0 auto;
+}
+
+/* Pushes everything after it to the bottom of the sidebar. */
+.sidebar-spacer {
+  flex: 1;
+}
+
+.sidebar-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--c-muted);
+}
+
+.sidebar-note svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.sidebar-language {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  color: var(--c-text-2);
+  text-align: left;
+}
+
+.sidebar-language:hover {
+  background: var(--c-surface-3);
+}
+
+.sidebar-language span {
+  flex: 1;
+}
+
+.sidebar-account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.sidebar-account:hover {
+  background: var(--c-surface-3);
+  text-decoration: none;
+}
+
+.avatar {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.avatar-farm {
+  background: var(--c-yellow-avatar);
+  color: #3a2d05;
+}
+
+.avatar-atlas {
+  background: var(--c-green-soft);
+  color: var(--c-green);
+}
+
+/* ---------- Main area ---------- */
+
+.shell-main {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The normal page: padded, with a maximum width. Pages that need to fill
+   the whole area edge to edge (the maps) use .page-full instead. */
+.page {
+  max-width: var(--page-max);
+  padding: var(--s-6) var(--page-pad) 48px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.page-full {
+  height: 100vh;
+  display: flex;
+  min-width: 0;
+}
+
+/* ---------- Small screens ---------- */
+
+@media (max-width: 860px) {
+  .shell {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    position: static;
+    width: auto;
+    height: auto;
+    flex: 0 0 auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--c-border);
+  }
+
+  .sidebar-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .sidebar-spacer {
+    display: none;
+  }
+
+  .page-full {
+    height: auto;
+    flex-direction: column;
+  }
+}

@@ -1,0 +1,630 @@
+/*
+  WHAT THIS FILE DOES
+  The styling for the AI chat screens (Field AI and Atlas AI), which share
+  the same layout: the "Chats" list on the left, the conversation in the
+  middle, and "What AI is reading" on the right. Every class starts with
+  "chat-" so it never collides with a page's own styling.
+
+  WHO EDITS IT
+  Danny. Colours, spacing and radii come from src/styles/tokens.css.
+
+  SECTIONS
+  1. The three-column layout
+  2. The thread list (left)
+  3. The conversation (middle): header, messages, bubbles
+  4. The cards inside AI answers (plan, what-if, table, actions)
+  5. The message box at the bottom
+  6. The right rail ("What AI is reading", "Try asking")
+  7. Small screens
+*/
+
+/* ---------- 1. Layout ---------- */
+
+.chat-layout {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr) 300px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: var(--c-surface);
+}
+
+.chat-threads,
+.chat-rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  padding: var(--s-5) var(--s-4);
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.chat-threads {
+  border-right: 1px solid var(--c-border);
+}
+
+.chat-rail {
+  border-left: 1px solid var(--c-border);
+}
+
+/* ---------- 2. Thread list ---------- */
+
+.chat-threads-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+
+.chat-threads-header h2 {
+  font-size: 17px;
+}
+
+.chat-thread-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  text-align: left;
+}
+
+.chat-thread:hover {
+  background: var(--c-surface-2);
+}
+
+.chat-thread.is-selected {
+  background: var(--c-green-soft);
+}
+
+.chat-thread-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.chat-thread-meta {
+  font-size: 12px;
+  color: var(--c-muted);
+}
+
+/* ---------- 3. Conversation ---------- */
+
+.chat-conversation {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.chat-conversation-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-4);
+  padding: var(--s-4) var(--s-6);
+  border-bottom: 1px solid var(--c-border);
+}
+
+.chat-conversation-header h1 {
+  font-size: 20px;
+}
+
+.chat-conversation-subtitle {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--c-muted);
+}
+
+/* The "Answers in English" button is a pill. */
+.chat-language-button {
+  border-radius: var(--r-pill);
+  flex: 0 0 auto;
+}
+
+/* The scrolling middle part. */
+.chat-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--s-5) var(--s-6);
+  background: var(--c-bg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.chat-empty {
+  margin: auto;
+  text-align: center;
+  font-size: 13px;
+  color: var(--c-muted);
+  max-width: 280px;
+}
+
+/* A message from the person: a dark pill on the right. */
+.chat-message-user {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  padding-left: 15%;
+}
+
+.chat-bubble {
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+  padding: 12px 16px;
+  border-radius: 18px;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+/* A photo attached to a message: a small thumbnail and the file name. */
+.chat-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px 6px 6px;
+  border-radius: var(--r-md);
+  background: var(--c-surface);
+  box-shadow: var(--shadow-card);
+  font-size: 13px;
+}
+
+.chat-attachment-thumb {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+.chat-attachment-thumb svg {
+  width: 100%;
+  height: 100%;
+}
+
+.chat-time {
+  font-size: 11px;
+  color: var(--c-muted);
+}
+
+/* A message from the AI: name on top, plain text, maybe a card. */
+.chat-message-ai {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 15%;
+}
+
+.chat-ai-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c-green);
+}
+
+.chat-ai-logo {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+}
+
+.chat-ai-text {
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+/* The "Thinking..." line while the reply is on its way. */
+.chat-thinking {
+  font-size: 13px;
+  color: var(--c-muted);
+  font-style: italic;
+}
+
+/* ---------- 4. Cards inside AI answers ---------- */
+
+.chat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: var(--s-4);
+  border-radius: var(--r-md);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+}
+
+.chat-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-card-footer {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--c-muted);
+}
+
+.chat-card-footer a {
+  display: inline-block;
+  margin-top: 4px;
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+/* Plan card: rows of icon + text. */
+.chat-card-plan .chat-card-footer {
+  padding-top: 10px;
+  border-top: 1px solid var(--c-border);
+}
+
+.chat-plan-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-plan-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.chat-plan-item svg {
+  flex: 0 0 auto;
+  margin-top: 3px;
+  color: var(--c-text-2);
+}
+
+/* Icon colours (see icons.jsx): the shield is red, the cloud blue, the map
+   and pin green, the dollar sign amber. These apply in the plan card and in
+   the "What AI is reading" list. */
+.chat-plan-item .chat-icon-red,
+.chat-reading-item .chat-icon-red {
+  color: var(--c-red);
+}
+
+.chat-plan-item .chat-icon-blue,
+.chat-reading-item .chat-icon-blue {
+  color: var(--c-blue);
+}
+
+.chat-plan-item .chat-icon-green,
+.chat-reading-item .chat-icon-green {
+  color: var(--c-green);
+}
+
+.chat-plan-item .chat-icon-amber,
+.chat-reading-item .chat-icon-amber {
+  color: var(--c-amber-text);
+}
+
+.chat-plan-item .chat-icon-grey,
+.chat-reading-item .chat-icon-grey {
+  color: var(--c-text-2);
+}
+
+/* What-if card: a grey panel with white rows inside. */
+.chat-card-whatif {
+  background: var(--c-surface-2);
+}
+
+.chat-whatif-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chat-whatif-row {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: var(--s-3);
+  align-items: baseline;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: var(--c-surface);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.chat-whatif-label {
+  font-weight: 600;
+}
+
+.chat-whatif-value .badge {
+  margin-right: 6px;
+  vertical-align: 1px;
+}
+
+/* Table card: the draft budget plan. The header row stays in the normal
+   font even over the number columns. */
+.chat-card-table .table th.num {
+  font-family: var(--font-sans);
+}
+
+.chat-card-table .table th:first-child,
+.chat-card-table .table td:first-child {
+  padding-left: 0;
+}
+
+.chat-card-table .table th:last-child,
+.chat-card-table .table td:last-child {
+  padding-right: 0;
+}
+
+.chat-card-table .table td {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.chat-table-rank {
+  color: var(--c-muted);
+  font-size: 12px;
+  margin-right: 6px;
+}
+
+.chat-table-name {
+  font-weight: 600;
+}
+
+.chat-table-total td {
+  font-weight: 700;
+}
+
+/* Actions card: a row of small buttons, no box around them. */
+.chat-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+/* ---------- 5. Message box ---------- */
+
+.chat-composer-wrap {
+  padding: var(--s-4) var(--s-6) var(--s-5);
+  border-top: 1px solid var(--c-border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chat-composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  padding: var(--s-4);
+  border-radius: var(--r-lg);
+  border: 1.5px solid var(--c-ink);
+  background: var(--c-surface);
+}
+
+.chat-composer:focus-within {
+  box-shadow: 0 0 0 3px var(--c-green-soft);
+}
+
+.chat-composer-input {
+  width: 100%;
+  border: 0;
+  padding: 2px 0;
+  background: transparent;
+  font-size: 14px;
+  resize: none;
+  min-height: 24px;
+  max-height: 160px;
+  line-height: 1.5;
+}
+
+.chat-composer-input::placeholder {
+  color: var(--c-muted);
+}
+
+.chat-composer-input:focus {
+  outline: none;
+}
+
+.chat-composer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+
+.chat-composer-chips {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+/* The chips in the message box are taller and rounder than elsewhere. */
+.chat-composer-chips .chip-select {
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--c-surface-2);
+}
+
+.chat-camera-button {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: var(--c-surface);
+  box-shadow: inset 0 0 0 1px var(--c-border-strong);
+  color: var(--c-text);
+}
+
+.chat-camera-button:hover {
+  background: var(--c-surface-2);
+}
+
+.chat-send-button {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--c-green);
+  color: var(--c-on-dark);
+  flex: 0 0 auto;
+}
+
+.chat-send-button:hover {
+  background: var(--c-green-strong);
+}
+
+/* ---------- 6. Right rail ---------- */
+
+.chat-rail h2 {
+  font-size: 15px;
+}
+
+.chat-rail-intro {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--c-muted);
+}
+
+.chat-reading-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.chat-reading-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+}
+
+.chat-reading-item svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--c-text-2);
+}
+
+.chat-reading-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.chat-reading-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.chat-reading-detail {
+  font-size: 12px;
+  color: var(--c-muted);
+  line-height: 1.35;
+}
+
+.chat-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.chat-suggestion {
+  width: 100%;
+  padding: 12px;
+  border-radius: var(--r-md);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  text-align: left;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.chat-suggestion:hover {
+  background: var(--c-surface-2);
+}
+
+/* ---------- 7. Small screens ---------- */
+
+@media (max-width: 1100px) {
+  .chat-layout {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+
+  .chat-threads {
+    border-right: 0;
+    border-bottom: 1px solid var(--c-border);
+    overflow: visible;
+  }
+
+  .chat-thread-list {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .chat-thread {
+    width: auto;
+    box-shadow: inset 0 0 0 1px var(--c-border);
+  }
+
+  .chat-messages {
+    max-height: 60vh;
+  }
+
+  .chat-rail {
+    border-left: 0;
+    border-top: 1px solid var(--c-border);
+  }
+}
+
+@media (max-width: 600px) {
+  .chat-conversation-header,
+  .chat-messages,
+  .chat-composer-wrap {
+    padding-left: var(--s-4);
+    padding-right: var(--s-4);
+  }
+
+  .chat-conversation-header {
+    flex-direction: column;
+  }
+
+  .chat-message-user {
+    padding-left: 0;
+  }
+
+  .chat-message-ai {
+    padding-right: 0;
+  }
+
+  .chat-whatif-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+}

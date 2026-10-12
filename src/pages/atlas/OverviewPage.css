@@ -1,0 +1,425 @@
+/*
+  WHAT THIS FILE DOES
+  The styling that only the Atlas overview page needs: the region tile map,
+  the top-five list, the scoring tiles, the alert boxes and the spring plan
+  box. Every class starts with "ao-" (Atlas Overview) so it never clashes
+  with another page. Colours, spacing and corners come from
+  src/styles/tokens.css.
+
+  WHO EDITS IT
+  Whoever changes how the Atlas overview looks. The shared blocks (cards,
+  stats, buttons) are styled in src/styles/components.css instead.
+*/
+
+/* ---------- Big numbers ---------- */
+
+/* The mockup puts the number above its label, so flip the order of the
+   shared stat tile here. The red tile keeps a grey label. */
+.ao-stats .stat-value {
+  order: -1;
+}
+
+.ao-stats .stat-red .stat-label {
+  color: var(--c-muted);
+}
+
+.ao-footnote {
+  margin-top: calc(-1 * var(--s-2));
+  font-size: 12px;
+  color: var(--c-muted);
+}
+
+.ao-footnote a {
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+/* ---------- The two-column grid ---------- */
+
+/* The four cards sit directly in the grid, two per row, and stretch so
+   each row's cards are the same height. */
+.two-col.ao-grid {
+  align-items: stretch;
+  row-gap: var(--s-4);
+}
+
+/* ---------- Where to start ---------- */
+
+/* The map on the left, the top-five list on the right. */
+.ao-start {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: var(--s-6);
+  align-items: start;
+}
+
+.ao-map-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+/* The tile map: a fixed grid of equal squares. */
+.ao-map {
+  max-width: 290px;
+  display: grid;
+  grid-template-columns: repeat(var(--ao-cols, 8), minmax(0, 1fr));
+  grid-template-rows: repeat(var(--ao-rows, 6), auto);
+  gap: 3px;
+}
+
+.ao-tile {
+  aspect-ratio: 1;
+  min-width: 0;
+  border-radius: 7px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.1;
+  background: var(--c-scale-1);
+  color: var(--c-text);
+}
+
+.ao-tile-code {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.ao-tile-rank {
+  font-size: 10px;
+  font-weight: 500;
+  margin-top: 1px;
+}
+
+/* One colour per tier. Dark tiles get white text. */
+.ao-tile-highest {
+  background: var(--c-scale-5);
+  color: var(--c-on-dark);
+}
+
+.ao-tile-high {
+  background: var(--c-scale-4);
+  color: var(--c-on-dark);
+}
+
+.ao-tile-medium {
+  background: var(--c-scale-2);
+}
+
+.ao-tile-lower {
+  background: var(--c-scale-1);
+}
+
+/* Set aside: grey diagonal hatching. */
+.ao-tile-setAside {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--c-border-strong) 0 2px,
+    var(--c-scale-0) 2px 6px
+  );
+  color: var(--c-text-2);
+}
+
+/* Not analysed (Crimea): white with a dotted outline. */
+.ao-tile-notAnalyzed,
+.ao-tile-dashed {
+  background: var(--c-surface);
+  border: 1.5px dashed var(--c-border-strong);
+  color: var(--c-text-2);
+}
+
+/* The "Set aside" legend swatch uses the same grey hatching as the tiles. */
+.legend.ao-legend {
+  font-size: 10.5px;
+  gap: 8px;
+  white-space: nowrap;
+  flex-wrap: nowrap;
+}
+
+.legend.ao-legend .legend-item {
+  gap: 4px;
+}
+
+.swatch.ao-swatch-striped {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--c-border-strong) 0 1.5px,
+    var(--c-scale-0) 1.5px 4px
+  );
+}
+
+/* ---------- Top five ---------- */
+
+.ao-top {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.ao-top h3 {
+  font-size: 13px;
+}
+
+.ao-top-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+/* rank | name | bar */
+.ao-top-row {
+  display: grid;
+  grid-template-columns: 14px 86px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--s-3);
+  font-size: 13px;
+}
+
+.ao-top-rank {
+  color: var(--c-muted);
+  font-size: 12px;
+}
+
+.ao-top-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.score-bar-track.ao-top-track {
+  display: block;
+}
+
+.score-bar-fill.ao-top-fill {
+  display: block;
+  background: var(--c-scale-5);
+}
+
+.ao-top-note {
+  font-size: 12px;
+  color: var(--c-muted);
+  line-height: 1.4;
+}
+
+/* ---------- How priority is scored ---------- */
+
+/* Three question tiles, an arrow, then the Priority box. */
+.ao-questions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto auto;
+  gap: var(--s-3);
+  align-items: stretch;
+}
+
+/* ".panel.ao-..." (two classes) so these win over the shared .panel rule
+   whatever order the stylesheets load in. */
+.panel.ao-question,
+.panel.ao-result {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 12px;
+}
+
+.ao-question-label {
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.ao-question-text {
+  font-size: 11.5px;
+  line-height: 1.3;
+  color: var(--c-text-2);
+}
+
+.ao-question-green .ao-question-label {
+  color: var(--c-green-text);
+}
+
+.ao-question-red .ao-question-label {
+  color: var(--c-red-text);
+}
+
+.ao-question-blue .ao-question-label {
+  color: var(--c-blue-text);
+}
+
+.panel.ao-result {
+  min-width: 108px;
+}
+
+.ao-result .ao-question-text {
+  color: var(--c-on-dark);
+  opacity: 0.75;
+}
+
+.ao-arrow {
+  display: grid;
+  place-items: center;
+  color: var(--c-text);
+}
+
+/* The two rule boxes. The selected one has a black outline. */
+.ao-modes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-3);
+}
+
+.panel.ao-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+  padding: 11px 14px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.panel.ao-mode:hover {
+  background: var(--c-surface-2);
+}
+
+.panel.ao-mode.is-active:hover {
+  background: var(--c-surface);
+}
+
+.ao-mode-title {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.ao-mode-tag {
+  font-weight: 400;
+  color: var(--c-text-2);
+}
+
+.ao-mode-text {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--c-text-2);
+}
+
+/* ---------- Alerts ---------- */
+
+.panel.ao-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 7px 12px;
+}
+
+.ao-alert-icon {
+  display: grid;
+  place-items: center;
+  margin-top: 1px;
+  flex: 0 0 auto;
+}
+
+.ao-alert-amber .ao-alert-icon {
+  color: var(--c-amber-text);
+}
+
+.ao-alert-red .ao-alert-icon {
+  color: var(--c-red);
+}
+
+.ao-alert-green .ao-alert-icon {
+  color: var(--c-green);
+}
+
+.ao-alert-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.ao-alert-title {
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.ao-alert-detail {
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--c-text-2);
+}
+
+/* ---------- Spring plan ---------- */
+
+.panel.ao-plan {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: var(--s-2);
+}
+
+.ao-plan-label {
+  font-size: 11px;
+  color: var(--c-on-dark);
+  opacity: 0.72;
+}
+
+.ao-plan-amount {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.ao-plan-text {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--c-on-dark);
+  opacity: 0.85;
+}
+
+/* ---------- Small screens ---------- */
+
+@media (max-width: 760px) {
+  .ao-start {
+    grid-template-columns: 1fr;
+  }
+
+  /* Let the legend wrap on narrow screens, with a tighter gap. */
+  .legend.ao-legend {
+    white-space: normal;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  /* Question tiles go two per row; the arrow is hidden and the Priority
+     box takes a full row. */
+  .ao-questions {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .ao-arrow {
+    display: none;
+  }
+
+  .ao-result {
+    grid-column: 1 / -1;
+  }
+
+  .ao-modes {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* On phones the six legend items do not fit on one line, so draw them as a
+   neat grid of three per row instead of a ragged wrap. */
+@media (max-width: 480px) {
+  .legend.ao-legend {
+    display: grid;
+    grid-template-columns: repeat(3, auto);
+    justify-content: start;
+    column-gap: var(--s-3);
+    row-gap: var(--s-1);
+  }
+}
