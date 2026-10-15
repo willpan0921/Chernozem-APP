@@ -3,19 +3,20 @@
 // notes on the left and the open note on the right. The search box and the
 // category pills filter the list; clicking a note card opens it.
 //
-// All the words and numbers come from src/data/farm.js (notes, notesPage,
-// noteCategories). The little pictures (leaf, beetle, crater, sunflowers,
+// The notes come from Firestore through src/api/notesApi.js. The page's own
+// words come from src/data/farm.js (notesPage). The little pictures (leaf, beetle, crater, sunflowers,
 // the small satellite map) are drawn by hand further down in this file.
 //
 // WHO EDITS IT
 // Whoever changes how the Notes page looks or behaves. To change a note's
 // text, edit src/data/farm.js instead. Styling lives in NotesPage.css.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Search, Plus, Pencil, Focus, Droplet, Sprout, Bug, Shield, Wheat, Image } from "lucide-react";
 import { PageHeader, Card, Badge, Button, Tabs } from "../../components/ui/index.js";
-import { notes, notesPage, noteCategories, noteCategoryStyles } from "../../data/farm.js";
+import { notesPage, noteCategoryStyles } from "../../data/farm.js";
+import { listenToNotes, noteCategoriesFor } from "../../api/notesApi.js";
 import "./NotesPage.css";
 
 // TODO move to src/data/farm.js — the mockup colours the categories
@@ -44,11 +45,32 @@ function categoryStyle(category) {
 const categoryIcons = { bug: Bug, shield: Shield, wheat: Wheat, droplet: Droplet, sprout: Sprout };
 
 export default function NotesPage() {
+  // The notes from Firestore, and whether they are still loading ("loading",
+  // "ready" or "error").
+  const [notes, setNotes] = useState([]);
+  const [status, setStatus] = useState("loading");
+
+  // Listen to Firestore while the page is open; stop when it closes.
+  useEffect(
+    () =>
+      listenToNotes(
+        (latest) => {
+          setNotes(latest);
+          setStatus("ready");
+        },
+        (error) => {
+          console.error("[notes] Could not load notes:", error);
+          setStatus("error");
+        }
+      ),
+    []
+  );
+
   // Which category pill is lit, what is typed in the search box, and which
   // note is open on the right.
   const [category, setCategory] = useState("all");
   const [query, setQuery] = useState("");
-  const [selectedId, setSelectedId] = useState(notes[0]?.id);
+  const [selectedId, setSelectedId] = useState(null);
 
   // The notes that pass both filters.
   const words = query.trim().toLowerCase();
@@ -87,7 +109,7 @@ export default function NotesPage() {
         }
       />
 
-      <Tabs tabs={noteCategories} active={category} onChange={setCategory} ariaLabel="Note categories" />
+      <Tabs tabs={noteCategoriesFor(notes)} active={category} onChange={setCategory} ariaLabel="Note categories" />
 
       <div className="fn-columns">
         {/* LEFT: the list of notes. */}
@@ -101,7 +123,7 @@ export default function NotesPage() {
               />
             </div>
           ))}
-          {visible.length === 0 && <p className="fn-empty muted small">No notes match.</p>}
+          {visible.length === 0 && <p className="fn-empty muted small">{emptyMessage(status, notes)}</p>}
         </div>
 
         {/* RIGHT: the open note. */}
@@ -109,6 +131,14 @@ export default function NotesPage() {
       </div>
     </div>
   );
+}
+
+// What the list says when it shows no notes.
+function emptyMessage(status, notes) {
+  if (status === "loading") return "Loading notes…";
+  if (status === "error") return "Could not load notes. Check your connection and refresh.";
+  if (notes.length === 0) return "No notes yet.";
+  return "No notes match.";
 }
 
 /* -------------------------------------------------------------------------
@@ -189,26 +219,29 @@ function NoteDetail({ note }) {
 
       <p className="fn-body">{note.body}</p>
 
-      {/* What the satellite saw: a small map plus the text and two buttons. */}
-      <div className="fn-satellite">
-        <div className="fn-satellite-map">
-          <SatelliteMap pin={note.satelliteNote.pin} />
-        </div>
-        <div className="fn-satellite-text">
-          <h3 className="fn-satellite-title">
-            <Focus size={14} />
-            {notesPage.satelliteTitle}
-          </h3>
-          <p>{note.satelliteNote.text}</p>
-          <p className="muted small">{note.satelliteNote.caveat}</p>
-          <div className="cluster fn-satellite-actions">
-            <Button variant="primary" to="/field/ai">
-              {notesPage.askAi}
-            </Button>
-            <Button title="Not connected yet">{notesPage.share}</Button>
+      {/* What the satellite saw: a small map plus the text and two buttons.
+          Hidden when the note has nothing from the satellite. */}
+      {note.satelliteNote && (
+        <div className="fn-satellite">
+          <div className="fn-satellite-map">
+            <SatelliteMap pin={note.satelliteNote.pin} />
+          </div>
+          <div className="fn-satellite-text">
+            <h3 className="fn-satellite-title">
+              <Focus size={14} />
+              {notesPage.satelliteTitle}
+            </h3>
+            <p>{note.satelliteNote.text}</p>
+            <p className="muted small">{note.satelliteNote.caveat}</p>
+            <div className="cluster fn-satellite-actions">
+              <Button variant="primary" to="/field/ai">
+                {notesPage.askAi}
+              </Button>
+              <Button title="Not connected yet">{notesPage.share}</Button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Footer facts: where, how, and tags. */}
       <dl className="fn-meta">
