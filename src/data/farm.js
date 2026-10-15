@@ -704,6 +704,21 @@ export const notesPage = {
   share: "Share with an agronomist",
   satelliteTitle: "What the satellite saw",
   metaLabels: { location: "Location", addedFrom: "Added from", tags: "Tags" },
+  // The form that opens on the right when "New note" is pressed.
+  newNoteForm: {
+    title: "New note",
+    subtitle: "Write down what you saw. It is saved to your farm's notes.",
+    fieldLabel: "Field",
+    categoryLabel: "Category",
+    titleLabel: "Title",
+    titlePlaceholder: "For example, beetles under leaves in the NE corner",
+    bodyLabel: "What you saw",
+    bodyPlaceholder: "Where, what it looked like, what you did.",
+    save: "Save note",
+    saving: "Saving…",
+    cancel: "Cancel",
+    error: "Could not save the note. Check your connection and try again.",
+  },
 };
 
 // How each note category looks: the pill colour and the icon used when a

@@ -8,10 +8,11 @@
 // needs the basics, and the Notes page gets every note in the same shape.
 //
 // WHO EDITS IT
-// Danny. The Notes page uses listenToNotes() and noteCategoriesFor(). To add
-// a fact to every note, add it to STORED_FIELDS and to toPageNote().
+// Danny. The Notes page uses listenToNotes(), noteCategoriesFor() and
+// addNote(). To add a fact to every note, add it to STORED_FIELDS and to
+// toPageNote().
 
-import { collection, onSnapshot } from "firebase/firestore";
+import { addDoc, collection, onSnapshot } from "firebase/firestore";
 import { db } from "./firebase.js";
 import { fieldById, noteCategoryStyles } from "../data/farm.js";
 
@@ -50,6 +51,24 @@ export function listenToNotes(onNotes, onError) {
     },
     onError
   );
+}
+
+// Saves a new note typed in the app and returns its id. "note" holds the
+// fieldId, category, title and body from the form; the date and time are
+// added here, from the computer's clock.
+export async function addNote({ fieldId, category, title, body }) {
+  const now = new Date();
+  const pad = (number) => String(number).padStart(2, "0");
+  const saved = await addDoc(notesCollection, {
+    fieldId,
+    category,
+    title: title.trim(),
+    body: body.trim(),
+    date: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
+    time: `${pad(now.getHours())}:${pad(now.getMinutes())}`,
+    addedFrom: "Typed in the app",
+  });
+  return saved.id;
 }
 
 // The category pills for a list of notes, with how many notes each holds.

@@ -322,3 +322,18 @@
     gap: var(--s-4);
   }
 }
+
+/* ---------- The New note form ---------- */
+
+.fn-form .chip-select {
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.fn-form-error {
+  color: var(--c-red-text);
+}
+
+.fn-form-actions {
+  justify-content: flex-end;
+}
