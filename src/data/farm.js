@@ -215,7 +215,8 @@ export const fieldsMap = {
   viewMode: "Zones",
   layerLabel: "Layer",
   layer: "Plant health (NDVI)",
-  dateLabel: "Sep 28, 2026 · Sentinel-2",
+  // The map photo is Esri World Imagery, whose date is not known.
+  dateLabel: "Esri World Imagery",
   satelliteThumbLabel: "Satellite",
   legend: {
     title: "Plant health (NDVI)",
