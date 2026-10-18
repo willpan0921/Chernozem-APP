@@ -47,7 +47,7 @@ import {
 } from "lucide-react";
 import { Badge, Button, Segmented, ChipSelect } from "../../components/ui/index.js";
 import { fields, fieldDetails, fieldsMap, dataLayers } from "../../data/farm.js";
-import { listenToFieldOutlines } from "../../api/fieldsApi.js";
+import { useFieldOutlines, fieldAreaHa } from "../../api/fieldsApi.js";
 import "./FieldsPage.css";
 
 /* =========================================================================
@@ -110,24 +110,7 @@ export default function FieldsPage() {
   const [layer, setLayer] = useState(fieldsMap.layer);
   // The real field outlines from Firestore, keyed by field id, and whether
   // they are still loading ("loading", "ready" or "error").
-  const [outlines, setOutlines] = useState({});
-  const [outlineStatus, setOutlineStatus] = useState("loading");
-
-  // Listen to the outlines while the page is open; stop when it closes.
-  useEffect(
-    () =>
-      listenToFieldOutlines(
-        (latest) => {
-          setOutlines(latest);
-          setOutlineStatus("ready");
-        },
-        (error) => {
-          console.error("[fields] Could not load field outlines:", error);
-          setOutlineStatus("error");
-        }
-      ),
-    []
-  );
+  const { outlines, status: outlineStatus } = useFieldOutlines();
 
   const selectedField = fields.find((field) => field.id === selectedId) || fields[0];
 
@@ -151,7 +134,12 @@ export default function FieldsPage() {
       />
       {/* "key" resets the panel's own state (checked steps, chosen what-if)
           when a different field is selected. */}
-      <DetailPanel key={selectedId} field={selectedField} onNext={selectNextField} />
+      <DetailPanel
+        key={selectedId}
+        field={selectedField}
+        areaText={areaText(selectedField, outlines[selectedField.id], outlineStatus)}
+        onNext={selectNextField}
+      />
     </div>
   );
 }
@@ -323,7 +311,16 @@ function FieldOutline({ field, outline, selected, onSelect }) {
    THE DETAIL PANEL (right side)
    ========================================================================= */
 
-function DetailPanel({ field, onNext }) {
+// The field's area for the panel: worked out from its real outline, "… ha"
+// while the outlines load, or the old number from farm.js if the field has
+// no outline.
+function areaText(field, outline, outlineStatus) {
+  if (outline) return `${fieldAreaHa(outline).toFixed(1)} ha`;
+  if (outlineStatus === "loading") return "… ha";
+  return `${field.areaHa.toFixed(1)} ha`;
+}
+
+function DetailPanel({ field, areaText, onNext }) {
   const detail = fieldDetails[field.id];
 
   // Fallback for a field with no detail entry in the data module.
@@ -335,7 +332,7 @@ function DetailPanel({ field, onNext }) {
             <h2>{field.name}</h2>
             {field.badgeTone !== undefined && <Badge tone={field.badgeTone}>{field.statusLabel}</Badge>}
           </div>
-          <p className="ff-panel-sub">{`${field.crop} · ${field.areaHa.toFixed(1)} ha · ${field.sownDisplay} · ${field.soil}`}</p>
+          <p className="ff-panel-sub">{`${field.crop} · ${areaText} · ${field.sownDisplay} · ${field.soil}`}</p>
         </div>
         <p className="muted small">{NO_DETAIL_TEXT}</p>
       </aside>
@@ -356,7 +353,7 @@ function DetailPanel({ field, onNext }) {
             <ChevronsUpDown size={14} />
           </button>
         </div>
-        <p className="ff-panel-sub">{detail.subline}</p>
+        <p className="ff-panel-sub">{detail.subline.replace("{area}", areaText)}</p>
       </div>
 
       {/* The four metric tiles. */}

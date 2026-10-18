@@ -246,7 +246,9 @@ export const fieldsMap = {
 // Detail panel for each field. Field 4 and Field 7 carry the full mockup
 // content; the other fields have enough for the panel to render when they
 // are selected. Shape of each entry:
-//   title line       -> name, headline badge, subline
+//   title line       -> name, headline badge, subline. "{area}" in the
+//                       subline is replaced with the field's real area,
+//                       worked out from its outline in Firestore.
 //   metrics[4]       -> water, pestStress, plantHealth, harvestReadiness
 //   seasonSeries     -> monthly NDVI Apr to Oct with the normal band
 //   whatIf           -> the three chips and their result rows
@@ -256,7 +258,7 @@ export const fieldDetails = {
     id: "field-4",
     thingsToWatch: 1,
     thingsToWatchLabel: "1 thing to watch",
-    subline: "Sunflower · 28.9 ha · Sown Apr 22 · Black soil",
+    subline: "Sunflower · {area} · Sown Apr 22 · Black soil",
     metrics: [
       {
         key: "water",
@@ -366,7 +368,7 @@ export const fieldDetails = {
     id: "field-7",
     thingsToWatch: 1,
     thingsToWatchLabel: "Needs recovery",
-    subline: "Winter wheat, planned · 48.6 ha · Not sown · Black soil",
+    subline: "Winter wheat, planned · {area} · Not sown · Black soil",
     metrics: [
       {
         key: "water",
@@ -471,7 +473,7 @@ export const fieldDetails = {
     actions: { askAi: "Ask AI about Field 7", addNote: "Add a note" },
   },
 
-  "field-1": makeSimpleDetail("field-1", "Winter wheat · 52.0 ha · Sown Sep 12 · Black soil", {
+  "field-1": makeSimpleDetail("field-1", "Winter wheat · {area} · Sown Sep 12 · Black soil", {
     water: ["0.24", "Normal", "green", "Good moisture at sowing. Seedlings should come up evenly."],
     pest: ["Low", "Fine", "green", "No unusual stress seen since sowing."],
     ndvi: ["0.21", "Emerging", "green", "Early growth after sowing on Sep 12."],
@@ -484,7 +486,7 @@ export const fieldDetails = {
       ["Add a note after rain", "Rain is likely Oct 9 to 11."],
     ],
   }),
-  "field-2": makeSimpleDetail("field-2", "Sunflower · 36.4 ha · Sown Apr 20 · Black soil", {
+  "field-2": makeSimpleDetail("field-2", "Sunflower · {area} · Sown Apr 20 · Black soil", {
     water: ["0.19", "Normal", "green", "Drying down, as expected before harvest."],
     pest: ["Low", "Fine", "green", "No unusual stress this month."],
     ndvi: ["0.41", "On track", "green", "Heads are turning brown on schedule."],
@@ -497,7 +499,7 @@ export const fieldDetails = {
       ["Book drying if needed", "Only if moisture stays above 10%."],
     ],
   }),
-  "field-3": makeSimpleDetail("field-3", "Corn · 41.8 ha · Sown May 2 · Black soil", {
+  "field-3": makeSimpleDetail("field-3", "Corn · {area} · Sown May 2 · Black soil", {
     water: ["0.11", "Dry", "amber", "Topsoil is drier than normal along the south edge."],
     pest: ["Low", "Fine", "green", "No unusual stress this month."],
     ndvi: ["0.52", "On track", "green", "Plants are maturing evenly."],
@@ -510,7 +512,7 @@ export const fieldDetails = {
       ["Add a note about the south edge", "Helps AI track the dry patch."],
     ],
   }),
-  "field-5": makeSimpleDetail("field-5", "Soybean · 33.2 ha · Sown May 8 · Black soil", {
+  "field-5": makeSimpleDetail("field-5", "Soybean · {area} · Sown May 8 · Black soil", {
     water: ["0.16", "Normal", "green", "Dry enough to harvest."],
     pest: ["Low", "Fine", "green", "No unusual stress this month."],
     ndvi: ["0.33", "Ready", "green", "Pods are dry and leaves have dropped."],
@@ -523,7 +525,7 @@ export const fieldDetails = {
       ["Add a yield note", "Helps next year's plan."],
     ],
   }),
-  "field-6": makeSimpleDetail("field-6", "Barley · 30.1 ha · Sown Mar 28 · Black soil", {
+  "field-6": makeSimpleDetail("field-6", "Barley · {area} · Sown Mar 28 · Black soil", {
     water: ["0.14", "Normal", "green", "Stubble field, normal for late September."],
     pest: ["Low", "Fine", "green", "Nothing to watch after harvest."],
     ndvi: ["0.17", "Harvested", null, "Harvested in July. Bare stubble now."],
