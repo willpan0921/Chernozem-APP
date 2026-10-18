@@ -18,7 +18,9 @@
     "react-router-dom": "^7.18.4"
   },
   "devDependencies": {
+    "@google/earthengine": "^1.7.48",
     "@vitejs/plugin-react": "^6.1.1",
+    "firebase-admin": "^14.5.0",
     "vite": "^8.3.2"
   }
 }
