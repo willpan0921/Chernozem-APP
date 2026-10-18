@@ -3,19 +3,21 @@
 // notes on the left and the open note on the right. The search box and the
 // category pills filter the list; clicking a note card opens it.
 //
-// All the words and numbers come from src/data/farm.js (notes, notesPage,
-// noteCategories). The little pictures (leaf, beetle, crater, sunflowers,
+// The notes come from Firestore through src/api/notesApi.js. The page's own
+// words come from src/data/farm.js (notesPage). "New note" swaps the open
+// note for a form that saves a new note to Firestore. The little pictures (leaf, beetle, crater, sunflowers,
 // the small satellite map) are drawn by hand further down in this file.
 //
 // WHO EDITS IT
 // Whoever changes how the Notes page looks or behaves. To change a note's
 // text, edit src/data/farm.js instead. Styling lives in NotesPage.css.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Search, Plus, Pencil, Focus, Droplet, Sprout, Bug, Shield, Wheat, Image } from "lucide-react";
-import { PageHeader, Card, Badge, Button, Tabs } from "../../components/ui/index.js";
-import { notes, notesPage, noteCategories, noteCategoryStyles } from "../../data/farm.js";
+import { PageHeader, Card, Badge, Button, Tabs, ChipSelect } from "../../components/ui/index.js";
+import { notesPage, noteCategoryStyles, fieldOptions } from "../../data/farm.js";
+import { listenToNotes, noteCategoriesFor, addNote } from "../../api/notesApi.js";
 import "./NotesPage.css";
 
 // TODO move to src/data/farm.js — the mockup colours the categories
@@ -44,11 +46,43 @@ function categoryStyle(category) {
 const categoryIcons = { bug: Bug, shield: Shield, wheat: Wheat, droplet: Droplet, sprout: Sprout };
 
 export default function NotesPage() {
+  // The notes from Firestore, and whether they are still loading ("loading",
+  // "ready" or "error").
+  const [notes, setNotes] = useState([]);
+  const [status, setStatus] = useState("loading");
+
+  // Listen to Firestore while the page is open; stop when it closes.
+  useEffect(
+    () =>
+      listenToNotes(
+        (latest) => {
+          setNotes(latest);
+          setStatus("ready");
+        },
+        (error) => {
+          console.error("[notes] Could not load notes:", error);
+          setStatus("error");
+        }
+      ),
+    []
+  );
+
   // Which category pill is lit, what is typed in the search box, and which
   // note is open on the right.
   const [category, setCategory] = useState("all");
   const [query, setQuery] = useState("");
-  const [selectedId, setSelectedId] = useState(notes[0]?.id);
+  const [selectedId, setSelectedId] = useState(null);
+  // True while the New note form is open on the right.
+  const [writing, setWriting] = useState(false);
+
+  // After a save: clear the filters so the new note is in the list, close
+  // the form and open the new note.
+  function handleSaved(id) {
+    setCategory("all");
+    setQuery("");
+    setSelectedId(id);
+    setWriting(false);
+  }
 
   // The notes that pass both filters.
   const words = query.trim().toLowerCase();
@@ -80,14 +114,14 @@ export default function NotesPage() {
                 aria-label={notesPage.searchPlaceholder}
               />
             </label>
-            <Button variant="primary" size="lg" icon={<Plus size={16} />} title="Not connected yet">
+            <Button variant="primary" size="lg" icon={<Plus size={16} />} onClick={() => setWriting(true)}>
               {notesPage.newNote}
             </Button>
           </>
         }
       />
 
-      <Tabs tabs={noteCategories} active={category} onChange={setCategory} ariaLabel="Note categories" />
+      <Tabs tabs={noteCategoriesFor(notes)} active={category} onChange={setCategory} ariaLabel="Note categories" />
 
       <div className="fn-columns">
         {/* LEFT: the list of notes. */}
@@ -97,18 +131,35 @@ export default function NotesPage() {
               <NoteCard
                 note={note}
                 selected={selected?.id === note.id}
-                onClick={() => setSelectedId(note.id)}
+                onClick={() => {
+                  setSelectedId(note.id);
+                  setWriting(false);
+                }}
               />
             </div>
           ))}
-          {visible.length === 0 && <p className="fn-empty muted small">No notes match.</p>}
+          {visible.length === 0 && <p className="fn-empty muted small">{emptyMessage(status, notes)}</p>}
         </div>
 
-        {/* RIGHT: the open note. */}
-        {selected ? <NoteDetail note={selected} /> : <Card className="fn-detail" />}
+        {/* RIGHT: the New note form, or the open note. */}
+        {writing ? (
+          <NewNoteForm onSaved={handleSaved} onCancel={() => setWriting(false)} />
+        ) : selected ? (
+          <NoteDetail note={selected} />
+        ) : (
+          <Card className="fn-detail" />
+        )}
       </div>
     </div>
   );
+}
+
+// What the list says when it shows no notes.
+function emptyMessage(status, notes) {
+  if (status === "loading") return "Loading notes…";
+  if (status === "error") return "Could not load notes. Check your connection and refresh.";
+  if (notes.length === 0) return "No notes yet.";
+  return "No notes match.";
 }
 
 /* -------------------------------------------------------------------------
@@ -141,6 +192,89 @@ function NoteCard({ note, selected, onClick }) {
         )}
       </div>
     </button>
+  );
+}
+
+/* -------------------------------------------------------------------------
+   The New note form on the right. Save stays off until a category and a
+   title are filled in.
+   ------------------------------------------------------------------------- */
+
+const categoryNames = Object.keys(noteCategoryStyles);
+
+function NewNoteForm({ onSaved, onCancel }) {
+  const words = notesPage.newNoteForm;
+  const [fieldId, setFieldId] = useState(fieldOptions[0]?.value);
+  const [category, setCategory] = useState(null);
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  // "idle", "saving" or "error".
+  const [saveStatus, setSaveStatus] = useState("idle");
+
+  const canSave = category && title.trim() && saveStatus !== "saving";
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    if (!canSave) return;
+    setSaveStatus("saving");
+    try {
+      const id = await addNote({ fieldId, category, title, body });
+      onSaved(id);
+    } catch (error) {
+      console.error("[notes] Could not save the note:", error);
+      setSaveStatus("error");
+    }
+  }
+
+  return (
+    <Card className="fn-detail" title={words.title} subtitle={words.subtitle}>
+      <form className="stack fn-form" onSubmit={handleSubmit}>
+        <div>
+          <span className="field-label">{words.fieldLabel}</span>
+          <ChipSelect options={fieldOptions} value={fieldId} onChange={setFieldId} ariaLabel={words.fieldLabel} />
+        </div>
+
+        <div>
+          <span className="field-label">{words.categoryLabel}</span>
+          <Tabs
+            tabs={categoryNames.map((name) => ({ id: name, label: name }))}
+            active={category}
+            onChange={setCategory}
+            ariaLabel={words.categoryLabel}
+          />
+        </div>
+
+        <label>
+          <span className="field-label">{words.titleLabel}</span>
+          <input
+            className="input"
+            placeholder={words.titlePlaceholder}
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+          />
+        </label>
+
+        <label>
+          <span className="field-label">{words.bodyLabel}</span>
+          <textarea
+            className="textarea"
+            placeholder={words.bodyPlaceholder}
+            value={body}
+            onChange={(event) => setBody(event.target.value)}
+            rows={5}
+          />
+        </label>
+
+        {saveStatus === "error" && <p className="fn-form-error small">{words.error}</p>}
+
+        <div className="cluster fn-form-actions">
+          <Button onClick={onCancel}>{words.cancel}</Button>
+          <Button variant="primary" type="submit" disabled={!canSave}>
+            {saveStatus === "saving" ? words.saving : words.save}
+          </Button>
+        </div>
+      </form>
+    </Card>
   );
 }
 
@@ -189,45 +323,54 @@ function NoteDetail({ note }) {
 
       <p className="fn-body">{note.body}</p>
 
-      {/* What the satellite saw: a small map plus the text and two buttons. */}
-      <div className="fn-satellite">
-        <div className="fn-satellite-map">
-          <SatelliteMap pin={note.satelliteNote.pin} />
-        </div>
-        <div className="fn-satellite-text">
-          <h3 className="fn-satellite-title">
-            <Focus size={14} />
-            {notesPage.satelliteTitle}
-          </h3>
-          <p>{note.satelliteNote.text}</p>
-          <p className="muted small">{note.satelliteNote.caveat}</p>
-          <div className="cluster fn-satellite-actions">
-            <Button variant="primary" to="/field/ai">
-              {notesPage.askAi}
-            </Button>
-            <Button title="Not connected yet">{notesPage.share}</Button>
+      {/* What the satellite saw: a small map plus the text and two buttons.
+          Hidden when the note has nothing from the satellite. */}
+      {note.satelliteNote && (
+        <div className="fn-satellite">
+          <div className="fn-satellite-map">
+            <SatelliteMap pin={note.satelliteNote.pin} />
+          </div>
+          <div className="fn-satellite-text">
+            <h3 className="fn-satellite-title">
+              <Focus size={14} />
+              {notesPage.satelliteTitle}
+            </h3>
+            <p>{note.satelliteNote.text}</p>
+            <p className="muted small">{note.satelliteNote.caveat}</p>
+            <div className="cluster fn-satellite-actions">
+              <Button variant="primary" to="/field/ai">
+                {notesPage.askAi}
+              </Button>
+              <Button title="Not connected yet">{notesPage.share}</Button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Footer facts: where, how, and tags. */}
+      {/* Footer facts: where, how, and tags. Each one hides when empty. */}
       <dl className="fn-meta">
-        <div>
-          <dt>{notesPage.metaLabels.location}</dt>
-          <dd className="mono">{note.location}</dd>
-        </div>
-        <div>
-          <dt>{notesPage.metaLabels.addedFrom}</dt>
-          <dd>{note.addedFrom}</dd>
-        </div>
-        <div>
-          <dt>{notesPage.metaLabels.tags}</dt>
-          <dd className="cluster">
-            {note.tags.map((tag) => (
-              <Badge key={tag}>{tag}</Badge>
-            ))}
-          </dd>
-        </div>
+        {note.location && (
+          <div>
+            <dt>{notesPage.metaLabels.location}</dt>
+            <dd className="mono">{note.location}</dd>
+          </div>
+        )}
+        {note.addedFrom && (
+          <div>
+            <dt>{notesPage.metaLabels.addedFrom}</dt>
+            <dd>{note.addedFrom}</dd>
+          </div>
+        )}
+        {note.tags.length > 0 && (
+          <div>
+            <dt>{notesPage.metaLabels.tags}</dt>
+            <dd className="cluster">
+              {note.tags.map((tag) => (
+                <Badge key={tag}>{tag}</Badge>
+              ))}
+            </dd>
+          </div>
+        )}
       </dl>
     </Card>
   );

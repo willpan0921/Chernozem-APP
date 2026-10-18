@@ -8,6 +8,9 @@
 // cropland from the latest run (src/state/AtlasData.jsx), or "No area yet".
 // Clicking it opens Atlas Settings, where the area is changed.
 //
+// On the Field side, the line under "My farm" shows the real number of
+// fields and their total area, worked out from the outlines in Firestore.
+//
 // WHO EDITS IT
 // Whoever changes how the sidebar looks. To add or rename a page, edit
 // src/config/navigation.js instead.
@@ -15,6 +18,7 @@
 import { NavLink, Link, useLocation } from "react-router-dom";
 import { Sprout, ChevronDown, Lock, Globe } from "lucide-react";
 import { products, productForPath } from "../config/navigation.js";
+import { useFieldOutlines, farmAreaHa } from "../api/fieldsApi.js";
 import { useAtlasData } from "../state/AtlasData.jsx";
 import { formatHaShort } from "../lib/format.js";
 
@@ -52,6 +56,15 @@ export default function Sidebar() {
   const { pathname } = useLocation();
   const product = productForPath(pathname);
   const ScopeIcon = product.scope.icon;
+  const { outlines } = useFieldOutlines();
+
+  // "7 fields · 336.2 ha" from the real outlines on the Field side. Until
+  // they arrive (and on the Atlas side) the line from navigation.js shows.
+  const fieldCount = Object.keys(outlines).length;
+  const scopeSubtitle =
+    product.id === "field" && fieldCount > 0
+      ? `${fieldCount} ${fieldCount === 1 ? "field" : "fields"} · ${farmAreaHa(outlines).toFixed(1)} ha`
+      : product.scope.subtitle;
 
   return (
     <aside className="sidebar">
@@ -89,7 +102,7 @@ export default function Sidebar() {
           </span>
           <span className="scope-card-text">
             <span className="scope-card-title">{product.scope.title}</span>
-            <span className="scope-card-subtitle">{product.scope.subtitle}</span>
+            <span className="scope-card-subtitle">{scopeSubtitle}</span>
           </span>
           <ChevronDown size={14} className="scope-card-chevron" />
         </button>

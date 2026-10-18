@@ -9,6 +9,13 @@ dist
 # Private settings and computer-specific clutter.
 .env
 .env.local
+
+# Service account keys. Keep keys outside the project folder (see
+# scripts/fetch-ndvi.js); these lines are a second guard in case one is
+# copied in by mistake.
+*-key.json
+service-account*.json
+chernozem-danny-*.json
 .DS_Store
 *.log
 
