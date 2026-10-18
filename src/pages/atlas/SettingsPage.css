@@ -1,404 +1,483 @@
 /*
   WHAT THIS FILE DOES
-  The layout for the Atlas Settings page (src/pages/atlas/SettingsPage.jsx):
-  the Near term and Postwar panels, the weight sliders, the baseline row,
-  the Region row, the dark "With these settings" box and the small row
-  lists on the right. Every class starts with "as-" so it cannot clash with
-  another page.
+  The styling for the Atlas Settings page (src/pages/atlas/SettingsPage.jsx):
+  the Area, Data, AI and Team cards. Every class starts with "aset-"
+  (Atlas settings) so nothing here changes another page.
+  On phones (under 640 px wide) every button is at least 40 px tall so it
+  is easy to tap.
 
   WHO EDITS IT
   Whoever changes how the Atlas Settings page looks. Colours, spacing and
-  radii come from src/styles/tokens.css.
+  corners come from src/styles/tokens.css.
 */
 
-/* ---------- Card titles with a small icon before them ---------- */
-
-.as-card-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
+.page.aset {
+  max-width: 880px;
 }
 
-.as-card-title svg {
-  color: var(--c-green);
-}
-
-/* Keeps the grey tabs track as wide as its tabs, not the whole page. */
-.as-tabs {
-  display: flex;
-}
-
-/* On a phone the track stays on one line and scrolls sideways instead of
-   wrapping onto two lines. */
-@media (max-width: 480px) {
-  .as-tabs {
-    overflow-x: auto;
-    max-width: 100%;
-  }
-
-  .as-tabs .tabs {
-    flex-wrap: nowrap;
-    white-space: nowrap;
-  }
-}
-
-/* Lets a tab scroll to a card without hiding its top under the edge. */
-.as-section {
-  scroll-margin-top: var(--s-4);
-}
-
-/* ---------- Near term / Postwar panels ---------- */
-
-.as-panel {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-3);
-  border-radius: var(--r-md);
-}
-
-.as-panel-text {
-  font-size: 13px;
-  color: var(--c-text-2);
-}
-
-/* Two selects side by side; one under the other on narrow screens. */
-.as-grid-2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--s-3);
-}
-
-@media (max-width: 640px) {
-  .as-grid-2 {
-    grid-template-columns: 1fr;
-  }
-}
-
-/* A grey line with an "i" icon before it. */
-.as-info {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--c-muted);
-}
-
-.as-info svg {
-  flex: 0 0 auto;
-}
-
-.as-note {
-  font-size: 12px;
-  color: var(--c-muted);
-  max-width: 440px;
-}
-
-.as-blend {
-  display: block;
-  max-width: 320px;
-}
-
-/* ---------- Postwar weight sliders ---------- */
-
-.as-weights {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: var(--s-1) 0;
-}
-
-/* name | slider | percentage */
-.as-weight {
-  display: grid;
-  grid-template-columns: 96px 1fr 44px;
-  align-items: center;
-  gap: var(--s-3);
-  font-size: 13px;
-  font-weight: 500;
-}
-
-@media (max-width: 480px) {
-  .as-weight {
-    grid-template-columns: 80px 1fr 40px;
-    gap: var(--s-2);
-  }
-}
-
-.as-weight-name {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-/* The small coloured square before each weight name. */
-.as-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-  flex: 0 0 auto;
-  background: var(--c-green);
-}
-
-.as-dot-red {
-  background: var(--c-red);
-}
-
-.as-dot-blue {
-  background: var(--c-blue);
-}
-
-.as-weight-value {
-  font-size: 12px;
-  text-align: right;
-}
-
-/* The slider itself: a thin grey track, filled green up to the handle.
-   --pct is set from the page for each slider. */
-.as-range {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 100%;
-  height: 6px;
-  margin: 0;
-  border-radius: var(--r-pill);
-  background: linear-gradient(
-    to right,
-    var(--c-green) 0 var(--pct, 0%),
-    var(--c-surface-3) var(--pct, 0%) 100%
-  );
-  cursor: pointer;
-}
-
-/* The handle: a plain solid green dot sitting on the track. */
-.as-range::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--c-green);
-  border: 0;
-}
-
-.as-range::-moz-range-thumb {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--c-green);
-  border: 0;
-}
-
-.as-range::-moz-range-track {
-  background: transparent;
-}
-
-/* "Adds up to 100%" under the sliders, right-aligned. */
-.as-sum {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 4px;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.as-sum-ok {
-  color: var(--c-green);
-}
-
-.as-sum-bad {
-  color: var(--c-red);
-}
-
-/* ---------- Baseline years + Save / Reset ---------- */
-
-.as-baseline-row {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--s-3);
-  flex-wrap: wrap;
-}
-
-.as-baseline {
-  flex: 1 1 240px;
-  min-width: 0;
-}
-
-/* ---------- Region card ---------- */
-
-/* Country select | Boundaries chip | Upload button */
-.as-region-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) auto;
-  align-items: end;
-  gap: var(--s-3);
-}
-
-@media (max-width: 760px) {
-  .as-region-row {
-    grid-template-columns: 1fr;
-  }
-}
-
-/* The read-only "FAO GAUL, level 1 · 24 regions" box. */
-.as-readonly {
-  padding: 8px 10px;
-  border: 1px solid transparent; /* same height as the select beside it */
-  border-radius: var(--r-sm);
-  background: var(--c-surface-2);
-  font-size: 13px;
-  line-height: 1.5;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* The green "same method works on any black soil" box. */
-.as-expand {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s-4);
-  font-size: 13px;
-}
-
-.as-expand p {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-@media (max-width: 640px) {
-  .as-expand {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-}
-
-/* A plain underlined green link that is really a button. */
-.as-text-link {
-  flex: 0 0 auto;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--c-green);
-  text-decoration: underline;
-  white-space: nowrap;
-}
-
-/* ---------- "With these settings" dark box ---------- */
-
-.card.as-dark {
-  background: var(--c-ink);
-  color: var(--c-on-dark);
-  box-shadow: none;
-}
-
-.as-dark .spread {
-  align-items: center;
-}
-
-/* A touch smaller so the title and the badge fit on one line. */
-.as-dark h2 {
+.aset-card .card-header h2 {
   font-size: 15px;
-  white-space: nowrap;
 }
 
-/* The solid green "Research result" badge. */
-.badge.as-badge-solid {
-  background: var(--c-green);
-  color: var(--c-on-dark);
-  font-size: 10px;
-  padding: 2px 7px;
-}
+/* ---------- Rows shared by the cards ---------- */
 
-/* Muted text on the dark box: the on-dark token, faded with opacity,
-   because tokens.css has no separate muted-on-dark colour. */
-.as-dark-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--c-on-dark);
-  opacity: 0.65;
-  margin-bottom: 6px;
-}
-
-.as-ranked {
+.aset-block {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.as-ranked li {
-  display: flex;
-  align-items: center;
   gap: var(--s-3);
 }
 
-.as-rank {
-  font-size: 11px;
-  color: var(--c-on-dark);
-  opacity: 0.55;
-  min-width: 10px;
-}
-
-.as-dark-line {
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.as-dark-note {
-  font-size: 12px;
-  color: var(--c-on-dark);
-  opacity: 0.65;
-}
-
-/* ---------- Row lists on the right (toggles, team, farm data) ---------- */
-
-.as-rows {
-  display: flex;
-  flex-direction: column;
-}
-
-.as-row {
-  padding: var(--s-3) 0;
+.aset-block + .aset-block {
+  padding-top: var(--s-4);
   border-top: 1px solid var(--c-border);
 }
 
-.as-row:last-child {
-  padding-bottom: 0;
-}
-
-/* The Team rows: avatar, name, role at the right. */
-.as-member {
+.aset-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--s-3);
+  min-width: 0;
 }
 
-.as-member-name {
+.aset-row-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--r-sm);
+  background: var(--c-surface-2);
+  color: var(--c-text-2);
+}
+
+.aset-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.aset-row-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.aset-row-meta {
+  font-size: 12px;
+  color: var(--c-muted);
+  overflow-wrap: anywhere;
+}
+
+.aset-row-meta code,
+.aset-hint code {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.aset-row-action {
+  flex: 0 0 auto;
+}
+
+.aset-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c-muted);
+}
+
+.aset-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.aset-error,
+.aset-ok {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.aset-error {
+  color: var(--c-red-text);
+}
+
+.aset-ok {
+  color: var(--c-green);
+  font-weight: 600;
+}
+
+/* ---------- Area ---------- */
+
+.aset-current {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--r-md);
+  background: var(--c-surface-2);
+}
+
+.aset-current-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--r-sm);
+  background: var(--c-green-soft);
+  color: var(--c-green);
+}
+
+.aset-current-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.aset-current-name {
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+/* An area name that renames when clicked. */
+.aset-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  margin: -2px -6px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: inherit;
+  text-align: left;
+  cursor: text;
+}
+
+.aset-name:hover {
+  background: var(--c-surface-3);
+}
+
+.aset-name-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.aset-name-pen {
+  flex: 0 0 auto;
+  color: var(--c-muted);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.aset-name:hover .aset-name-pen,
+.aset-name:focus-visible .aset-name-pen {
+  opacity: 1;
+}
+
+.input.aset-rename {
+  width: 100%;
+  max-width: 360px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.input.aset-rename.aset-saved-name {
+  font-size: 13px;
+}
+
+.aset-picker {
+  padding: var(--s-4);
+  border-radius: var(--r-md);
+  box-shadow: inset 0 0 0 1px var(--c-border);
+}
+
+.aset-saved {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.aset-saved-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-3);
+  padding: var(--s-2) 0;
+  border-bottom: 1px solid var(--c-border);
+  min-width: 0;
+}
+
+.aset-saved-row:last-child {
+  border-bottom: 0;
+}
+
+.aset-saved-icon {
+  flex: 0 0 auto;
+  color: var(--c-muted);
+}
+
+.aset-saved-name {
   flex: 1;
   min-width: 0;
   font-size: 13px;
   font-weight: 600;
 }
 
-.as-avatar {
-  width: 26px;
-  height: 26px;
-  font-size: 10px;
+/* Keeps the rename button from stretching past its text. */
+.aset-name.aset-saved-name {
+  flex: 0 1 auto;
+  margin-right: auto;
 }
 
-.as-avatar-green {
-  background: var(--c-green-soft);
+.aset-name.aset-saved-name .aset-name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aset-row-error {
+  flex-basis: 100%;
+  padding-left: 27px;
+}
+
+.aset-saved-meta {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* ---------- Data and AI: the .env lines ---------- */
+
+.aset-setup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin-left: 46px;
+}
+
+.aset-env {
+  border-radius: var(--r-sm);
+  background: var(--c-surface-2);
+  box-shadow: inset 0 0 0 1px var(--c-border);
+  overflow: hidden;
+}
+
+.aset-env-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px 4px 12px;
+  border-bottom: 1px solid var(--c-border);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--c-muted);
+}
+
+.aset-env-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 26px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
   color: var(--c-green);
 }
 
-.as-avatar-amber {
-  background: var(--c-amber);
-  color: var(--c-ink);
+.aset-env-copy:hover {
+  background: var(--c-green-soft);
 }
 
-.as-avatar-blue {
-  background: var(--c-blue-soft);
-  color: var(--c-blue-text);
+.aset-env-code {
+  margin: 0;
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--c-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.aset-hint {
+  font-size: 12px;
+  color: var(--c-muted);
+}
+
+.aset-card .atlas-progress.is-compact {
+  margin-left: 46px;
+}
+
+/* ---------- Team ---------- */
+
+.aset-member {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+  padding: 10px 0;
+  border-bottom: 1px solid var(--c-border);
+}
+
+.aset-member:first-child {
+  padding-top: 0;
+}
+
+.aset-avatar {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--c-green-soft);
+  color: var(--c-green);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.aset-member-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+.aset-member-name {
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.select.aset-role {
+  width: 112px;
+  flex: 0 0 auto;
+}
+
+.btn.aset-remove {
+  color: var(--c-muted);
+}
+
+.btn.aset-remove:hover {
+  color: var(--c-red);
+  background: var(--c-red-soft);
+}
+
+.aset-confirm {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.aset-member-error {
+  flex-basis: 100%;
+  padding-left: 46px;
+}
+
+.aset-add {
+  display: grid;
+  grid-template-columns: 1fr 1.3fr 112px auto;
+  gap: var(--s-2);
+  align-items: center;
+}
+
+.aset-add .select.aset-role {
+  width: 100%;
+}
+
+.aset-add-error {
+  grid-column: 1 / -1;
+}
+
+/* A bigger tap area for the monthly switch (the knob stays the same size). */
+.aset-auto .toggle::before {
+  content: "";
+  position: absolute;
+  inset: -10px -6px;
+}
+
+/* ---------- Phones ---------- */
+
+@media (max-width: 640px) {
+  .aset .btn-sm,
+  .aset-env-copy {
+    min-height: 40px;
+  }
+
+  .aset .btn-sm.btn-icon {
+    min-width: 40px;
+  }
+
+  .aset-env-head {
+    padding: 2px 4px 2px 12px;
+  }
+
+  .aset-auto .toggle-row {
+    min-height: 44px;
+  }
+
+  .aset-auto .toggle::before {
+    inset: -12px -10px;
+  }
+
+  .aset-name {
+    min-height: 32px;
+  }
+
+  .aset-picker {
+    padding: 0;
+    box-shadow: none;
+  }
+
+  .aset-row {
+    flex-wrap: wrap;
+  }
+
+  .aset-row-action {
+    margin-left: 46px;
+  }
+
+  .aset-setup,
+  .aset-card .atlas-progress.is-compact {
+    margin-left: 0;
+  }
+
+  .aset-saved-meta {
+    display: none;
+  }
+
+  .aset-row-error {
+    padding-left: 0;
+  }
+
+  .select.aset-role {
+    width: 100px;
+  }
+
+  .aset-member-error {
+    padding-left: 0;
+  }
+
+  .aset-add {
+    grid-template-columns: 1fr 100px;
+  }
+
+  .aset-add .input {
+    grid-column: 1 / -1;
+  }
 }

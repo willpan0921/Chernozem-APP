@@ -4,7 +4,7 @@
 // uses the same paths for its routes.
 //
 //   Field - what a farmer sees: their own farm.
-//   Atlas - what a regional office sees: the whole country.
+//   Atlas - what an office sees: a country, a region or a farm it picks.
 //
 // WHO EDITS IT
 // Whoever adds, renames or reorders a page. To add a page:
@@ -52,12 +52,9 @@ export const products = {
     id: "atlas",
     label: "Atlas",
     basePath: "/atlas",
-    scope: {
-      title: "Ukraine",
-      subtitle: "24 regions · 35.0M ha cropland",
-      icon: Map,
-    },
-    privacyNote: "Farm data joins only with consent",
+    // The box under the switch shows the current area (Sidebar.jsx reads
+    // its name from the Atlas data); only the icon is set here.
+    scope: { icon: Map },
     account: { initials: "RO", label: "Regional office", tone: "atlas" },
     pages: [
       { id: "overview", label: "Overview", path: "/atlas", icon: LayoutGrid },

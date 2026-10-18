@@ -1,0 +1,838 @@
+/*
+  WHAT THIS FILE DOES
+  The styling for the shared Atlas blocks in src/components/atlas (the map,
+  its legend, the weights, the area picker) and for the loading, progress
+  and "Choose an area" screens in src/state/AtlasData.jsx.
+
+  WHO EDITS IT
+  Whoever changes how those blocks look. Colours come from tokens.css; the
+  map colour ramps are the --map-* variables there.
+*/
+
+/* ---------- AtlasMap ---------- */
+
+.atlas-map {
+  position: relative;
+  width: 100%;
+  min-height: 160px;
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: var(--c-surface-2);
+  isolation: isolate;
+}
+
+.atlas-map .atlas-map-canvas {
+  position: absolute;
+  inset: 0;
+  background: var(--c-surface-2);
+  font-family: var(--font-sans);
+}
+
+.atlas-map-canvas:focus-visible {
+  outline: 2px solid var(--c-green);
+  outline-offset: -2px;
+}
+
+.atlas-map.is-drawing .leaflet-container,
+.atlas-map.is-drawing .leaflet-interactive {
+  cursor: crosshair;
+}
+
+.atlas-map .leaflet-container .leaflet-control-attribution {
+  font-size: 10px;
+  background: rgba(255, 255, 255, 0.75);
+  color: var(--c-muted);
+}
+
+.atlas-map-zoom {
+  position: absolute;
+  top: var(--s-3);
+  right: var(--s-3);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-sm);
+  background: var(--c-surface);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+
+.atlas-map-btn {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  color: var(--c-text);
+  background: var(--c-surface);
+  transition: background 0.12s;
+}
+
+.atlas-map-btn + .atlas-map-btn {
+  border-top: 1px solid var(--c-border);
+}
+
+.atlas-map-btn:hover {
+  background: var(--c-surface-2);
+}
+
+.atlas-map-btn:focus-visible {
+  outline: 2px solid var(--c-green);
+  outline-offset: -2px;
+}
+
+.atlas-map-tip {
+  position: absolute;
+  z-index: 1001;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-width: 220px;
+  padding: 7px 10px;
+  border-radius: var(--r-sm);
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+  box-shadow: var(--shadow-pop);
+}
+
+.atlas-map-tip-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.atlas-map-tip-value {
+  font-size: 12px;
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Something floating over the map (pages put legends and panels here). */
+.atlas-map-float {
+  position: absolute;
+  z-index: 1000;
+  background: var(--c-surface);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-pop);
+  padding: var(--s-3);
+}
+
+/* ---------- MapLegend ---------- */
+
+.map-legend {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+.map-legend .segmented {
+  display: flex;
+}
+
+.map-legend .segmented-option {
+  flex: 1;
+  padding: 6px 8px;
+}
+
+.map-legend-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.map-legend-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c-text-2);
+}
+
+.map-legend-ramp {
+  display: flex;
+  height: 10px;
+  border-radius: var(--r-pill);
+  overflow: hidden;
+}
+
+.map-legend-step {
+  flex: 1;
+}
+
+.map-legend-ends {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--c-muted);
+}
+
+.map-legend-aside {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--c-muted);
+}
+
+.map-legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+
+/* ---------- WeightsPanel ---------- */
+
+.weights {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-width: 0;
+}
+
+.weights-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.weights .segmented {
+  display: flex;
+}
+
+.weights .segmented-option {
+  flex: 1;
+}
+
+.weights-reset {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c-green);
+}
+
+.weights-reset:hover {
+  background: var(--c-green-soft);
+}
+
+.weights-stack {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+  border-radius: var(--r-pill);
+  overflow: hidden;
+  background: var(--c-surface-3);
+}
+
+.weights-stack-part {
+  min-width: 0;
+  background: var(--tone);
+  transition: flex-grow 0.15s ease-out;
+}
+
+.weights-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.weights-green { --tone: var(--c-green); }
+.weights-red { --tone: var(--c-red); }
+.weights-blue { --tone: var(--c-blue); }
+.weights-ink { --tone: var(--c-ink); }
+
+.weights-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.weights-row.is-muted {
+  opacity: 0.45;
+}
+
+.weights-row-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+
+.weights-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.weights-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tone);
+}
+
+.weights-value {
+  display: inline-flex;
+  align-items: baseline;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The big percentage. It is a number box, so it can also be typed. */
+.weights-number {
+  width: 3ch;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  font: inherit;
+  font-size: 22px;
+  font-weight: 650;
+  line-height: 1;
+  text-align: right;
+  color: var(--c-text);
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.weights-number::-webkit-outer-spin-button,
+.weights-number::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.weights-number:hover {
+  background: var(--c-surface-2);
+}
+
+.weights-number:focus {
+  outline: 2px solid var(--c-green);
+  outline-offset: 2px;
+  background: var(--c-surface);
+}
+
+.weights-suffix {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--c-muted);
+  margin-left: 1px;
+}
+
+.weights-note {
+  font-size: 11px;
+  color: var(--c-muted);
+}
+
+.weights-divider {
+  height: 1px;
+  background: var(--c-border);
+}
+
+/* The slider: a thick track filled with the weight's colour up to the
+   thumb, and a large white thumb that is easy to grab. */
+.weights-range {
+  --fill: 50%;
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  background: transparent;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+
+.weights-range:focus {
+  outline: none;
+}
+
+.weights-range::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: linear-gradient(to right, var(--tone) 0 var(--fill), var(--c-surface-3) var(--fill) 100%);
+}
+
+.weights-range::-moz-range-track {
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: linear-gradient(to right, var(--tone) 0 var(--fill), var(--c-surface-3) var(--fill) 100%);
+}
+
+.weights-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-top: -7px;
+  border-radius: 50%;
+  background: var(--c-surface);
+  border: 2px solid var(--tone);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  transition: transform 0.1s;
+}
+
+.weights-range::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--c-surface);
+  border: 2px solid var(--tone);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+}
+
+.weights-range:active::-webkit-slider-thumb {
+  transform: scale(1.12);
+}
+
+.weights-range:focus-visible::-webkit-slider-thumb {
+  outline: 3px solid var(--c-green-soft);
+  outline-offset: 1px;
+}
+
+/* ---------- AreaPicker ---------- */
+
+.area-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-width: 0;
+}
+
+.area-picker > .tabs-bar {
+  align-self: flex-start;
+}
+
+.area-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+.area-tab > .segmented {
+  align-self: flex-start;
+}
+
+.area-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  height: 48px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--c-border-strong);
+  background: var(--c-surface);
+  color: var(--c-muted);
+}
+
+.area-search:focus-within {
+  outline: 2px solid var(--c-green);
+  outline-offset: -1px;
+  border-color: transparent;
+}
+
+.area-search-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 15px;
+  color: var(--c-text);
+}
+
+.area-search-input:focus {
+  outline: none;
+}
+
+.area-results {
+  display: flex;
+  flex-direction: column;
+  max-height: 264px;
+  overflow-y: auto;
+  border-radius: var(--r-md);
+  border: 1px solid var(--c-border);
+}
+
+.area-results li + li {
+  border-top: 1px solid var(--c-border);
+}
+
+.area-result {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 14px;
+  text-align: left;
+  color: var(--c-text-2);
+}
+
+.area-result:hover {
+  background: var(--c-surface-2);
+}
+
+.area-result.is-selected {
+  background: var(--c-green-soft);
+  color: var(--c-green);
+}
+
+.area-result-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--c-text);
+}
+
+.area-result-kind {
+  font-size: 12px;
+  color: var(--c-muted);
+}
+
+.area-result-check {
+  color: var(--c-green);
+}
+
+.area-status {
+  font-size: 12px;
+  color: var(--c-muted);
+}
+
+.area-status.is-ok {
+  color: var(--c-green);
+  font-weight: 600;
+}
+
+.area-status.is-error {
+  color: var(--c-red-text);
+}
+
+.area-coords {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--s-4);
+  align-items: start;
+}
+
+.area-coords-input {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.textarea.area-points {
+  min-height: 160px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.area-box {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-3);
+}
+
+.area-box-field .field-label {
+  margin-bottom: 4px;
+}
+
+.area-preview {
+  min-height: 220px;
+}
+
+.area-draw-bar {
+  position: absolute;
+  left: var(--s-3);
+  bottom: var(--s-3);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  max-width: calc(100% - 24px);
+  padding: 6px 6px 6px 12px;
+  border-radius: var(--r-sm);
+  background: var(--c-surface);
+  box-shadow: var(--shadow-pop);
+}
+
+.area-draw-bar .area-status {
+  margin-right: var(--s-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.area-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.area-footer .btn {
+  margin-left: auto;
+}
+
+.area-name {
+  flex: 1;
+  max-width: 320px;
+  height: 42px;
+}
+
+@media (max-width: 640px) {
+  .area-coords {
+    grid-template-columns: 1fr;
+  }
+
+  .area-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .area-name {
+    max-width: none;
+  }
+
+  .area-footer .btn {
+    margin-left: 0;
+  }
+}
+
+/* ---------- AtlasGate screens (src/state/AtlasData.jsx) ---------- */
+
+.page.atlas-setup {
+  max-width: none;
+  align-items: center;
+  padding-top: clamp(16px, 8vh, 72px);
+}
+
+.card.atlas-setup-card {
+  width: 100%;
+  max-width: 720px;
+  padding: var(--s-8);
+  gap: var(--s-6);
+}
+
+.atlas-setup-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.atlas-setup-head h1 {
+  font-size: 28px;
+}
+
+@media (max-width: 640px) {
+  .card.atlas-setup-card {
+    padding: var(--s-5);
+  }
+}
+
+.atlas-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.atlas-progress-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--c-green);
+}
+
+.atlas-progress-title {
+  font-size: 20px;
+  font-weight: 650;
+  color: var(--c-text);
+  letter-spacing: -0.01em;
+}
+
+.atlas-progress.is-compact {
+  gap: 6px;
+}
+
+.atlas-progress.is-compact .atlas-progress-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.atlas-progress-track {
+  height: 8px;
+  border-radius: var(--r-pill);
+  background: var(--c-surface-3);
+  overflow: hidden;
+}
+
+.atlas-progress.is-compact .atlas-progress-track {
+  height: 5px;
+}
+
+.atlas-progress-fill {
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--c-green);
+  transition: width 0.6s ease-out;
+}
+
+.atlas-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--c-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.atlas-spin {
+  animation: atlas-spin 1s linear infinite;
+}
+
+@keyframes atlas-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.card.atlas-error {
+  max-width: 640px;
+  gap: var(--s-3);
+}
+
+.atlas-error-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--c-red-text);
+}
+
+.atlas-error-text {
+  font-size: 13px;
+  color: var(--c-red-text);
+}
+
+.atlas-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.atlas-skel {
+  border-radius: var(--r-md);
+  background: linear-gradient(90deg, var(--c-surface-3) 0%, var(--c-surface-2) 50%, var(--c-surface-3) 100%);
+  background-size: 200% 100%;
+  animation: atlas-shimmer 1.4s ease-in-out infinite;
+}
+
+.atlas-skel-title {
+  width: 220px;
+  height: 32px;
+}
+
+.atlas-skel-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--s-3);
+}
+
+.atlas-skel-stat {
+  height: 84px;
+}
+
+.atlas-skel-map {
+  height: 380px;
+}
+
+@keyframes atlas-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .atlas-skel,
+  .atlas-spin {
+    animation: none;
+  }
+}
+
+/* ---------- Sidebar area box (src/layout/Sidebar.jsx) ---------- */
+
+/* In the Atlas the box is a link to Settings; keep it looking like the box. */
+a.scope-card,
+a.scope-card:hover {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* ---------- Access screen (AccessGate.jsx) ---------- */
+
+/* Shown only when the owner set an access code on the server. */
+.access-gate {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: var(--s-4);
+  background: var(--c-bg);
+}
+
+.access-card {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  padding: var(--s-8) var(--s-6) var(--s-6);
+  background: var(--c-surface);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-pop);
+}
+
+.access-logo {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  margin-bottom: var(--s-4);
+  border-radius: var(--r-sm);
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+}
+
+.access-title {
+  margin: 0 0 var(--s-6);
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--c-text);
+}
+
+.access-input {
+  padding: 10px 12px;
+  font-size: 15px;
+}
+
+.access-error {
+  margin: var(--s-2) 0 0;
+  font-size: 13px;
+  color: var(--c-red-text);
+}
+
+.access-card .btn {
+  margin-top: var(--s-4);
+}
+
+.access-card .btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}

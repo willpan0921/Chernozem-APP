@@ -1,783 +1,607 @@
 /*
   WHAT THIS FILE DOES
-  The styling for the Atlas map page (src/pages/atlas/MapPage.jsx): the map
-  area, the floating cards over it, the legend and mini-map, the tooltip, and
-  the "Selected area" panel on the right. Every class starts with "am-" so
-  it never clashes with another page.
+  The styling for the Atlas map page (src/pages/atlas/MapPage.jsx): the
+  left column (area and weights), the map in the middle, the right column
+  (top areas or the picked place) and the "Change area" dialog. Every class
+  starts with "mp-" so it never clashes with another page.
 
   WHO EDITS IT
   Whoever changes how the Atlas map page looks. Colours, fonts and spacing
   come from src/styles/tokens.css.
 */
 
-/* ---------- The two halves: map on the left, panel on the right ---------- */
+/* ---------- The three columns ---------- */
 
-.am-page {
-  background: var(--c-surface-2);
+.mp {
+  background: var(--c-bg);
 }
 
-/* The map column. On wide screens it holds only the map; on narrow screens
-   the controls card sits above the map and the legend below it. */
-.am-map-col {
-  flex: 1;
-  min-width: 0;
+.mp-left,
+.mp-right {
   display: flex;
   flex-direction: column;
+  background: var(--c-surface);
+  overflow-y: auto;
+  min-height: 0;
 }
 
-.am-map {
+.mp-left {
+  flex: 0 0 300px;
+  width: 300px;
+  border-right: 1px solid var(--c-border);
+}
+
+.mp-right {
+  flex: 0 0 320px;
+  width: 320px;
+  border-left: 1px solid var(--c-border);
+  overflow-x: hidden;
+}
+
+.mp-map {
   position: relative;
   flex: 1;
-  min-height: 0;
-  overflow: hidden;
-  background: var(--c-surface-2);
-}
-
-/* The drawing itself, which the zoom buttons scale. */
-.am-map-layer {
-  position: absolute;
-  inset: 0;
-  transform-origin: center center;
-  transition: transform 0.2s ease;
-}
-
-.am-svg {
-  position: absolute;
-  inset: 0;
-}
-
-.am-outline {
-  cursor: pointer;
-}
-
-/* Labels drawn inside the SVG. */
-.am-place-label {
-  font-size: 12px;
-  font-weight: 500;
-  font-family: var(--font-sans);
-  /* A pale halo so roads and cells do not cut through the words. */
-  paint-order: stroke;
-  stroke: var(--c-surface-2);
-  stroke-width: 3px;
-  stroke-linejoin: round;
-}
-
-.am-place-label-city {
-  font-size: 14px;
-  font-weight: 650;
-}
-
-.am-river-label {
-  font-size: 12px;
-  font-style: italic;
-  font-family: var(--font-sans);
-}
-
-/* The ink pill under the cluster. */
-.am-cluster-pill {
-  position: absolute;
-  transform: translate(-50%, 0);
-  padding: 8px 16px;
-  border-radius: var(--r-sm);
-  background: var(--c-ink);
-  color: var(--c-on-dark);
-  font-size: 13px;
-  font-weight: 600;
-  white-space: nowrap;
-  box-shadow: var(--shadow-pop);
-}
-
-/* The dark tooltip card. */
-.am-tooltip {
-  position: absolute;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  width: 180px;
-  padding: 10px 12px;
-  border-radius: var(--r-sm);
-  background: var(--c-ink);
-  color: var(--c-on-dark);
-  font-size: 12px;
-  box-shadow: var(--shadow-pop);
-}
-
-.am-tooltip-coords {
-  font-size: 11px;
-  color: var(--c-on-dark);
-  opacity: 0.75;
-}
-
-.am-tooltip-tier {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 13px;
-  font-weight: 650;
-  margin-bottom: 3px;
-}
-
-.am-tooltip-row {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--s-3);
-  color: var(--c-on-dark);
-  opacity: 0.85;
-}
-
-/* A small coloured square used in the tooltip and the status boxes. */
-.am-square {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border-radius: 3px;
-  flex: 0 0 auto;
-  background: var(--c-scale-5);
-}
-
-.am-tooltip .am-square {
-  width: 12px;
-  height: 12px;
-  border: 1.5px solid var(--c-on-dark);
-}
-
-.am-square-striped {
-  background: repeating-linear-gradient(
-    45deg,
-    var(--c-border-strong) 0 2px,
-    var(--c-scale-0) 2px 5px
-  );
-}
-
-/* ---------- Floating cards over the map ---------- */
-
-.am-float {
-  background: var(--c-surface);
-  border-radius: var(--r-md);
-  box-shadow: var(--shadow-card);
-}
-
-.am-top-left {
-  position: absolute;
-  top: var(--s-4);
-  left: var(--s-4);
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-3);
-  max-width: calc(100% - 96px);
-}
-
-.am-top-row {
-  display: flex;
-  gap: var(--s-2);
-  flex-wrap: wrap;
-}
-
-/* Breadcrumb card: Ukraine > Kharkiv > Kupiansk cluster */
-.am-breadcrumb {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 10px 14px;
-  font-size: 14px;
-  white-space: nowrap;
-}
-
-.am-crumb-group {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.am-crumb {
-  color: var(--c-text);
-}
-
-.am-crumb:hover {
-  text-decoration: none;
-}
-
-.am-crumb-current {
-  font-weight: 650;
-}
-
-.am-crumb-sep {
-  color: var(--c-muted);
-  margin-right: 8px;
-}
-
-/* The Near term / Postwar switch sits in a white card. */
-.am-timeframe {
-  padding: 4px;
-}
-
-.am-timeframe .segmented {
-  background: transparent;
-  padding: 0;
-}
-
-.am-timeframe .segmented-option {
-  padding: 7px 16px;
-  font-size: 14px;
-}
-
-/* "Color the map by" card */
-.am-controls {
-  width: 224px;
-  padding: var(--s-4);
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-3);
-}
-
-.am-controls-title {
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.am-mode-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
-}
-
-.am-mode {
-  padding: 11px 8px;
-  border-radius: var(--r-sm);
-  background: var(--c-surface-2);
-  font-size: 13px;
-  font-weight: 550;
-  color: var(--c-text);
-  text-align: center;
-}
-
-.am-mode:hover {
-  background: var(--c-surface-3);
-}
-
-.am-mode.is-active {
-  background: var(--c-ink);
-  color: var(--c-on-dark);
-  font-weight: 600;
-}
-
-/* The two checkbox rows. */
-.am-layers {
-  display: flex;
-  flex-direction: column;
-  border-top: 1px solid var(--c-border);
-  padding-top: 4px;
-}
-
-.am-layer {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--c-border);
-  text-align: left;
-  font-size: 13px;
-}
-
-.am-layer:last-child {
-  border-bottom: 0;
-}
-
-.am-layer .check-box {
-  width: 18px;
-  height: 18px;
-  margin-top: 0;
-}
-
-.am-layer-label {
-  flex: 1;
-  font-weight: 500;
-}
-
-.am-layer-meta {
-  font-size: 11px;
-  color: var(--c-muted);
-}
-
-/* The grey weights box with the Adjust link. */
-.am-weights {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s-2);
-  padding: 10px 12px;
-}
-
-.am-weights-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
   min-width: 0;
-}
-
-.am-weights-title {
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.am-weights-summary {
-  font-size: 12px;
-  color: var(--c-text-2);
-}
-
-.am-weights-link {
-  font-size: 13px;
-  font-weight: 650;
-  flex: 0 0 auto;
-}
-
-/* ---------- Round buttons, top right ---------- */
-
-.am-top-right {
-  position: absolute;
-  top: var(--s-4);
-  right: var(--s-4);
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-  align-items: center;
-}
-
-.am-round {
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  background: var(--c-surface);
-  box-shadow: var(--shadow-card);
-  color: var(--c-text);
-}
-
-.am-round:hover {
-  background: var(--c-surface-2);
-}
-
-/* ---------- Legend and mini-map, bottom left ---------- */
-
-.am-bottom-left {
-  position: absolute;
-  left: var(--s-4);
-  bottom: var(--s-4);
-  display: flex;
-  gap: var(--s-3);
-  align-items: flex-end;
-  flex-wrap: wrap;
-}
-
-.am-legend {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: 236px;
-  padding: var(--s-3) var(--s-4);
-  font-size: 12px;
-  color: var(--c-text-2);
-}
-
-.am-legend-title {
-  font-size: 12px;
-  font-weight: 650;
-  color: var(--c-text);
-}
-
-.am-legend-scale {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-}
-
-.am-legend-scale > span:first-child {
-  margin-right: 5px;
-}
-
-.am-legend-scale > span:last-child {
-  margin-left: 5px;
-}
-
-.am-legend-swatch {
-  width: 18px;
-  height: 11px;
-  border-radius: 2px;
-}
-
-.am-legend-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.am-legend-dash {
-  width: 20px;
-  border-top: 2px dashed var(--c-ink);
-}
-
-.am-legend-pin {
-  margin-left: 2px;
-}
-
-.am-scalebar {
-  width: 120px;
-  height: 7px;
-  border: 1.5px solid var(--c-text-2);
-  border-top: 0;
-}
-
-.am-legend-footer {
-  font-size: 11px;
-  color: var(--c-muted);
-}
-
-.am-minimap {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: var(--s-3) var(--s-4);
-}
-
-.am-minimap-grid {
-  display: grid;
-  grid-template-columns: repeat(6, 12px);
-  gap: 3px;
-  padding: 2px 0;
-}
-
-.am-minicell {
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
-}
-
-.am-minicell-1 {
-  background: var(--c-border);
-}
-
-.am-minicell-2 {
-  background: var(--c-ink);
-}
-
-.am-minicell-3 {
-  border: 1px dashed var(--c-border-strong);
-}
-
-.am-minimap-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  font-size: 12px;
-  font-weight: 650;
-}
-
-/* ---------- The "Selected area" panel ---------- */
-
-.am-panel {
-  flex: 0 0 380px;
-  width: 380px;
-  display: flex;
-  flex-direction: column;
-  background: var(--c-surface);
-  border-left: 1px solid var(--c-border);
   min-height: 0;
 }
 
-.am-panel-scroll {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--s-5) var(--s-4) var(--s-4);
+/* The map fills its column edge to edge. */
+.mp-map .atlas-map {
+  border-radius: 0;
+}
+
+/* ---------- Left: the area ---------- */
+
+.mp-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding: var(--s-5) var(--s-5) var(--s-4);
+  border-bottom: 1px solid var(--c-border);
+}
+
+.mp-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+
+.mp-area {
+  min-width: 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mp-head-row .btn {
+  flex: 0 0 auto;
+}
+
+.mp-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.mp-meta .badge {
+  gap: 4px;
+}
+
+/* The spinner next to the month while another month loads. */
+.mp-loading {
+  display: inline-flex;
+  color: var(--c-muted);
+}
+
+/* ---------- Left: the weights ---------- */
+
+.mp-weights {
+  padding: var(--s-5);
+}
+
+.mp-weights .weights-head h2 {
+  font-size: 15px;
+}
+
+.mp-save-error {
+  margin-top: var(--s-3);
+  font-size: 12px;
+  color: var(--c-red-text);
+}
+
+/* ---------- Map key (floats bottom-left on the map) ---------- */
+
+.atlas-map-float.mp-legend {
+  left: var(--s-3);
+  bottom: var(--s-6);
+  width: 248px;
+  max-width: calc(100% - 24px);
+}
+
+/* The fold button only shows on phones (see the end of this file). */
+.mp-legend-toggle {
+  display: none;
+}
+
+/* ---------- Right: shared ---------- */
+
+.mp-panel-body {
   display: flex;
   flex-direction: column;
   gap: var(--s-5);
+  padding: var(--s-5);
 }
 
-.am-panel-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--s-3);
+.mp-panel-title {
+  font-size: 15px;
+  font-weight: 650;
 }
 
-.am-panel-head-text {
+.mp-empty {
+  font-size: 13px;
+  color: var(--c-muted);
+}
+
+/* ---------- Right: top areas ---------- */
+
+.mp-top {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  min-width: 0;
+  margin: calc(var(--s-2) * -1) calc(var(--s-3) * -1) 0;
 }
 
-.am-panel-title {
-  font-size: 24px;
-}
-
-.am-panel-subtitle {
-  font-size: 12px;
-  color: var(--c-text-2);
-}
-
-.am-close {
+.mp-top-row {
   display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  box-shadow: inset 0 0 0 1px var(--c-border-strong);
-  flex: 0 0 auto;
+  grid-template-columns: 26px minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  padding: 10px var(--s-3);
+  border-radius: var(--r-sm);
+  text-align: left;
+  transition: background 0.12s;
 }
 
-.am-close:hover {
+.mp-top-row:hover,
+.mp-top-row:focus-visible {
   background: var(--c-surface-2);
 }
 
-/* The two status boxes side by side. */
-.am-status-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--s-2);
+.mp-top-row:focus-visible {
+  outline: 2px solid var(--c-green);
+  outline-offset: -2px;
 }
 
-.am-status {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 10px;
-  text-align: left;
-  border-radius: var(--r-md);
-  min-width: 0;
-}
-
-.am-status.panel-selected {
-  padding: 9.5px;
-}
-
-.am-status-label {
-  font-size: 12px;
-  color: var(--c-text-2);
-}
-
-.am-status-value {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 14px;
-  font-weight: 650;
-  white-space: nowrap;
-}
-
-.am-status-why {
-  font-size: 11px;
-  color: var(--c-muted);
-  line-height: 1.35;
-}
-
-/* A titled section of the panel. */
-.am-section {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.am-section h3 {
-  font-size: 14px;
-  font-weight: 650;
-}
-
-.am-scores {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.am-scores .score-bar {
-  grid-template-columns: 100px 1fr auto;
-}
-
-/* "What the satellites found" tiles. */
-.am-sat-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--s-2);
-}
-
-.panel.am-sat {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 10px 8px;
-  min-width: 0;
-}
-
-.am-sat-value {
-  font-size: 15px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.am-sat-label {
-  font-size: 10.5px;
-  color: var(--c-muted);
-  line-height: 1.3;
-}
-
-/* "Recovery cost" tiles. */
-.am-cost-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--s-2);
-}
-
-.panel.am-cost {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 12px;
-  min-width: 0;
-}
-
-.am-cost-label {
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.am-cost-amount {
-  font-size: 16px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.am-cost-text {
-  font-size: 11px;
-  color: var(--c-muted);
-  line-height: 1.3;
-}
-
-/* "Help requests from farms" */
-.am-new {
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.am-help-sub {
-  margin-top: -6px;
-}
-
-.am-request {
-  width: 100%;
-  align-items: center;
-  text-align: left;
-  padding: 12px 0;
-}
-
-.am-request:hover .row-title {
-  text-decoration: underline;
-}
-
-.am-request-number {
+.mp-top-rank {
   display: grid;
   place-items: center;
   width: 26px;
   height: 26px;
-  border-radius: 50%;
-  background: var(--c-amber-soft);
-  box-shadow: inset 0 0 0 1.5px var(--c-amber);
-  color: var(--c-amber-text);
+  border-radius: 7px;
+  background: var(--c-green-soft);
+  color: var(--c-green);
   font-size: 12px;
   font-weight: 700;
-  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
 }
 
-.am-request-chevron {
-  color: var(--c-muted);
-  flex: 0 0 auto;
-}
-
-/* The two buttons pinned to the bottom of the panel. */
-.am-panel-actions {
+.mp-top-text {
   display: flex;
+  flex-direction: column;
   gap: 6px;
-  padding: var(--s-3) var(--s-4) var(--s-4);
-  background: var(--c-surface);
-  border-top: 1px solid var(--c-border);
-}
-
-.am-panel-actions .btn {
-  flex: 1;
   min-width: 0;
-  padding: 11px 6px;
-  gap: 5px;
 }
 
-/* ---------- Small screens ---------- */
+.mp-top-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
+.mp-top-coords {
+  margin-top: -4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--c-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mp-top-bar {
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: var(--c-surface-3);
+  overflow: hidden;
+}
+
+.mp-top-bar span {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--map-priority-4);
+}
+
+/* The hectares never wrap or get cut: their column takes what they need
+   and the name shortens instead. */
+.mp-top-ha {
+  justify-self: end;
+  min-width: 52px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--c-text-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-align: right;
+}
+
+/* ---------- Right: the picked place ---------- */
+
+.mp-detail-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: calc(var(--s-2) * -1) calc(var(--s-2) * -1) calc(var(--s-2) * -1) calc(var(--s-3) * -1);
+}
+
+.mp-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px var(--s-3);
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c-text-2);
+}
+
+.mp-back:hover {
+  background: var(--c-surface-2);
+  color: var(--c-text);
+}
+
+.mp-close {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  color: var(--c-text-2);
+}
+
+.mp-close:hover {
+  background: var(--c-surface-3);
+  color: var(--c-text);
+}
+
+.mp-detail-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.mp-detail-title {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+}
+
+.mp-detail-title:focus,
+.mp-panel-title:focus {
+  outline: none;
+}
+
+.mp-detail-title:focus-visible,
+.mp-panel-title:focus-visible {
+  outline: 2px solid var(--c-green);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.mp-detail-coords {
+  margin-top: calc(var(--s-1) * -1);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--c-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.mp-detail-tags {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.mp-rank {
+  font-size: 12px;
+  color: var(--c-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.mp-bars {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.mp-bars .score-bar {
+  grid-template-columns: 88px minmax(0, 1fr) auto;
+}
+
+.mp-bars .score-bar-value {
+  min-width: 26px;
+}
+
+.mp-figures {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s-2);
+}
+
+.mp-figures > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  border-radius: var(--r-sm);
+  background: var(--c-surface-2);
+  min-width: 0;
+}
+
+.mp-figures dt {
+  font-size: 11px;
+  color: var(--c-muted);
+}
+
+.mp-figures dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mp-figures dd.is-red {
+  color: var(--c-red-text);
+}
+
+.mp-cost {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.mp-cost h3 {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.mp-cost-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-3);
+  font-size: 13px;
+  color: var(--c-text-2);
+}
+
+.mp-cost-value {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.mp-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-2);
+}
+
+/* ---------- "Change area" dialog ---------- */
+
+.mp-dialog {
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-lg);
+  background: var(--c-surface);
+  color: var(--c-text);
+  box-shadow: var(--shadow-pop);
+  overflow-y: auto;
+}
+
+.mp-dialog::backdrop {
+  background: color-mix(in srgb, var(--c-ink) 38%, transparent);
+}
+
+.mp-dialog-inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+  padding: var(--s-6);
+}
+
+.mp-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.mp-dialog-head h2 {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.mp-saved {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.mp-saved-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+.mp-saved-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 7px 12px;
+  border-radius: var(--r-pill);
+  background: var(--c-surface-2);
+  box-shadow: inset 0 0 0 1px var(--c-border);
+  font-size: 13px;
+  color: var(--c-text-2);
+}
+
+.mp-saved-item:hover:not(:disabled) {
+  background: var(--c-green-soft);
+  color: var(--c-green);
+}
+
+.mp-saved-name {
+  font-weight: 600;
+  color: var(--c-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mp-saved-size {
+  font-size: 12px;
+  color: var(--c-muted);
+  white-space: nowrap;
+}
+
+/* ---------- Narrower screens ---------- */
+
+@media (max-width: 1180px) {
+  .mp-left {
+    flex-basis: 270px;
+    width: 270px;
+  }
+
+  .mp-right {
+    flex-basis: 280px;
+    width: 280px;
+  }
+}
+
+/* Phones and small tablets: one column. Area, map, weights, then the
+   top areas or the picked place. */
 @media (max-width: 860px) {
-  .am-map-col {
-    flex: 0 0 auto;
-  }
-
-  .am-map {
-    flex: 0 0 auto;
-    height: 620px;
-  }
-
-  .am-panel {
-    flex: 0 0 auto;
-    width: 100%;
-    border-left: 0;
-    border-top: 1px solid var(--c-border);
-  }
-
-  .am-panel-scroll {
-    overflow: visible;
-  }
-}
-
-/* Phone-sized screens: the controls card sits above the map and the legend
-   and mini-map below it (MapPage.jsx moves them there), so nothing floats
-   over the drawing. */
-@media (max-width: 520px) {
-  .am-top-left {
-    max-width: calc(100% - 72px);
-  }
-
-  .am-map {
-    height: 560px;
-  }
-
-  /* The controls card, now a full-width card above the map. */
-  .am-map-col > .am-controls {
-    width: auto;
-    margin: var(--s-4) var(--s-4) 0;
-  }
-
-  .am-map-col > .am-controls .am-mode-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
-  /* The legend and mini-map, now a row below the map. */
-  .am-bottom-static {
-    position: static;
-    padding: var(--s-4);
-    align-items: stretch;
-  }
-
-  .am-bottom-static .am-legend {
-    flex: 1 1 200px;
-    width: auto;
-  }
-
-  /* The tooltip hugs the right edge so it is never cut off. */
-  .am-tooltip {
-    max-width: calc(100% - 24px);
-  }
-
-  .am-sat-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .am-panel-actions {
+  .mp {
     flex-direction: column;
+  }
+
+  .mp-left {
+    display: contents;
+  }
+
+  .mp-head {
+    order: 1;
+    background: var(--c-surface);
+    padding: var(--s-4);
+  }
+
+  .mp-map {
+    order: 2;
+    flex: 0 0 auto;
+    height: max(360px, 62vh);
+  }
+
+  .mp-right {
+    order: 4;
+    flex: 0 0 auto;
+    width: auto;
+    overflow: visible;
+    border-left: 0;
+    border-bottom: 1px solid var(--c-border);
+  }
+
+  .mp-weights {
+    order: 3;
+    background: var(--c-surface);
+    padding: var(--s-4);
+    border-bottom: 1px solid var(--c-border);
+  }
+
+  .mp-right {
+    padding-bottom: var(--s-6);
+  }
+
+  .mp-panel-body {
+    padding: var(--s-4);
+  }
+
+  .mp-dialog-inner {
+    padding: var(--s-4);
+  }
+
+  /* A smaller key so it covers less of a phone-sized map. */
+  .atlas-map-float.mp-legend {
+    left: var(--s-2);
+    bottom: var(--s-5);
+    width: 210px;
+    padding: var(--s-2);
+  }
+
+  .mp-legend .map-legend {
+    gap: var(--s-2);
+  }
+
+  .mp-legend .segmented-option {
+    padding: 5px 6px;
+    font-size: 12px;
+  }
+
+  /* The key folds down to just the Priority | Damage | Access switch. */
+  .mp-legend {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s-2);
+  }
+
+  .mp-legend .map-legend {
+    flex: 1;
+  }
+
+  .mp-legend.is-folded .map-legend-body {
+    display: none;
+  }
+
+  .mp-legend-toggle {
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 28px;
+    height: 28px;
+    border-radius: var(--r-sm);
+    color: var(--c-text-2);
+  }
+
+  .mp-legend-toggle:hover {
+    background: var(--c-surface-2);
   }
 }

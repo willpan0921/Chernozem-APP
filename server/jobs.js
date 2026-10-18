@@ -1,0 +1,159 @@
+// WHAT THIS FILE DOES
+// Runs an analysis in the background and keeps track of how far it got, so
+// the page can show "Analyzing Ukraine… 7 of 12 months".
+//
+//   startAnalysis({ areaId, months, rerun })  starts (or joins) a job
+//   getJob(id)                                 where a job is now
+//   listJobs({ areaId })                       recent jobs, running first
+//
+// A job analyzes the latest complete month first, then goes back one month
+// at a time. Months that already have a run are skipped (unless rerun),
+// except runs made from sample data once Earth Engine is connected: those
+// are redone with the real data.
+//
+// WHO EDITS IT
+// Nobody, normally.
+
+import { getArea, getRun, listRuns, newId, saveRun } from "./store.js";
+import { planGrid } from "./geo.js";
+import { buildRun, latestCompleteMonth, linkNewDamage, monthLabel, monthsBack } from "./runs.js";
+import { getProvider } from "./providers/index.js";
+
+// Kept on globalThis so the dev server, which reloads files after edits,
+// still finds jobs that were started before.
+const jobs = (globalThis.__chernozemJobs ??= new Map());
+const KEEP_FINISHED_MS = 60 * 60 * 1000;
+
+function publicJob(job) {
+  if (!job) return null;
+  const { internal, ...rest } = job;
+  return { ...rest, runIds: [...job.runIds] };
+}
+
+export function getJob(id) {
+  return publicJob(jobs.get(id));
+}
+
+export function listJobs({ areaId, status } = {}) {
+  prune();
+  return [...jobs.values()]
+    .filter((job) => (!areaId || job.areaId === areaId) && (!status || job.status === status))
+    .sort((a, b) => (a.status === "running" ? -1 : 0) - (b.status === "running" ? -1 : 0) || b.startedAt.localeCompare(a.startedAt))
+    .map(publicJob);
+}
+
+function prune() {
+  const now = Date.now();
+  for (const [id, job] of jobs) {
+    if (job.status !== "running" && job.finishedAt && now - Date.parse(job.finishedAt) > KEEP_FINISHED_MS) jobs.delete(id);
+  }
+}
+
+const pause = () => new Promise((resolve) => setImmediate(resolve));
+
+// Starts analyzing an area. Gives back the job right away; the work goes on
+// in the background. If the area is already being analyzed, that job is
+// given back instead of starting a second one.
+export async function startAnalysis({ areaId, months = 12, rerun = false, trigger = "manual" }) {
+  const area = await getArea(areaId);
+  if (!area) {
+    const error = new Error("That area does not exist.");
+    error.status = 404;
+    error.code = "not_found";
+    throw error;
+  }
+  const running = [...jobs.values()].find((job) => job.areaId === areaId && job.status === "running");
+  if (running) return publicJob(running);
+
+  const count = Math.min(24, Math.max(1, Math.round(Number(months) || 12)));
+  const job = {
+    id: newId("job"),
+    areaId,
+    areaName: area.name,
+    trigger,
+    status: "running",
+    done: 0,
+    total: count,
+    message: `Analyzing ${area.name}…`,
+    runIds: [],
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+  };
+  jobs.set(job.id, job);
+  prune();
+  runJob(job, area, count, Boolean(rerun)).catch((error) => {
+    job.status = "error";
+    job.error = error.message || String(error);
+    job.message = `Analysis stopped: ${job.error}`;
+    job.finishedAt = new Date().toISOString();
+    console.error(`[chernozem] Analysis of ${area.name} failed:`, error);
+  });
+  return publicJob(job);
+}
+
+async function runJob(job, area, count, rerun) {
+  await pause();
+  const provider = await getProvider();
+  job.provider = provider.id;
+  const grid = planGrid(area.geometry);
+  const months = monthsBack(latestCompleteMonth(), count);
+  const existing = new Map();
+  for (const summary of await listRuns(area.id)) if (!existing.has(summary.month)) existing.set(summary.month, summary);
+
+  try {
+    for (const month of months) {
+      const old = existing.get(month);
+      // Keep an existing run unless asked to redo it, or it is sample data and
+      // the real source is now connected.
+      if (old && !rerun && !(old.provider === "sample" && provider.id !== "sample")) {
+        job.done += 1;
+        job.runIds.push(old.id);
+        continue;
+      }
+      job.message = `Analyzing ${area.name}: ${monthLabel(month)} (${job.done + 1} of ${job.total})`;
+      const result = await provider.analyze({
+        area,
+        cells: grid.cells,
+        month,
+        cellSizeDeg: grid.cellSizeDeg,
+        onProgress: (share) => {
+          job.monthProgress = Math.max(0, Math.min(1, Number(share) || 0));
+        },
+      });
+      const run = buildRun({
+        area,
+        month,
+        provider,
+        readings: result.readings || [],
+        alerts: result.alerts || [],
+        warnings: result.warnings || [],
+        cellSizeDeg: grid.cellSizeDeg,
+        cells: grid.cells,
+        baseline: result.baseline,
+      });
+      // Redoing a month keeps its id, so links to it keep working.
+      if (old) run.id = old.id;
+      await saveRun(run);
+      job.runIds.push(run.id);
+      job.done += 1;
+      job.monthProgress = 0;
+      await pause();
+    }
+  } finally {
+    // "New heavy damage" needs the month before, which may have been
+    // analyzed after this one, so it is filled in at the end (also when a
+    // month failed, for the months that did finish).
+    job.message = "Finishing…";
+    try {
+      const summaries = await listRuns(area.id);
+      const full = (await Promise.all(summaries.map((summary) => getRun(summary.id)))).filter(Boolean);
+      for (const run of linkNewDamage(full)) await saveRun(run);
+    } catch (error) {
+      console.warn(`[chernozem] Could not link new damage for ${area.name}: ${error.message}`);
+    }
+  }
+
+  job.status = "done";
+  job.message = `${area.name}: ${job.total} months analyzed`;
+  job.finishedAt = new Date().toISOString();
+}

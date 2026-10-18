@@ -1,12 +1,81 @@
 /*
   WHAT THIS FILE DOES
   Styling that belongs only to the Atlas AI page (/atlas/ai). The chat
-  itself is styled in src/components/chat/chat.css; this file only wraps it.
+  itself is styled in src/components/chat/chat.css; this file only fits the
+  Atlas controls into the "Using" rows. Every class starts with "aai-"
+  (Atlas AI).
 
   WHO EDITS IT
   Danny.
 */
 
-.ai-page {
+.aai-page {
   min-width: 0;
 }
+
+/* The month picker sits inside a "Using" row: keep it compact. The row
+   already has a calendar icon, so the picker's own icon is hidden. */
+.aai-page .chat-using-control .chip-select {
+  padding: 4px 8px;
+  box-shadow: none;
+  background: var(--c-surface-2);
+}
+
+.aai-page .chat-using-control .chip-select > svg:first-child {
+  display: none;
+}
+
+/* Near term | Postwar inside its "Using" row. */
+.aai-page .chat-using-control .segmented {
+  padding: 2px;
+}
+
+.aai-page .chat-using-control .segmented-option {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+/* The weights row: "Weights" on the first line, the three weights spelled
+   out on the line under it. */
+.aai-page .chat-using-item[data-using="weights"] {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+.aai-page .chat-using-item[data-using="weights"] .chat-using-label {
+  flex: 1 1 auto;
+}
+
+.aai-page .chat-using-item[data-using="weights"] .chat-using-control {
+  order: 3;
+  flex: 1 0 100%;
+  text-align: left;
+}
+
+/* A coloured dot before each weight, in the same colours as the weights
+   panel (soil green, damage red, access blue). */
+.aai-weights {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.aai-weight {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.aai-weight::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--tone);
+}
+
+.aai-weight.is-soil { --tone: var(--c-green); }
+.aai-weight.is-damage { --tone: var(--c-red); }
+.aai-weight.is-access { --tone: var(--c-blue); }

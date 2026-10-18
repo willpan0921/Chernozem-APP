@@ -1,0 +1,264 @@
+/*
+  WHAT THIS FILE DOES
+  The styling for the printable report (/atlas/report). Classes start with
+  "rp-". The "@media print" part at the bottom hides the sidebar and the
+  buttons, so "Save as PDF" gives a clean document.
+
+  WHO EDITS IT
+  Whoever changes how the report looks on screen or on paper.
+*/
+
+.rp-page {
+  max-width: 960px;
+}
+
+.rp-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.rp-spacer {
+  flex: 1;
+}
+
+.card.rp-doc {
+  padding: var(--s-8);
+  gap: var(--s-6);
+}
+
+.rp-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.rp-head h1 {
+  font-size: 26px;
+  letter-spacing: -0.02em;
+}
+
+.rp-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-1) var(--s-3);
+  font-size: 12px;
+  color: var(--c-text-2);
+}
+
+.rp-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--s-4);
+  padding: var(--s-4) 0;
+  border-top: 1px solid var(--c-border);
+  border-bottom: 1px solid var(--c-border);
+}
+
+.rp-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.rp-kpi-value {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.rp-kpi-label {
+  font-size: 12px;
+  color: var(--c-muted);
+}
+
+.rp-red {
+  color: var(--c-red);
+}
+
+.rp-line {
+  margin-top: calc(-1 * var(--s-3));
+  font-size: 13px;
+  color: var(--c-text-2);
+}
+
+.rp-section .rp-line {
+  margin-top: 0;
+}
+
+.rp-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.rp-section h2 {
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.rp-table td,
+.rp-table th {
+  padding: var(--s-2);
+}
+
+.rp-table .num {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.rp-place {
+  white-space: nowrap;
+}
+
+.rp-place-name,
+.rp-place-coords {
+  display: block;
+}
+
+.rp-place-name {
+  font-weight: 550;
+}
+
+.rp-place-coords {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--c-muted);
+}
+
+.rp-score {
+  font-weight: 650;
+}
+
+.rp-settings {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s-4);
+}
+
+.rp-settings div {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.rp-settings dt {
+  font-size: 12px;
+  color: var(--c-muted);
+}
+
+.rp-settings dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.rp-alerts {
+  display: flex;
+  flex-direction: column;
+}
+
+.rp-alerts li {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr) auto;
+  gap: var(--s-3);
+  padding: var(--s-2) 0;
+  border-top: 1px solid var(--c-border);
+  font-size: 13px;
+}
+
+.rp-alerts li:first-child {
+  border-top: 0;
+}
+
+.rp-mono {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--c-text-2);
+  white-space: nowrap;
+}
+
+.rp-method p {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--c-text-2);
+}
+
+.rp-method .rp-disclaimer {
+  font-size: 12px;
+  color: var(--c-muted);
+}
+
+@media (max-width: 640px) {
+  .card.rp-doc {
+    padding: var(--s-5);
+  }
+
+  .rp-kpis {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .rp-settings {
+    grid-template-columns: 1fr;
+  }
+
+  .rp-alerts li {
+    grid-template-columns: 1fr auto;
+  }
+
+  .rp-alerts li span:not(.rp-mono) {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    font-size: 12px;
+    color: var(--c-muted);
+  }
+
+  .rp-alerts li .rp-mono {
+    grid-column: 2;
+    grid-row: 1;
+  }
+}
+
+/* ---------- Paper ---------- */
+
+@media print {
+  @page {
+    margin: 14mm;
+  }
+
+  .sidebar,
+  .rp-toolbar {
+    display: none !important;
+  }
+
+  html,
+  html body {
+    background: var(--c-surface);
+  }
+
+  .shell,
+  .shell-main,
+  .page {
+    display: block;
+    padding: 0;
+    max-width: none;
+  }
+
+  .card.rp-doc {
+    box-shadow: none;
+    padding: 0;
+  }
+
+  .rp-section {
+    break-inside: avoid;
+    margin-top: var(--s-5);
+  }
+
+  .table-wrap {
+    overflow: visible;
+  }
+}

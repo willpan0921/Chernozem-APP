@@ -11,3 +11,10 @@ dist
 .env.local
 .DS_Store
 *.log
+
+# The Atlas server's saved areas, runs, chats and team (local data).
+server/.data
+
+# Private keys: never commit an Earth Engine service-account key.
+*.key.json
+service-account*.json

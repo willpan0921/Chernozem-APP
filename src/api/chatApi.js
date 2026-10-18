@@ -1,71 +1,76 @@
-// WHAT THIS FILE DOES
-// The one place the app "talks to the AI". Right now there is no real AI: the
-// function waits about a second and returns a fake reply, in the same language
-// as the question (English, Ukrainian, Russian or Chinese).
+// CHANGED (October 2026): the fake replies are gone. sendChatMessage now
+// sends the question to the real AI (Claude) through the Atlas server
+// (POST /api/chat, see server/ai/chat.js) and streams the answer back as it
+// is written. It goes through streamChat in src/api/atlasApi.js. Saved
+// chats now live on the server too, so this file also lists, opens and
+// deletes them. The AI only answers once ANTHROPIC_API_KEY is in .env;
+// until then the reply is one "ai_not_configured" error.
 //
-// Both AI pages use it: the Field AI page (/field/ai) and the Atlas AI page
-// (/atlas/ai). The "context" tells the AI which product the person is in and
-// what the chat is about ("Field 7", "All regions"...).
+// WHAT THIS FILE DOES
+// The one place the app "talks to the AI". Both AI pages use it: the Field
+// AI page (/field/ai) and the Atlas AI page (/atlas/ai). The chat
+// components in src/components/chat only call the functions below.
 //
 // WHO EDITS IT
-// Danny. To connect the real AI, replace the inside of sendChatMessage. As
-// long as it still takes a message and a context and gives back the reply
-// text, the chat components in src/components/chat do not need to change.
+// Danny. As long as sendChatMessage still takes a message and options and
+// gives back the reply, the chat components do not need to change.
 //
 // HOW TO CALL IT
-//   const reply = await sendChatMessage("What should I do?", {
-//     product: "field",        // "field" or "atlas"
-//     scopeLabel: "Field 7",   // the chip under the message box
+//   const reply = await sendChatMessage("Where should we start?", {
+//     product: "atlas",                 // "atlas" or "field"
+//     threadId: "chat-1a2b3c4d",        // leave out to start a new chat
+//     context: { runId, settings, timeframe, selectedCellId },   // Atlas
+//     //  or   { farm: { ...a short farm summary } }               // Field
+//     onThread: ({ threadId, title }) => {},  // the chat was saved (new chats get an id here)
+//     onText:   (piece, wholeSoFar) => {},    // more of the answer arrived
+//     onTool:   ({ name, status }) => {},     // the AI is looking something up
+//     onError:  ({ code, message }) => {},    // e.g. code "ai_not_configured"
+//     signal,                                 // an AbortSignal to stop early (optional)
 //   });
+//   // reply = { threadId, messageId, text, error }   (error is null when it worked)
+//
+//   listThreads("atlas")  -> [{ id, title, updatedAt, preview }]  newest first
+//   openThread(id)        -> { id, title, messages: [{ id, role: "user"|"assistant", text, at, stopped? }] }
+//                            or null when the chat was deleted
+//   removeThread(id)      -> true
+//   getAiStatus()         -> { configured, model }
 
-// The fake reply in each language. "scope" is dropped into the sentence.
-const fakeReplies = {
-  english: (scope) =>
-    `Thanks for your question about ${scope}. The AI isn't connected yet, so this is a placeholder answer.`,
-  ukrainian: (scope) =>
-    `Дякуємо за ваше запитання про ${scope}. ШІ ще не підключено, тому це тимчасова відповідь-заглушка.`,
-  russian: (scope) =>
-    `Спасибо за ваш вопрос о ${scope}. ИИ пока не подключён, поэтому это временный ответ-заглушка.`,
-  chinese: (scope) =>
-    `感谢你关于「${scope}」的提问。AI 尚未接入，所以这只是一条占位回复。`,
-};
+import { deleteChat, getChat, getStatus, listChats, streamChat } from "./atlasApi.js";
 
-// What to call the scope when the context does not say.
-const defaultScope = { field: "your farm", atlas: "the Atlas" };
+// Sends a question and streams the reply. Never throws for AI problems:
+// they come back as reply.error (and through onError). Stopping with the
+// signal throws an AbortError, like fetch does.
+export async function sendChatMessage(message, options = {}) {
+  const { product = "atlas", threadId, context = {}, onThread, onText, onTool, onError, signal } = options;
+  let soFar = "";
+  return streamChat({
+    product,
+    threadId: threadId || undefined,
+    message,
+    context,
+    signal,
+    onEvent(name, data) {
+      if (name === "thread") onThread?.(data);
+      else if (name === "delta") {
+        soFar += data.text || "";
+        onText?.(data.text || "", soFar);
+      } else if (name === "tool") onTool?.(data);
+      else if (name === "error") onError?.(data);
+    },
+  });
+}
 
-// Works out which language a message is written in by looking at its letters.
-function detectLanguage(message) {
-  // Any Chinese character means Chinese.
-  if (/[一-鿿]/.test(message)) return "chinese";
+export const listThreads = (product) => listChats(product);
+export const openThread = (id) => getChat(id);
+export const removeThread = (id) => deleteChat(id);
 
-  // Cyrillic letters mean Ukrainian or Russian.
-  if (/[Ѐ-ӿ]/.test(message)) {
-    // Letters only Ukrainian uses.
-    if (/[іїєґ]/i.test(message)) return "ukrainian";
-    // Letters only Russian uses.
-    if (/[ыэъё]/i.test(message)) return "russian";
-    // No telltale letter, so it could be either. Assume Ukrainian, because
-    // the app is for Ukrainian farmers.
-    return "ukrainian";
+// Whether the AI has its key. A server that cannot be reached counts as
+// "not known" (null), so the page does not show the setup steps by mistake.
+export async function getAiStatus() {
+  try {
+    const status = await getStatus();
+    return status?.ai || null;
+  } catch {
+    return null;
   }
-
-  // Everything else is treated as English.
-  return "english";
-}
-
-// Pauses for the given number of milliseconds (1000 = 1 second).
-function wait(milliseconds) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
-// Sends a question and gives back the reply text.
-//   message - what the person typed
-//   context - { product: "field" | "atlas", scopeLabel: "Field 7" }
-export async function sendChatMessage(message, context = {}) {
-  // Pretend the AI is thinking.
-  await wait(1000);
-
-  const scope = context.scopeLabel || defaultScope[context.product] || "this";
-  const language = detectLanguage(message);
-  return fakeReplies[language](scope);
 }

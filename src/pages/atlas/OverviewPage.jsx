@@ -1,318 +1,450 @@
 // WHAT THIS FILE DOES
-// The Atlas "Recovery overview" page (/atlas): the first screen the regional
-// office sees. From top to bottom it shows
-//   - the heading with the "Near term | Postwar" switch and the report button,
-//   - four big-number tiles and a footnote,
-//   - "Where to start": a tile map of the 24 regions plus Crimea, its legend,
-//     the top-five list and a note,
-//   - "How priority is scored": the three questions, the result box and the
-//     two time-frame rules,
-//   - on the right: "Next steps for your office", "Alerts" and the dark
-//     "Spring plan" box.
+// The Atlas Overview (/atlas): the first screen an official sees for the
+// current area. From top to bottom:
+//   - the area name, the month and where the data came from, with the
+//     month picker, the Near term | Postwar switch and the Report button,
+//   - four big numbers (cropland, black soil, heavy damage, people),
+//   - "Where to start": the map coloured by priority with its key under
+//     it, the weights in one line (click "Adjust" to change them on the
+//     map page) and the five top areas (place names, else "North-west",
+//     "East"…, the same names as on the map page),
+//   - on the right: "Next steps" (tick them off, saved for the team),
+//     "Alerts" from this month, and the "Budget" (click the amount to change
+//     it; the hectares it covers recalculate).
 //
-// The "Near term | Postwar" switch is the only state on the page. Changing
-// it recolours the tile map, swaps the top-five list and moves the
-// "showing now" mark between the two rule boxes.
-//
-// Every number and sentence comes from src/data/atlas.js. Nothing is typed
-// in here, so the team changes the data file, not this one.
+// Everything is worked out from the analyzed month (useAtlasData) and the
+// team's weights, so nothing here is typed in by hand. The wording rules
+// live in src/lib/atlas/overview.js; the short area names, the month in
+// the address (?month=2026-09) and the step dates in ./overviewHelpers.js.
 //
 // WHO EDITS IT
-// Whoever changes how the Atlas overview looks or is laid out. To change a
-// number or a sentence, edit src/data/atlas.js instead.
+// Whoever changes how the Atlas overview looks or is laid out.
 
-import { useState } from "react";
-import { Link } from "react-router-dom";
-import {
-  Download,
-  ChevronRight,
-  ArrowRight,
-  ShieldCheck,
-  TriangleAlert,
-  Waves,
-  FileText,
-  Cloud,
-  Flame,
-  MapPin,
-} from "lucide-react";
-import { PageHeader, Card, Stat, Button, Segmented, RowItem } from "../../components/ui/index.js";
-import {
-  atlas,
-  kpis,
-  kpisFootnote,
-  timeframes,
-  regions,
-  topFive,
-  mapLegend,
-  nextStepsSubtitle,
-  nextSteps,
-  nextStepsLink,
-  alerts,
-  springPlan,
-  scoring,
-} from "../../data/atlas.js";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { Check, ChevronRight, FileText, Flame, Pencil, Radar, ShieldCheck, SlidersHorizontal, Sprout, TriangleAlert } from "lucide-react";
+import { PageHeader, Card, Stat, Button, Segmented, Badge } from "../../components/ui/index.js";
+import { AnalysisProgress, AtlasGate, useAtlasData, useTimeframe } from "../../state/AtlasData.jsx";
+import AtlasMap from "../../components/atlas/AtlasMap.jsx";
+import MapLegend from "../../components/atlas/MapLegend.jsx";
+import RunPicker from "../../components/atlas/RunPicker.jsx";
+import { describeAlert, kpis, springPlan, summarize } from "../../lib/atlas/overview.js";
+import { dueLabel, formatHaShort, formatUsd, listNames, toDay } from "../../lib/format.js";
+import { areaOfAlert, atlasLink, haFixed, nameAreas, planSteps, useMonthInUrl, weightItems } from "./overviewHelpers.js";
 import "./OverviewPage.css";
 
-// The data file names icons by their Lucide name ("ShieldCheck"). This
-// table turns the name into the real icon. Add a line here when the data
-// file starts using a new icon.
-const ICONS = {
-  ShieldCheck,
-  TriangleAlert,
-  Waves,
-  FileText,
-  Cloud,
-  Flame,
-  MapPin,
-};
+const TIMEFRAMES = [
+  { value: "nearTerm", label: "Near term" },
+  { value: "postwar", label: "Postwar" },
+];
 
-// How many columns and rows the region tile map has.
-const MAP_COLS = 8;
-const MAP_ROWS = 6;
+// How many top areas and alerts show before "Show all".
+const TOP_COUNT = 5;
+const ALERTS_SHOWN = 3;
+
+const STEP_ICONS = { shield: ShieldCheck, alert: TriangleAlert, soil: Sprout, report: FileText };
 
 export default function OverviewPage() {
-  // Which time frame is showing: "nearTerm" or "postwar".
-  const [timeframeId, setTimeframeId] = useState(timeframes[0].id);
-  const timeframe = timeframes.find((item) => item.id === timeframeId) || timeframes[0];
+  // Wait while a month from the address (?month=) is switched to.
+  const switchingMonth = useMonthInUrl();
+  return <AtlasGate>{switchingMonth ? null : <Overview />}</AtlasGate>;
+}
 
-  // The small "showing now" words next to the selected rule box. In the
-  // data file only the "Near term" entry has a tag (Postwar's is empty), so
-  // we take the first non-empty tag we find and reuse it for whichever rule
-  // box is selected. That way choosing "Postwar" moves the words over to it.
-  const showingTag = timeframes.find((item) => item.tag)?.tag || "";
+function Overview() {
+  const navigate = useNavigate();
+  const { area, run, runs, scored, hotspots, settings, job, saveError } = useAtlasData();
+  const [timeframe, setTimeframe] = useTimeframe();
+  const [hovered, setHovered] = useState(null);
+  const mapRef = useRef(null);
+
+  // Links keep the chosen month and time frame.
+  const withView = (path) => atlasLink(path, { month: run.month, timeframe });
+  const openOnMap = (focusId, extra = "") => navigate(withView(`/atlas/map?focus=${encodeURIComponent(focusId)}${extra}`));
+
+  const summary = useMemo(() => summarize(scored.places), [scored]);
+  // The top areas with the names every page uses.
+  const named = useMemo(() => nameAreas(hotspots[timeframe]), [hotspots, timeframe]);
+  const weightLine = weightItems(settings, timeframe);
+  const top = named.slice(0, TOP_COUNT);
+  const isLatest = runs[0]?.id === run.id;
+  const reanalyzing = job?.status === "running" && job.areaId === area.id;
+  const fromEarthEngine = run.provider === "gee";
+
+  // Hovering or focusing a top area outlines it on the map; if the map has
+  // been moved so the area is not fully in view, glide over to it.
+  const showArea = (hotspot) => {
+    setHovered(hotspot);
+    const map = mapRef.current?.getMap();
+    if (!map || !hotspot?.bounds) return;
+    if (!map.getBounds().contains(hotspot.bounds)) {
+      const [[south, west], [north, east]] = hotspot.bounds;
+      map.panTo([(south + north) / 2, (west + east) / 2], { animate: true, duration: 0.4 });
+    }
+  };
 
   return (
-    <div className="page">
+    <div className="page ao">
       <PageHeader
-        eyebrow={atlas.eyebrow}
-        title={atlas.overviewTitle}
-        subtitle={`${atlas.run} run · ${atlas.imagery}`}
+        title={area.name}
+        subtitle={
+          <span className="ao-meta">
+            <span>{run.label}</span>
+            {fromEarthEngine ? (
+              <Badge tone="green" dot>
+                Earth Engine
+              </Badge>
+            ) : (
+              <Badge tone="amber">Sample data</Badge>
+            )}
+          </span>
+        }
         actions={
           <>
-            <Segmented
-              light
-              ariaLabel="Time frame"
-              options={timeframes.map((item) => ({ value: item.id, label: item.label }))}
-              value={timeframeId}
-              onChange={setTimeframeId}
-            />
-            <Button variant="primary" icon={<Download size={14} />} title="Not connected yet">
-              {atlas.reportButton}
+            <RunPicker />
+            <Segmented options={TIMEFRAMES} value={timeframe} onChange={setTimeframe} ariaLabel="Time frame" />
+            <Button variant="primary" icon={<FileText size={14} />} to={withView("/atlas/report")}>
+              Report
             </Button>
           </>
         }
       />
 
-      {/* The four big numbers. The second one (heavy damage) is red. */}
-      <div className="stat-row ao-stats">
-        {kpis.map((kpi) => (
+      {reanalyzing && (
+        <div className="card ao-progress">
+          <AnalysisProgress job={job} compact />
+        </div>
+      )}
+      {saveError && (
+        <p className="ao-save-error" role="alert">
+          <TriangleAlert size={14} /> Weights not saved: {saveError.message}
+        </p>
+      )}
+
+      <div className="ao-stats">
+        {kpis(summary).map((item) => (
           <Stat
-            key={kpi.label}
-            label={kpi.label}
-            value={kpi.value}
-            note={kpi.note || undefined}
-            tone={kpi.tone || undefined}
+            key={item.id}
+            label={item.label}
+            value={item.value}
+            // Red only when there is damage to show: a red "0 ha" reads like an alarm.
+            tone={item.id === "heavy-damage" && item.value === "0 ha" ? undefined : item.tone}
+            note={item.id === "heavy-damage" && run.newHeavyDamageHa > 0 ? `+${formatHaShort(run.newHeavyDamageHa)} this month` : undefined}
           />
         ))}
       </div>
-      <p className="ao-footnote">
-        {kpisFootnote.text} <Link to="/atlas/data">{kpisFootnote.link}</Link>
-      </p>
 
-      {/* Two columns: the big cards on the left, the office list on the
-          right. The four cards sit directly in the grid so each row's two
-          cards are the same height, like the mockup. */}
-      <div className="two-col ao-grid">
+      <div className="ao-grid">
         <Card
+          className="ao-start"
           title="Where to start"
-          subtitle={timeframe.whereToStart}
           actions={
-            <Link to="/atlas/map" className="link-arrow">
-              Open the Atlas <ChevronRight size={14} />
+            <Link to={withView("/atlas/map")} className="ao-weights-link" aria-label={`Weights: ${weightLine.map((item) => item.text).join(", ")}. Adjust`}>
+              <SlidersHorizontal size={13} aria-hidden="true" />
+              <span className="ao-w-list" aria-hidden="true">
+                {weightLine.map((item) => (
+                  <span key={item.key} className={`ao-w ao-w-${item.key}`}>
+                    {item.text}
+                  </span>
+                ))}
+              </span>
+              <span className="ao-weights-adjust" aria-hidden="true">
+                Adjust <ChevronRight size={13} />
+              </span>
             </Link>
           }
         >
-          <div className="ao-start">
-            <div className="ao-map-block">
-              <RegionMap timeframeId={timeframeId} />
-              <MapLegend />
+          <div className="ao-map">
+            <AtlasMap
+              ref={mapRef}
+              area={area}
+              run={run}
+              places={scored.places}
+              colorBy="priority"
+              timeframe={timeframe}
+              height="clamp(280px, 62vw, 380px)"
+              highlightIds={hovered?.cellIds}
+              onSelect={(place) => place && openOnMap(place.id)}
+              ariaLabel={`Map of ${area.name} coloured by priority`}
+            />
+          </div>
+          {/* The key sits under the map so it never covers squares. */}
+          <MapLegend colorBy="priority" timeframe={timeframe} className="ao-legend" />
+
+          <div className="ao-top">
+            <div className="ao-top-head">
+              <h3>Top areas</h3>
+              <span className="ao-top-unit">Black soil</span>
             </div>
-            <TopFive timeframe={timeframe} />
+            {top.length === 0 ? (
+              <p className="ao-empty">No area qualifies with these weights.</p>
+            ) : (
+              <ol className="ao-top-list">
+                {top.map((hotspot) => (
+                  <li key={hotspot.id}>
+                    <button
+                      type="button"
+                      className="ao-top-row"
+                      onClick={() => openOnMap(hotspot.id)}
+                      onMouseEnter={() => showArea(hotspot)}
+                      onMouseLeave={() => setHovered(null)}
+                      onFocus={() => showArea(hotspot)}
+                      onBlur={() => setHovered(null)}
+                    >
+                      <span className="ao-top-rank">{hotspot.rank}</span>
+                      <span className="ao-top-text">
+                        <span className="ao-top-name">{hotspot.title}</span>
+                        {hotspot.coords && <span className="ao-top-coords">{hotspot.coords}</span>}
+                      </span>
+                      <span className="ao-top-ha">{haFixed(hotspot.blackSoilHa)}</span>
+                      <ChevronRight size={14} className="ao-top-go" aria-hidden="true" />
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            )}
           </div>
         </Card>
 
-        <Card title="Next steps for your office" subtitle={nextStepsSubtitle}>
-          <div className="row-list">
-            {nextSteps.map((step) => {
-              const Icon = ICONS[step.icon] || FileText;
-              return (
-                <RowItem
-                  key={step.id}
-                  icon={<Icon size={14} />}
-                  tone={step.tone || undefined}
-                  title={step.title}
-                  help={step.help}
-                  when={step.when}
-                  urgent={step.urgent}
-                />
-              );
-            })}
-          </div>
-          <Link to="/atlas/ai" className="link-arrow">
-            {nextStepsLink} <ChevronRight size={14} />
-          </Link>
-        </Card>
+        <div className="ao-side">
+          <NextSteps run={run} hotspots={named} isLatest={isLatest} linkTo={withView} />
+          <Alerts
+            alerts={run.alerts || []}
+            areas={named}
+            onOpen={(alert) => (alert.cellIds?.[0] ? openOnMap(alert.cellIds[0], "&color=damage") : navigate(withView("/atlas/map?color=damage")))}
+          />
+          <Budget hotspots={named} blackSoilHa={summary.blackSoilHa} />
+        </div>
+      </div>
+    </div>
+  );
+}
 
-        <Card title={scoring.title} subtitle={scoring.subtitle}>
-          <Scoring timeframeId={timeframeId} onChange={setTimeframeId} showingTag={showingTag} />
-        </Card>
+// ---------- Next steps ----------
 
-        <Card title="Alerts">
-          <div className="stack stack-sm">
-            {alerts.map((alert) => {
-              const Icon = ICONS[alert.icon] || Cloud;
-              return (
-                <div key={alert.id} className={`panel panel-${alert.tone} ao-alert ao-alert-${alert.tone}`}>
-                  <span className="ao-alert-icon">
+// "hotspots" are the top areas shown on the page, with their short names,
+// so the steps name the same places as the list.
+function NextSteps({ run, hotspots, isLatest, linkTo }) {
+  const navigate = useNavigate();
+  const { workspace, actions } = useAtlasData();
+  const [error, setError] = useState(null);
+  const steps = planSteps({ run, hotspots, alerts: run.alerts || [], isLatest });
+  const done = new Set(workspace?.doneSteps || []);
+  const doneCount = steps.filter((step) => done.has(step.id)).length;
+  const today = toDay(new Date());
+
+  const toggle = async (stepId) => {
+    setError(null);
+    try {
+      await actions.toggleStep(stepId);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  return (
+    <Card title="Next steps" actions={<span className="ao-count">{doneCount} of {steps.length} done</span>}>
+      <ul className="ao-steps">
+        {steps.map((step) => {
+          const isDone = done.has(step.id);
+          const Icon = STEP_ICONS[step.icon] || FileText;
+          const due = dueLabel(step.due, today);
+          return (
+            <li key={step.id} className={isDone ? "ao-step is-done" : "ao-step"}>
+              <button
+                type="button"
+                className={`ao-step-check ao-tone-${step.tone || "ink"}`}
+                aria-pressed={isDone}
+                aria-label={isDone ? `Mark not done: ${step.title}` : `Mark done: ${step.title}`}
+                onClick={() => toggle(step.id)}
+              >
+                {isDone ? <Check size={14} strokeWidth={3} /> : <Icon size={14} />}
+              </button>
+              <button type="button" className="ao-step-title" onClick={() => navigate(linkTo(step.to))}>
+                {step.title}
+              </button>
+              {!isDone && <span className={due.urgent ? "ao-due is-urgent" : "ao-due"}>{due.text}</span>}
+            </li>
+          );
+        })}
+      </ul>
+      {error && (
+        <p className="ao-inline-error" role="alert">
+          {error}
+        </p>
+      )}
+    </Card>
+  );
+}
+
+// ---------- Alerts ----------
+
+// An alert inside a top area is named after it ("North-west"); others keep
+// their coordinates.
+function Alerts({ alerts, areas, onOpen }) {
+  const [showAll, setShowAll] = useState(false);
+  const shown = showAll ? alerts : alerts.slice(0, ALERTS_SHOWN);
+  return (
+    <Card title="Alerts" actions={alerts.length > 0 && <span className="ao-count">{alerts.length}</span>}>
+      {alerts.length === 0 ? (
+        <p className="ao-empty">No alerts this month.</p>
+      ) : (
+        <ul className="ao-alerts">
+          {shown.map((alert) => {
+            const view = describeAlert(alert);
+            const area = areaOfAlert(alert, areas);
+            const Icon = alert.kind === "fire" ? Flame : Radar;
+            return (
+              <li key={alert.id}>
+                <button type="button" className="ao-alert" onClick={() => onOpen(alert)}>
+                  <span className={`ao-alert-icon ao-tone-${view.tone}`}>
                     <Icon size={14} />
                   </span>
                   <span className="ao-alert-text">
-                    <span className="ao-alert-title">{alert.title}</span>
-                    <span className="ao-alert-detail">{alert.detail}</span>
+                    <span className="ao-alert-title">{view.title}</span>
+                    <span className="ao-alert-place">{area ? area.name : view.place}</span>
                   </span>
-                </div>
-              );
-            })}
-            <div className="panel panel-dark ao-plan">
-              <span className="ao-plan-label">{springPlan.label}</span>
-              <span className="ao-plan-amount mono">{springPlan.amount}</span>
-              <span className="ao-plan-text">{springPlan.text}</span>
-            </div>
-          </div>
-        </Card>
-      </div>
-    </div>
+                  <span className="ao-alert-detail">{view.detail}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {alerts.length > ALERTS_SHOWN && (
+        <button type="button" className="ao-more" onClick={() => setShowAll((value) => !value)} aria-expanded={showAll}>
+          {showAll ? "Show fewer" : `Show all ${alerts.length}`}
+        </button>
+      )}
+    </Card>
   );
 }
 
-// The tile map: one rounded square per region, placed on an 8 by 6 grid
-// and coloured by its tier in the chosen time frame. Top-five regions also
-// show their rank under the code.
-function RegionMap({ timeframeId }) {
-  return (
-    <div
-      className="ao-map"
-      role="img"
-      aria-label="Regions of Ukraine coloured by priority"
-      style={{ "--ao-cols": MAP_COLS, "--ao-rows": MAP_ROWS }}
-    >
-      {regions.map((region) => {
-        const { tier, rank } = region[timeframeId] || region.nearTerm;
-        const classes = ["ao-tile", `ao-tile-${tier}`, region.dashed ? "ao-tile-dashed" : ""]
-          .filter(Boolean)
-          .join(" ");
-        return (
-          <div
-            key={region.code}
-            className={classes}
-            style={{ gridColumn: region.col + 1, gridRow: region.row + 1 }}
-            title={region.name}
-          >
-            <span className="ao-tile-code">{region.code}</span>
-            {rank && <span className="ao-tile-rank">{rank}</span>}
-          </div>
-        );
-      })}
-    </div>
-  );
+// ---------- Budget ----------
+
+// Reads what a person typed as a dollar amount: "10,000,000", "$2.5M",
+// "750k", "1.2 billion". Gives back null when it is not an amount.
+function parseBudget(text) {
+  const clean = String(text || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[$,\s]|usd/g, "");
+  const match = /^(\d+(?:\.\d+)?)(k|thousand|m|mn|million|b|bn|billion)?$/.exec(clean);
+  if (!match) return null;
+  const times = { k: 1e3, thousand: 1e3, m: 1e6, mn: 1e6, million: 1e6, b: 1e9, bn: 1e9, billion: 1e9 }[match[2]] || 1;
+  const value = Math.round(Number(match[1]) * times);
+  return value <= 1e12 ? value : null;
 }
 
-// The legend under the map: a small swatch per tier.
-function MapLegend() {
+// "8.6k–26.3k ha": both ends in the same short form.
+function haRange(low, high) {
+  const short = (ha) => (ha >= 1000 && ha < 1e6 ? `${Number((ha / 1000).toFixed(ha < 1e4 ? 1 : 0))}k` : formatHaShort(ha).replace(" ha", ""));
+  return `${short(low)}–${short(high)} ha`;
+}
+
+function Budget({ hotspots, blackSoilHa }) {
+  const { workspace, actions } = useAtlasData();
+  const budget = workspace?.budgetUsd ?? 0;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [error, setError] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const inputRef = useRef(null);
+  // Set while Enter or Escape closes the box, so leaving it does not save twice.
+  const closing = useRef(false);
+  // springPlan names places by "label": use the short names.
+  const plan = springPlan(
+    budget,
+    hotspots.map((hotspot) => ({ ...hotspot, label: hotspot.name }))
+  );
+
+  useEffect(() => {
+    if (editing) inputRef.current?.select();
+  }, [editing]);
+
+  const startEditing = () => {
+    setDraft(budget.toLocaleString("en-US"));
+    setError(null);
+    closing.current = false;
+    setEditing(true);
+  };
+
+  const save = async () => {
+    if (closing.current) return;
+    const value = parseBudget(draft);
+    if (value === null) {
+      setError("Enter an amount in dollars, like 10,000,000 or 2.5M.");
+      return;
+    }
+    closing.current = true;
+    setEditing(false);
+    if (value === budget) return;
+    setSaving(true);
+    try {
+      await actions.updateWorkspace({ budgetUsd: value });
+      setError(null);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <div className="legend ao-legend">
-      {mapLegend.map((item) => {
-        const swatchClass =
-          item.pattern === "striped"
-            ? "swatch ao-swatch-striped"
-            : item.pattern === "dashed"
-              ? "swatch swatch-dashed"
-              : "swatch";
-        return (
-          <span key={item.tier} className="legend-item">
-            <span className={swatchClass} style={{ "--swatch": `var(--c-${item.colour})` }} />
-            {item.label}
+    <section className="ao-budget" aria-label="Budget">
+      <span className="ao-budget-label">Budget</span>
+      {editing ? (
+        <form
+          className="ao-budget-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            save();
+          }}
+        >
+          <span className="ao-budget-dollar" aria-hidden="true">
+            $
           </span>
-        );
-      })}
-    </div>
-  );
-}
-
-// The "Top five" list: rank, region name and a green bar, then the note.
-function TopFive({ timeframe }) {
-  const list = topFive[timeframe.id] || topFive.nearTerm;
-  return (
-    <div className="ao-top">
-      <h3>{timeframe.topTitle}</h3>
-      <ol className="ao-top-list">
-        {list.map((item) => (
-          <li key={item.code} className="ao-top-row">
-            <span className="ao-top-rank">{item.rank}</span>
-            <span className="ao-top-name">{item.name}</span>
-            <span className="score-bar-track ao-top-track">
-              <span className="score-bar-fill ao-top-fill" style={{ width: `${item.value * 100}%` }} />
-            </span>
-          </li>
-        ))}
-      </ol>
-      <p className="ao-top-note">{topFive.note}</p>
-    </div>
-  );
-}
-
-// "How priority is scored": three question tiles, an arrow, the Priority
-// box, and under them one rule box per time frame. Clicking a rule box
-// switches the whole page to that time frame.
-function Scoring({ timeframeId, onChange, showingTag }) {
-  return (
-    <div className="stack">
-      <div className="ao-questions">
-        {scoring.questions.map((question) => (
-          <div key={question.id} className={`panel panel-${question.tone} ao-question ao-question-${question.tone}`}>
-            <span className="ao-question-label">{question.label}</span>
-            <span className="ao-question-text">{question.question}</span>
-          </div>
-        ))}
-        <span className="ao-arrow" aria-hidden="true">
-          <ArrowRight size={18} />
-        </span>
-        <div className="panel panel-dark ao-result">
-          <span className="ao-question-label">{scoring.result.label}</span>
-          <span className="ao-question-text">{scoring.result.help}</span>
-        </div>
-      </div>
-
-      <div className="ao-modes">
-        {timeframes.map((item) => {
-          const active = item.id === timeframeId;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              className={active ? "panel panel-outline panel-selected ao-mode is-active" : "panel panel-outline ao-mode"}
-              onClick={() => onChange(item.id)}
-              aria-pressed={active}
-            >
-              <span className="ao-mode-title">
-                {item.label}
-                {active && showingTag && <span className="ao-mode-tag"> · {showingTag}</span>}
-              </span>
-              <span className="ao-mode-text">{item.description}</span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
+          <input
+            ref={inputRef}
+            id="ao-budget-input"
+            className="ao-budget-input"
+            inputMode="decimal"
+            aria-label="Budget in US dollars"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onBlur={save}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                closing.current = true;
+                setEditing(false);
+                setError(null);
+              }
+            }}
+          />
+        </form>
+      ) : (
+        <button type="button" className="ao-budget-amount" onClick={startEditing} aria-label={`Budget ${formatUsd(budget)}. Change`}>
+          <span>{formatUsd(budget)}</span>
+          <Pencil size={14} aria-hidden="true" />
+        </button>
+      )}
+      {error && (
+        <p className="ao-budget-error" role="alert">
+          {error}
+        </p>
+      )}
+      {budget > 0 ? (
+        <>
+          <span className="ao-budget-ha" aria-busy={saving}>
+            {/* A budget bigger than the land (a farm) covers all of it. */}
+            {plan.fewestHa >= blackSoilHa
+              ? `Covers all ${formatHaShort(blackSoilHa)}`
+              : `Covers ${haRange(plan.fewestHa, Math.min(plan.mostHa, blackSoilHa))}`}
+          </span>
+          {plan.start.length > 0 && <span className="ao-budget-start">Start with {listNames(plan.start)}</span>}
+        </>
+      ) : (
+        <span className="ao-budget-start">Set a budget to see the land it covers.</span>
+      )}
+    </section>
   );
 }

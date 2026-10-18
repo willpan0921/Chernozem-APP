@@ -831,3 +831,22 @@
     var(--c-red-soft) 2px 4px
   );
 }
+
+/* ---------- Atlas loading and error box (src/state/AtlasData.jsx) ---------- */
+
+.atlas-status {
+  max-width: 640px;
+  gap: var(--s-2);
+}
+
+.atlas-status-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.atlas-status-error .atlas-status-title {
+  color: var(--c-red-text);
+}

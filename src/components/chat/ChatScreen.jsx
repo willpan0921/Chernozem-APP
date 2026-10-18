@@ -1,178 +1,374 @@
 // WHAT THIS FILE DOES
-// A whole AI page in one piece: it holds the state (which thread is open,
-// the messages, the text being typed, whether a reply is on its way) and
-// puts the building blocks together with ChatLayout. The Field and Atlas AI
-// pages are each just a <ChatScreen /> with their own data.
+// A whole AI page in one piece: it holds the state (which chat is open, its
+// messages, the text being typed, the answer being written) and puts the
+// building blocks together with ChatLayout. The Field and Atlas AI pages
+// are each just a <ChatScreen /> with their own context.
 //
 // WHAT HAPPENS
-// - Clicking a chat in the left list opens it.
-// - "New" starts an empty chat called "New chat" and opens it.
-// - Sending a message adds it as a dark bubble, shows "Thinking…", then adds
-//   the reply from src/api/chatApi.js (a fake reply for now).
-// - A "Try asking" button puts its question in the message box.
+// - The saved chats load from the server (src/api/chatApi.js). Clicking one
+//   opens it; the open chat is kept in the address (?chat=...), so a reload
+//   or a shared link opens the same chat.
+// - "New chat" starts an empty chat. It is saved on the server when the
+//   first question is sent.
+// - Sending shows the question at once, then "Thinking…", then what the AI
+//   is looking up, then the answer as it is written. The square button
+//   stops it; the part already written stays (and is saved) as "Stopped".
+// - Problems show as a red line with "Try again". Without an AI key the
+//   "Connect Claude" steps show instead.
+// - Until the first chat is saved, the "Chats" column is hidden.
+// - A "Try asking" question is sent straight away.
+// - The bin icon deletes the open chat (after "Delete" to confirm).
 //
 // WHO EDITS IT
 // Danny.
 //
 // WHAT IT RECEIVES
-// product     - "field" or "atlas" (passed to the AI with every message)
-// threads     - fieldChats or atlasChats from src/data/chats.js
-// reading     - fieldReading or atlasReading
-// suggestions - fieldSuggestions or atlasSuggestions
-// composer    - composer.field or composer.atlas
+// product      - "field" or "atlas" (sent to the AI with every message)
+// context      - what the AI should read, sent with every message
+//                Atlas: { runId, settings, timeframe, selectedCellId }; Field: { farm }
+// text         - { placeholder, disclaimer, welcome } (from "composer" in src/data/chats.js)
+// suggestions  - the "Try asking" questions
+// using        - the "Using" rows for the right column (see ChatRail.jsx)
+// chips        - dropdown chips for the message box (see ChatComposer.jsx)
+// initialDraft - text to put in the message box when the page opens
+//                (e.g. "Tell me about Kharkiv"); changing it puts the new text in.
+//                When it becomes "" and the box still holds the old text
+//                untouched, the box is emptied too.
 
-import { useState } from "react";
-import { sendChatMessage } from "../../api/chatApi.js";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { Sprout } from "lucide-react";
+import { getAiStatus, listThreads, openThread, removeThread, sendChatMessage } from "../../api/chatApi.js";
+import { titleFrom, upsertThread } from "../../lib/chat/threads.js";
 import ChatLayout from "./ChatLayout.jsx";
 import ChatThreadList from "./ChatThreadList.jsx";
 import ChatConversation from "./ChatConversation.jsx";
 import ChatComposer from "./ChatComposer.jsx";
 import ChatRail from "./ChatRail.jsx";
+import ChatSetupCard from "./ChatSetupCard.jsx";
 
-// Text the screen needs that is not in the thread data yet.
-// TODO move to src/data/chats.js (as a "chatLabels" export; the new-chat
-// subtitle should become a per-product default in "composer")
+// Text the screen needs on its own.
 const labels = {
   newChatTitle: "New chat",
-  replyFailed: "Sorry, something went wrong. Please try again.",
+  listFailed: "Could not load your chats.",
+  openFailed: "Could not open this chat.",
+  deleteFailed: "Could not delete this chat. Try again.",
 };
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+let localCount = 0;
+const localId = (prefix) => `${prefix}-local-${Date.now()}-${(localCount += 1)}`;
 
-// "Oct 11" for the chat list.
-function shortDate(date) {
-  return `${MONTHS[date.getMonth()]} ${date.getDate()}`;
-}
+export default function ChatScreen({ product, context, text, suggestions = [], using = [], chips = [], initialDraft = "" }) {
+  const [params, setParams] = useSearchParams();
+  const selectedId = params.get("chat") || null;
 
-// "Oct 11 · 9:40" for under a message.
-function shortTime(date) {
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  return `${shortDate(date)} · ${date.getHours()}:${minutes}`;
-}
+  // The saved chats, newest first.
+  const [threads, setThreads] = useState([]);
+  const [threadsLoading, setThreadsLoading] = useState(true);
+  const [threadsError, setThreadsError] = useState(null);
+  // The open chat's messages.
+  const [messages, setMessages] = useState([]);
+  const [threadLoading, setThreadLoading] = useState(false);
+  // The answer being written: { text, tool } or null.
+  const [pending, setPending] = useState(null);
+  const [error, setError] = useState(null);
+  const [draft, setDraft] = useState(initialDraft);
+  // { configured, model } from the server, or null while unknown.
+  const [aiStatus, setAiStatus] = useState(null);
+  const [checking, setChecking] = useState(false);
+  // Changes whenever a chat opens, so the message box takes the cursor.
+  const [focusKey, setFocusKey] = useState(0);
 
-// "2026-10-11T09:40" in local time, matching the data file.
-function isoMinute(date) {
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
+  // The running answer (to stop it), and a counter so a stopped answer can
+  // never write into a chat opened after it.
+  const abortRef = useRef(null);
+  const sessionRef = useRef(0);
+  // A chat the server just created while we were sending: its messages are
+  // already on screen, so it is not loaded again.
+  const createdRef = useRef(null);
+  const lastQuestionRef = useRef("");
+  // The latest context, read when a message is sent.
+  const contextRef = useRef(context);
+  contextRef.current = context;
+  // The last pre-filled question, to tell whether the box still holds it.
+  const initialDraftRef = useRef(initialDraft);
 
-export default function ChatScreen({ product, threads: initialThreads, reading, suggestions, composer }) {
-  // All threads, newest first. Starts from the data file; new chats and new
-  // messages are added here (they are not saved anywhere yet).
-  const [threads, setThreads] = useState(initialThreads);
-  // The id of the open thread.
-  const [selectedId, setSelectedId] = useState(initialThreads[0]?.id);
-  // The text in the message box.
-  const [draft, setDraft] = useState("");
-  // The chosen value of each dropdown chip, keyed by its kind.
-  const [chips, setChips] = useState(() =>
-    Object.fromEntries(
-      composer.contextChips.filter((chip) => chip.options).map((chip) => [chip.kind, chip.label]),
-    ),
+  const notConfigured = aiStatus?.configured === false;
+  const busy = Boolean(pending);
+
+  const setChat = useCallback(
+    (id) => {
+      setParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          if (id) next.set("chat", id);
+          else next.delete("chat");
+          return next;
+        },
+        { replace: true }
+      );
+    },
+    [setParams]
   );
-  // True while we wait for a reply.
-  const [thinking, setThinking] = useState(false);
 
-  const thread = threads.find((item) => item.id === selectedId) || threads[0];
-
-  // The chip that names what the chat is about ("Field 7", "All regions").
-  const scopeChip = composer.contextChips.find((chip) => chip.options);
-  const scopeLabel = scopeChip ? chips[scopeChip.kind] : thread?.scopeLabel;
-
-  // Adds a message to the end of one thread.
-  function addMessage(threadId, message) {
-    setThreads((current) =>
-      current.map((item) =>
-        item.id === threadId ? { ...item, messages: [...item.messages, message] } : item,
-      ),
-    );
-  }
-
-  // "New": an empty thread at the top of the list, opened straight away.
-  function handleNew() {
-    const now = new Date();
-    const fresh = {
-      id: `new-${now.getTime()}`,
-      title: labels.newChatTitle,
-      date: isoMinute(now).slice(0, 10),
-      dateLabel: shortDate(now),
-      scopeLabel,
-      // Same helper line as the data chat about the same scope, or else
-      // the first chat in this product.
-      subtitle:
-        initialThreads.find((item) => item.scopeLabel === scopeLabel)?.subtitle ||
-        initialThreads[0]?.subtitle ||
-        "",
-      messages: [],
+  // The saved chats and whether the AI has a key, once.
+  useEffect(() => {
+    let gone = false;
+    listThreads(product)
+      .then((list) => !gone && (setThreads(list), setThreadsError(null)))
+      .catch(() => !gone && setThreadsError(labels.listFailed))
+      .finally(() => !gone && setThreadsLoading(false));
+    getAiStatus().then((status) => !gone && setAiStatus(status));
+    return () => {
+      gone = true;
     };
-    setThreads((current) => [fresh, ...current]);
-    setSelectedId(fresh.id);
-    setDraft("");
-  }
+  }, [product]);
 
-  // Sends the draft: show it, ask for the reply, show the reply.
-  async function handleSend() {
-    const text = draft.trim();
-    if (!text || thinking || !thread) return;
-
-    const threadId = thread.id;
-    const now = new Date();
-    addMessage(threadId, {
-      id: `u-${now.getTime()}`,
-      role: "user",
-      at: isoMinute(now),
-      time: shortTime(now),
-      text,
-    });
-    setDraft("");
-    setThinking(true);
-
-    let replyText;
-    try {
-      replyText = await sendChatMessage(text, { product, scopeLabel });
-    } catch {
-      replyText = labels.replyFailed;
+  // A new pre-filled question (e.g. "Tell me about ..." from the map). When
+  // the page takes it away (the place was cleared), an unedited copy in the
+  // box goes too.
+  useEffect(() => {
+    const previous = initialDraftRef.current;
+    initialDraftRef.current = initialDraft;
+    if (initialDraft) {
+      setDraft(initialDraft);
+      setFocusKey((n) => n + 1);
+    } else if (previous) {
+      setDraft((current) => (current.trim() === previous.trim() ? "" : current));
     }
-    const replyAt = new Date();
-    addMessage(threadId, {
-      id: `ai-${replyAt.getTime()}`,
-      role: "ai",
-      at: isoMinute(replyAt),
-      time: shortTime(replyAt),
-      text: replyText,
-    });
-    setThinking(false);
+  }, [initialDraft]);
+
+  // Open the chat named in the address.
+  useEffect(() => {
+    if (!selectedId) {
+      setMessages([]);
+      setThreadLoading(false);
+      return undefined;
+    }
+    if (createdRef.current === selectedId) return undefined;
+    let gone = false;
+    setThreadLoading(true);
+    setMessages([]);
+    setError(null);
+    openThread(selectedId)
+      .then((thread) => {
+        if (gone) return;
+        // A chat that no longer exists: go back to a new chat.
+        if (!thread) {
+          setChat(null);
+          return;
+        }
+        setMessages(
+          (thread.messages || []).map((m) => ({ id: m.id, role: m.role === "user" ? "user" : "assistant", text: m.text, stopped: Boolean(m.stopped) }))
+        );
+        setFocusKey((n) => n + 1);
+      })
+      .catch((err) => {
+        if (gone) return;
+        // A chat that no longer exists: go back to a new chat.
+        if (err?.status === 404) setChat(null);
+        else setError({ code: err?.code || "error", message: labels.openFailed });
+      })
+      .finally(() => !gone && setThreadLoading(false));
+    return () => {
+      gone = true;
+    };
+  }, [selectedId, setChat]);
+
+  // Stop an answer when the page closes.
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  // Stops the answer being written and forgets it.
+  function cancelRunning() {
+    sessionRef.current += 1;
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setPending(null);
   }
+
+  function openChat(id) {
+    if (id === selectedId) return;
+    cancelRunning();
+    createdRef.current = null;
+    setError(null);
+    setChat(id);
+  }
+
+  function newChat() {
+    cancelRunning();
+    createdRef.current = null;
+    setError(null);
+    setMessages([]);
+    setDraft("");
+    setChat(null);
+    setFocusKey((n) => n + 1);
+  }
+
+  async function send(question) {
+    const textToSend = (question ?? draft).trim();
+    if (!textToSend || busy || notConfigured) return;
+
+    const session = (sessionRef.current += 1);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    lastQuestionRef.current = textToSend;
+    const startedIn = selectedId;
+    let soFar = "";
+
+    setError(null);
+    setMessages((list) => [...list, { id: localId("u"), role: "user", text: textToSend }]);
+    setPending({ text: "", tool: null });
+    if (question === undefined) setDraft("");
+
+    const live = () => sessionRef.current === session;
+
+    try {
+      const reply = await sendChatMessage(textToSend, {
+        product,
+        threadId: startedIn,
+        context: contextRef.current,
+        signal: controller.signal,
+        onThread: ({ threadId, title }) => {
+          if (!live()) return;
+          setThreads((list) => upsertThread(list, { id: threadId, title: title || titleFrom(textToSend), updatedAt: new Date().toISOString() }));
+          if (threadId !== startedIn) {
+            createdRef.current = threadId;
+            setChat(threadId);
+          }
+        },
+        onText: (_piece, all) => {
+          soFar = all;
+          if (live()) setPending({ text: all, tool: null });
+        },
+        onTool: ({ name, status }) => {
+          if (live()) setPending((p) => ({ text: p?.text || "", tool: status === "running" ? name : null }));
+        },
+      });
+      if (!live()) return;
+      abortRef.current = null;
+      setPending(null);
+      if (reply.error) {
+        if (soFar.trim()) setMessages((list) => [...list, { id: localId("a"), role: "assistant", text: soFar, stopped: true }]);
+        if (reply.error.code === "ai_not_configured") setAiStatus((s) => ({ ...s, configured: false }));
+        setError(reply.error);
+        return;
+      }
+      setMessages((list) => [...list, { id: reply.messageId || localId("a"), role: "assistant", text: reply.text }]);
+      if (reply.threadId) setThreads((list) => upsertThread(list, { id: reply.threadId, updatedAt: new Date().toISOString() }));
+    } catch (err) {
+      if (!live()) return;
+      abortRef.current = null;
+      setPending(null);
+      if (err?.name === "AbortError") {
+        // Stopped by the person: keep what was written so far.
+        if (soFar.trim()) setMessages((list) => [...list, { id: localId("a"), role: "assistant", text: soFar, stopped: true }]);
+        return;
+      }
+      setError({ code: "error", message: err?.message || "Something went wrong. Try again." });
+    }
+  }
+
+  function stop() {
+    abortRef.current?.abort();
+  }
+
+  // "Try again": send the last question once more. The server keeps the
+  // question it already saved (server/ai/chat.js) instead of a second copy.
+  function retry() {
+    const question = lastQuestionRef.current;
+    if (!question) return;
+    // The failed question is already on screen; send it without adding it twice.
+    setMessages((list) => {
+      const last = list[list.length - 1];
+      return last?.role === "user" && last.text === question ? list.slice(0, -1) : list;
+    });
+    send(question);
+  }
+
+  async function deleteOpenChat() {
+    const id = selectedId;
+    if (!id) return;
+    try {
+      await removeThread(id);
+      setThreads((list) => list.filter((item) => item.id !== id));
+      newChat();
+    } catch {
+      setError({ code: "error", message: labels.deleteFailed });
+    }
+  }
+
+  async function checkAgain() {
+    setChecking(true);
+    const status = await getAiStatus();
+    setChecking(false);
+    setAiStatus(status);
+    if (status?.configured) setError((e) => (e?.code === "ai_not_configured" ? null : e));
+  }
+
+  const openTitle = selectedId ? threads.find((item) => item.id === selectedId)?.title || "" : labels.newChatTitle;
+  const setupCard = notConfigured ? <ChatSetupCard onCheck={checkAgain} checking={checking} /> : null;
+  // Nothing saved and nothing typed yet: no "Chats" column.
+  const noThreads = !threadsLoading && !threadsError && threads.length === 0 && !selectedId && messages.length === 0 && !pending;
+
+  const welcome = (
+    <div className="chat-welcome">
+      <span className="chat-welcome-logo">
+        <Sprout size={22} strokeWidth={2.2} />
+      </span>
+      <p className="chat-welcome-text">{text.welcome}</p>
+      {suggestions.length > 0 && (
+        <div className="chat-welcome-suggestions">
+          {suggestions.map((question) => (
+            <button key={question} type="button" className="chat-suggestion" onClick={() => send(question)}>
+              {question}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <ChatLayout
+      noThreads={noThreads}
       threads={
         <ChatThreadList
           threads={threads}
-          selectedId={thread?.id}
-          onSelect={setSelectedId}
-          onNew={handleNew}
+          selectedId={selectedId}
+          onSelect={openChat}
+          onNew={newChat}
+          loading={threadsLoading}
+          error={threadsError}
         />
       }
       conversation={
         <ChatConversation
-          thread={thread}
-          thinking={thinking}
-          languageButton={composer.languageButton}
+          title={openTitle}
+          onDelete={selectedId && !busy ? deleteOpenChat : undefined}
+          messages={messages}
+          pending={pending}
+          error={error?.code === "ai_not_configured" ? null : error}
+          onRetry={error && error.code !== "ai_not_configured" ? retry : undefined}
+          loading={threadLoading}
+          notice={setupCard && messages.length > 0 ? setupCard : null}
+          empty={setupCard || welcome}
           composer={
             <ChatComposer
-              config={composer}
+              placeholder={text.placeholder}
+              disclaimer={text.disclaimer}
               draft={draft}
               onDraft={setDraft}
               chips={chips}
-              onChip={(kind, value) => setChips((current) => ({ ...current, [kind]: value }))}
-              onSend={handleSend}
-              disabled={thinking}
+              onSend={() => send()}
+              onStop={stop}
+              busy={busy}
+              disabled={notConfigured}
+              focusKey={`${selectedId}-${focusKey}`}
             />
           }
         />
       }
-      rail={<ChatRail reading={reading} suggestions={suggestions} onSuggest={setDraft} />}
+      rail={<ChatRail using={using} suggestions={suggestions} onSuggest={send} disabled={busy || notConfigured} emptyChat={messages.length === 0 && !pending && !threadLoading && !notConfigured} />}
     />
   );
 }
