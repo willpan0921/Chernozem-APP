@@ -2,9 +2,10 @@
 // The one place the app reads the farm's fields from Firestore, in the
 // collection called "fields" (one document per field: "field-1"...).
 //
-// For now Firestore holds only each field's name and real outline (drawn in
-// the Earth Engine Code Editor, copied in by scripts/seed-fields.js). The
-// crop, status and every number on the Fields page still come from
+// For now Firestore holds each field's name, its real outline (drawn in the
+// Earth Engine Code Editor, copied in by scripts/seed-fields.js) and its
+// newest clear NDVI reading, "latestNdvi" (saved by scripts/fetch-ndvi.js).
+// The crop, status and the other numbers on the Fields page still come from
 // src/data/farm.js, matched by the field's id.
 //
 // Firestore cannot store a list inside a list, so the outline is saved as
@@ -13,7 +14,8 @@
 //
 // WHO EDITS IT
 // Danny. The Fields page and the sidebar use useFieldOutlines(), and
-// fieldAreaHa() / farmAreaHa() for the real hectares.
+// fieldAreaHa() / farmAreaHa() for the real hectares. The Fields page also
+// uses the hook's latestNdvi for the plant health tile.
 
 import { useEffect, useState } from "react";
 import { collection, onSnapshot } from "firebase/firestore";
@@ -21,40 +23,48 @@ import { db } from "./firebase.js";
 
 const fieldsCollection = collection(db, "fields");
 
-// Starts listening to the field outlines. "onOutlines" is called right away
-// with an object keyed by field id, e.g. { "field-1": { type: "Polygon",
-// coordinates: [...] } }, and again whenever an outline changes. A field
-// whose outline cannot be read is left out. Returns a function that stops
-// listening (call it when the page closes).
+// Starts listening to the fields. "onOutlines" is called right away with two
+// objects keyed by field id, and again whenever a field changes:
+//   outlines   - { "field-1": { type: "Polygon", coordinates: [...] } }
+//   latestNdvi - { "field-1": { date: "2026-10-12", value: 0.29 } }
+// A field whose outline cannot be read, or that has no NDVI reading yet, is
+// left out of that object. Returns a function that stops listening (call it
+// when the page closes).
 export function listenToFieldOutlines(onOutlines, onError) {
   return onSnapshot(
     fieldsCollection,
     (snapshot) => {
       const outlines = {};
+      const latestNdvi = {};
       for (const doc of snapshot.docs) {
+        const reading = doc.data().latestNdvi;
+        if (reading) latestNdvi[doc.id] = reading;
         try {
           outlines[doc.id] = JSON.parse(doc.data().outline);
         } catch (error) {
           console.error(`[fields] The outline of ${doc.id} is not valid GeoJSON:`, error);
         }
       }
-      onOutlines(outlines);
+      onOutlines(outlines, latestNdvi);
     },
     onError
   );
 }
 
-// For pages: the outlines (keyed by field id) and whether they are still
-// loading ("loading", "ready" or "error"). Listens while the page is open.
+// For pages: the outlines and newest NDVI readings (each keyed by field id),
+// and whether they are still loading ("loading", "ready" or "error").
+// Listens while the page is open.
 export function useFieldOutlines() {
   const [outlines, setOutlines] = useState({});
+  const [latestNdvi, setLatestNdvi] = useState({});
   const [status, setStatus] = useState("loading");
 
   useEffect(
     () =>
       listenToFieldOutlines(
-        (latest) => {
-          setOutlines(latest);
+        (latestOutlines, latestReadings) => {
+          setOutlines(latestOutlines);
+          setLatestNdvi(latestReadings);
           setStatus("ready");
         },
         (error) => {
@@ -65,7 +75,7 @@ export function useFieldOutlines() {
     []
   );
 
-  return { outlines, status };
+  return { outlines, latestNdvi, status };
 }
 
 /* -------------------------------------------------------------------------

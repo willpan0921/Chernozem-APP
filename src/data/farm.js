@@ -218,6 +218,14 @@ export const fieldsMap = {
   // The map photo is Esri World Imagery, whose date is not known.
   dateLabel: "Esri World Imagery",
   satelliteThumbLabel: "Satellite",
+  // The plant health tile in the right panel shows the field's newest clear
+  // satellite reading from Firestore. "{date}" becomes e.g. "Oct 12".
+  ndviTile: {
+    measured: "Sentinel-2 reading from {date}.",
+    loading: "…",
+    none: "–",
+    noneText: "No clear satellite reading yet.",
+  },
   legend: {
     title: "Plant health (NDVI)",
     low: "Low",

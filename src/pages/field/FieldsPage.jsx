@@ -110,7 +110,8 @@ export default function FieldsPage() {
   const [layer, setLayer] = useState(fieldsMap.layer);
   // The real field outlines from Firestore, keyed by field id, and whether
   // they are still loading ("loading", "ready" or "error").
-  const { outlines, status: outlineStatus } = useFieldOutlines();
+  // The newest clear NDVI reading per field comes with them.
+  const { outlines, latestNdvi, status: outlineStatus } = useFieldOutlines();
 
   const selectedField = fields.find((field) => field.id === selectedId) || fields[0];
 
@@ -138,6 +139,8 @@ export default function FieldsPage() {
         key={selectedId}
         field={selectedField}
         areaText={areaText(selectedField, outlines[selectedField.id], outlineStatus)}
+        ndvi={latestNdvi[selectedField.id]}
+        ndviStatus={outlineStatus}
         onNext={selectNextField}
       />
     </div>
@@ -320,7 +323,21 @@ function areaText(field, outline, outlineStatus) {
   return `${field.areaHa.toFixed(1)} ha`;
 }
 
-function DetailPanel({ field, areaText, onNext }) {
+// The plant health tile with the field's real NDVI from Firestore in place
+// of the number in farm.js: "0.29" and "Sentinel-2 reading from Oct 12.",
+// "…" while loading, or a dash when there is no clear reading. The badge
+// still comes from farm.js.
+function withRealNdvi(metric, reading, status) {
+  const words = fieldsMap.ndviTile;
+  if (reading) {
+    const day = new Date(`${reading.date}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    return { ...metric, value: reading.value.toFixed(2), text: words.measured.replace("{date}", day) };
+  }
+  if (status === "loading") return { ...metric, value: words.loading };
+  return { ...metric, value: words.none, text: words.noneText };
+}
+
+function DetailPanel({ field, areaText, ndvi, ndviStatus, onNext }) {
   const detail = fieldDetails[field.id];
 
   // Fallback for a field with no detail entry in the data module.
@@ -359,7 +376,10 @@ function DetailPanel({ field, areaText, onNext }) {
       {/* The four metric tiles. */}
       <div className="ff-metrics">
         {detail.metrics.map((metric) => (
-          <MetricTile key={metric.key} metric={metric} />
+          <MetricTile
+            key={metric.key}
+            metric={metric.key === "plantHealth" ? withRealNdvi(metric, ndvi, ndviStatus) : metric}
+          />
         ))}
       </div>
 
