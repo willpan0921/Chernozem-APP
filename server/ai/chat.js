@@ -7,8 +7,11 @@
 //
 // How a message is answered:
 //   1. The conversation is loaded (or started) and the question is saved.
-//   2. The facts are gathered (context.js): for the Atlas the current run,
-//      scored with the user's weights; for Field the farm summary.
+//   2. The facts are gathered on the server: for the Atlas (context.js) the
+//      current run, scored with the user's weights; for Field
+//      (field-context.js) the saved farm, its fields' analyses, weather and
+//      reports. A Field chat opened about a "Tell us what happened" report
+//      (context.reportId) also carries that report's photos as images.
 //   3. Claude is asked, streaming. While it writes, each piece of text is
 //      sent on to the page ("delta" events). When Claude wants to look
 //      something up it calls a tool; we run it, give back the answer, and
@@ -25,10 +28,12 @@
 //
 // WHO EDITS IT
 // Whoever changes how the AI talks. The AI's instructions are the
-// ATLAS_SYSTEM and FIELD_SYSTEM texts below; what it knows is in context.js.
+// ATLAS_SYSTEM and FIELD_SYSTEM texts below; what it knows is in context.js
+// (Atlas) and field-context.js (Field).
 
 import Anthropic from "@anthropic-ai/sdk";
-import { buildAtlasContext, fieldContextText } from "./context.js";
+import { buildAtlasContext } from "./context.js";
+import { buildFieldContext } from "./field-context.js";
 
 // ---------- Settings ----------
 
@@ -56,12 +61,16 @@ How to answer:
 - Never say land is safe or cleared. Safe access is an estimate from distance to recorded fighting; only certified deminers can declare land safe.
 - Costs exclude demining.`;
 
-export const FIELD_SYSTEM = `You are the farming assistant inside Chernozem Field, an app for farmers working black-soil (chernozem) farmland, much of it affected by war.
+export const FIELD_SYSTEM = `You are the farming assistant inside Chernozem Field, an app that watches a farmer's black-soil (chernozem) fields from satellite images every few days and compares them with the normal for 2019 to 2021, before the full-scale war.
 
 How to answer:
-- Be short, practical and friendly. Plain words a farmer would use.
-- Base answers on the farm details provided. If something important is missing, ask one short question.
-- Never say a field is safe from mines or unexploded ordnance. If there is any sign of it, tell the farmer to stay off and contact the national demining service.`;
+- Short and plain. A direct answer first, then at most a few short bullet points. Words a farmer uses: say "plant health" and "water in the plants" rather than NDVI and NDWI unless the farmer uses those words. No formulas unless asked.
+- Use only the farm data in the context block and the tools. Quote real numbers from it (hectares, dates, days to harvest, millimetres of rain) and name the fields. If something is not in the data, say so plainly; do not guess.
+- Use the tools for one field's full readings and season curve, its monthly history since 2019, the weather forecast and the farmer's reports.
+- If the data source is SAMPLE DATA, say once, briefly, that the numbers are sample data for testing, not real satellite readings.
+- Photos the farmer sent are attached as images. Say what you can actually see and what it may mean; say when a photo is unclear.
+- Never say a field or any land is free of mines or unexploded ordnance, or that it is safe to enter. Satellites cannot see mines. If a field shows war damage, or the farmer mentions shelling, craters, metal pieces or anything suspicious, tell them to stay off it and call the demining service (in Ukraine, the State Emergency Service on 101) before any work.
+- Recovery costs are rough ranges in US dollars and do not include demining.`;
 
 // ---------- Swappable parts (for tests) ----------
 
@@ -88,6 +97,9 @@ async function deps() {
     store: depOverrides.store || (await import("../store.js")),
     runs: depOverrides.runs || (await import("../runs.js").catch(() => null)),
     config: depOverrides.config || (await import("../env.js")).config,
+    // (farm) -> weather | null for the Field AI; field-context.js finds the
+    // real one itself when this is not set.
+    getWeather: depOverrides.getWeather,
   };
 }
 
@@ -189,7 +201,7 @@ export function checkBody(body) {
 // Answers one message. send(event, data) delivers each event to the page.
 // Never throws: problems become an "error" event.
 export async function runChat(body, send, { signal } = {}) {
-  const { store, runs, config } = await deps();
+  const { store, runs, config, getWeather } = await deps();
   const cfg = config();
   const product = body.product === "field" ? "field" : "atlas";
   const message = body.message.trim();
@@ -222,6 +234,7 @@ export async function runChat(body, send, { signal } = {}) {
     // 2. The facts.
     let contextBlock;
     let tools = [];
+    let images = [];
     let runTool = async () => ({ error: "No tools." });
     if (product === "atlas") {
       const atlas = await buildAtlasContext({ store, runs, context: body.context || {} });
@@ -229,13 +242,19 @@ export async function runChat(body, send, { signal } = {}) {
       tools = atlas.tools;
       runTool = atlas.runTool;
     } else {
-      contextBlock = fieldContextText(body.context?.farm);
+      // Built from the saved farm on the server. The report a chat was
+      // opened about stays with the chat, so its photos are seen every turn.
+      const field = await buildFieldContext({ store, reportId: thread.reportId || null, ...(getWeather ? { getWeather } : {}) });
+      contextBlock = field.text;
+      tools = field.tools;
+      runTool = field.runTool;
+      images = field.images || [];
     }
 
     // 3. Ask Claude.
     const client = getClient(cfg.anthropicKey);
     const model = cfg.claudeModel || DEFAULT_MODEL;
-    const messages = buildMessages(history, message, contextBlock);
+    const messages = buildMessages(history, message, contextBlock, images);
     const system = product === "atlas" ? ATLAS_SYSTEM : FIELD_SYSTEM;
     const result = await toolLoop({ client, model, system, tools, messages, runTool, send: relay, signal });
     if (signal?.aborted) {
@@ -295,6 +314,11 @@ async function openThread(store, body, product, message) {
   if (!thread) {
     thread = { id: await store.newId("chat"), product, title: titleFrom(message), createdAt: now, updatedAt: now, messages: [] };
   }
+  // A Field chat opened from "Tell us what happened" remembers its report.
+  const reportId = body.context?.reportId;
+  if (product === "field" && !thread.reportId && typeof reportId === "string" && SAFE_ID.test(reportId)) {
+    thread.reportId = reportId;
+  }
   if (!Array.isArray(thread.messages)) thread.messages = [];
   const last = thread.messages[thread.messages.length - 1];
   if (last?.role === "user" && last.text === message) {
@@ -316,9 +340,10 @@ export function titleFrom(message) {
 }
 
 // Turns saved messages into Claude's format. The facts go at the top of the
-// first user message. Messages of the same role in a row are merged, and
-// the list always starts with the user.
-export function buildMessages(history, message, contextBlock) {
+// first user message, after any photos (at most 4 images, each
+// { media_type, data } in base64). Messages of the same role in a row are
+// merged, and the list always starts with the user.
+export function buildMessages(history, message, contextBlock, images = []) {
   const turns = [...history.filter((m) => m && typeof m.text === "string" && m.text.trim()), { role: "user", text: message }];
   while (turns.length && turns[0].role !== "user") turns.shift();
   const merged = [];
@@ -333,6 +358,7 @@ export function buildMessages(history, message, contextBlock) {
       return {
         role: "user",
         content: [
+          ...imageBlocks(images),
           { type: "text", text: `<context>\n${contextBlock}\n</context>` },
           { type: "text", text: turn.text },
         ],
@@ -340,6 +366,16 @@ export function buildMessages(history, message, contextBlock) {
     }
     return { role: turn.role, content: turn.text };
   });
+}
+
+const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+// Photos as Claude image blocks (base64), at most 4, known types only.
+export function imageBlocks(images) {
+  return (Array.isArray(images) ? images : [])
+    .filter((image) => image && IMAGE_TYPES.has(image.media_type) && typeof image.data === "string" && image.data)
+    .slice(0, 4)
+    .map((image) => ({ type: "image", source: { type: "base64", media_type: image.media_type, data: image.data } }));
 }
 
 // The request to Claude for one round. Kept in one place so it is easy to

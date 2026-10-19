@@ -37,6 +37,9 @@ import {
   toPolygonal,
   explainGeeError,
   socToChernozem,
+  blackSoilClassesFrom,
+  BLACK_SOIL,
+  BLACK_SOIL_SOURCE,
   setupProblems,
   isGeeConfigured,
   GeeError,
@@ -63,11 +66,19 @@ test("monthBounds gives the month with an exclusive end", () => {
   assert.deepEqual(monthBounds("2026-12"), { start: "2026-12-01", end: "2027-01-01" });
 });
 
-test("growing-season months compare with the same months of 2021", () => {
+test("growing-season months compare with the same months of 2019-2021", () => {
   const w = monthWindows("2026-09");
   assert.deepEqual(w.season, { start: "2026-04-01", end: "2026-10-01", from: "2026-04", to: "2026-09" });
   assert.deepEqual(w.baseline, { start: "2021-04-01", end: "2021-10-01" });
   assert.deepEqual(monthWindows("2026-04").baseline, { start: "2021-04-01", end: "2021-05-01" });
+  // The CHI "before" picture: the same months of 2019, 2020 and 2021.
+  assert.deepEqual(w.baselines, [
+    { start: "2019-04-01", end: "2019-10-01" },
+    { start: "2020-04-01", end: "2020-10-01" },
+    { start: "2021-04-01", end: "2021-10-01" },
+  ]);
+  assert.deepEqual(monthWindows("2026-02").baselines.map((b) => b.end), ["2019-11-01", "2020-11-01", "2021-11-01"]);
+  assert.deepEqual(monthWindows("2026-09", "2026-09-15").baselines.map((b) => b.end), ["2019-09-15", "2020-09-15", "2021-09-15"], "cut short like the season");
 });
 
 test("winter months use the last full April-October season", () => {
@@ -84,7 +95,13 @@ test("radar, fire and night-light windows", () => {
   assert.deepEqual(w.month, { start: "2026-01-01", end: "2026-02-01" });
   assert.deepEqual(w.s1Prior, { start: "2025-10-01", end: "2026-01-01" });
   assert.deepEqual(w.firmsWar, { start: "2022-02-24", end: "2026-02-01" });
-  assert.deepEqual(w.last90, { start: "2025-11-03", end: "2026-02-01" });
+  // Distance to fighting: the last 12 months against the same 12 months of 2019-2021.
+  assert.deepEqual(w.lastYear, { start: "2025-02-01", end: "2026-02-01" });
+  assert.deepEqual(w.fireBaselines, [
+    { start: "2018-02-01", end: "2019-02-01" },
+    { start: "2019-02-01", end: "2020-02-01" },
+    { start: "2020-02-01", end: "2021-02-01" },
+  ]);
   assert.deepEqual(w.viirsSearch, { start: "2025-08-01", end: "2026-02-01" });
   assert.equal(monthWindows("2021-06").firmsWar, null);
   assert.deepEqual(monthWindows("2022-02").firmsWar, { start: "2022-02-24", end: "2022-03-01" });
@@ -199,11 +216,22 @@ test("toReading fills gaps safely", () => {
   assert.equal(r2.population, 10);
 });
 
-test("socToChernozem uses 5 g/kg units and the notebook's (SOC-10)/50 scale", () => {
-  assert.equal(socToChernozem(2), 0); // 10 g/kg
-  assert.equal(socToChernozem(8), 0.6); // 40 g/kg
-  assert.equal(socToChernozem(20), 1); // 100 g/kg, capped
+test("socToChernozem uses SoilGrids dg/kg and the notebook's (SOC-10)/50 scale", () => {
+  assert.equal(socToChernozem(100), 0); // 10 g/kg
+  assert.ok(Math.abs(socToChernozem(400) - 0.6) < 1e-9); // 40 g/kg
+  assert.equal(socToChernozem(1000), 1); // 100 g/kg, capped
   assert.equal(socToChernozem(NaN), null);
+});
+
+test("black soil = Mollisol great groups except the cold and bleached ones", () => {
+  const names = ["NODATA", "Hapludalfs", "Argialbolls", "Argiaquolls", "Argicryolls", "Cryaquolls", "Cryrendolls", "Hapludolls", "Haplustolls", "Cryoborolls", "Paleborolls"];
+  const values = [0, 18, 268, 269, 270, 279, 280, 290, 291, 309, 312];
+  assert.deepEqual(blackSoilClassesFrom({ grtgroup_class_names: names, grtgroup_class_values: values }), [269, 280, 290, 291, 312]);
+  assert.equal(blackSoilClassesFrom({}), null);
+  assert.equal(blackSoilClassesFrom({ grtgroup_class_names: ["a"], grtgroup_class_values: [1, 2] }), null);
+  // The built-in list: 31 classes, none of the excluded ones.
+  assert.equal(BLACK_SOIL.classes.length, 31);
+  for (const dropped of [268, 270, 275, 279, 287, 299, 309]) assert.ok(!BLACK_SOIL.classes.includes(dropped), `${dropped}`);
 });
 
 // ---------- Alerts ----------
@@ -420,12 +448,13 @@ test("date windows never reach past today", () => {
   assert.deepEqual(clampWindow({ start: "2026-10-01", end: "2026-11-01" }, "2026-10-18"), { start: "2026-10-01", end: "2026-10-18" });
   assert.deepEqual(clampWindow({ start: "2026-11-01", end: "2026-12-01" }, "2026-10-18"), { start: "2026-10-18", end: "2026-10-18" });
   const w = monthWindows("2026-10", "2026-10-18");
-  for (const window of [w.month, w.season, w.s1Prior, w.firmsWar, w.last90, w.viirsSearch]) assert.ok(window.end <= "2026-10-18", JSON.stringify(window));
+  for (const window of [w.month, w.season, w.s1Prior, w.firmsWar, w.lastYear, w.viirsSearch, ...w.baselines, ...w.fireBaselines]) assert.ok(window.end <= "2026-10-18", JSON.stringify(window));
   assert.deepEqual(w.month, { start: "2026-10-01", end: "2026-10-18" });
   assert.equal(w.season.end, "2026-10-18");
   // The baseline stops on the same day of 2021, so like is compared with like.
   assert.deepEqual(w.baseline, { start: "2021-04-01", end: "2021-10-18" });
-  assert.deepEqual(w.last90, { start: "2026-07-20", end: "2026-10-18" });
+  assert.deepEqual(w.lastYear, { start: "2025-10-18", end: "2026-10-18" });
+  assert.deepEqual(w.fireBaselines.at(-1), { start: "2020-10-18", end: "2021-10-18" });
   // A finished month is not changed.
   assert.deepEqual(monthWindows("2026-09", "2026-10-18"), monthWindows("2026-09", "2030-01-01"));
 });
@@ -565,6 +594,18 @@ test("analyze() on a 9-cell area gives every reading for every cell", async () =
   // One request measured all 9 cells.
   assert.equal(meanRequests(ee).length, 1);
   assert.ok(ee.stats.peakActive <= 2);
+  // The health index "before" picture is the same months of 2019, 2020 AND
+  // 2021 (2021 alone made 8.8M ha of Ukraine "heavily damaged", real run).
+  const s2Windows = filterDates(ee).map(([start]) => start);
+  for (const year of [2019, 2020, 2021]) assert.ok(s2Windows.includes(`${year}-04-01`), `baseline ${year}`);
+  assert.deepEqual(result.baseline, { from: 2019, to: 2021, label: "2019 to 2021 (same months)" });
+  // Distance to fighting without ACLED: only fires far above the pre-war
+  // normal for the place count (plain fires put Lviv 7 km from "fighting").
+  const focal = ee.calls.filter((c) => c.name === "Image.focal_mean").map((c) => c.args.slice(0, 3));
+  assert.deepEqual(focal, [[10000, "circle", "meters"], [10000, "circle", "meters"], [10000, "circle", "meters"]]);
+  const fireStarts = filterDates(ee).map(([start]) => start);
+  for (const year of [2018, 2019, 2020]) assert.ok(fireStarts.includes(`${year}-09-01`), `pre-war fires ${year}`);
+  assert.ok(result.warnings.some((w) => /unusual fires of the last 12 months/.test(w)));
 });
 
 test("600 small cells are measured in chunks of 250, two at a time", async () => {
@@ -623,6 +664,19 @@ test("a chunk that runs out of memory is tried once more with coarser pixels", a
   assert.ok(result.warnings.some((w) => /coarser pixels/.test(w)));
 });
 
+test("GAUL's \"Administrative unit not available\" is dropped from place names", async () => {
+  const { provider } = fakeProvider({ gaul2: [{ ADM0_NAME: "Ukraine", ADM1_NAME: "Kharkivs'ka", ADM2_NAME: "Administrative unit not available", ADM2_CODE: 31899 }] });
+  const { area, cells } = gridArea(2, 2, 0.01);
+  const result = await provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.01 });
+  assert.equal(result.readings.length, 4);
+  for (const reading of result.readings) {
+    assert.equal(reading.admin1, "Kharkivs'ka");
+    assert.equal(reading.admin2, undefined, "the placeholder is not a place name");
+    assert.equal(placeLabel(reading), "Kharkivs'ka");
+  }
+  for (const alert of result.alerts) assert.doesNotMatch(alert.place || "", /not available/i);
+});
+
 test("a chunk that fails twice stops the analysis with a clear error", async () => {
   const { provider } = fakeProvider({ fail: (request) => (request.has("Dictionary") && request.find("reduceRegions").length ? "Computation timed out." : null) });
   const { area, cells } = gridArea(2, 2, 0.05);
@@ -669,14 +723,44 @@ test("no Sentinel-2 or radar images: damage unknown, warnings say so", async () 
   assert.ok(result.alerts.every((a) => a.kind === "fire"));
 });
 
-test("an unreadable chernozem map falls back to soil organic carbon", async () => {
+test("an unreadable chernozem map falls back to the OpenLandMap black-soil map", async () => {
   const { ee, provider } = fakeProvider({ assets: { [TEST_CFG.chernozemAsset]: "missing" } });
   const { area, cells } = gridArea(1, 1, 0.01);
   const result = await provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.01 });
   assert.equal(result.readings.length, 1);
   assertReading(result.readings[0], new Set(["r0c0"]));
-  assert.ok(result.warnings.some((w) => /Soil organic carbon was used instead/.test(w)));
+  assert.ok(result.warnings.some((w) => w.includes("The black-soil map: OpenLandMap USDA soil classes (Mollisols), 250 m was used instead")), result.warnings.join(" | "));
   assert.ok(!ee.callsNamed("Image").some((c) => c.args[0] === TEST_CFG.chernozemAsset));
+  assert.ok(ee.callsNamed("Image").some((c) => c.args[0] === DATASETS.blackSoil));
+});
+
+test("with GEE_CHERNOZEM_ASSET=none the black-soil map is used, from the map's own class list", async () => {
+  const names = ["NODATA", "Argialbolls", "Hapludolls", "Haplustolls", "Argicryolls"];
+  const values = [0, 268, 290, 291, 270];
+  const assets = { [DATASETS.blackSoil]: { id: DATASETS.blackSoil, type: "IMAGE", bands: [{ id: "grtgroup" }], properties: { grtgroup_class_names: names, grtgroup_class_values: values } } };
+  const { ee, provider } = fakeProvider({ assets }, { ...TEST_CFG, chernozemAsset: "none" });
+  const { area, cells } = gridArea(1, 1, 0.01);
+  const result = await provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.01 });
+  assertReading(result.readings[0], new Set(["r0c0"]));
+  assert.ok(!result.warnings.some((w) => /zhaobo|chernozem map/i.test(w)), "no asset warning when the asset is none");
+  assert.ok(!ee.callsNamed("data.getAsset").some((c) => /zhaobo/.test(c.args[0])), "the asset is not even looked up");
+  const remap = ee.callsNamed("Image.remap")[0];
+  assert.deepEqual(remap.args[0], [290, 291], "classes read from grtgroup_class_values / names");
+  assert.deepEqual(remap.args[1], [1, 1]);
+  assert.equal(remap.args[2], 0);
+  // SoilGrids SOC fills where the class map has no data.
+  assert.ok(ee.callsNamed("Image").some((c) => c.args[0] === "projects/soilgrids-isric/soc_mean"));
+  assert.ok(ee.callsNamed("Image.select").some((c) => c.args[0] === "soc_0-5cm_mean"));
+
+  // The map's class list cannot be read: the built-in list is used.
+  const fallback = fakeProvider({ assets: { [DATASETS.blackSoil]: "missing" } }, { ...TEST_CFG, chernozemAsset: "none" });
+  await fallback.provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.01 });
+  assert.deepEqual(fallback.ee.callsNamed("Image.remap")[0].args[0], BLACK_SOIL.classes);
+
+  const soil = await provider.probePoint({ lat: 49.74, lon: 37.54 });
+  assert.equal(soil.assetId, null);
+  assert.equal(soil.soilSource, BLACK_SOIL_SOURCE);
+  assert.equal(soil.blackSoil, 1);
 });
 
 test("a rejected key gives clear advice, and regions are searchable", async () => {

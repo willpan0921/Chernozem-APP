@@ -4,7 +4,9 @@
 // stands in for server/store.js. Checks: no key -> a clear setup message;
 // a tool look-up goes round and comes back as text; a refusal becomes a
 // polite error; the conversation is saved; Stop saves the part already
-// written; "Try again" does not save the question twice.
+// written; "Try again" does not save the question twice. Field chats: the
+// farm comes from the server, the Field tools run, and a report's photos
+// go to Claude as images.
 //
 // WHO EDITS IT
 // Whoever changes chat.js. Run with: npm test
@@ -23,16 +25,36 @@ import {
   describeError,
   checkBody,
   echoableContent,
+  imageBlocks,
   ATLAS_SYSTEM,
+  FIELD_SYSTEM,
 } from "./chat.js";
 
 // ---------- Stand-ins ----------
 
-function memoryStore({ workspace = {}, areas = {}, runs = {} } = {}) {
+function memoryStore({ workspace = {}, areas = {}, runs = {}, farm = null, analyses = {}, reports = [], photos = {} } = {}) {
   const chats = new Map();
   let counter = 0;
   return {
     chats,
+    async getFarm() {
+      return farm;
+    },
+    async getFieldAnalysis(id) {
+      return analyses[id] || null;
+    },
+    async getFieldHistory() {
+      return null;
+    },
+    async listReports() {
+      return reports;
+    },
+    async getReport(id) {
+      return reports.find((r) => r.id === id) || null;
+    },
+    async readPhoto(id) {
+      return photos[id] ? { buffer: photos[id], type: "image/jpeg" } : null;
+    },
     async getWorkspace() {
       return workspace;
     },
@@ -314,17 +336,149 @@ test("a bad key becomes ai_bad_key, a rate limit ai_rate_limited", async () => {
   assert.equal(out.of("error")[0].code, "ai_bad_key");
 });
 
-test("Field chats use the farm text and no tools", async () => {
-  const store = memoryStore();
-  const client = fakeClient([{ role: "assistant", stop_reason: "end_turn", content: [{ type: "text", text: "Plant in May." }] }]);
-  setDepsForTests({ store, config: keyConfig });
+// ---------- Field ----------
+
+const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(40, 7)]);
+const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(40, 8)]);
+
+function farmStore(extra = {}) {
+  return memoryStore({
+    farm: {
+      id: "farm-1",
+      name: "Hill Farm",
+      location: { label: "Kupiansk", lat: 49.73, lon: 37.54 },
+      units: "ha",
+      fields: [
+        { id: "fld-aaaa1111", name: "Field 1", areaHa: 40, crop: "Winter wheat" },
+        { id: "fld-bbbb2222", name: "Field 2", areaHa: 25, crop: "Sunflower" },
+      ],
+    },
+    analyses: {
+      "fld-aaaa1111": {
+        fieldId: "fld-aaaa1111",
+        provider: "sample",
+        plantHealth: { ndvi: 0.61, normal: { low: 0.55, high: 0.7, median: 0.6 }, versus: "normal" },
+        water: { ndwi: 0.2, normal: { low: 0.15, high: 0.25, median: 0.2 }, versus: "normal" },
+        stress: { share: 0.01, level: "low", stressedHa: 0.4, patches: [] },
+        harvest: { stage: "growing" },
+        condition: { score: 0.9, class: "great" },
+        damage: { detected: false },
+        status: { id: "healthy", label: "Healthy", tone: "green" },
+      },
+      "fld-bbbb2222": {
+        fieldId: "fld-bbbb2222",
+        provider: "sample",
+        plantHealth: { ndvi: 0.3, normal: { low: 0.5, high: 0.6, median: 0.55 }, versus: "below" },
+        water: { ndwi: 0.02, normal: { low: 0.1, high: 0.2, median: 0.15 }, versus: "below" },
+        stress: { share: 0.2, level: "high", stressedHa: 5, patches: [] },
+        harvest: { stage: "growing" },
+        condition: { score: 0.3, class: "poor" },
+        damage: { detected: true, radarChangedShare: 0.3, firesSinceWar: 4, chiDrop: 0.2, damagedHa: 7.5 },
+        status: { id: "recovery", label: "Needs recovery", tone: "red" },
+      },
+    },
+    ...extra,
+  });
+}
+
+test("Field without an API key gives ai_not_configured", async () => {
+  setDepsForTests({ store: farmStore(), config: () => ({ anthropicKey: "" }) });
+  const out = collector();
+  await runChat({ product: "field", message: "Which field needs attention?" }, out.send);
+  assert.deepEqual(out.events.map((e) => [e.event, e.data.code]), [["error", "ai_not_configured"]]);
+});
+
+test("Field chats answer from the server's farm data and run the Field tools", async () => {
+  const store = farmStore();
+  const client = fakeClient([
+    {
+      role: "assistant",
+      stop_reason: "tool_use",
+      content: [{ type: "tool_use", id: "toolu_f1", name: "get_field", input: { name_or_id: "Field 2" } }],
+    },
+    { role: "assistant", stop_reason: "end_turn", content: [{ type: "text", text: "Field 2 needs recovery." }] },
+  ]);
+  setDepsForTests({ store, config: keyConfig, getWeather: async () => ({ current: { tempC: 9, label: "Clear" }, rain: null, daily: [] }) });
   setClientFactory(() => client);
   const out = collector();
-  await runChat({ product: "field", message: "When to plant?", context: { farm: "Field A: 40 ha wheat" } }, out.send);
-  assert.equal(client.requests[0].tools, undefined);
-  assert.match(client.requests[0].messages[0].content[0].text, /40 ha wheat/);
-  assert.equal(out.of("done").length, 1);
+  // A farm summary sent by the page is ignored: the server's data is used.
+  await runChat({ product: "field", message: "Which field needs attention?", context: { farm: "Field Z: 999 ha" } }, out.send);
+  assert.equal(out.of("error").length, 0, JSON.stringify(out.of("error")));
+  assert.equal(out.of("delta").map((d) => d.text).join(""), "Field 2 needs recovery.");
+
+  const first = client.requests[0];
+  assert.equal(first.system[0].text, FIELD_SYSTEM);
+  assert.match(FIELD_SYSTEM, /Never say a field or any land is free of mines/);
+  assert.match(FIELD_SYSTEM, /SAMPLE DATA/);
+  assert.deepEqual(first.tools.map((t) => t.name), ["get_field", "get_field_history", "get_weather", "get_reports"]);
+  for (const tool of first.tools) {
+    assert.equal(tool.strict, true);
+    assert.equal(tool.input_schema.additionalProperties, false);
+  }
+  assert.deepEqual(first.thinking, { type: "adaptive" });
+  assert.deepEqual(first.output_config, { effort: "medium" });
+  assert.equal(first.fallbacks, "default");
+  const contextText = first.messages[0].content[0].text;
+  assert.match(contextText, /Hill Farm/);
+  assert.match(contextText, /SAMPLE DATA/);
+  assert.match(contextText, /Field 2 .*Status: Needs recovery/);
+  assert.match(contextText, /Weather now: 9°C, Clear/);
+  assert.doesNotMatch(contextText, /999 ha/);
+  assert.equal(first.messages[0].content.some((b) => b.type === "image"), false);
+
+  // The tool answer went back with the field's details.
+  const result = client.requests[1].messages.at(-1).content[0];
+  assert.equal(result.type, "tool_result");
+  assert.equal(result.tool_use_id, "toolu_f1");
+  const detail = JSON.parse(result.content);
+  assert.equal(detail.field.name, "Field 2");
+  assert.equal(detail.status, "Needs recovery");
+  assert.deepEqual(detail.damage.recoveryCostUsd, { fast: [713, 2175], full: [1950, 4650] });
   assert.equal([...store.chats.values()][0].product, "field");
+});
+
+test("a Field chat about a report sends its photos as images before the text, on every turn", async () => {
+  const store = farmStore({
+    reports: [{ id: "rep-abc12345", fieldId: "fld-bbbb2222", kind: "shelling", text: "Crater by the gate", photos: ["ph-1", "ph-2"], createdAt: "2026-10-17T09:00:00Z" }],
+    photos: { "ph-1": JPEG, "ph-2": PNG },
+  });
+  const client = fakeClient([
+    { role: "assistant", stop_reason: "end_turn", content: [{ type: "text", text: "I can see a crater." }] },
+    { role: "assistant", stop_reason: "end_turn", content: [{ type: "text", text: "Stay off it." }] },
+  ]);
+  setDepsForTests({ store, config: keyConfig, getWeather: async () => null });
+  setClientFactory(() => client);
+  const one = collector();
+  await runChat({ product: "field", message: "What do you see in my photos?", context: { reportId: "rep-abc12345" } }, one.send);
+  assert.equal(one.of("error").length, 0, JSON.stringify(one.of("error")));
+  const threadId = one.of("thread")[0].threadId;
+  assert.equal(store.chats.get(threadId).reportId, "rep-abc12345");
+
+  const content = client.requests[0].messages[0].content;
+  assert.deepEqual(content.map((b) => b.type), ["image", "image", "text", "text"]);
+  assert.deepEqual(content[0].source, { type: "base64", media_type: "image/jpeg", data: JPEG.toString("base64") });
+  assert.equal(content[1].source.media_type, "image/png");
+  assert.match(content[2].text, /This chat is about the farmer's report: .*Crater by the gate/);
+  assert.match(content[2].text, /Its 2 photos are attached above/);
+  assert.equal(content[3].text, "What do you see in my photos?");
+
+  // The next turn (no reportId sent) still shows the photos.
+  await runChat({ product: "field", threadId, message: "Is it safe to plough?" }, collector().send);
+  const again = client.requests[1].messages;
+  assert.deepEqual(again.map((m) => m.role), ["user", "assistant", "user"]);
+  assert.equal(again[0].content.filter((b) => b.type === "image").length, 2);
+  assert.equal(again[2].content, "Is it safe to plough?");
+});
+
+test("imageBlocks keeps at most 4 JPEG/PNG/WebP images", () => {
+  const img = (media_type) => ({ media_type, data: "AAAA" });
+  const blocks = imageBlocks([img("image/jpeg"), img("image/gif"), img("image/png"), img("image/webp"), { media_type: "image/png", data: "" }, img("image/jpeg"), img("image/png")]);
+  assert.deepEqual(blocks.map((b) => b.source.media_type), ["image/jpeg", "image/png", "image/webp", "image/jpeg"]);
+  assert.deepEqual(blocks[0], { type: "image", source: { type: "base64", media_type: "image/jpeg", data: "AAAA" } });
+  assert.deepEqual(imageBlocks(null), []);
+  // Atlas messages carry no images.
+  const msgs = buildMessages([], "q", "CTX");
+  assert.deepEqual(msgs[0].content.map((b) => b.type), ["text", "text"]);
 });
 
 test("the tool loop stops after 6 rounds", async () => {

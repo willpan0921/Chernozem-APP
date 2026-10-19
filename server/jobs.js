@@ -2,9 +2,15 @@
 // Runs an analysis in the background and keeps track of how far it got, so
 // the page can show "Analyzing Ukraine… 7 of 12 months".
 //
-//   startAnalysis({ areaId, months, rerun })  starts (or joins) a job
+//   startAnalysis({ areaId, months, rerun })  starts (or joins) an Atlas job
+//   startJob({ kind, key, ... run })          starts (or joins) any other job
+//                                             (the Field: "field-detect",
+//                                             "field-analyze"; see server/field/run.js)
 //   getJob(id)                                 where a job is now
-//   listJobs({ areaId })                       recent jobs, running first
+//   listJobs({ areaId, status, kind })         recent jobs, running first
+//
+// Every job has a kind: "atlas" (an area analysis), "field-detect" or
+// "field-analyze". Atlas jobs keep their old shape (areaId, runIds...).
 //
 // A job analyzes the latest complete month first, then goes back one month
 // at a time. Months that already have a run are skipped (unless rerun),
@@ -27,17 +33,17 @@ const KEEP_FINISHED_MS = 60 * 60 * 1000;
 function publicJob(job) {
   if (!job) return null;
   const { internal, ...rest } = job;
-  return { ...rest, runIds: [...job.runIds] };
+  return job.runIds ? { ...rest, runIds: [...job.runIds] } : { ...rest };
 }
 
 export function getJob(id) {
   return publicJob(jobs.get(id));
 }
 
-export function listJobs({ areaId, status } = {}) {
+export function listJobs({ areaId, status, kind } = {}) {
   prune();
   return [...jobs.values()]
-    .filter((job) => (!areaId || job.areaId === areaId) && (!status || job.status === status))
+    .filter((job) => (!areaId || job.areaId === areaId) && (!status || job.status === status) && (!kind || job.kind === kind))
     .sort((a, b) => (a.status === "running" ? -1 : 0) - (b.status === "running" ? -1 : 0) || b.startedAt.localeCompare(a.startedAt))
     .map(publicJob);
 }
@@ -62,12 +68,13 @@ export async function startAnalysis({ areaId, months = 12, rerun = false, trigge
     error.code = "not_found";
     throw error;
   }
-  const running = [...jobs.values()].find((job) => job.areaId === areaId && job.status === "running");
+  const running = [...jobs.values()].find((job) => job.kind === "atlas" && job.areaId === areaId && job.status === "running");
   if (running) return publicJob(running);
 
   const count = Math.min(24, Math.max(1, Math.round(Number(months) || 12)));
   const job = {
     id: newId("job"),
+    kind: "atlas",
     areaId,
     areaName: area.name,
     trigger,
@@ -154,6 +161,58 @@ async function runJob(job, area, count, rerun) {
   }
 
   job.status = "done";
-  job.message = `${area.name}: ${job.total} months analyzed`;
+  job.message = `${area.name}: ${job.total === 1 ? "1 month" : `${job.total} months`} analyzed`;
   job.finishedAt = new Date().toISOString();
+}
+
+// ---------- Any other kind of job ----------
+// Starts a background job of another kind. If a job with the same kind and
+// key is running, that one is given back instead (pass no key to always
+// start a new one).
+//   kind     "field-detect" | "field-analyze" | ...
+//   key      what makes two jobs "the same", e.g. "farm"
+//   total    steps, for "3 of 7"
+//   message  the first line the page shows
+//   info     extra public fields (e.g. { fieldIds })
+//   run(job) does the work; may set job.done, job.total, job.message and
+//            gives back the result (job.result). Throwing marks the job failed.
+export function startJob({ kind, key = null, total = 1, message = "Working…", trigger = "manual", info = {}, run }) {
+  if (!kind || kind === "atlas") throw new Error('startJob needs a kind other than "atlas" (use startAnalysis).');
+  if (key != null) {
+    const running = [...jobs.values()].find((job) => job.kind === kind && job.key === key && job.status === "running");
+    if (running) return publicJob(running);
+  }
+  const job = {
+    ...info,
+    id: newId("job"),
+    kind,
+    key,
+    trigger,
+    status: "running",
+    done: 0,
+    total: Math.max(1, Math.round(Number(total) || 1)),
+    message,
+    result: null,
+    error: null,
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+  };
+  jobs.set(job.id, job);
+  prune();
+  (async () => {
+    await pause();
+    const result = await run(job);
+    job.result = result ?? null;
+    job.status = "done";
+    job.done = job.total;
+    job.finishedAt = new Date().toISOString();
+  })().catch((error) => {
+    job.status = "error";
+    job.error = error.message || String(error);
+    job.errorCode = error.code || null;
+    job.message = job.error;
+    job.finishedAt = new Date().toISOString();
+    console.error(`[chernozem] ${kind} job failed:`, error);
+  });
+  return publicJob(job);
 }

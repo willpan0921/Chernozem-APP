@@ -805,6 +805,35 @@ ol.chat-md-list li.is-sub {
   cursor: default;
 }
 
+/* What the chat is about ("Fire · Field 1 · 1 photo"): narrow screens
+   only, where "Using" sits below the chat. */
+.chat-about {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px var(--s-6);
+  font-size: 13px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--c-border);
+  background: var(--c-surface);
+}
+
+.chat-about > svg {
+  flex: 0 0 auto;
+}
+
+.chat-about > .chat-icon-red {
+  color: var(--c-red);
+}
+
+.chat-about > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---------- 8. Small screens ---------- */
 
 @media (max-width: 1100px) {
@@ -872,6 +901,10 @@ ol.chat-md-list li.is-sub {
     min-height: 480px;
   }
 
+  .chat-about {
+    display: flex;
+  }
+
   .chat-welcome-suggestions {
     display: flex;
   }
@@ -895,6 +928,7 @@ ol.chat-md-list li.is-sub {
 
 @media (max-width: 600px) {
   .chat-conversation-header,
+  .chat-about,
   .chat-threads {
     padding-left: var(--s-4);
     padding-right: var(--s-4);

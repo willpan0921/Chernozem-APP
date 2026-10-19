@@ -8,8 +8,9 @@
 // cropland from the latest run (src/state/AtlasData.jsx), or "No area yet".
 // Clicking it opens Atlas Settings, where the area is changed.
 //
-// On the Field side, the line under "My farm" shows the real number of
-// fields and their total area, worked out from the outlines in Firestore.
+// On the Field side the box shows the farm: its name and "7 fields · 336 ha"
+// (in the farm's unit) from src/state/FieldData.jsx, or "No farm yet".
+// Clicking it opens Field Settings, where the farm is changed.
 //
 // WHO EDITS IT
 // Whoever changes how the sidebar looks. To add or rename a page, edit
@@ -18,7 +19,8 @@
 import { NavLink, Link, useLocation } from "react-router-dom";
 import { Sprout, ChevronDown, Lock, Globe } from "lucide-react";
 import { products, productForPath } from "../config/navigation.js";
-import { useFieldOutlines, farmAreaHa } from "../api/fieldsApi.js";
+import { useFieldData } from "../state/FieldData.jsx";
+import { farmLine } from "../lib/field/format.js";
 import { useAtlasData } from "../state/AtlasData.jsx";
 import { formatHaShort } from "../lib/format.js";
 
@@ -52,19 +54,35 @@ function AtlasScope({ icon: Icon }) {
   );
 }
 
+// The Field farm box: the farm's name and its fields and area.
+function FieldScope({ icon: Icon }) {
+  const { status, farm, job } = useFieldData();
+  let title = farm?.name || "No farm yet";
+  let subtitle = farm ? farmLine(farm) : "Set it up";
+  if (status === "loading" && !farm) {
+    title = "Loading…";
+    subtitle = "";
+  } else if (farm && job?.status === "running" && job.kind === "field-analyze") {
+    subtitle = `Analysing · ${job.done || 0} of ${job.total || 1}`;
+  }
+  return (
+    <Link to="/field/settings" className="scope-card" title="Change farm">
+      <span className="scope-card-icon">
+        <Icon size={14} />
+      </span>
+      <span className="scope-card-text">
+        <span className="scope-card-title">{title}</span>
+        {subtitle && <span className="scope-card-subtitle">{subtitle}</span>}
+      </span>
+      <ChevronDown size={14} className="scope-card-chevron" />
+    </Link>
+  );
+}
+
 export default function Sidebar() {
   const { pathname } = useLocation();
   const product = productForPath(pathname);
   const ScopeIcon = product.scope.icon;
-  const { outlines } = useFieldOutlines();
-
-  // "7 fields · 336.2 ha" from the real outlines on the Field side. Until
-  // they arrive (and on the Atlas side) the line from navigation.js shows.
-  const fieldCount = Object.keys(outlines).length;
-  const scopeSubtitle =
-    product.id === "field" && fieldCount > 0
-      ? `${fieldCount} ${fieldCount === 1 ? "field" : "fields"} · ${farmAreaHa(outlines).toFixed(1)} ha`
-      : product.scope.subtitle;
 
   return (
     <aside className="sidebar">
@@ -92,21 +110,8 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      {/* "My farm", or the Atlas's current area. */}
-      {product.id === "atlas" ? (
-        <AtlasScope icon={ScopeIcon} />
-      ) : (
-        <button type="button" className="scope-card">
-          <span className="scope-card-icon">
-            <ScopeIcon size={14} />
-          </span>
-          <span className="scope-card-text">
-            <span className="scope-card-title">{product.scope.title}</span>
-            <span className="scope-card-subtitle">{scopeSubtitle}</span>
-          </span>
-          <ChevronDown size={14} className="scope-card-chevron" />
-        </button>
-      )}
+      {/* The farm, or the Atlas's current area. */}
+      {product.id === "atlas" ? <AtlasScope icon={ScopeIcon} /> : <FieldScope icon={ScopeIcon} />}
 
       {/* The page list. "end" stops the Overview link from staying lit on
           every page under it. */}

@@ -6,7 +6,7 @@
 //
 // TO SHARE THEM ACROSS THE TEAM
 // Replace the inside of loadOffice and saveOffice with calls to the
-// database (Firebase, like src/api/notesApi.js on Danny's branch). The
+// database (for example Firebase Firestore, as Danny's scripts use). The
 // pages use useOfficeValue() and do not need to change.
 //
 // WHO EDITS IT

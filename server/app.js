@@ -20,6 +20,7 @@
 //   GET    /api/runs/compare?a=&b=      what changed between two runs
 //   GET    /api/runs/:id                one run with its cells and alerts
 //   /api/chat, /api/chats...            the AI (server/ai/chat.js)
+//   /api/farm..., /api/geocode          the Field product (server/field/routes.js)
 //   /api/auth/status, login, logout     the optional access code (server/auth.js)
 //
 // When ATLAS_ACCESS_CODE is set in .env, every address above except the
@@ -51,6 +52,7 @@ import { getProvider, providerStatus, withTimeout } from "./providers/index.js";
 import { schedulerStatus } from "./scheduler.js";
 import { checkSettings } from "../src/lib/atlas/method.js";
 import { handleAuth } from "./auth.js";
+import { handleFieldRoutes } from "./field/routes.js";
 
 const MIN_AREA_HA = 0.5;
 const MAX_CUSTOM_AREA_HA = 3000000 * 100; // 3,000,000 km²
@@ -342,6 +344,12 @@ async function route(req, res, url) {
   if (await handleAuth(req, res, { method, first, second, third })) return;
 
   if (first === "chat" || first === "chats") return handleChat(req, res, url);
+
+  // The Field product (farm, fields, reports, weather, place search).
+  if (first === "farm" || first === "geocode") {
+    if (!(await handleFieldRoutes(req, res, url))) throw notFound(`No such API route: ${url.pathname}`);
+    return;
+  }
 
   if (first === "status" && !second && method === "GET") {
     const env = config();

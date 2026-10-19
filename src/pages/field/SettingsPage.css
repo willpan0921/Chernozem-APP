@@ -1,382 +1,728 @@
 /*
   WHAT THIS FILE DOES
-  The layout of the Field Settings page: the scrolling form on the left and
-  the full-height satellite map on the right, plus the small labels, chips
-  and legend drawn on top of the map. Every class starts with "fs-" so it
-  never clashes with another page.
+  The styling for the Field Settings page (src/pages/field/SettingsPage.jsx):
+  the Farm, Units, Data and AI cards. In the field list the swatch is
+  the "Show on the map" button: condition colour, or the red/beige
+  recovery stripes, like the map. Every class starts with "fset-"
+  (Field settings) so nothing here changes another page.
+  On phones (under 640 px wide) every button is at least 40 px tall so it
+  is easy to tap.
 
   WHO EDITS IT
-  Whoever changes how the Settings page looks. Colours, spacing and corners
-  come from src/styles/tokens.css. The shared blocks (cards, buttons, tabs)
-  are styled in src/styles/components.css, not here.
+  Whoever changes how the Field Settings page looks. Colours, spacing and
+  corners come from src/styles/tokens.css.
 */
 
-/* ---------- The two halves ---------- */
-
-.fs-page {
-  align-items: stretch;
+.page.fset {
+  max-width: 880px;
+  --fset-map-h: 440px;
 }
 
-/* The form column scrolls on its own; the map stays put. */
-.fs-left {
-  flex: 0 0 520px;
-  max-width: 100%;
-  height: 100%;
-  overflow-y: auto;
-  padding: var(--s-5) var(--page-pad) var(--s-6);
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--s-3);
+.fset-card .card-header h2 {
+  font-size: 15px;
 }
 
-.fs-form {
-  width: 100%;
+.fset-units .card-header {
+  align-items: center;
+}
+
+/* ---------- Rows shared by the cards ---------- */
+
+.fset-block {
   display: flex;
   flex-direction: column;
   gap: var(--s-3);
 }
 
-/* The cards and inputs on this page sit a little tighter than the default
-   so the whole form (title through Save) fits on one screen next to the
-   map, as in the mockup, instead of scrolling. */
-.fs-page .card {
-  padding: 14px var(--s-4);
-  gap: 10px;
+.fset-block + .fset-block {
+  padding-top: var(--s-4);
+  border-top: 1px solid var(--c-border);
 }
 
-.fs-page .input,
-.fs-page .select {
-  padding: 7px 10px;
-}
-
-/* ---------- Field picker row ---------- */
-
-.fs-field-row {
+.fset-row {
   display: flex;
   align-items: center;
   gap: var(--s-3);
-  flex-wrap: wrap;
-}
-
-.fs-rename-input {
-  width: auto;
-  max-width: 200px;
-}
-
-/* A green text link inside a sentence, like "Rename" or "Reset to detected". */
-.fs-link {
-  color: var(--c-green);
-  font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-/* ---------- Cards ---------- */
-
-/* Card heading with a small icon before the words. */
-.fs-card-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.fs-card-title svg {
-  color: var(--c-green);
-}
-
-/* Two inputs side by side (Latitude / Longitude, the two soil dropdowns). */
-.fs-two {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--s-4);
-}
-
-/* The two soil dropdowns sit a little closer together. */
-.fs-two-wide {
-  gap: var(--s-3);
-}
-
-.fs-stack {
-  display: flex;
-  flex-direction: column;
-}
-
-.fs-label {
-  font-size: 13px;
-  font-weight: 600;
-}
-
-/* ---------- Field area ---------- */
-
-/* The "Square around pin | Traced edges | Upload a file" switch fills the
-   card, each option the same width. */
-.fs-area-modes .segmented {
-  display: flex;
-  width: 100%;
-}
-
-.fs-area-modes .segmented-option {
-  flex: 1;
-  text-align: center;
-  padding-left: 6px;
-  padding-right: 6px;
-  white-space: nowrap;
-}
-
-/* The hints under the two soil dropdowns are drawn one step smaller than
-   other small text, as in the mockup, so "Found on the global soil map,
-   82% likely." reads as one line. */
-.fs-two-wide .small {
-  font-size: 11px;
-}
-
-.fs-area-panel {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--s-4);
-  flex-wrap: wrap;
-  padding: var(--s-3) 14px;
-}
-
-.fs-area-main {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.fs-area-main .field-label {
-  margin-bottom: 0;
-}
-
-.fs-area-value {
-  font-size: 24px;
-  font-weight: 600;
-  line-height: 1.15;
-}
-
-/* Corners 4 / Edge length 2.9 km: a small label-value table. */
-.fs-area-facts {
-  margin: 0;
-  display: grid;
-  grid-template-columns: auto auto;
-  column-gap: var(--s-6);
-  row-gap: 4px;
-  font-size: 12px;
-  color: var(--c-text-2);
-  align-self: flex-end;
-}
-
-.fs-area-facts dd {
-  margin: 0;
-  text-align: right;
-  color: var(--c-text);
-}
-
-/* "Edit edges on map": white with a green outline and green text. */
-.fs-btn-green {
-  color: var(--c-green);
-  box-shadow: inset 0 0 0 1.5px var(--c-green);
-}
-
-.fs-btn-green:hover {
-  background: var(--c-green-soft);
-}
-
-/* "Start over from the pin": soft grey, no border. */
-.fs-btn-soft {
-  background: var(--c-surface-3);
-  box-shadow: none;
-}
-
-/* ---------- Save / Cancel / Delete ---------- */
-
-.fs-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--s-3);
-  flex-wrap: wrap;
-}
-
-.fs-delete {
-  margin-left: auto;
-}
-
-/* ---------- The map ---------- */
-
-.fs-map {
-  flex: 1;
   min-width: 0;
-  position: relative;
-  overflow: hidden;
-  background: var(--c-ink);
 }
 
-.fs-map-svg {
-  position: absolute;
-  inset: 0;
-}
-
-.fs-handle {
-  cursor: grab;
-}
-
-.fs-handle-small {
-  cursor: pointer;
-}
-
-/* Top-left: the date chip and the tip. */
-.fs-map-top {
-  position: absolute;
-  top: var(--s-4);
-  left: var(--s-4);
-  right: 72px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--s-2);
-}
-
-.fs-map-chip {
-  display: inline-block;
-  padding: 5px 10px;
-  border-radius: var(--r-sm);
-  background: var(--c-ink);
-  color: var(--c-on-dark);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.fs-map-tip {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  max-width: 300px;
-  padding: 10px 12px;
-  border-radius: var(--r-sm);
-  background: var(--c-surface);
-  box-shadow: var(--shadow-pop);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.fs-map-tip svg {
-  flex: 0 0 auto;
-  margin-top: 1px;
-  color: var(--c-green);
-}
-
-/* Top-right: + / - / layers. */
-.fs-map-zoom {
-  position: absolute;
-  top: var(--s-4);
-  right: var(--s-4);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.fs-map-round {
+.fset-row-icon {
   display: grid;
   place-items: center;
+  flex: 0 0 auto;
   width: 34px;
   height: 34px;
   border-radius: var(--r-sm);
-  background: var(--c-surface);
-  box-shadow: var(--shadow-pop);
-  color: var(--c-text);
-}
-
-.fs-map-round:hover {
   background: var(--c-surface-2);
+  color: var(--c-text-2);
 }
 
-/* The "48.6 ha" pill in the middle of the field. */
-.fs-map-area {
-  position: absolute;
-  transform: translate(-50%, -50%);
-  padding: 8px 16px;
-  border-radius: var(--r-sm);
-  background: var(--c-ink);
-  color: var(--c-on-dark);
-  font-size: 18px;
+.fset-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.fset-row-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  font-size: 14px;
   font-weight: 600;
-  white-space: nowrap;
 }
 
-/* Bottom-left legend. */
-.fs-map-legend {
-  position: absolute;
-  left: var(--s-4);
-  bottom: var(--s-4);
+.fset-row-meta {
+  font-size: 12px;
+  color: var(--c-muted);
+  overflow-wrap: anywhere;
+}
+
+.fset-row-meta code {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.fset-row-action {
+  flex: 0 0 auto;
+}
+
+.fset-error,
+.fset-ok {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.fset-error {
+  color: var(--c-red-text);
+}
+
+.fset-ok {
+  color: var(--c-green);
+  font-weight: 600;
+}
+
+.fset-warning {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--c-amber-text, var(--c-text-2));
+}
+
+/* ---------- A name that renames when clicked ---------- */
+
+.fset-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  margin: -2px -6px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: inherit;
+  text-align: left;
+  cursor: text;
+}
+
+.fset-name:hover {
+  background: var(--c-surface-3);
+}
+
+.fset-name-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.fset-name-pen {
+  flex: 0 0 auto;
+  color: var(--c-muted);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.fset-name:hover .fset-name-pen,
+.fset-name:focus-visible .fset-name-pen {
+  opacity: 1;
+}
+
+.input.fset-rename {
+  width: 100%;
+  max-width: 360px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+/* ---------- Farm ---------- */
+
+.fset-farm-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-4);
+}
+
+.fset-farm-id {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 10px 12px;
-  border-radius: var(--r-sm);
-  background: var(--c-surface);
-  box-shadow: var(--shadow-pop);
-  font-size: 12px;
+  min-width: 0;
 }
 
-.fs-legend-row {
+.fset-farm-name {
+  font-size: 26px;
+  font-weight: 650;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+.input.fset-rename.fset-farm-name {
+  font-size: 22px;
+}
+
+.fset-farm-place {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  color: var(--c-text-2);
+}
+
+.fset-farm-place svg {
+  flex: 0 0 auto;
+  color: var(--c-muted);
+}
+
+.btn.fset-change {
+  flex: 0 0 auto;
+}
+
+/* "7 fields  336 ha" */
+.fset-big {
+  display: flex;
+  gap: var(--s-6);
+}
+
+.fset-big-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.fset-big-value {
+  font-size: 44px;
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.fset-big-label {
+  font-size: 15px;
+  font-weight: 550;
+  color: var(--c-text-2);
+}
+
+/* The bar above the map while drawing or picking found fields. */
+.fset-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--r-md);
+  background: var(--c-surface-2);
+  box-shadow: inset 0 0 0 1px var(--c-border);
+}
+
+.fset-panel-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.fset-panel-title {
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.fset-panel-meta {
+  font-size: 12.5px;
+  color: var(--c-muted);
+}
+
+/* "Overlaps Field 4" while drawing */
+.fset-panel-meta.is-problem {
+  color: var(--c-red-text);
+  font-weight: 600;
+}
+
+/* "Saving replaces your 7 fields" */
+.fset-panel-meta.is-replace {
+  color: var(--c-amber-text);
+  font-weight: 600;
+}
+
+.fset-panel-actions {
   display: flex;
   align-items: center;
-  gap: 7px;
+  flex-wrap: wrap;
+  gap: var(--s-2);
 }
 
-.fs-legend-row .mono {
+.fset-panel .fset-warning {
+  flex-basis: 100%;
+}
+
+.fset-finding {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
+
+.fset-finding-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.fset-map {
+  position: relative;
+  border-radius: var(--r-md);
+  overflow: hidden;
+  height: var(--fset-map-h);
+}
+
+.fset-map-wait {
+  height: 100%;
+  background: var(--zone-ground);
+}
+
+.fset-sample {
+  position: absolute;
+  left: 12px;
+  bottom: 28px;
+  z-index: 500;
+  pointer-events: none;
+}
+
+.fset-farm-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+.fset-farm-actions .fset-ok {
+  margin-left: var(--s-2);
+}
+
+/* The list of fields */
+.fset-fields {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--c-border);
+}
+
+.fset-field {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-3);
+  padding: 10px 8px;
+  margin: 0 -8px;
+  border-bottom: 1px solid var(--c-border);
+  border-radius: 8px;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.fset-field:last-child {
+  border-bottom: 0;
+}
+
+.fset-field:hover {
+  background: var(--c-surface-2);
+}
+
+.fset-field.is-selected {
+  background: var(--c-green-soft);
+}
+
+/* The swatch is the "Show on the map" button. */
+.fset-field-show {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  margin: -7px;
+  border-radius: 8px;
+}
+
+.fset-field-show:focus-visible {
+  outline: 2px solid var(--c-green);
+  outline-offset: 0;
+}
+
+.fset-field-show[aria-pressed="true"] .fset-field-swatch {
+  box-shadow: 0 0 0 2px var(--c-surface), 0 0 0 4px var(--c-green);
+}
+
+.fset-field-id {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  flex: 1 1 0;
+  min-width: 120px;
+}
+
+.fset-field-swatch {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: var(--zone-nodata);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
+.fset-field-swatch.is-poor {
+  background: var(--zone-poor);
+}
+
+.fset-field-swatch.is-fair {
+  background: var(--zone-fair);
+}
+
+.fset-field-swatch.is-good {
+  background: var(--zone-good);
+}
+
+.fset-field-swatch.is-great {
+  background: var(--zone-great);
+}
+
+/* "Needs recovery": the same red/beige stripes as on the map. */
+.fset-field-swatch.is-recovery {
+  background: repeating-linear-gradient(
+    135deg,
+    var(--zone-hatch-red) 0 3px,
+    var(--zone-hatch-beige) 3px 6px
+  );
+}
+
+.fset-field-name {
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.fset-name.fset-field-name {
+  flex: 0 1 auto;
+}
+
+.input.fset-rename.fset-field-name {
+  flex: 1;
+  max-width: 260px;
+  font-size: 14px;
+}
+
+.select.fset-crop {
+  width: 150px;
+  flex: 0 0 auto;
+}
+
+.fset-field-area {
+  flex: 0 0 auto;
+  min-width: 70px;
+  text-align: right;
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.btn.fset-remove {
+  color: var(--c-muted);
+}
+
+.btn.fset-remove:hover {
+  color: var(--c-red);
+  background: var(--c-red-soft);
+}
+
+.fset-confirm {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.fset-field-error {
+  flex-basis: 100%;
+  padding-left: 26px;
+}
+
+/* ---------- Data ---------- */
+
+.fset-latest {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4);
+}
+
+.fset-latest-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.fset-latest-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--c-muted);
+}
+
+.fset-latest-value {
+  font-size: 28px;
+  font-weight: 650;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.btn.fset-update {
+  flex: 0 0 auto;
+}
+
+.fset-card .fd-progress.is-compact {
+  margin: 0;
+}
+
+/* "Using sample data. ... Show how" with the .env lines folded away */
+.fset-how {
+  margin-left: 46px;
+}
+
+.fset-how > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  list-style: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--c-text-2);
+}
+
+.fset-how > summary::-webkit-details-marker {
+  display: none;
+}
+
+.fset-how-toggle {
+  font-weight: 600;
+  color: var(--c-green);
+}
+
+.fset-how > summary:hover .fset-how-toggle {
+  text-decoration: underline;
+}
+
+.fset-how > summary:focus-visible {
+  outline: 2px solid var(--c-green);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.fset-how[open] .fset-how-toggle {
+  display: none;
+}
+
+.fset-how .fset-setup {
+  margin: var(--s-2) 0 0;
+}
+
+/* The .env lines */
+.fset-setup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin-left: 46px;
+}
+
+.fset-env {
+  border-radius: var(--r-sm);
+  background: var(--c-surface-2);
+  box-shadow: inset 0 0 0 1px var(--c-border);
+  overflow: hidden;
+}
+
+.fset-env-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px 4px 12px;
+  border-bottom: 1px solid var(--c-border);
+  font-family: var(--font-mono);
   font-size: 11px;
+  color: var(--c-muted);
 }
 
-.fs-legend-pin {
-  color: var(--c-amber);
-  flex: 0 0 auto;
+.fset-env-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 26px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c-green);
 }
 
-.fs-legend-swatch {
-  width: 12px;
-  height: 12px;
-  border-radius: 2px;
-  flex: 0 0 auto;
+.fset-env-copy:hover {
+  background: var(--c-green-soft);
 }
 
-.fs-legend-dashed {
-  border: 1.5px dashed var(--c-ink);
+.fset-env-code {
+  margin: 0;
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--c-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: all;
 }
 
-.fs-legend-traced {
-  box-shadow: 0 0 0 1.5px var(--c-ink);
+.fset-hint {
+  font-size: 12px;
+  color: var(--c-muted);
 }
 
-/* ---------- Small screens ---------- */
+/* A bigger tap area for the switch (the knob stays the same size). */
+.fset-auto .toggle {
+  position: relative;
+}
 
-@media (max-width: 860px) {
-  .fs-left {
-    flex: 0 0 auto;
-    height: auto;
-    overflow: visible;
-    padding-left: var(--s-4);
-    padding-right: var(--s-4);
+.fset-auto .toggle::before {
+  content: "";
+  position: absolute;
+  inset: -10px -6px;
+}
+
+/* ---------- Phones ---------- */
+
+@media (max-width: 640px) {
+  .page.fset {
+    --fset-map-h: 260px;
   }
 
-  .fs-map {
-    flex: 0 0 520px;
-    min-height: 520px;
-  }
-}
-
-@media (max-width: 520px) {
-  .fs-two {
-    grid-template-columns: 1fr;
+  .fset .btn-sm,
+  .fset-env-copy {
+    min-height: 40px;
   }
 
-  .fs-map-tip {
-    max-width: 100%;
+  .fset .btn-sm.btn-icon {
+    min-width: 40px;
   }
 
-  .fs-delete {
+  .fset .segmented-option {
+    min-height: 36px;
+    padding: 6px 12px;
+  }
+
+  .fset-farm-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .fset-farm-name {
+    font-size: 24px;
+  }
+
+  .fset-big-value {
+    font-size: 38px;
+  }
+
+  .fset-farm-actions .btn {
+    flex: 1 1 auto;
+    min-height: 44px;
+  }
+
+  .fset-farm-actions .fset-ok {
+    flex-basis: 100%;
     margin-left: 0;
+  }
+
+  .fset-panel-actions {
+    width: 100%;
+  }
+
+  .fset-panel-actions .btn {
+    flex: 1 1 auto;
+  }
+
+  .fset-field {
+    gap: var(--s-2);
+  }
+
+  .fset-field-id {
+    flex: 1 1 auto;
+  }
+
+  .fset-name.fset-field-name {
+    min-height: 32px;
+  }
+
+  .select.fset-crop {
+    order: 5;
+    flex: 1 1 auto;
+    width: auto;
+    margin-left: 26px;
+  }
+
+  .fset-field-area {
+    min-width: 0;
+  }
+
+  .fset-field-error {
+    padding-left: 0;
+  }
+
+  .fset-latest-value {
+    font-size: 24px;
+  }
+
+  .fset-setup,
+  .fset-how {
+    margin-left: 0;
+  }
+
+  .fset-field-show {
+    width: 40px;
+    height: 40px;
+    margin: -13px -10px;
+  }
+
+  .fset-auto .toggle-row {
+    min-height: 44px;
+  }
+
+  .fset-units .card-header {
+    flex-wrap: wrap;
+    align-items: center;
   }
 }

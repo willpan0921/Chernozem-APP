@@ -1,402 +1,669 @@
 /*
   WHAT THIS FILE DOES
-  The layout for the Field Overview page (OverviewPage.jsx): the weather
-  tile, the Recovery card with its two paths, the event form, and the
-  "Your fields" list. Every class starts with "fo-" (field overview) so it
-  never clashes with another page.
+  The styling that only the Field overview page (/field) needs: the status
+  sentence, the five big tiles, "What needs doing", "Tell us what
+  happened" and the "Your fields" card (zone map + list). Every class starts
+  with "fo-" (Field Overview). Colours, spacing and corners come from
+  src/styles/tokens.css (the softer shades are color-mix() of tokens).
 
   WHO EDITS IT
-  Whoever changes how the Overview looks. Colours, spacing and radii come
-  from src/styles/tokens.css; shared blocks are styled in
-  src/styles/components.css.
+  Whoever changes how the Field overview looks.
 */
 
-/* ---------- Header ---------- */
-
-/* The grey date line above the "My farm" title. It goes through the
-   PageHeader "eyebrow" slot, so this undoes the eyebrow look (small caps,
-   green, letter-spaced) and makes it plain grey text instead. */
-.fo-dateline {
-  display: block;
-  font-size: 12px;
-  font-weight: 400;
-  letter-spacing: 0;
-  text-transform: none;
-  color: var(--c-muted);
+.fo {
+  gap: var(--s-5);
 }
 
-/* ---------- Stat tiles ---------- */
-
-/* Four equal tiles plus a wider weather tile on the right.
-   (The shared stylesheet loads after this one, so the selectors below add
-   ".stat-row" or name ".stat" twice to win over the shared rules.) */
-.stat-row.fo-stats {
-  grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(270px, 1.5fr);
-}
-
-/* The tiles are a little tighter than the shared default, so the label and
-   the big number sit close together like the mockup. */
-.fo-stats .stat {
-  padding: var(--s-3) var(--s-4);
-  gap: 4px;
-}
-
-/* On the mockup the big numbers are dark; only the label is coloured. */
-.fo-stats .stat .stat-value {
-  color: var(--c-text);
-  font-size: 24px;
-}
-
-.fo-stats .stat .stat-label {
-  font-weight: 600;
-}
-
-/* The dark weather tile: sun on the left, two lines of text on the right. */
-.fo-stats .stat.fo-weather {
-  flex-direction: row;
+.fo-meta {
+  display: inline-flex;
   align-items: center;
-  gap: var(--s-3);
-  padding: var(--s-3) var(--s-4);
-}
-
-.fo-stats .fo-weather .stat-note {
-  font-size: 11px;
-}
-
-.fo-weather-icon {
-  color: var(--c-amber);
-  flex: 0 0 auto;
-}
-
-.fo-weather-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.fo-weather-summary {
-  font-size: 18px;
-  font-weight: 650;
-  line-height: 1.2;
-}
-
-@media (max-width: 1100px) {
-  .stat-row.fo-stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .fo-stats .stat.fo-weather {
-    grid-column: 1 / -1;
-  }
-}
-
-@media (max-width: 480px) {
-  .stat-row.fo-stats {
-    grid-template-columns: 1fr;
-  }
-}
-
-/* ---------- Recovery card ---------- */
-
-.fo-recovery-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--s-3);
   flex-wrap: wrap;
-}
-
-.fo-recovery-title {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.fo-recovery-headline {
-  font-size: 18px;
-}
-
-.fo-recovery-maplink {
-  margin-top: 18px;
-}
-
-/* The red warning: a dark red icon box and the text beside it. */
-.fo-warning {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--s-3);
-  border-radius: var(--r-md);
-}
-
-.fo-warning-icon {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  background: var(--c-red);
-  color: var(--c-on-dark);
-  flex: 0 0 auto;
-}
-
-.fo-warning-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: 13px;
-}
-
-.fo-warning-text strong {
-  font-size: 15px;
-  font-weight: 650;
-  color: var(--c-red-text);
-}
-
-/* The two paths side by side. */
-.fo-paths {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--s-4);
-}
-
-.fo-path {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  border-radius: var(--r-md);
-}
-
-.fo-path.is-selected {
-  border-width: 2px;
-}
-
-.fo-path-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   gap: var(--s-2);
-}
-
-.fo-path-head h3 {
-  font-size: 15px;
-}
-
-.fo-path-tagline {
+  font-size: 13px;
   color: var(--c-text-2);
 }
 
-/* The checklist of steps, with a green tick before each. */
-.fo-steps {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 13px;
-}
+/* ---------- Tones (shared by the sentence, tiles and item icons) ---------- */
 
-.fo-steps li {
+.fo-tone-green { --fo-tone: var(--c-green); --fo-soft: var(--c-green-soft); }
+.fo-tone-amber { --fo-tone: var(--c-amber-text); --fo-soft: var(--c-amber-soft); }
+.fo-tone-red { --fo-tone: var(--c-red); --fo-soft: var(--c-red-soft); }
+.fo-tone-blue { --fo-tone: var(--c-blue-text); --fo-soft: var(--c-blue-soft); }
+.fo-tone-ink { --fo-tone: var(--c-ink); --fo-soft: var(--c-surface-3); }
+.fo-tone-none { --fo-tone: var(--c-muted); --fo-soft: var(--c-surface-3); }
+
+/* ---------- The status sentence ---------- */
+
+.fo-status {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--s-3);
+  margin-top: calc(-1 * var(--s-2));
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  color: var(--c-text);
 }
 
-.fo-steps svg {
-  color: var(--c-green);
+.fo-status-dot {
   flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--fo-tone);
+  box-shadow: 0 0 0 4px var(--fo-soft);
 }
 
-.fo-cost {
+.fo-progress.card {
+  padding: var(--s-3) var(--s-4);
+}
+
+/* ---------- Big tiles ---------- */
+
+.fo-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(0, 1.35fr);
+  gap: var(--s-3);
+}
+
+.fo-stat {
+  gap: var(--s-2);
+}
+
+.fo-stat-value {
+  font-size: 34px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  white-space: nowrap;
+}
+
+.fo-stat.fo-tone-green .fo-stat-value,
+.fo-stat.fo-tone-red .fo-stat-value,
+.fo-stat.fo-tone-amber .fo-stat-value {
+  color: var(--fo-tone);
+}
+
+.fo-stat-area .fo-stat-value {
+  font-size: 28px;
+  line-height: 34px;
+}
+
+/* A group tile you can press: picks out its fields in "Your fields". */
+.fo-stat-button {
+  text-align: left;
+  transition: box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.fo-stat-button:hover {
+  background: var(--c-surface-2);
+}
+
+.fo-stat-button.is-pressed {
+  box-shadow: inset 0 0 0 2px var(--fo-tone, var(--c-ink));
+}
+
+.fo-stat-button:focus-visible {
+  outline: 2px solid var(--c-green);
+  outline-offset: 2px;
+}
+
+/* The dark weather tile. */
+.fo-weather.stat {
+  gap: var(--s-2);
+}
+
+.fo-weather-now {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  align-items: center;
+  gap: var(--s-2);
 }
 
-.fo-cost-amount {
-  font-size: 18px;
+.fo-weather {
+  --fo-on-dark-2: color-mix(in srgb, var(--c-on-dark) 72%, transparent);
+  --fo-on-dark-3: color-mix(in srgb, var(--c-on-dark) 50%, transparent);
+  --fo-rain-on-dark: color-mix(in srgb, var(--c-blue) 45%, var(--c-on-dark));
+}
+
+.fo-weather-label {
+  font-size: 13px;
+  color: var(--fo-on-dark-2);
+}
+
+.fo-weather-rain {
+  font-size: 12px;
+  color: var(--fo-on-dark-2);
+}
+
+.fo-weather-rain.is-rain {
+  color: var(--fo-rain-on-dark);
   font-weight: 600;
 }
 
-.fo-cost-total {
-  margin-top: -6px;
+.fo-weather-wait {
+  color: var(--fo-on-dark-3);
 }
 
-.fo-path-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--s-2);
-  flex-wrap: wrap;
-  margin-top: 2px;
-}
-
-.fo-replant {
+.fo-weather-retry {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 13px;
+  color: var(--c-on-dark);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
-/* The row under the paths: progress on the left, links and buttons right. */
-.fo-recovery-foot {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
+/* ---------- Layout ---------- */
+
+.fo-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
   gap: var(--s-4);
-  flex-wrap: wrap;
+  align-items: start;
 }
 
-.fo-progress {
+.fo-main {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  flex: 1 1 200px;
-  max-width: 220px;
+  gap: var(--s-4);
+  min-width: 0;
 }
 
-.fo-progress-label {
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.fo-progress-track {
-  height: 6px;
-  border-radius: var(--r-pill);
-  background: var(--c-surface-3);
-  overflow: hidden;
-}
-
-.fo-progress-fill {
-  height: 100%;
-  border-radius: var(--r-pill);
-  background: var(--c-amber);
-}
-
-.fo-recovery-actions {
+.fo-card-head {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: var(--s-3);
-  flex-wrap: wrap;
+  min-height: 32px;
 }
 
-.fo-programs {
+.fo-card-head h2 {
+  font-size: 17px;
+}
+
+.fo-count {
+  min-width: 24px;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  background: var(--c-surface-3);
   font-size: 12px;
-  gap: 6px;
+  font-weight: 650;
+  text-align: center;
+  color: var(--c-text-2);
 }
 
-@media (max-width: 760px) {
-  .fo-paths {
-    grid-template-columns: 1fr;
+.fo-head-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-green);
+}
+
+.fo-head-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ---------- What needs doing ---------- */
+
+.fo-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.fo-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-3) var(--s-3) var(--s-3);
+  border-radius: var(--r-sm);
+  background: var(--c-surface-2);
+}
+
+.fo-item.is-recovery {
+  align-items: start;
+  padding: var(--s-4);
+  background: var(--c-red-soft);
+}
+
+.fo-item.is-recovery .fo-item-action {
+  align-self: center;
+}
+
+.fo-item-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--fo-soft);
+  color: var(--fo-tone);
+}
+
+.fo-item.is-recovery .fo-item-icon {
+  background: var(--c-surface);
+}
+
+.fo-item-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.fo-item-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--s-2);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--c-text);
+}
+
+.fo-item.is-recovery .fo-item-title {
+  font-size: 16px;
+}
+
+.fo-item-amount {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--c-red-text);
+}
+
+.fo-item-line {
+  font-size: 12px;
+  color: var(--c-muted);
+}
+
+.fo-item.is-recovery .fo-item-line,
+.fo-item-line.is-error {
+  color: var(--c-red-text);
+}
+
+.fo-spin {
+  animation: fo-spin 0.9s linear infinite;
+}
+
+@keyframes fo-spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 
-/* ---------- Event form ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .fo-spin {
+    animation: none;
+  }
+}
 
-.fo-event-head {
+.fo-costs {
   display: flex;
-  align-items: flex-start;
-  gap: var(--s-3);
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin: var(--s-1) 0;
 }
 
-.fo-event-icon {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  background: var(--c-green-soft);
-  color: var(--c-green);
-  flex: 0 0 auto;
+.fo-cost {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  padding: 5px 10px;
+  border-radius: var(--r-sm);
+  background: var(--c-surface);
 }
 
-/* "Field [Field 7 v] | Shelling Fire Flood Hail Pests" */
-.fo-event-controls {
+.fo-cost-label {
+  font-size: 12px;
+  color: var(--c-muted);
+}
+
+.fo-cost-value {
+  font-size: 15px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text);
+}
+
+.fo-calm {
   display: flex;
   align-items: center;
   gap: var(--s-2);
-  flex-wrap: wrap;
+  padding: var(--s-4);
+  border-radius: var(--r-sm);
+  background: var(--c-green-soft);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--c-green);
 }
 
-.fo-event-controls .chip-select {
-  padding: 8px 12px;
+.fo-more {
+  align-self: flex-start;
   font-size: 13px;
+  font-weight: 600;
+  color: var(--c-green);
 }
 
-.fo-event-controls .tab {
-  padding: 8px 14px;
+.fo-more:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
-.fo-vdivider {
-  width: 1px;
-  height: 24px;
-  background: var(--c-border);
-  margin: 0 4px;
+/* ---------- Tell us what happened ---------- */
+
+.fo-tell-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
 }
 
-/* When the event-type pills wrap onto their own line (narrow screens) the
-   divider would be a stray line on its own, so hide it. */
-@media (max-width: 760px) {
-  .fo-vdivider {
-    display: none;
-  }
+.fo-tell-field.select {
+  width: auto;
+  min-width: 140px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  font-weight: 550;
 }
 
-.fo-event-textarea {
-  min-height: 68px;
+.fo-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
-.fo-event-foot {
+.fo-kind {
+  padding: 7px 14px;
+  border-radius: var(--r-pill);
+  background: var(--c-surface);
+  box-shadow: inset 0 0 0 1px var(--c-border-strong);
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--c-text-2);
+}
+
+.fo-kind:hover {
+  background: var(--c-surface-2);
+}
+
+.fo-kind.is-active {
+  background: var(--c-ink);
+  box-shadow: none;
+  color: var(--c-on-dark);
+}
+
+.fo-kind:focus-visible,
+.fo-photo-remove:focus-visible {
+  outline: 2px solid var(--c-green);
+  outline-offset: 2px;
+}
+
+.fo-tell-text.textarea {
+  min-height: 84px;
+  font-size: 14px;
+}
+
+.fo-photos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.fo-photo {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  background: var(--c-surface-3);
+}
+
+.fo-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.fo-photo-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--c-ink) 75%, transparent);
+  color: var(--c-on-dark);
+}
+
+.fo-photo-remove:hover {
+  background: var(--c-ink);
+}
+
+.fo-tell-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
   flex-wrap: wrap;
 }
 
-/* ---------- Next steps ---------- */
+.fo-tell-error {
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--c-red-text);
+}
 
-.fo-next-link {
-  margin-top: 4px;
+.fo-send {
+  margin-left: auto;
+  min-width: 96px;
 }
 
 /* ---------- Your fields ---------- */
 
+.card.fo-fields {
+  gap: var(--s-3);
+}
+
+.fo-map {
+  height: 300px;
+  margin: 0 calc(-1 * var(--s-5));
+}
+
+.fo-map .fm-map {
+  border-radius: 0;
+}
+
+.fo-map-wait {
+  height: 100%;
+  background: var(--zone-ground);
+}
+
 .fo-field-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  list-style: none;
+  margin: 0 calc(-1 * var(--s-2));
+  padding: 0;
 }
 
-.fo-field-row {
-  display: flex;
+.fo-field {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
-  padding: 3px 0;
+  gap: var(--s-3);
+  padding: 9px var(--s-2);
+  border-radius: var(--r-sm);
 }
 
-/* The small coloured square. "--swatch" is set per field in the JSX. */
-.fo-field-swatch {
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
-  background: var(--swatch, var(--c-field-healthy));
-  flex: 0 0 auto;
+.fo-field:hover {
+  background: var(--c-surface-2);
 }
 
-/* Field 7: red diagonal stripes on a light ground. */
-.fo-field-swatch.is-striped {
-  background: repeating-linear-gradient(
-    45deg,
-    var(--c-red) 0 3px,
-    var(--c-amber-soft) 3px 7px
-  );
+.fo-field:focus-visible {
+  background: var(--c-surface-2);
+  outline: 2px solid var(--c-green);
+  outline-offset: -2px;
+}
+
+/* A pressed group tile: the other fields fade back. */
+.fo-field-list li {
+  transition: opacity 0.15s ease;
+}
+
+.fo-field-list.is-filtered li.is-out {
+  opacity: 0.35;
+}
+
+.fo-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-ink) 12%, transparent);
+}
+
+.fo-swatch-poor { background: var(--zone-poor); }
+.fo-swatch-fair { background: var(--zone-fair); }
+.fo-swatch-good { background: var(--zone-good); }
+.fo-swatch-great { background: var(--zone-great); }
+.fo-swatch-nodata { background: var(--zone-nodata); }
+
+.fo-swatch.is-recovery {
+  background: repeating-linear-gradient(135deg, var(--zone-hatch-red) 0 3px, var(--zone-hatch-beige) 3px 6px);
 }
 
 .fo-field-text {
   display: flex;
   flex-direction: column;
-  flex: 1;
   min-width: 0;
 }
 
 .fo-field-name {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
-  line-height: 1.3;
+  color: var(--c-text);
+}
+
+.fo-field-sub {
+  font-size: 12px;
+  color: var(--c-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- Smaller screens ---------- */
+
+/* The map and the list sit side by side once the card is full width. */
+@media (max-width: 1100px) {
+  .fo-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1100px) and (min-width: 700px) {
+  .card.fo-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: var(--s-5);
+  }
+
+  .fo-fields .fo-card-head {
+    grid-column: 1 / -1;
+  }
+
+  .fo-map {
+    height: auto;
+    min-height: 320px;
+    margin: 0;
+    border-radius: var(--r-sm);
+    overflow: hidden;
+  }
+
+  .fo-field-list {
+    margin: 0;
+  }
+}
+
+/* Three group tiles on top, farm area and weather under them. */
+@media (max-width: 1000px) {
+  .fo-stats {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .fo-stat {
+    grid-column: span 2;
+  }
+
+  .fo-stat-area,
+  .fo-weather {
+    grid-column: span 3;
+  }
+}
+
+@media (max-width: 640px) {
+  .fo-status {
+    font-size: 17px;
+  }
+
+  .fo-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .fo-stat,
+  .fo-stat-area {
+    grid-column: auto;
+  }
+
+  .fo-stat-value {
+    font-size: 28px;
+  }
+
+  .fo-stat-area .fo-stat-value {
+    font-size: 22px;
+    line-height: 28px;
+  }
+
+  .fo-weather {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    column-gap: var(--s-4);
+  }
+
+  .fo-weather .stat-label {
+    flex-basis: 100%;
+  }
+
+  .fo-map {
+    height: 260px;
+  }
+
+  .fo-item.is-recovery {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .fo-item.is-recovery .fo-item-action {
+    grid-column: 2;
+    align-self: start;
+  }
+
+  .fo-send {
+    margin-left: 0;
+    flex: 1 1 100%;
+  }
 }

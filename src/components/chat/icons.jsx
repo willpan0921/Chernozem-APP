@@ -12,7 +12,7 @@
 // Danny. To use a new icon, import it from "lucide-react" and add a line to
 // the list below. Icon names: https://lucide.dev/icons
 
-import { Shield, Cloud, Calendar, Map, MapPin, SlidersHorizontal, ListOrdered, Database, Wheat, LayoutGrid, CircleHelp } from "lucide-react";
+import { Shield, Cloud, Calendar, Map, MapPin, SlidersHorizontal, ListOrdered, Database, Wheat, LayoutGrid, CircleHelp, Satellite, Camera, Sprout } from "lucide-react";
 
 const icons = {
   // Atlas AI
@@ -27,6 +27,9 @@ const icons = {
   "layout-grid": LayoutGrid,
   shield: Shield,
   cloud: Cloud,
+  satellite: Satellite,
+  camera: Camera,
+  sprout: Sprout,
 };
 
 // The colour each icon gets unless the item says otherwise. Icons not
@@ -35,6 +38,8 @@ const defaultTones = {
   shield: "red",
   cloud: "blue",
   "map-pin": "green",
+  camera: "red",
+  sprout: "green",
 };
 
 // Draws the icon for a name. Unknown names show a question mark so a typo

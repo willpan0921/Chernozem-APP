@@ -8,8 +8,7 @@
 //     history), and
 //   - the tools Claude may call to look things up: get_ranking, get_place,
 //     compare_months, budget_coverage and get_history.
-// For the Field app there are no tools: the phone sends a short farm summary
-// and that is the context.
+// The Field app's context is built from the saved farm in field-context.js.
 //
 // WHO EDITS IT
 // Whoever changes what the AI knows or can look up. To add a tool, add its
@@ -484,13 +483,4 @@ export async function runAtlasTool(name, input = {}, data) {
     default:
       return { error: `Unknown tool "${name}".` };
   }
-}
-
-// ---------- Field ----------
-
-// The Field app sends a short farm summary as text. Keep it to a sane size.
-export function fieldContextText(farm) {
-  if (typeof farm === "string" && farm.trim()) return `The user's farm:\n${farm.trim().slice(0, 8000)}`;
-  if (farm && typeof farm === "object") return `The user's farm:\n${JSON.stringify(farm).slice(0, 8000)}`;
-  return "The user has not shared farm details yet.";
 }

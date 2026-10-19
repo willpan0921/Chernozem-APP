@@ -23,6 +23,9 @@
 // loading    - true while a saved chat is being opened
 // empty      - what an empty chat shows (welcome line or the setup card)
 // notice     - shown above the messages of a saved chat (the setup card)
+// about      - { icon, text } or null: one line under the title saying what the
+//              chat is about (e.g. "Fire · Field 1 · 1 photo"). Only shown on
+//              narrow screens, where the "Using" column is below the chat.
 // composer   - the <ChatComposer /> to show at the bottom
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -32,6 +35,7 @@ import { aiName } from "../../data/chats.js";
 import { plainText } from "../../lib/chat/markdown.js";
 import { toolLabel } from "../../lib/chat/threads.js";
 import ChatMarkdown from "./ChatMarkdown.jsx";
+import ChatIcon from "./icons.jsx";
 
 // The small bits of text this column shows on its own.
 const labels = {
@@ -167,7 +171,7 @@ function DeleteControl({ onDelete }) {
   );
 }
 
-export default function ChatConversation({ title, onDelete, messages, pending, error, onRetry, loading, empty, notice, composer }) {
+export default function ChatConversation({ title, onDelete, messages, pending, error, onRetry, loading, empty, notice, about, composer }) {
   const listRef = useRef(null);
   const stickRef = useRef(true);
 
@@ -193,6 +197,12 @@ export default function ChatConversation({ title, onDelete, messages, pending, e
         </h1>
         {onDelete && <DeleteControl key={title} onDelete={onDelete} />}
       </header>
+      {about && (
+        <p className="chat-about" data-testid="chat-about">
+          <ChatIcon name={about.icon} size={14} />
+          <span>{about.text}</span>
+        </p>
+      )}
 
       <div className={isEmpty ? "chat-messages is-empty" : "chat-messages"} ref={listRef} onScroll={handleScroll} data-testid="chat-messages">
         {loading && (

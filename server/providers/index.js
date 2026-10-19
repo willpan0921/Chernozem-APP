@@ -9,6 +9,9 @@
 //   getProvider()     the data source to use now
 //   providerStatus()  { id, label, ok, detail, missing } for the Settings page
 //                     (answers within 3 s, even while Earth Engine signs in)
+//   getFieldProvider() / fieldProviderStatus()
+//                     the same for the Field product (field-gee.js or
+//                     field-sample.js); see the end of this file
 //
 // WHO EDITS IT
 // Nobody, normally. Connecting Earth Engine only needs the .env settings.
@@ -131,4 +134,101 @@ export async function providerStatus() {
 // Forget the cached choice (used after .env changes are detected or in tests).
 export function resetProvider() {
   Object.assign(state, { key: null, provider: null, detail: null, fallback: false, checkedAt: 0 });
+}
+
+// ---------- The Field product's data source ----------
+// Same switch for the Field: Earth Engine (field-gee.js) when it is set up,
+// otherwise the sample source (field-sample.js), with the same fallback and
+// 5-minute retry as the Atlas.
+//
+//   getFieldProvider()     the Field data source to use now
+//   fieldProviderStatus()  { id, label, ok, detail, ... } like providerStatus()
+
+import { fieldSampleProvider } from "./field-sample.js";
+
+const fieldState = (globalThis.__chernozemFieldProvider ??= { key: null, provider: null, detail: null, fallback: false, checkedAt: 0 });
+
+// field-gee.js exports a ready provider (default or fieldGeeProvider), or a
+// factory createFieldGeeProvider({ getConfig }).
+function resolveFieldGee(mod) {
+  let provider = mod.default || mod.fieldGeeProvider || null;
+  if (!provider && typeof mod.createFieldGeeProvider === "function") provider = mod.createFieldGeeProvider({ getConfig: config });
+  if (typeof provider === "function") provider = provider({ getConfig: config });
+  if (!provider || typeof provider.analyzeFields !== "function" || typeof provider.detectFields !== "function") {
+    throw new Error("server/providers/field-gee.js does not provide detectFields() and analyzeFields().");
+  }
+  return provider;
+}
+
+export async function getFieldProvider() {
+  const env = config();
+  const wantGee = Boolean(env.geeCredentials && env.geeProjectId && !env.geeDisabled);
+  const key = wantGee ? `gee:${env.geeProjectId}:${env.geeCredentials.client_email}` : `sample:${env.geeDisabled}:${env.geeCredentialsError || ""}`;
+  const fresh = fieldState.key === key && fieldState.provider && !(fieldState.fallback && Date.now() - fieldState.checkedAt > RETRY_MS);
+  if (fresh) return fieldState.provider.id === "sample" ? fieldSampleProvider : fieldState.provider;
+
+  if (fieldState.pending && fieldState.pendingKey === key) return fieldState.pending;
+  fieldState.pendingKey = key;
+  fieldState.pending = (async () => {
+    let provider = fieldSampleProvider;
+    let detail = sampleDetail(env);
+    let fallback = false;
+    if (wantGee) {
+      try {
+        const mod = await import("./field-gee.js");
+        const gee = resolveFieldGee(mod);
+        const status = await gee.status();
+        if (!status || !status.ok) throw new Error(status?.detail || "Earth Engine did not answer.");
+        provider = gee;
+        detail = status.detail || "Connected to Earth Engine.";
+      } catch (error) {
+        fallback = true;
+        detail = `Earth Engine is set up but could not connect: ${error.message}. Using sample data until it does.`;
+        console.warn(`[chernozem] Field: ${detail}`);
+      }
+    }
+    const before = fieldState.provider?.id;
+    Object.assign(fieldState, { key, provider, detail, fallback, checkedAt: Date.now() });
+    // Earth Engine just came on: let the scheduler redo the sample analyses.
+    if (before === "sample" && provider.id !== "sample" && globalThis.__chernozemScheduler?.started) {
+      import("../scheduler.js")
+        .then((mod) => (mod.checkFieldsNow || mod.checkNow)())
+        .catch((error) => console.warn(`[chernozem] Could not start the field check: ${error.message}`));
+    }
+    return provider;
+  })();
+  try {
+    return await fieldState.pending;
+  } finally {
+    fieldState.pending = null;
+  }
+}
+
+export async function fieldProviderStatus() {
+  const env = config();
+  const attempt = getFieldProvider();
+  attempt.catch(() => {});
+  let provider = await withTimeout(attempt, STATUS_WAIT_MS, null);
+  let connecting = false;
+  if (!provider) {
+    connecting = true;
+    provider = fieldState.provider || fieldSampleProvider;
+  }
+  const detail = connecting && !fieldState.provider ? "Connecting to Earth Engine…" : fieldState.detail;
+  return {
+    id: provider.id,
+    label: provider.id === "gee" ? provider.label || "Earth Engine" : "Sample data",
+    ok: !fieldState.fallback && !connecting,
+    detail,
+    connecting,
+    configured: Boolean(env.geeCredentials && env.geeProjectId),
+    fallbackFrom: fieldState.fallback ? "gee" : null,
+    missing: provider.id === "gee" ? [] : missingGeeSettings(env),
+    credentialsError: env.geeCredentialsError || null,
+    checkedAt: fieldState.checkedAt ? new Date(fieldState.checkedAt).toISOString() : null,
+  };
+}
+
+export function resetFieldProvider() {
+  Object.assign(fieldState, { key: null, provider: null, detail: null, fallback: false, checkedAt: 0 });
 }

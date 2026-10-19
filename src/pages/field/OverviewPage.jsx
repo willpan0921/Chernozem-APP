@@ -1,345 +1,499 @@
 // WHAT THIS FILE DOES
 // The Field "Overview" page (web address /field): the first thing a farmer
-// sees. From top to bottom it shows
-//   - the farm name, today's date and the "Open map" / "Add a field" buttons
+// sees. From top to bottom:
+//   - the farm name, where the data comes from and the date of the latest
+//     satellite pass, with the "Open map" button,
+//   - one status sentence ("1 field needs recovery · 1 to watch"),
 //   - five tiles: healthy / to watch / needs recovery / farm area / weather
-//   - the big Recovery card for Field 7, with the two recovery paths
-//   - the "Tell us what happened" form for reporting an event
-//   - on the right: "Next steps this week" and the "Your fields" list
+//     (press one of the first three to pick out its fields in the list),
+//   - "What needs doing": only things worked out from the analyses
+//     (recovery of damaged fields with its cost, fields ready to harvest
+//     before the rain, stress patches...), or "Nothing urgent",
+//   - "Tell us what happened": a report with up to 4 photos; Send saves it
+//     and opens the AI chat about it (/field/ai?report=<id>),
+//   - on the right, "Your fields": the zone map and the list of fields
+//     (click one to open it on the Fields map).
 //
-// Every number and sentence comes from src/data/farm.js. To change a word or
-// a figure, edit that file, not this one.
+// Everything comes from the farm and its analyses (useFieldData). The rules
+// (what counts as damaged, ready, stressed...) are in
+// src/lib/field/method.js; the status sentence and the "What needs doing"
+// items are worded in src/lib/field/overview.js (tested there). The report
+// kinds are REPORT_KINDS in src/data/chats.js (shared with the AI page).
 //
 // WHO EDITS IT
-// Whoever changes how the Overview is laid out. The look of each block is in
-// OverviewPage.css next to this file; the shared blocks (Card, Stat, Badge,
-// Button...) live in src/components/ui.
+// Whoever changes how the Field overview looks or is laid out. Its styles
+// are in OverviewPage.css next to this file (every class starts "fo-").
 
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import {
-  CircleCheck,
-  Eye,
-  Shield,
-  LayoutGrid,
-  Sun,
-  Map,
-  Plus,
-  ChevronRight,
-  Check,
-  Calendar,
-  Landmark,
-  MessageSquare,
-  Download,
   Camera,
+  ChevronRight,
+  CircleCheck,
+  Cloud,
+  CloudDrizzle,
+  CloudFog,
+  CloudLightning,
+  CloudRain,
+  CloudSnow,
+  CloudSun,
+  Map as MapIcon,
+  RefreshCw,
   Send,
+  ShieldAlert,
+  Sun,
+  TriangleAlert,
   Wheat,
-  Droplet,
+  Activity,
+  Droplets,
+  Sprout,
+  X,
 } from "lucide-react";
-import { PageHeader, Card, Stat, Badge, Button, Tabs, ChipSelect, RowItem } from "../../components/ui/index.js";
-import {
-  farm,
-  fields,
-  fieldOptions,
-  recoveryPlan,
-  nextSteps,
-  nextStepsCard,
-  yourFieldsCard,
-  eventTypes,
-  eventForm,
-} from "../../data/farm.js";
+import { PageHeader, Badge, Button } from "../../components/ui/index.js";
+import { FarmGate, FieldProgress, useFieldData } from "../../state/FieldData.jsx";
+import { STATUS_GROUPS } from "../../lib/field/method.js";
+import { farmAreaHa, formatArea, formatDay, formatDayRange, statusCounts } from "../../lib/field/format.js";
+import { latestPass, likelyRain, needsDoing, statusSentence } from "../../lib/field/overview.js";
+import { REPORT_KINDS } from "../../data/chats.js";
+import { PHOTO_TYPES } from "../../api/fieldApi.js";
 import "./OverviewPage.css";
 
-// The data file names icons with short keys ("shield", "wheat"...). This
-// table turns each key into the Lucide icon that draws it.
-const ICONS = {
-  "check-circle": CircleCheck,
-  eye: Eye,
-  shield: Shield,
-  "layout-grid": LayoutGrid,
-  wheat: Wheat,
-  droplet: Droplet,
-};
+// The map (and the map library) only downloads once the page shows.
+const FieldMap = lazy(() => import("../../components/field/FieldMap.jsx"));
 
-// Draws the icon for a key, at the size the caller wants. Falls back to the
-// shield if the key is unknown, so a typo in the data never breaks the page.
-function DataIcon({ name, size = 14 }) {
-  const Icon = ICONS[name] || Shield;
-  return <Icon size={size} />;
-}
+const MAX_PHOTOS = 4;
+const ITEMS_SHOWN = 5;
+// The small zone map: the farm fills the frame.
+const MAP_FIT_PADDING = [14, 14];
 
 export default function OverviewPage() {
-  // Which recovery path is highlighted. Starts on the one the data marks as
-  // selected ("fast") and changes when someone clicks "Choose this path".
-  const [selectedPath, setSelectedPath] = useState(recoveryPlan.selectedPath);
+  return (
+    <FarmGate>
+      <Overview />
+    </FarmGate>
+  );
+}
 
-  // The event form: which field it is about, what kind of event, the text,
-  // and whether it has been "sent" (shows a confirmation line).
-  const [eventFieldId, setEventFieldId] = useState(eventForm.defaultFieldId);
-  const [eventType, setEventType] = useState(null);
-  const [eventText, setEventText] = useState("");
-  const [eventSent, setEventSent] = useState(false);
+const ITEM_ICONS = { shield: ShieldAlert, wheat: Wheat, stress: Activity, health: Sprout, water: Droplets, cloud: CloudFog, alert: TriangleAlert };
 
-  function handleEventSubmit(event) {
-    event.preventDefault();
-    setEventSent(true);
-  }
+// WMO weather code (Open-Meteo) -> an icon.
+function WeatherIcon({ code, size = 26 }) {
+  let Icon = Cloud;
+  if (code === 0) Icon = Sun;
+  else if (code === 1 || code === 2) Icon = CloudSun;
+  else if (code === 45 || code === 48) Icon = CloudFog;
+  else if (code >= 51 && code <= 57) Icon = CloudDrizzle;
+  else if ((code >= 61 && code <= 67) || (code >= 80 && code <= 82)) Icon = CloudRain;
+  else if ((code >= 71 && code <= 77) || code === 85 || code === 86) Icon = CloudSnow;
+  else if (code >= 95) Icon = CloudLightning;
+  return <Icon size={size} strokeWidth={2} aria-hidden="true" />;
+}
 
-  const paths = Object.values(recoveryPlan.paths);
-  // The word on the black pill of whichever path is chosen ("Selected").
-  const SELECTED_LABEL = recoveryPlan.paths[recoveryPlan.selectedPath].badge;
+// ---------- The page ----------
+
+function Overview() {
+  const navigate = useNavigate();
+  const { farm, analyses, provider, job, weather, weatherError, actions } = useFieldData();
+  const [hoveredId, setHoveredId] = useState(null);
+  // A group tile that is pressed: its fields stand out in "Your fields".
+  const [group, setGroup] = useState(null);
+  const toggleGroup = (id) => setGroup((now) => (now === id ? null : id));
+  const inGroup = (statusId) => !group || STATUS_GROUPS[group].includes(statusId);
+
+  const status = statusSentence(farm, analyses);
+  const counts = statusCounts(farm, analyses);
+  const items = useMemo(() => needsDoing({ farm, analyses, weather, job }), [farm, analyses, weather, job]);
+  const pass = latestPass(farm, analyses);
+  const running = job?.status === "running";
+  // The badge follows the readings shown, not the current data source.
+  const shown = Object.values(analyses || {}).filter(Boolean);
+  const fromEarthEngine = shown.length ? shown.every((item) => item.provider === "gee") : provider?.id === "gee";
 
   return (
-    <div className="page fo-page">
-      {/* ---- Header: date line above the title, buttons on the right ---- */}
+    <div className="page fo">
       <PageHeader
-        eyebrow={
-          <span className="fo-dateline">
-            {farm.todayDisplay} · {farm.district}
+        title={farm.name}
+        subtitle={
+          <span className="fo-meta">
+            {fromEarthEngine ? (
+              <Badge tone="green" dot>
+                Earth Engine
+              </Badge>
+            ) : (
+              <Badge tone="amber">Sample data</Badge>
+            )}
+            {pass && <span>{fromEarthEngine ? `Sentinel-2 · ${formatDay(pass)}` : formatDay(pass)}</span>}
           </span>
         }
-        title={farm.name}
         actions={
-          <>
-            <Button variant="secondary" icon={<Map size={15} />} to="/field/fields">
-              {farm.headerActions.openMap}
-            </Button>
-            <Button variant="primary" icon={<Plus size={15} />} title="Not connected yet">
-              {farm.headerActions.addField}
-            </Button>
-          </>
+          <Button variant="primary" icon={<MapIcon size={15} />} to="/field/fields">
+            Open map
+          </Button>
         }
       />
 
-      {/* ---- Stat tiles: four counts plus the dark weather tile ---- */}
-      <div className="stat-row fo-stats">
-        {farm.stats.map((stat) => (
-          <Stat
-            key={stat.key}
-            label={stat.label}
-            value={stat.value}
-            tone={stat.tone || undefined}
-            icon={<DataIcon name={stat.icon} size={13} />}
-            mono={stat.key === "totalHa"}
-          />
-        ))}
-        <div className="stat stat-dark fo-weather">
-          <span className="fo-weather-icon">
-            <Sun size={26} strokeWidth={2.2} />
-          </span>
-          <span className="fo-weather-text">
-            <span className="fo-weather-summary">{farm.weather.display}</span>
-            <span className="stat-note">{farm.weather.note}</span>
-          </span>
+      <p className={`fo-status fo-tone-${status.tone}`} role="status">
+        <span className="fo-status-dot" aria-hidden="true" />
+        {status.text}
+      </p>
+
+      {running && (
+        <div className="card fo-progress">
+          <FieldProgress job={job} compact />
         </div>
+      )}
+
+      <div className="fo-stats">
+        <StatTile id="healthy" label="Healthy" value={counts.healthy} tone="green" pressed={group === "healthy"} onPress={toggleGroup} />
+        <StatTile id="watch" label="To watch" value={counts.watch} tone={counts.watch ? "amber" : null} pressed={group === "watch"} onPress={toggleGroup} />
+        <StatTile id="recovery" label="Needs recovery" value={counts.recovery} tone={counts.recovery ? "red" : null} pressed={group === "recovery"} onPress={toggleGroup} />
+        <StatTile id="area" label="Farm area" value={formatArea(farmAreaHa(farm), farm.units)} />
+        <WeatherTile weather={weather} error={weatherError} onRetry={actions.reloadWeather} />
       </div>
 
-      <div className="two-col">
-        {/* ================= LEFT COLUMN ================= */}
-        <div className="stack">
-          {/* ---- Recovery card for Field 7 ---- */}
-          <Card className="fo-recovery">
-            <div className="fo-recovery-head">
-              <div className="fo-recovery-title">
-                <span className="eyebrow eyebrow-red">{recoveryPlan.eyebrow}</span>
-                <h2 className="fo-recovery-headline">{recoveryPlan.headline}</h2>
-                <p className="small muted">{recoveryPlan.subline}</p>
-              </div>
-              <Link to="/field/fields" className="link-arrow fo-recovery-maplink">
-                {recoveryPlan.seeOnMap}
-                <ChevronRight size={14} />
-              </Link>
-            </div>
-
-            {/* The red "get it checked first" warning. */}
-            <div className="panel panel-red fo-warning">
-              <span className="fo-warning-icon">
-                <Shield size={15} strokeWidth={2.2} />
-              </span>
-              <div className="fo-warning-text">
-                <strong>{recoveryPlan.warning.title}</strong>
-                <p>{recoveryPlan.warning.text}</p>
-              </div>
-            </div>
-
-            {/* The two recovery paths side by side. */}
-            <div className="fo-paths">
-              {paths.map((path) => {
-                const isSelected = path.id === selectedPath;
-                return (
-                  <div
-                    key={path.id}
-                    className={isSelected ? "panel panel-outline panel-selected fo-path is-selected" : "panel panel-outline fo-path"}
-                  >
-                    <div className="fo-path-head">
-                      <h3>{path.name}</h3>
-                      {/* The selected path always shows the black "Selected"
-                          pill; the other shows its own badge. */}
-                      {isSelected ? (
-                        <Badge tone="ink">{SELECTED_LABEL}</Badge>
-                      ) : (
-                        path.badge !== SELECTED_LABEL && <Badge tone={path.badgeTone || undefined}>{path.badge}</Badge>
-                      )}
-                    </div>
-                    <p className="small fo-path-tagline">{path.tagline}</p>
-                    <ul className="fo-steps">
-                      {path.steps.map((step) => (
-                        <li key={step}>
-                          <Check size={13} strokeWidth={2.5} />
-                          {step}
-                        </li>
-                      ))}
-                    </ul>
-                    <div className="divider" />
-                    <div className="fo-cost">
-                      <span className="mono fo-cost-amount">{path.costPerHa}</span>
-                      <span className="mono small muted">{path.costUnit}</span>
-                    </div>
-                    <p className="small muted fo-cost-total">{path.total}</p>
-                    <div className="fo-path-foot">
-                      <span className="fo-replant">
-                        <Calendar size={13} />
-                        {path.replant}
-                      </span>
-                      {!isSelected && (
-                        <Button variant="secondary" size="sm" onClick={() => setSelectedPath(path.id)}>
-                          {path.chooseLabel}
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Bottom row: progress bar, programs link and the two buttons. */}
-            <div className="fo-recovery-foot">
-              <div className="fo-progress">
-                <div className="spread">
-                  <span className="fo-progress-label">{recoveryPlan.progress.label}</span>
-                  <span className="small">{recoveryPlan.progress.display}</span>
-                </div>
-                <div className="fo-progress-track">
-                  <div className="fo-progress-fill" style={{ width: `${recoveryPlan.progress.pct}%` }} />
-                </div>
-              </div>
-              <div className="fo-recovery-actions">
-                <Link to="/field/ai" className="link-arrow fo-programs">
-                  <Landmark size={14} />
-                  {recoveryPlan.programsLabel}
-                </Link>
-                <Button variant="secondary" icon={<MessageSquare size={14} />} to="/field/ai">
-                  {recoveryPlan.actions.askAi}
-                </Button>
-                <Button variant="primary" icon={<Download size={14} />} title="Not connected yet">
-                  {recoveryPlan.actions.download}
-                </Button>
-              </div>
-            </div>
-          </Card>
-
-          {/* ---- "Tell us what happened" event form ---- */}
-          <Card className="fo-event">
-            <form className="stack" onSubmit={handleEventSubmit}>
-              <div className="fo-event-head">
-                <span className="fo-event-icon">
-                  <MessageSquare size={15} />
-                </span>
-                <div className="card-header-text">
-                  <h2>{eventForm.title}</h2>
-                  <p className="card-subtitle">{eventForm.subtitle}</p>
-                </div>
-              </div>
-
-              <div className="fo-event-controls">
-                <span className="small muted">{eventForm.fieldLabel}</span>
-                <ChipSelect options={fieldOptions} value={eventFieldId} onChange={setEventFieldId} ariaLabel="Field" />
-                <span className="fo-vdivider" />
-                <Tabs
-                  tabs={eventTypes.map((type) => ({ id: type, label: type }))}
-                  active={eventType}
-                  onChange={(id) => setEventType(id === eventType ? null : id)}
-                  ariaLabel="Kind of event"
-                />
-              </div>
-
-              <textarea
-                className="textarea fo-event-textarea"
-                placeholder={eventForm.placeholder}
-                value={eventText}
-                onChange={(event) => setEventText(event.target.value)}
-                rows={3}
-              />
-
-              <div className="spread fo-event-foot">
-                <Button variant="secondary" icon={<Camera size={14} />} title="Not connected yet">
-                  {eventForm.addPhotos}
-                </Button>
-                <div className="cluster">
-                  {eventSent && <span className="small muted">{eventForm.sentConfirmation}</span>}
-                  <Button variant="primary" type="submit" title="Not connected yet" className="fo-send">
-                    {eventForm.send}
-                    <Send size={14} />
-                  </Button>
-                </div>
-              </div>
-            </form>
-          </Card>
+      <div className="fo-grid">
+        <div className="fo-main">
+          <NeedsDoing items={items} onAnalyze={actions.analyze} />
+          <TellUs farm={farm} onSent={(report) => navigate(`/field/ai?report=${encodeURIComponent(report.id)}`)} />
         </div>
 
-        {/* ================= RIGHT COLUMN ================= */}
-        <div className="stack">
-          {/* ---- Next steps this week ---- */}
-          <Card title={nextStepsCard.title} subtitle={nextStepsCard.subtitle} className="fo-next">
-            <div className="row-list">
-              {nextSteps.map((step) => (
-                <RowItem
-                  key={step.id}
-                  icon={<DataIcon name={step.icon} size={13} />}
-                  tone={step.tone}
-                  title={step.title}
-                  help={`${step.field} · ${step.help}`}
-                  when={step.when}
-                  urgent={step.urgent}
-                />
-              ))}
-            </div>
-            <Link to="/field/ai" className="link-arrow fo-next-link">
-              {nextStepsCard.footerLink}
-              <ChevronRight size={14} />
+        <section className="card fo-fields" aria-labelledby="fo-fields-title">
+          <div className="fo-card-head">
+            <h2 id="fo-fields-title">Your fields</h2>
+            <Link to="/field/fields" className="fo-head-link">
+              Map <ChevronRight size={14} />
             </Link>
-          </Card>
-
-          {/* ---- Your fields ---- */}
-          <Card
-            title={yourFieldsCard.title}
-            actions={
-              <Link to="/field/fields" className="link-arrow">
-                {yourFieldsCard.link}
-              </Link>
-            }
-            className="fo-fields"
-          >
-            <ul className="fo-field-list">
-              {fields.map((field) => (
-                <li key={field.id} className="fo-field-row">
-                  <span
-                    className={field.striped ? "fo-field-swatch is-striped" : "fo-field-swatch"}
-                    style={{ "--swatch": `var(--c-${field.colorToken})` }}
-                  />
-                  <span className="fo-field-text">
-                    <span className="fo-field-name">{field.name}</span>
-                    <span className="small muted">
-                      {field.crop} · {field.areaHa.toFixed(1)} ha
+          </div>
+          <div className="fo-map">
+            <Suspense fallback={<div className="fo-map-wait" />}>
+              <FieldMap
+                fields={farm.fields}
+                analyses={analyses}
+                selectedId={hoveredId}
+                onSelect={(id) => id && navigate(`/field/fields?field=${encodeURIComponent(id)}`)}
+                view="zones"
+                height="100%"
+                fitPadding={MAP_FIT_PADDING}
+                interactive={false}
+                showLabels={false}
+                ariaLabel="Zone map of your fields"
+              />
+            </Suspense>
+          </div>
+          <ul className={group ? "fo-field-list is-filtered" : "fo-field-list"}>
+            {farm.fields.map((field) => {
+              const a = analyses[field.id];
+              const statusId = a?.status?.id;
+              const cls = a?.condition?.class || "nodata";
+              return (
+                <li key={field.id} className={inGroup(statusId) ? "is-in" : "is-out"}>
+                  <Link
+                    to={`/field/fields?field=${encodeURIComponent(field.id)}`}
+                    className="fo-field"
+                    onMouseEnter={() => setHoveredId(field.id)}
+                    onMouseLeave={() => setHoveredId(null)}
+                    onFocus={() => setHoveredId(field.id)}
+                    onBlur={() => setHoveredId(null)}
+                  >
+                    <span className={`fo-swatch fo-swatch-${cls}${statusId === "recovery" ? " is-recovery" : ""}`} aria-hidden="true" />
+                    <span className="fo-field-text">
+                      <span className="fo-field-name">{field.name}</span>
+                      <span className="fo-field-sub">{[field.crop, formatArea(field.areaHa, farm.units)].filter(Boolean).join(" · ")}</span>
                     </span>
-                  </span>
-                  <Badge tone={field.badgeTone || undefined}>{field.statusLabel}</Badge>
+                    {a ? <Badge tone={a.status?.tone || undefined}>{a.status?.label}</Badge> : <Badge>Not analysed</Badge>}
+                  </Link>
                 </li>
-              ))}
-            </ul>
-          </Card>
-        </div>
+              );
+            })}
+          </ul>
+        </section>
       </div>
     </div>
+  );
+}
+
+// A big number. With onPress (and a count above 0) it is a button that
+// picks out its fields in the "Your fields" list.
+function StatTile({ id, label, value, tone, pressed = false, onPress }) {
+  const className = `stat fo-stat fo-stat-${id}${tone ? ` fo-tone-${tone}` : ""}`;
+  const body = (
+    <>
+      <span className="stat-label">{label}</span>
+      <span className="fo-stat-value">{value}</span>
+    </>
+  );
+  if (!onPress || !value) return <div className={className}>{body}</div>;
+  return (
+    <button type="button" className={`${className} fo-stat-button${pressed ? " is-pressed" : ""}`} aria-pressed={pressed} onClick={() => onPress(id)}>
+      {body}
+    </button>
+  );
+}
+
+function WeatherTile({ weather, error, onRetry }) {
+  if (!weather) {
+    return (
+      <div className="stat stat-dark fo-weather">
+        <span className="stat-label">Weather</span>
+        {error ? (
+          <button type="button" className="fo-weather-retry" onClick={onRetry}>
+            <RefreshCw size={13} /> No forecast · retry
+          </button>
+        ) : (
+          <span className="fo-stat-value fo-weather-wait">–</span>
+        )}
+      </div>
+    );
+  }
+  const rain = likelyRain(weather);
+  const current = weather.current || {};
+  return (
+    <div className="stat stat-dark fo-weather">
+      <span className="stat-label">Weather</span>
+      <span className="fo-weather-now">
+        <WeatherIcon code={current.code} />
+        <span className="fo-stat-value">{Number.isFinite(current.tempC) ? `${Math.round(current.tempC)}°` : "–"}</span>
+        {current.label && <span className="fo-weather-label">{current.label}</span>}
+      </span>
+      <span className={rain ? "fo-weather-rain is-rain" : "fo-weather-rain"}>
+        {rain ? `Rain ${formatDayRange(rain.from, rain.to)}${Number.isFinite(rain.mm) ? ` · ${Math.round(rain.mm)} mm` : ""}` : "No rain coming"}
+      </span>
+    </div>
+  );
+}
+
+// ---------- What needs doing ----------
+
+// onAnalyze starts an update (actions.analyze); the "Try again" button
+// waits for it and shows why it could not start.
+function NeedsDoing({ items, onAnalyze }) {
+  const [showAll, setShowAll] = useState(false);
+  // error is kept with the failed update it was for (forLine), so a later
+  // failure does not show an old message.
+  const [retry, setRetry] = useState({ pending: false, error: null, forLine: null });
+  const failed = items.find((item) => item.action.run);
+  const tryAgain = async () => {
+    if (retry.pending) return;
+    const forLine = failed?.line ?? null;
+    setRetry({ pending: true, error: null, forLine });
+    try {
+      await onAnalyze();
+      setRetry({ pending: false, error: null, forLine: null });
+    } catch (err) {
+      setRetry({ pending: false, error: err?.message || String(err), forLine });
+    }
+  };
+  const shownRetry = retry.forLine === (failed?.line ?? null) ? retry : { pending: false, error: null };
+  const shown = showAll ? items : items.slice(0, ITEMS_SHOWN);
+  return (
+    <section className="card fo-todo" aria-labelledby="fo-todo-title">
+      <div className="fo-card-head">
+        <h2 id="fo-todo-title">What needs doing</h2>
+        {items.length > 0 && <span className="fo-count">{items.length}</span>}
+      </div>
+      {items.length === 0 ? (
+        <p className="fo-calm">
+          <CircleCheck size={20} aria-hidden="true" /> Nothing urgent
+        </p>
+      ) : (
+        <ul className="fo-items">
+          {shown.map((item) => (
+            <TodoItem key={item.id} item={item} onRun={tryAgain} retry={shownRetry} />
+          ))}
+        </ul>
+      )}
+      {items.length > ITEMS_SHOWN && (
+        <button type="button" className="fo-more" onClick={() => setShowAll((value) => !value)} aria-expanded={showAll}>
+          {showAll ? "Show fewer" : `Show all ${items.length}`}
+        </button>
+      )}
+    </section>
+  );
+}
+
+function TodoItem({ item, onRun, retry }) {
+  const Icon = ITEM_ICONS[item.icon] || TriangleAlert;
+  const isRecovery = item.id === "recovery";
+  const runs = Boolean(item.action.run);
+  const line = runs && retry.error ? `Could not start: ${retry.error}` : item.line;
+  const action = runs ? (
+    <Button variant="secondary" size="sm" icon={<RefreshCw size={13} className={retry.pending ? "fo-spin" : undefined} />} onClick={onRun} disabled={retry.pending}>
+      {retry.pending ? "Starting…" : item.action.label}
+    </Button>
+  ) : (
+    <Button variant={isRecovery ? "primary" : "secondary"} size="sm" to={item.action.to}>
+      {item.action.label}
+      {!isRecovery && <ChevronRight size={14} />}
+    </Button>
+  );
+  return (
+    <li className={`fo-item${isRecovery ? " is-recovery" : ""}`}>
+      <span className={`fo-item-icon fo-tone-${item.tone || "none"}`} aria-hidden="true">
+        <Icon size={16} />
+      </span>
+      <span className="fo-item-text">
+        <span className="fo-item-title">
+          {item.title}
+          {item.amount && <span className="fo-item-amount">{item.amount}</span>}
+        </span>
+        {item.costs && (
+          <span className="fo-costs">
+            {item.costs.map((cost) => (
+              <span key={cost.id} className="fo-cost">
+                <span className="fo-cost-label">{cost.label}</span>
+                <span className="fo-cost-value">{cost.value}</span>
+              </span>
+            ))}
+          </span>
+        )}
+        {line && (
+          <span className={runs && retry.error ? "fo-item-line is-error" : "fo-item-line"} role={runs && retry.error ? "alert" : undefined}>
+            {line}
+          </span>
+        )}
+      </span>
+      <span className="fo-item-action">{action}</span>
+    </li>
+  );
+}
+
+// ---------- Tell us what happened ----------
+
+function TellUs({ farm, onSent }) {
+  const { actions } = useFieldData();
+  const [fieldId, setFieldId] = useState("");
+  const [kind, setKind] = useState(null);
+  const [text, setText] = useState("");
+  const [photos, setPhotos] = useState([]); // [{ id, file, url }]
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState(null);
+  const fileRef = useRef(null);
+  const photosRef = useRef(photos);
+  photosRef.current = photos;
+
+  // Free the photo previews when the page closes.
+  useEffect(() => () => photosRef.current.forEach((photo) => URL.revokeObjectURL(photo.url)), []);
+
+  const addPhotos = (fileList) => {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    const images = files.filter((file) => PHOTO_TYPES.includes(file.type));
+    const room = MAX_PHOTOS - photos.length;
+    const taken = images.slice(0, Math.max(0, room));
+    if (images.length < files.length) setError("Only JPEG, PNG or WebP photos.");
+    else if (images.length > room) setError(`Up to ${MAX_PHOTOS} photos.`);
+    else setError(null);
+    if (taken.length) {
+      setPhotos((prev) => [...prev, ...taken.map((file, i) => ({ id: `${Date.now()}-${i}-${file.name}`, file, url: URL.createObjectURL(file) }))]);
+    }
+  };
+
+  const removePhoto = (id) => {
+    setPhotos((prev) => {
+      const gone = prev.find((photo) => photo.id === id);
+      if (gone) URL.revokeObjectURL(gone.url);
+      return prev.filter((photo) => photo.id !== id);
+    });
+    setError(null);
+  };
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (sending) return;
+    if (!kind) return setError("Choose what happened.");
+    if (!text.trim() && photos.length === 0) return setError("Add a few words or a photo.");
+    setSending(true);
+    setError(null);
+    try {
+      const report = await actions.report({ fieldId: fieldId || null, kind, text: text.trim(), files: photos.map((photo) => photo.file) });
+      onSent(report);
+    } catch (err) {
+      setError(err.message || String(err));
+      setSending(false);
+    }
+  };
+
+  return (
+    <section className="card fo-tell" aria-labelledby="fo-tell-title">
+      <form className="fo-tell-form" onSubmit={submit} noValidate>
+        <div className="fo-card-head">
+          <h2 id="fo-tell-title">Tell us what happened</h2>
+          <select className="select fo-tell-field" value={fieldId} onChange={(event) => setFieldId(event.target.value)} aria-label="Which field">
+            <option value="">Whole farm</option>
+            {farm.fields.map((field) => (
+              <option key={field.id} value={field.id}>
+                {field.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="fo-kinds" role="group" aria-label="What happened">
+          {REPORT_KINDS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={item.id === kind ? "fo-kind is-active" : "fo-kind"}
+              aria-pressed={item.id === kind}
+              onClick={() => {
+                setKind(item.id === kind ? null : item.id);
+                setError(null);
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+
+        <textarea
+          className="textarea fo-tell-text"
+          placeholder="What did you see, and when?"
+          aria-label="What happened"
+          value={text}
+          maxLength={2000}
+          onChange={(event) => setText(event.target.value)}
+          rows={3}
+        />
+
+        {photos.length > 0 && (
+          <ul className="fo-photos" aria-label="Photos">
+            {photos.map((photo) => (
+              <li key={photo.id} className="fo-photo">
+                <img src={photo.url} alt={photo.file.name} />
+                <button type="button" className="fo-photo-remove" onClick={() => removePhoto(photo.id)} aria-label={`Remove ${photo.file.name}`}>
+                  <X size={12} strokeWidth={3} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div className="fo-tell-foot">
+          <input
+            ref={fileRef}
+            type="file"
+            accept={PHOTO_TYPES.join(",")}
+            multiple
+            hidden
+            onChange={(event) => {
+              addPhotos(event.target.files);
+              event.target.value = "";
+            }}
+          />
+          <Button variant="secondary" icon={<Camera size={14} />} onClick={() => fileRef.current?.click()} disabled={photos.length >= MAX_PHOTOS || sending}>
+            {photos.length ? `Photos ${photos.length}/${MAX_PHOTOS}` : "Add photos"}
+          </Button>
+          {error && (
+            <span className="fo-tell-error" role="alert">
+              {error}
+            </span>
+          )}
+          <Button variant="primary" type="submit" className="fo-send" disabled={sending}>
+            {sending ? "Sending…" : "Send"}
+            {!sending && <Send size={14} />}
+          </Button>
+        </div>
+      </form>
+    </section>
   );
 }

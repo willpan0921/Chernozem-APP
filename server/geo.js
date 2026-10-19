@@ -3,6 +3,7 @@
 // [longitude, latitude], and an area is a Polygon or MultiPolygon.
 //
 //   bboxOf(geometry)              [west, south, east, north]
+//   bboxAreaKm2(bbox)             the box's area in km²
 //   areaHa(geometry)              the area in hectares (on the round Earth)
 //   pointInGeometry(lon, lat, g)  is a point inside? (holes count as outside)
 //   chooseCellSize(km², lat)      grid cell size so an area gets ~150-1500 cells
@@ -23,6 +24,17 @@ const rad = (deg) => (deg * Math.PI) / 180;
 export const CELL_LADDER = [0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.25, 0.5, 1, 2];
 export const MAX_CELLS = 1500;
 export const MIN_CELLS = 150;
+
+// The largest box (km²) the Field searches for fields in one go. Earth
+// Engine's field detection and the /api/farm/detect check both use it.
+export const FIELD_SEARCH_MAX_KM2 = 400;
+
+// The area of a [west, south, east, north] box in km² (flat-Earth, fine
+// for a farm-sized box).
+export function bboxAreaKm2([w, s, e, n]) {
+  const lat = (s + n) / 2;
+  return (e - w) * KM_PER_DEG * Math.cos(rad(lat)) * (n - s) * 110.57;
+}
 
 // Every polygon of a geometry as a list of rings: [[outer, hole, ...], ...].
 export function polygonsOf(geometry) {

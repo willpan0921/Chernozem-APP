@@ -25,7 +25,8 @@
 // WHAT IT RECEIVES
 // product      - "field" or "atlas" (sent to the AI with every message)
 // context      - what the AI should read, sent with every message
-//                Atlas: { runId, settings, timeframe, selectedCellId }; Field: { farm }
+//                Atlas: { runId, settings, timeframe, selectedCellId }
+//                Field: { reportId? } (the server reads the farm itself)
 // text         - { placeholder, disclaimer, welcome } (from "composer" in src/data/chats.js)
 // suggestions  - the "Try asking" questions
 // using        - the "Using" rows for the right column (see ChatRail.jsx)
@@ -34,6 +35,16 @@
 //                (e.g. "Tell me about Kharkiv"); changing it puts the new text in.
 //                When it becomes "" and the box still holds the old text
 //                untouched, the box is emptied too.
+// autoSend     - a question to send by itself, once, in a new chat, as soon
+//                as the AI is known to be connected (e.g. the Field AI page
+//                opened from "Tell us what happened"). Each text is sent at
+//                most once.
+// onThread     - called with each saved chat as it opens ({ id, reportId?, ... }),
+//                and with null for a new chat, so the page can show what that
+//                chat is about (e.g. the report a Field chat was started from)
+// about        - a short line about what the chat is about, shown at the top
+//                of the conversation on narrow screens (where "Using" is far
+//                below): { icon, text } or null
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -58,7 +69,7 @@ const labels = {
 let localCount = 0;
 const localId = (prefix) => `${prefix}-local-${Date.now()}-${(localCount += 1)}`;
 
-export default function ChatScreen({ product, context, text, suggestions = [], using = [], chips = [], initialDraft = "" }) {
+export default function ChatScreen({ product, context, text, suggestions = [], using = [], chips = [], initialDraft = "", autoSend = "", onThread, about = null }) {
   const [params, setParams] = useSearchParams();
   const selectedId = params.get("chat") || null;
 
@@ -92,6 +103,11 @@ export default function ChatScreen({ product, context, text, suggestions = [], u
   contextRef.current = context;
   // The last pre-filled question, to tell whether the box still holds it.
   const initialDraftRef = useRef(initialDraft);
+  // The last question sent by itself (autoSend), so it is sent only once.
+  const autoSentRef = useRef("");
+  // The latest onThread, so a new function from the page never reopens a chat.
+  const onThreadRef = useRef(onThread);
+  onThreadRef.current = onThread;
 
   const notConfigured = aiStatus?.configured === false;
   const busy = Boolean(pending);
@@ -143,6 +159,7 @@ export default function ChatScreen({ product, context, text, suggestions = [], u
     if (!selectedId) {
       setMessages([]);
       setThreadLoading(false);
+      onThreadRef.current?.(null);
       return undefined;
     }
     if (createdRef.current === selectedId) return undefined;
@@ -158,6 +175,7 @@ export default function ChatScreen({ product, context, text, suggestions = [], u
           setChat(null);
           return;
         }
+        onThreadRef.current?.(thread);
         setMessages(
           (thread.messages || []).map((m) => ({ id: m.id, role: m.role === "user" ? "user" : "assistant", text: m.text, stopped: Boolean(m.stopped) }))
         );
@@ -174,6 +192,16 @@ export default function ChatScreen({ product, context, text, suggestions = [], u
       gone = true;
     };
   }, [selectedId, setChat]);
+
+  // A question to send by itself: once, in a new chat, when the AI is ready.
+  useEffect(() => {
+    if (!autoSend || autoSentRef.current === autoSend) return;
+    if (aiStatus?.configured !== true || selectedId || busy) return;
+    autoSentRef.current = autoSend;
+    send(autoSend);
+    // send() reads the latest state itself; only these decide when to run.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSend, aiStatus, selectedId, busy]);
 
   // Stop an answer when the page closes.
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -350,6 +378,7 @@ export default function ChatScreen({ product, context, text, suggestions = [], u
           error={error?.code === "ai_not_configured" ? null : error}
           onRetry={error && error.code !== "ai_not_configured" ? retry : undefined}
           loading={threadLoading}
+          about={about}
           notice={setupCard && messages.length > 0 ? setupCard : null}
           empty={setupCard || welcome}
           composer={

@@ -116,8 +116,9 @@ function quantile(sorted, q) {
 // inside it uses the real front line below.
 export const UKRAINE_BBOX = [22.1, 44.3, 40.25, 52.4];
 
-// The real eastern front, roughly, north to south, as [lat, lon].
-const UKRAINE_FRONT = [
+// The real eastern front, roughly, north to south, as [lat, lon]. The Field
+// sample (providers/field-sample.js) uses the same line.
+export const UKRAINE_FRONT = [
   [50.45, 36.7], // Russian border north of Vovchansk
   [50.29, 36.94], // Vovchansk
   [50.0, 37.45],

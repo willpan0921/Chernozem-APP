@@ -14,16 +14,23 @@
 //
 // What each reading comes from (dataset ids are Earth Engine catalog ids):
 //   chernozem      GEE_CHERNOZEM_ASSET band b1 / 89 (SoilGrids WRB Chernozem
-//                  probability, the deposit's asset), and where that map has
-//                  no data: OpenLandMap soil organic carbon (band b0), see SOC
+//                  probability, the deposit's asset) when it is set and
+//                  readable; else (and where it has no data) the share of
+//                  black soil on OpenLandMap's USDA great-group map
+//                  (OpenLandMap/SOL/SOL_GRTGROUP_USDA-SOILTAX_C/v01, Mollisols
+//                  except the cold and bleached ones, see BLACK_SOIL); where
+//                  that has no data either, SoilGrids soil organic carbon
+//                  (projects/soilgrids-isric/soc_mean, 0-5 cm), see SOC
 //   croplandShare  ESA/WorldCover/v200, share of pixels with class 40 (cropland)
 //   chiDrop        drop of the Chernozem Health Index (COPERNICUS/S2_SR_HARMONIZED,
-//                  formula below) from the 2021 baseline to this year's season
+//                  formula below) from the 2019-2021 baseline (the same
+//                  months, one composite) to this year's season
 //   heavyShare     share of cropland pixels whose drop is at least
 //                  HEAVY_DAMAGE_CHI_DROP (method.js)
 //   firesPer100Km2 FIRMS (band T21) detections since 24 Feb 2022, per 100 km²
 //   conflictKm     distance to recent battles (ACLED file, acled.js), or to
-//                  fire detections of the last 90 days when there is no file
+//                  unusual fire detections of the last 12 months when there
+//                  is no file (FIGHTING_FIRES)
 //   population     WorldPop/GP/100m/pop (2020), people living in the cell
 //   lights         NASA/VIIRS/002/VNP46A2 night lights, median of the month
 //   admin1/admin2  FAO/GAUL/2015/level2 names (best effort)
@@ -63,7 +70,8 @@ export const DATASETS = {
   sentinel2: "COPERNICUS/S2_SR_HARMONIZED",
   sentinel1: "COPERNICUS/S1_GRD",
   worldCover: "ESA/WorldCover/v200",
-  soc: "OpenLandMap/SOL/SOL_ORGANIC-CARBON_USDA-6A1C_M/v02",
+  blackSoil: "OpenLandMap/SOL/SOL_GRTGROUP_USDA-SOILTAX_C/v01",
+  soc: "projects/soilgrids-isric/soc_mean",
   firms: "FIRMS",
   viirs: "NASA/VIIRS/002/VNP46A2",
   worldPop: "WorldPop/GP/100m/pop",
@@ -73,7 +81,8 @@ export const DATASETS = {
 
 export const BANDS = {
   chernozemAsset: "b1", // 0..89 in the deposit's asset, divided by 89 like the Colab notebook
-  soc: "b0", // surface (0 cm) soil organic carbon
+  blackSoil: "grtgroup", // USDA great group, the most likely class, 250 m
+  soc: "soc_0-5cm_mean", // soil organic carbon 0-5 cm, dg/kg
   worldCover: "Map",
   firms: "T21",
   viirs: "Gap_Filled_DNB_BRDF_Corrected_NTL",
@@ -81,15 +90,34 @@ export const BANDS = {
   sentinel1: "VV",
 };
 
-// The research season: the 2021 growing season is the "before" picture.
-export const BASELINE_YEAR = 2021;
-export const GEE_BASELINE = { from: BASELINE_YEAR, to: BASELINE_YEAR, label: `${BASELINE_YEAR} (same months)` };
+// The "before" picture: the same months of 2019, 2020 and 2021, in one
+// composite (the research compares several pre-war years with the war
+// years). One year alone mixed weather and crop rotation into "damage":
+// real run, Ukraine, September 2026, 2021 alone (a record harvest year):
+// 8.8M ha of black-soil cropland "heavily damaged", most of it in the
+// drought-hit centre and south; 2019-2021: 2.6M ha (probe, same month),
+// in line with the research's ~2M ha.
+export const BASELINE_FROM = 2019;
+export const BASELINE_YEAR = 2021; // the last baseline year
+export const BASELINE_YEARS = Array.from({ length: BASELINE_YEAR - BASELINE_FROM + 1 }, (_, i) => BASELINE_FROM + i);
+export const GEE_BASELINE = { from: BASELINE_FROM, to: BASELINE_YEAR, label: `${BASELINE_FROM} to ${BASELINE_YEAR} (same months)` };
 // Fire counting starts with the full-scale invasion, as in the deposit.
 export const WAR_START = "2022-02-24";
 // Sentinel-2 scenes cloudier than this are skipped (deposit: 55%).
 export const MAX_CLOUD_PERCENT = 55;
 // Distance to fighting is measured up to 300 km; farther counts as 300 km.
 export const MAX_CONFLICT_M = 300000;
+// Without an ACLED file, "fighting" is fire that is NOT normal for the
+// place: a fire detection of the last 12 months where the fire density
+// within radiusM is at least timesPrewar times the same 12 months' mean of
+// 2019-2021 AND at least minPerKm2 detections per km² (per 1 km pixel).
+// Farm burning comes back every year at the same places, so it cancels out;
+// the front does not. Real data, October 2026 (probe): plain fires put Lviv
+// 7 km and Odesa 5 km from "fighting" (Ukraine median 18 km); with this
+// rule Kupiansk 1 km, Pokrovsk 2, Kherson 10, Kharkiv 28, Dnipro 75, Odesa
+// 100, Poltava 140, Lviv and Uzhhorod 300+. A 90-day window failed in
+// winter (too few fires anywhere: Kherson 295 km), so 12 months are used.
+export const FIGHTING_FIRES = { radiusM: 10000, timesPrewar: 3, minPerKm2: 1 };
 // A radar pixel "changed" when its VV backscatter moved by more than 2 dB.
 export const RADAR_CHANGE_DB = 2;
 // The most cells in one Earth Engine request (small cells), the fewest
@@ -117,13 +145,66 @@ export const WORLDPOP_PIXEL_M2_AT_EQUATOR = (WORLDPOP_PIXEL_DEG * 111319.49) ** 
 // "Nothing found" inside Earth Engine (it does not accept null there).
 export const NONE = -1;
 
+// The black-soil map used when there is no chernozem asset (the owner's
+// choice, 2026-10-18): OpenLandMap's USDA great groups. Black soil = the
+// Mollisol great groups (names ending in "olls") except the cold ones
+// (Cryolls, Cryaquolls, Cryoborolls) and the bleached ones (Albolls). The
+// share of a cell or field in those groups is the "chernozem" value, so it
+// works worldwide (Ukraine, the US prairie, north-east China). It is broader
+// than the research's WRB Chernozem >= 0.5 (it also counts Phaeozems and
+// Kastanozems), so national black-soil totals come out higher than the
+// paper's 15.07 million ha.
+export const BLACK_SOIL_SOURCE = "Black-soil map: OpenLandMap USDA soil classes (Mollisols), 250 m";
+export const BLACK_SOIL = {
+  keep: /olls$/i,
+  drop: /cryolls$|albolls$|cryoborolls$|^cryaquolls$/i,
+  // The class values when the map's own class list cannot be read
+  // (grtgroup_class_values / grtgroup_class_names, read 2026-10-18).
+  classes: [269, 271, 272, 273, 274, 276, 277, 278, 280, 283, 284, 285, 286, 289, 290, 291, 292, 294, 296, 297, 298, 300, 301, 302, 303, 306, 307, 308, 310, 311, 312],
+};
+
+// The black-soil class values from the map's properties, or null.
+export function blackSoilClassesFrom(properties) {
+  const values = properties?.grtgroup_class_values;
+  const names = properties?.grtgroup_class_names;
+  if (!Array.isArray(values) || !Array.isArray(names) || values.length !== names.length) return null;
+  const picked = values.filter((value, i) => Number.isFinite(value) && typeof names[i] === "string" && BLACK_SOIL.keep.test(names[i]) && !BLACK_SOIL.drop.test(names[i]));
+  return picked.length ? picked : null;
+}
+
+// The class list, read once per Earth Engine connection (checkChernozemAsset
+// does it before any image is built).
+const blackSoilClassesByEe = new WeakMap();
+async function loadBlackSoilClasses(ee) {
+  if (blackSoilClassesByEe.has(ee)) return blackSoilClassesByEe.get(ee);
+  let classes = BLACK_SOIL.classes;
+  try {
+    classes = blackSoilClassesFrom((await getAsset(ee, DATASETS.blackSoil))?.properties) || BLACK_SOIL.classes;
+  } catch {
+    // The built-in list is the same classes.
+  }
+  blackSoilClassesByEe.set(ee, classes);
+  return classes;
+}
+
+// 1 where the great group is black soil, 0 elsewhere; masked where the map
+// has no data. Its mean over a cell or field is the black-soil share.
+export function blackSoilImage(ee) {
+  const classes = blackSoilClassesByEe.get(ee) || BLACK_SOIL.classes;
+  return ee
+    .Image(DATASETS.blackSoil)
+    .select(BANDS.blackSoil)
+    .remap(classes, classes.map(() => 1), 0)
+    .rename("blackSoil");
+}
+
 // Soil organic carbon -> a 0..1 stand-in for chernozem, used only where
-// the chernozem map has no data (outside Ukraine). OpenLandMap stores SOC
-// in units of 5 g/kg, so g/kg = value × 5. The 0..1 scale is the one the
-// research notebook uses for its soil score: (SOC g/kg − 10) / 50, so
-// 10 g/kg or less (poor soil) -> 0, 60 g/kg or more -> 1, a typical
-// chernozem topsoil (30–40 g/kg) -> about 0.4–0.6.
-export const SOC = { unitGkg: 5, offsetGkg: 10, spanGkg: 50 };
+// the black-soil map has no data. SoilGrids stores SOC in dg/kg, so
+// g/kg = value × 0.1. The 0..1 scale is the one the research notebook uses
+// for its soil score: (SOC g/kg − 10) / 50, so 10 g/kg or less (poor soil)
+// -> 0, 60 g/kg or more -> 1, a typical chernozem topsoil (30–40 g/kg) ->
+// about 0.4–0.6.
+export const SOC = { unitGkg: 0.1, offsetGkg: 10, spanGkg: 50 };
 
 // The same formula as plain arithmetic, for tests and the gee:check script.
 export function socToChernozem(rawValue) {
@@ -274,7 +355,7 @@ async function connectWith(state, cfg) {
   return state.promise;
 }
 
-function contextOf(cfg) {
+export function contextOf(cfg) {
   return {
     projectId: cfg.geeProjectId,
     clientEmail: cfg.geeCredentials?.client_email,
@@ -288,7 +369,7 @@ function asError(error) {
 }
 
 // Runs one Earth Engine computation and waits for the answer.
-function evaluate(eeObject, { timeoutMs = CHUNK_TIMEOUT_MS, what = "Earth Engine request", context = {} } = {}) {
+export function evaluate(eeObject, { timeoutMs = CHUNK_TIMEOUT_MS, what = "Earth Engine request", context = {} } = {}) {
   const request = new Promise((resolve, reject) => {
     eeObject.evaluate((value, error) => (error ? reject(asError(error)) : resolve(value)));
   });
@@ -317,7 +398,7 @@ function rect(ee, bbox) {
   return ee.Geometry.Rectangle(bbox, null, false);
 }
 
-function sentinel2(ee, region, window) {
+export function sentinel2(ee, region, window) {
   return ee
     .ImageCollection(DATASETS.sentinel2)
     .filterBounds(region)
@@ -337,8 +418,12 @@ function maskSentinel2Clouds(image) {
 // (higher = healthier) from a cloud-masked median composite:
 //   CHI = 0.30 NDVI + 0.25 NDMI + 0.20 NBR + 0.15 (1 − BSI) + 0.10 RVI
 // each index first stretched to 0..1 over a fixed range.
-function chiHealthImage(ee, region, window) {
-  const img = sentinel2(ee, region, window).map(maskSentinel2Clouds).median();
+// `window` may be a list of windows: one composite over all their images
+// (the multi-year "before" picture).
+export function chiHealthImage(ee, region, window) {
+  const windows = Array.isArray(window) ? window : [window];
+  const collection = windows.map((w) => sentinel2(ee, region, w)).reduce((all, next) => all.merge(next));
+  const img = collection.map(maskSentinel2Clouds).median();
   const b2 = img.select("B2");
   const b4 = img.select("B4");
   const b8 = img.select("B8");
@@ -360,7 +445,7 @@ function chiHealthImage(ee, region, window) {
     .rename("chi");
 }
 
-function sentinel1(ee, region, window) {
+export function sentinel1(ee, region, window) {
   return ee
     .ImageCollection(DATASETS.sentinel1)
     .filterBounds(region)
@@ -370,7 +455,7 @@ function sentinel1(ee, region, window) {
     .select(BANDS.sentinel1);
 }
 
-function firms(ee, region, window) {
+export function firms(ee, region, window) {
   return ee.ImageCollection(DATASETS.firms).filterBounds(region).filterDate(window.start, window.end).select(BANDS.firms);
 }
 
@@ -394,9 +479,10 @@ function emptyBand(ee, name) {
   return ee.Image.constant(0).updateMask(ee.Image.constant(0)).rename(name);
 }
 
-// Chernozem 0..1: the chernozem asset where it has data, else soil organic
-// carbon. Left masked over water so the mean is over land.
-function chernozemImage(ee, assetId) {
+// Chernozem 0..1: the chernozem asset where it has data, else the
+// black-soil map (BLACK_SOIL), else soil organic carbon. Left masked over
+// water so the mean is over land.
+export function chernozemImage(ee, assetId) {
   const soc = ee
     .Image(DATASETS.soc)
     .select(BANDS.soc)
@@ -404,13 +490,15 @@ function chernozemImage(ee, assetId) {
     .subtract(SOC.offsetGkg)
     .divide(SOC.spanGkg)
     .clamp(0, 1);
-  if (!assetId) return soc.rename("chernozem");
+  // false: also fill where the map has no pixels at all
+  const blackSoil = blackSoilImage(ee).unmask(soc, false);
+  if (!assetId) return blackSoil.rename("chernozem");
   return ee
     .Image(assetId)
     .select(BANDS.chernozemAsset)
     .divide(89)
     .clamp(0, 1)
-    .unmask(soc, false) // false: also fill where the asset has no pixels at all
+    .unmask(blackSoil, false)
     .rename("chernozem");
 }
 
@@ -445,14 +533,14 @@ async function preflight(ee, { region, bufferRegion, windows, context }) {
   const viirsSearch = viirs(ee, region, windows.viirsSearch);
   const counts = ee.Dictionary({
     s2Current: sentinel2(ee, region, windows.season).size(),
-    s2Baseline: sentinel2(ee, region, windows.baseline).size(),
+    s2Baseline: windows.baselines.map((w) => sentinel2(ee, region, w)).reduce((all, next) => all.merge(next)).size(),
     s1Month: sentinel1(ee, region, windows.month).size(),
     s1Prior: sentinel1(ee, region, windows.s1Prior).size(),
     viirsMonth: viirs(ee, region, windows.month).size(),
     viirsLatest: latest(viirsSearch),
     firmsWar: windows.firmsWar ? firms(ee, region, windows.firmsWar).size() : ee.Number(0),
     firmsMonth: firms(ee, region, windows.month).size(),
-    firms90: firms(ee, bufferRegion, windows.last90).size(), // within 300 km, like the distance
+    firmsYear: firms(ee, bufferRegion, windows.lastYear).size(), // within 300 km, like the distance
     worldPop: worldPop(ee, region).size(),
   });
   const raw = await evaluate(counts, { timeoutMs: 2 * 60 * 1000, what: "Checking which satellite images exist", context });
@@ -460,21 +548,26 @@ async function preflight(ee, { region, bufferRegion, windows, context }) {
 }
 
 // Can the service account read the chernozem asset, and does it have b1?
-// Gives back { assetId|null, warning|null }.
-async function checkChernozemAsset(ee, assetId) {
-  if (!assetId || /^(none|off|no)$/i.test(assetId)) return { assetId: null, warning: null };
+// Also reads the black-soil map's class list (once). Gives back
+// { assetId|null, warning|null, source } (source: which soil map is used).
+export async function checkChernozemAsset(ee, assetId) {
+  await loadBlackSoilClasses(ee);
+  const instead = { assetId: null, source: BLACK_SOIL_SOURCE };
+  if (!assetId || /^(none|off|no)$/i.test(assetId)) return { ...instead, warning: null };
   try {
     const info = await getAsset(ee, assetId);
     const bands = (info?.bands || []).map((band) => band.id);
     if (bands.length && !bands.includes(BANDS.chernozemAsset)) {
-      return { assetId: null, warning: `The chernozem map ${assetId} has no band ${BANDS.chernozemAsset}; soil organic carbon was used instead.` };
+      return { ...instead, warning: `The chernozem map ${assetId} has no band ${BANDS.chernozemAsset}; the ${lowerFirst(BLACK_SOIL_SOURCE)} was used instead.` };
     }
-    return { assetId, warning: null };
+    return { assetId, warning: null, source: `Chernozem map: ${assetId} (band ${BANDS.chernozemAsset})` };
   } catch (error) {
     const reason = explainGeeError(error, { asset: assetId });
-    return { assetId: null, warning: `${reason.message} Soil organic carbon was used instead.` };
+    return { ...instead, warning: `${reason.message} The ${lowerFirst(BLACK_SOIL_SOURCE)} was used instead.` };
   }
 }
+
+const lowerFirst = (text) => text.charAt(0).toLowerCase() + text.slice(1);
 
 async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress } = {}) {
   if (!area?.bbox || !Array.isArray(cells) || !cells.length) throw new GeeError("bad_request", "Nothing to analyze: the area has no cells.");
@@ -510,10 +603,10 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress } = {
 
   let chiDrop;
   if (have.s2Current > 0 && have.s2Baseline > 0) {
-    chiDrop = chiHealthImage(ee, region, windows.baseline).subtract(chiHealthImage(ee, region, windows.season)).rename("chiDrop");
+    chiDrop = chiHealthImage(ee, region, windows.baselines).subtract(chiHealthImage(ee, region, windows.season)).rename("chiDrop");
   } else {
     chiDrop = emptyBand(ee, "chiDrop");
-    warnings.push(`No usable Sentinel-2 images for ${have.s2Current > 0 ? "the 2021 baseline" : "this season"}; the soil health index could not be measured.`);
+    warnings.push(`No usable Sentinel-2 images for ${have.s2Current > 0 ? `the ${GEE_BASELINE.from}-${GEE_BASELINE.to} baseline` : "this season"}; the soil health index could not be measured.`);
   }
   const heavy = chiDrop.gte(HEAVY_DAMAGE_CHI_DROP).updateMask(cropland).rename("heavy");
 
@@ -529,9 +622,9 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress } = {
   if (acled.points.length) {
     const battles = ee.FeatureCollection(acled.points.map((point) => ee.Feature(ee.Geometry.Point(point))));
     conflictM = battles.distance(MAX_CONFLICT_M).unmask(MAX_CONFLICT_M).rename("conflictM");
-  } else if (have.firms90 > 0) {
-    warnings.push("Distance to fighting is measured to fire detections of the last 90 days (no ACLED file). Fires include farm burning, so treat safe access as rough.");
-    const fireBand = firms(ee, bufferRegion, windows.last90).count().gt(0).selfMask().rename("fire");
+  } else if (have.firmsYear > 0) {
+    warnings.push("Distance to fighting is estimated from unusual fires of the last 12 months (far more than before the war; no ACLED file), so treat safe access as rough.");
+    const fireBand = fightingFires(ee, bufferRegion, windows).rename("fire");
     const fires = fireBand.stratifiedSample({
       numPoints: 3000,
       classBand: "fire",
@@ -596,8 +689,11 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress } = {
   const measure = (part, plan) => {
     const squares = cellCollection(ee, part, cellSizeDeg);
     const regionArgs = (extra) => ({ collection: squares, tileScale: plan.tileScale, ...(deps.state.noMaxPixelsArg ? {} : { maxPixelsPerRegion: MAX_PIXELS_PER_CELL }), ...extra });
+    // Sent as LISTS of features: real Earth Engine answers a FeatureCollection
+    // nested inside a Dictionary with its description only, no features,
+    // which made every cell read 0 (fake-ee.js does the same by default).
     const answer = {
-      means: meanImage.reduceRegions(regionArgs({ reducer: ee.Reducer.mean(), scale: plan.scale, crs: "EPSG:4326" })).select([".*"], null, false),
+      means: meanImage.reduceRegions(regionArgs({ reducer: ee.Reducer.mean(), scale: plan.scale, crs: "EPSG:4326" })).select([".*"], null, false).toList(part.length),
     };
     if (people) {
       const pop = populationPlan(cellSizeDeg, midLat, plan.scale);
@@ -606,7 +702,7 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress } = {
         pop.native
           ? people.perPixel.reduceRegions(regionArgs({ reducer: sumReducer, crs: people.nativeProjection }))
           : people.density.reduceRegions(regionArgs({ reducer: sumReducer, scale: pop.scale, crs: "EPSG:4326" }))
-      ).select([".*"], null, false);
+      ).select([".*"], null, false).toList(part.length);
     }
     return ee.Dictionary(answer);
   };
@@ -635,8 +731,9 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress } = {
       }
     }
     if (retried) coarserChunks += 1;
-    for (const feature of result?.means?.features || []) means.set(feature.properties.id, feature.properties);
-    for (const feature of result?.sums?.features || []) sums.set(feature.properties.id, feature.properties);
+    const featuresOf = (value) => (Array.isArray(value) ? value : value?.features || []);
+    for (const feature of featuresOf(result?.means)) if (feature?.properties) means.set(feature.properties.id, feature.properties);
+    for (const feature of featuresOf(result?.sums)) if (feature?.properties) sums.set(feature.properties.id, feature.properties);
     measured += part.length;
     step(`Measured ${measured} of ${cells.length} cells`);
   });
@@ -802,19 +899,25 @@ async function admin1Details(deps, id) {
 }
 
 // For the gee:check script: the raw soil values at one point, to confirm
-// the units (SOC is expected around 4–8 on Ukrainian chernozem).
+// the units (SoilGrids SOC 0-5 cm is expected around 300–500 dg/kg on
+// Ukrainian chernozem) and the black-soil class there.
 async function readPoint(deps, { lat, lon }) {
   const cfg = deps.getConfig();
   const ee = await deps.connect(cfg);
   const point = ee.Geometry.Point([lon, lat]);
-  const { assetId, warning } = await checkChernozemAsset(ee, cfg.chernozemAsset);
-  const bands = [ee.Image(DATASETS.soc).select(BANDS.soc).rename("socRaw"), ee.ImageCollection(DATASETS.worldCover).first().select(BANDS.worldCover).rename("worldCover")];
+  const { assetId, warning, source } = await checkChernozemAsset(ee, cfg.chernozemAsset);
+  const bands = [
+    ee.Image(DATASETS.soc).select(BANDS.soc).rename("socRaw"),
+    ee.Image(DATASETS.blackSoil).select(BANDS.blackSoil).rename("greatGroup"),
+    blackSoilImage(ee).rename("blackSoil"),
+    ee.ImageCollection(DATASETS.worldCover).first().select(BANDS.worldCover).rename("worldCover"),
+  ];
   if (assetId) bands.push(ee.Image(assetId).select(BANDS.chernozemAsset).rename("assetRaw"));
   const values = await evaluate(
     ee.Image.cat(bands).reduceRegion({ reducer: ee.Reducer.first(), geometry: point, scale: 250, bestEffort: true, maxPixels: MAX_PIXELS_PER_CELL }),
     { timeoutMs: 60 * 1000, what: "Reading soil values at the test point", context: contextOf(cfg) },
   );
-  return { ...values, assetId, assetWarning: warning };
+  return { ...values, assetId, assetWarning: warning, soilSource: source };
 }
 
 // =====================================================================
@@ -834,10 +937,13 @@ export function monthBounds(month) {
 //              Nov–Mar use the last full Apr–Oct season), from runs.js
 //   baseline   the same months of 2021, so April is compared with April
 //              and a whole season with a whole season
+//   baselines  the same months of each baseline year, 2019 to 2021 (the
+//              CHI "before" composite uses all of them)
 //   month      the month itself (alerts, night lights)
 //   s1Prior    the 3 months before it (radar "before" picture)
 //   firmsWar   24 Feb 2022 to the end of the month (null before the war)
-//   last90     the 90 days up to the end of the month
+//   lastYear   the 12 months up to the end of the month, and fireBaselines
+//              the same 12 months of each baseline year (distance to fighting)
 //   viirsSearch the 6 months up to the end of the month (night lights are
 //              published with a delay)
 // No window reaches past `today` ("YYYY-MM-DD", not included), so a month
@@ -848,20 +954,55 @@ export function monthWindows(month, today = isoDay(new Date())) {
   const season = imageryWindow(month);
   const seasonEnd = stop({ start: `${season.from}-01`, end: `${addMonths(season.to, 1)}-01` });
   const seasonWindow = { ...seasonEnd, from: season.from, to: season.to };
-  const shift = (ym) => `${BASELINE_YEAR}${ym.slice(4)}`;
-  // When the season is cut short by today, the baseline stops on the same day of 2021.
+  // The same months of one baseline year. The season may span two
+  // calendar years (Nov-Mar use the last full season), so years shift by
+  // the same amount. When the season is cut short by today, the baseline
+  // stops on the same day.
   const fullSeasonEnd = `${addMonths(season.to, 1)}-01`;
-  const baselineEnd = seasonEnd.end < fullSeasonEnd && seasonEnd.end > seasonEnd.start ? `${BASELINE_YEAR}${seasonEnd.end.slice(4)}` : `${addMonths(shift(season.to), 1)}-01`;
-  const baseline = { start: `${shift(season.from)}-01`, end: baselineEnd };
+  const sameMonths = (year) => {
+    const offset = year - Number(season.from.slice(0, 4));
+    const shift = (text) => `${Number(text.slice(0, 4)) + offset}${text.slice(4)}`;
+    const end = seasonEnd.end < fullSeasonEnd && seasonEnd.end > seasonEnd.start ? shift(seasonEnd.end) : shift(fullSeasonEnd);
+    return { start: shift(`${season.from}-01`), end };
+  };
   return {
     month: own,
     season: seasonWindow,
-    baseline,
+    baseline: sameMonths(BASELINE_YEAR),
+    baselines: BASELINE_YEARS.map(sameMonths),
     s1Prior: stop({ start: `${addMonths(month, -3)}-01`, end: monthBounds(month).start }),
     firmsWar: own.end > WAR_START ? stop({ start: WAR_START, end: own.end }) : null,
-    last90: stop({ start: shiftDays(own.end, -90), end: own.end }),
+    lastYear: stop({ start: yearBefore(own.end), end: own.end }),
+    fireBaselines: BASELINE_YEARS.map((year) => {
+      const end = sameDayIn(year, own.end);
+      return { start: yearBefore(end), end };
+    }),
     viirsSearch: stop({ start: `${addMonths(month, -5)}-01`, end: own.end }),
   };
+}
+
+// "2026-10-18" in another year ("2019-10-18"); 29 February becomes 1 March.
+function sameDayIn(year, day) {
+  const text = `${year}${day.slice(4)}`;
+  return text.endsWith("-02-29") && !(year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)) ? `${year}-03-01` : text;
+}
+
+// The same day one year earlier.
+function yearBefore(day) {
+  return sameDayIn(Number(day.slice(0, 4)) - 1, day);
+}
+
+// Fire detections that are not normal for the place (FIGHTING_FIRES): 1 on
+// 1 km pixels with an unusual fire in the last 12 months, masked elsewhere.
+export function fightingFires(ee, region, windows) {
+  const f = FIGHTING_FIRES;
+  const count = (window) => firms(ee, region, window).count().unmask(0);
+  const recent = count(windows.lastYear);
+  const before = ee.ImageCollection(windows.fireBaselines.map(count)).mean();
+  // On FIRMS's own 1 km grid (no resampling), so "per pixel" is per km².
+  const density = (image) => image.setDefaultProjection("EPSG:4326", null, 1000).focal_mean(f.radiusM, "circle", "meters");
+  const unusual = density(recent).gte(density(before).multiply(f.timesPrewar)).and(density(recent).gte(f.minPerKm2));
+  return recent.gt(0).and(unusual).selfMask();
 }
 
 // A date window cut off at `today` (start and end never later than it).
@@ -974,7 +1115,7 @@ export function cleanCounts(raw = {}) {
     viirsLatest: fromSentinel(r.viirsLatest),
     firmsWar: count("firmsWar"),
     firmsMonth: count("firmsMonth"),
-    firms90: count("firms90"),
+    firmsYear: count("firmsYear"),
     worldPop: count("worldPop"),
   };
 }
@@ -1028,7 +1169,9 @@ const round = (value, digits) => (value === null ? null : Number(value.toFixed(d
 
 function cleanName(value) {
   const text = value == null ? "" : String(value).trim();
-  return text && text !== "null" ? text : undefined;
+  // FAO GAUL uses "Administrative unit not available" for a missing name.
+  if (!text || text === "null" || /^administrative unit not available$/i.test(text)) return undefined;
+  return text;
 }
 
 // One cell's Earth Engine results -> the raw reading the runs expect.

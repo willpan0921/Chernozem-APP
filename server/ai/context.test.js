@@ -10,7 +10,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { buildAtlasContext, fallbackGroupHotspots, coordLabel, placeLabel, ATLAS_TOOLS, fieldContextText } from "./context.js";
+import { buildAtlasContext, fallbackGroupHotspots, coordLabel, placeLabel, ATLAS_TOOLS } from "./context.js";
 import { scorePlaces } from "../../src/lib/atlas/scoring.js";
 
 // A 6 x 6 grid with a strong corner (top left) and a weak rest.
@@ -181,11 +181,6 @@ test("no area yet gives a clear note, and tools explain there is no run", async 
   assert.match(ctx.text, /No area has been chosen/);
   assert.ok((await ctx.runTool("get_ranking", { timeframe: "nearTerm", limit: 5 })).error);
   assert.ok((await ctx.runTool("get_history", {})).error);
-});
-
-test("field context", () => {
-  assert.match(fieldContextText("40 ha wheat"), /40 ha wheat/);
-  assert.match(fieldContextText(null), /not shared/);
 });
 
 // Uses the real sample provider and run builder when they exist.

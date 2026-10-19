@@ -18,7 +18,6 @@ import {
   LayoutGrid,
   Grid2x2,
   Map,
-  NotebookPen,
   MessageSquare,
   Database,
   SlidersHorizontal,
@@ -29,19 +28,15 @@ export const products = {
     id: "field",
     label: "Field",
     basePath: "/field",
-    // The box under the Field / Atlas switch.
-    scope: {
-      title: "My farm",
-      subtitle: "7 fields · 271.0 ha",
-      icon: Grid2x2,
-    },
+    // The box under the switch shows the farm (Sidebar.jsx reads its name
+    // and fields from the Field data); only the icon is set here.
+    scope: { icon: Grid2x2 },
     // The small note near the bottom of the sidebar.
     privacyNote: "Your fields are private",
     account: { initials: "MF", label: "Account", tone: "farm" },
     pages: [
       { id: "overview", label: "Overview", path: "/field", icon: LayoutGrid },
       { id: "fields", label: "Fields", path: "/field/fields", icon: Grid2x2 },
-      { id: "notes", label: "Notes", path: "/field/notes", icon: NotebookPen },
       { id: "ai", label: "AI", path: "/field/ai", icon: MessageSquare },
       { id: "data", label: "Data", path: "/field/data", icon: Database },
       { id: "settings", label: "Settings", path: "/field/settings", icon: SlidersHorizontal },

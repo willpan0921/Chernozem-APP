@@ -22,7 +22,7 @@ import { config } from "../server/env.js";
 import { cellAreaKm2, planGrid } from "../server/geo.js";
 import { latestCompleteMonth, monthLabel } from "../server/runs.js";
 import { acledStatus } from "../server/providers/acled.js";
-import gee, { connect, probePoint, setupProblems, socToChernozem, monthWindows, reduceScale, chunkSizeFor, SOC } from "../server/providers/gee.js";
+import gee, { connect, probePoint, setupProblems, socToChernozem, monthWindows, reduceScale, chunkSizeFor, SOC, BLACK_SOIL_SOURCE } from "../server/providers/gee.js";
 
 const TEST = { lat: 49.74, lon: 37.54, sizeDeg: 0.01 };
 const DOCS = "docs/CONNECT-DATA.md";
@@ -101,7 +101,7 @@ async function main() {
     item("MISSING", "GOOGLE_APPLICATION_CREDENTIALS", "path to the service-account key, e.g. ./service-account.json");
     item("", "(or GEE_SERVICE_ACCOUNT_JSON", "with the whole key pasted on one line)");
   }
-  item("OPTIONAL", "GEE_CHERNOZEM_ASSET", !cfg.chernozemAsset || /^(none|off|no)$/i.test(cfg.chernozemAsset) ? "(none: soil organic carbon is used)" : cfg.chernozemAsset);
+  item("OPTIONAL", "GEE_CHERNOZEM_ASSET", !cfg.chernozemAsset || /^(none|off|no)$/i.test(cfg.chernozemAsset) ? `(none: ${BLACK_SOIL_SOURCE.charAt(0).toLowerCase()}${BLACK_SOIL_SOURCE.slice(1)} is used)` : cfg.chernozemAsset);
   const acled = acledStatus(cfg.acledCsvPath);
   item(cfg.acledCsvPath ? (acled.ok ? "OK" : "PROBLEM") : "OPTIONAL", "ACLED_CSV_PATH", cfg.acledCsvPath ? `${cfg.acledCsvPath}: ${acled.detail}` : acled.detail);
   item(cfg.anthropicKey ? "OK" : "OPTIONAL", "ANTHROPIC_API_KEY", cfg.anthropicKey ? "set (the AI pages are on)" : "not set (needed only for the AI pages)");
@@ -143,15 +143,24 @@ async function main() {
     if (soil.assetId) {
       const value = Number(soil.assetRaw);
       item("OK", "Chernozem map", Number.isFinite(value) ? `${soil.assetId} b1 = ${value} -> ${(Math.min(1, value / 89)).toFixed(2)} (expected high here)` : `${soil.assetId} has no value at this point`);
-    } else {
-      item(soil.assetWarning ? "WARNING" : "OPTIONAL", "Chernozem map", soil.assetWarning || "not used (GEE_CHERNOZEM_ASSET=none); soil organic carbon is used");
+    } else if (soil.assetWarning) {
+      item("WARNING", "Chernozem map", soil.assetWarning);
     }
+    const group = Number(soil.greatGroup);
+    const black = Number(soil.blackSoil);
+    item(
+      Number.isFinite(group) ? "OK" : "WARNING",
+      "Black-soil map",
+      Number.isFinite(group)
+        ? `${BLACK_SOIL_SOURCE.replace(/^Black-soil map: /, "")}: great group ${group} -> ${black === 1 ? "black soil (expected here)" : "not black soil (unexpected here)"}${soil.assetId ? " (used where the chernozem map has no data)" : ""}`
+        : "no value at this point",
+    );
     const soc = Number(soil.socRaw);
     item(
       Number.isFinite(soc) ? "OK" : "WARNING",
       "Soil organic carbon",
       Number.isFinite(soc)
-        ? `b0 = ${soc} -> ${soc * SOC.unitGkg} g/kg -> ${socToChernozem(soc).toFixed(2)} (chernozem topsoil is usually 4 to 8 here; far outside that, the SOC units in gee.js need a look)`
+        ? `SoilGrids 0-5 cm = ${soc} dg/kg -> ${Math.round(soc * SOC.unitGkg)} g/kg -> ${socToChernozem(soc).toFixed(2)} (used only where the black-soil map has no data; chernozem topsoil, 0-5 cm, is usually 30 to 80 g/kg here)`
         : "no value at this point",
     );
     item("OK", "WorldCover class", `${soil.worldCover} (40 = cropland)`);
@@ -275,7 +284,7 @@ async function analysisSteps() {
   const windows = monthWindows(month);
   line();
   line(`4. Analyzing 1 cell (${TEST.sizeDeg}°, about 0.7 x 1.1 km) at ${TEST.lat}° N, ${TEST.lon}° E for ${monthLabel(month)}`);
-  line(`   Season ${windows.season.start} to ${windows.season.end} vs ${windows.baseline.start} to ${windows.baseline.end}; pixel size ${reduceScale(TEST.sizeDeg, TEST.lat)} m`);
+  line(`   Season ${windows.season.start} to ${windows.season.end} vs the same months of ${windows.baselines[0].start.slice(0, 4)}-${windows.baseline.end.slice(0, 4)}; pixel size ${reduceScale(TEST.sizeDeg, TEST.lat)} m`);
   const one = rowOfCells(TEST, 1);
   const single = await timedAnalyze({ ...one, cellSizeDeg: TEST.sizeDeg, month });
   line();

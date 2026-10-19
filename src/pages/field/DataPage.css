@@ -1,213 +1,545 @@
 /*
   WHAT THIS FILE DOES
-  The styling for the Field "Data" page only: the chart, the readings table
-  and the download rows. Every class starts with "fd-" so it never clashes
-  with another page. Shared blocks (cards, tabs, badges) are styled in
-  src/styles/components.css.
+  The styling for the Field Data page (src/pages/field/DataPage.jsx): the
+  three big numbers, the "Since 2019" chart, the passes table, the
+  downloads and the printable season report. Every class starts with
+  "fdata-" so it never clashes with another page.
 
   WHO EDITS IT
-  Whoever changes how the Data page looks. Colours and spacing come from
+  Whoever changes how the Field Data page looks. Colours come from
   src/styles/tokens.css.
 */
 
-/* ---------- Page layout ---------- */
-
-/* The two bottom cards stand the same height, as on the mockup. */
-.fd-page .two-col {
-  align-items: stretch;
+.fdata {
+  --fdata-health: var(--c-green);
+  --fdata-water: var(--c-blue);
+  --fdata-farm: var(--c-muted);
 }
 
-/* ---------- Layer tabs ---------- */
-
-/* The five layer tabs sit on one line on a desktop and wrap onto a second
-   line on a phone, so none of them is hidden. */
-.fd-tabs .tabs-bar {
-  flex-wrap: wrap;
-}
-
-.fd-tabs .tab {
-  white-space: nowrap;
-}
-
-/* ---------- Chart card ---------- */
-
-/* The legend on the right of the chart heading. */
-.fd-legend {
+.fdata-screen {
+  display: flex;
+  flex-direction: column;
   gap: var(--s-4);
-  font-size: 12px;
+  min-width: 0;
 }
 
-/* A short coloured line, used as the legend swatch. */
-.fd-line-swatch {
-  width: 14px;
-  height: 2.5px;
-  border-radius: 2px;
-  background: var(--swatch);
-  flex: 0 0 auto;
-}
-
-/* The chart scrolls sideways on narrow screens so the labels stay readable.
-   The outer box only exists to hold the edge fade (below). */
-.fd-chart-wrap {
-  position: relative;
-}
-
-.fd-chart-scroll {
-  overflow-x: auto;
-}
-
-.fd-chart {
-  display: block;
-  width: 100%;
-  min-width: 600px;
-  height: auto;
-}
-
-/* "Scroll sideways to see more": hidden unless the chart really scrolls. */
-.fd-scroll-hint {
-  display: none;
-}
-
-@media (max-width: 640px) {
-  /* A soft fade on the right edge shows the chart continues off-screen. */
-  .fd-chart-wrap::after {
-    content: "";
-    position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    width: 48px;
-    background: linear-gradient(to right, transparent, var(--c-surface));
-    pointer-events: none;
-  }
-
-  .fd-scroll-hint {
-    display: block;
-    margin-top: calc(-1 * var(--s-2));
-  }
-}
-
-/* Text inside the chart. SVG text does not use the usual CSS sizes, so
-   these are set here. */
-.fd-tick {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  fill: var(--c-muted);
-}
-
-.fd-year {
-  font-size: 11px;
-  fill: var(--c-text-2);
-}
-
-.fd-marker line {
-  stroke: var(--c-border-strong);
-}
-
-.fd-marker text {
-  font-size: 10px;
-  font-weight: 600;
-  fill: var(--c-text-2);
-}
-
-.fd-marker-red line {
-  stroke: var(--c-red);
-  opacity: 0.6;
-}
-
-.fd-marker-red text {
-  fill: var(--c-red);
-}
-
-.fd-line-label {
-  font-size: 10.5px;
-  font-weight: 600;
-  fill: var(--c-text-2);
-}
-
-.fd-tip-title {
-  font-size: 10px;
-  font-weight: 650;
-  fill: var(--c-on-dark);
-}
-
-.fd-tip-text {
-  font-size: 9.5px;
-  fill: var(--c-on-dark);
-  opacity: 0.85;
-}
-
-/* The sentence under the chart. */
-.fd-caption {
-  font-size: 13px;
+.fdata-meta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: 14px;
   color: var(--c-text-2);
 }
 
-/* ---------- Readings table ---------- */
+.fdata-progress {
+  padding: var(--s-3) var(--s-4);
+}
 
-/* A green text link that is really a button, like "See all 412" or "View". */
-.fd-link {
+.fdata-error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--c-red-text);
+}
+
+/* ---------- The three big numbers ---------- */
+
+.fdata-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s-3);
+}
+
+.fdata-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 16px 20px 18px;
+  border-radius: 16px;
+  background: var(--c-surface);
+  box-shadow: var(--shadow-card);
+}
+
+.fdata-stat-label {
+  overflow: hidden;
   font-size: 13px;
   font-weight: 600;
-  color: var(--c-green);
+  color: var(--c-text-2);
   white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-.fd-link:hover {
-  text-decoration: underline;
+.fdata-stat-value {
+  font-size: 34px;
+  line-height: 1.1;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text);
 }
 
-.fd-table td {
-  white-space: nowrap;
+.fdata-stat-line {
+  font-size: 13px;
+  color: var(--c-muted);
 }
 
-.fd-table .fd-date {
-  font-size: 12.5px;
+@media (max-width: 640px) {
+  .fdata-stats {
+    gap: var(--s-2);
+  }
+
+  .fdata-stat {
+    padding: 12px 12px 14px;
+  }
+
+  .fdata-stat-label {
+    font-size: 12px;
+  }
+
+  .fdata-stat-value {
+    font-size: 24px;
+  }
+
+  .fdata-stat-line {
+    font-size: 12px;
+  }
 }
 
-/* "What changed" cell: the "New" pill sits before the text. */
-.fd-change {
+/* ---------- The history chart ---------- */
+
+.fdata-history .card-header {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.fdata-chart-block {
   display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.fdata-readout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--s-4);
+  row-gap: 2px;
+}
+
+.fdata-readout-month {
+  flex-basis: 100%;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-muted);
+}
+
+.fdata-readout-value {
+  font-size: 40px;
+  line-height: 1.05;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text);
+}
+
+.fdata-readout-side {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--s-4);
+  font-size: 14px;
+  color: var(--c-muted);
+}
+
+.fdata-readout-side b {
+  font-weight: 600;
+  color: var(--c-text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.fdata-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-4);
+  font-size: 12.5px;
+  color: var(--c-text-2);
+}
+
+.fdata-key {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
 }
 
-.fd-open {
-  text-align: right;
+.fdata-key-line {
+  width: 18px;
+  height: 0;
+  border-top: 2.5px solid var(--fdata-series);
+  border-radius: 2px;
 }
 
-/* ---------- Download rows ---------- */
+.fdata-key-line.is-farm {
+  border-top: 2px dashed var(--fdata-farm);
+}
 
-.fd-downloads {
+.fdata-chart {
+  position: relative;
+  width: 100%;
+  min-height: 230px;
+  touch-action: pan-y;
+  border-radius: var(--r-sm);
+}
+
+.fdata-chart.is-live {
+  cursor: crosshair;
+}
+
+.fdata-chart:focus-visible {
+  outline: 2px solid var(--c-green);
+  outline-offset: 4px;
+}
+
+.fdata-chart svg {
+  display: block;
+}
+
+.fdata-base {
+  fill: var(--c-surface-2);
+}
+
+.fdata-base-label {
+  font-size: 11px;
+  fill: var(--c-muted);
+}
+
+.fdata-grid {
+  stroke: var(--c-border);
+  stroke-width: 1;
+}
+
+.fdata-tick,
+.fdata-year {
+  font-size: 11px;
+  fill: var(--c-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.fdata-year-line {
+  stroke: var(--c-border);
+  stroke-dasharray: 2 4;
+}
+
+.fdata-war line {
+  stroke: var(--c-red);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+
+.fdata-war text {
+  font-size: 11px;
+  font-weight: 600;
+  fill: var(--c-red-text);
+}
+
+.fdata-line {
+  fill: none;
+  stroke: var(--fdata-series);
+  stroke-width: 2.25;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.fdata-line-farm {
+  fill: none;
+  stroke: var(--fdata-farm);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  stroke-linejoin: round;
+}
+
+.fdata-dot-lone {
+  fill: var(--fdata-series);
+}
+
+.fdata-dot-farm {
+  fill: var(--fdata-farm);
+}
+
+.fdata-cross line {
+  stroke: var(--c-ink);
+  stroke-width: 1;
+  opacity: 0.35;
+}
+
+.fdata-dot {
+  fill: var(--fdata-series);
+  stroke: var(--c-surface);
+  stroke-width: 2;
+}
+
+.fdata-dot-farm-on {
+  fill: var(--c-surface);
+  stroke: var(--fdata-farm);
+  stroke-width: 2;
+}
+
+.fdata-empty {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: var(--s-3);
+  min-height: 200px;
 }
 
-/* One outlined row: icon, file name, format on the right. */
-.fd-download-row {
-  display: flex;
+.fdata-empty[aria-busy="true"] {
   align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 11px 12px;
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-sm);
-  background: var(--c-surface);
-  text-align: left;
-  color: var(--c-text);
+  color: var(--c-muted);
 }
 
-.fd-download-row:hover {
-  background: var(--c-surface-2);
+.fdata-empty-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
 }
 
-.fd-download-row svg {
-  color: var(--c-text-2);
-  flex: 0 0 auto;
+/* ---------- Passes and downloads ---------- */
+
+.fdata-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
+  gap: var(--s-4);
+  align-items: start;
 }
 
-.fd-download-name {
-  flex: 1;
+@media (max-width: 1000px) {
+  .fdata-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.fdata-table td {
+  font-size: 14px;
+}
+
+.table.fdata-table th,
+.table.fdata-print-table th {
+  font-family: var(--font-sans);
+}
+
+.fdata-date {
+  white-space: nowrap;
+}
+
+.fdata-date .badge {
+  margin-left: 8px;
+}
+
+.fdata-table tr.is-latest td {
+  font-weight: 600;
+}
+
+.fdata-more {
+  align-self: flex-start;
+  margin-top: var(--s-1);
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  font: inherit;
   font-size: 13px;
   font-weight: 600;
+  color: var(--c-green);
+  cursor: pointer;
+}
+
+.fdata-more:hover {
+  text-decoration: underline;
+}
+
+.fdata-none {
+  margin: 0;
+  color: var(--c-muted);
+}
+
+.fdata-files {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.fdata-file {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 52px;
+  padding: 10px 14px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+  background: var(--c-surface);
+  font: inherit;
+  color: var(--c-text);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.fdata-file > svg:first-child {
+  flex: 0 0 auto;
+  color: var(--c-green);
+}
+
+.fdata-file:hover {
+  background: var(--c-surface-2);
+  border-color: var(--c-border-strong);
+}
+
+.fdata-file:focus-visible {
+  outline: 2px solid var(--c-green);
+  outline-offset: 2px;
+}
+
+.fdata-file:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.fdata-file-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.fdata-file-format {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c-muted);
+  font-family: var(--font-mono);
+}
+
+.fdata-file-go {
+  flex: 0 0 auto;
+  color: var(--c-muted);
+}
+
+/* ---------- Small screens ---------- */
+
+@media (max-width: 640px) {
+  .fdata .page-header {
+    flex-wrap: wrap;
+  }
+
+  .fdata .page-header-actions {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .fdata-readout-value {
+    font-size: 32px;
+  }
+}
+
+/* ---------- The printable season report ---------- */
+
+.fdata-print {
+  display: none;
+}
+
+@media print {
+  @page {
+    margin: 14mm;
+  }
+
+  .sidebar,
+  .fdata-screen {
+    display: none !important;
+  }
+
+  html,
+  html body {
+    background: #fff;
+  }
+
+  .shell,
+  .shell-main,
+  .page.fdata {
+    display: block;
+    padding: 0;
+    max-width: none;
+  }
+
+  .fdata-print {
+    display: block;
+    color: #000;
+  }
+
+  .fdata-print-head h1 {
+    margin: 0 0 4px;
+    font-size: 24px;
+  }
+
+  .fdata-print-head p {
+    margin: 0 0 18px;
+    font-size: 12px;
+    color: #444;
+  }
+
+  .fdata-print-table {
+    font-size: 11px;
+  }
+
+  .fdata-print-table td,
+  .fdata-print-table th {
+    padding: 5px 6px;
+  }
+
+  .fdata-print-table .num,
+  .fdata-print-num {
+    font-family: var(--font-sans);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .fdata-print-num {
+    font-weight: 600;
+  }
+
+  .fdata-print-soft {
+    margin-left: 4px;
+    color: #666;
+    font-family: var(--font-sans);
+  }
+
+  .fdata-print-chart {
+    margin-top: 22px;
+    break-inside: avoid;
+  }
+
+  .fdata-print-chart h2 {
+    margin: 0 0 8px;
+    font-size: 15px;
+  }
+
+  .fdata-print-chart .fdata-readout-value {
+    font-size: 24px;
+  }
+
+  /* The chart is drawn 680 wide (an A4 page) and scales to the paper. */
+  .fdata-print-chart .fdata-chart {
+    min-height: 0;
+  }
+
+  .fdata-print-chart .fdata-chart svg {
+    width: 100%;
+    height: auto;
+  }
+
+  .fdata-print-foot {
+    margin-top: 16px;
+    font-size: 11px;
+    color: #555;
+  }
 }

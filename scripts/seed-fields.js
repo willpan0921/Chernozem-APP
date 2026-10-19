@@ -13,22 +13,40 @@
 // It is safe to run again: it only replaces "name" and "outline", so anything
 // else saved on a field (NDVI readings later) is left alone.
 //
+// It signs in with the same service account key as scripts/fetch-ndvi.js
+// (~/.config/chernozem/ndvi-key.json, or set NDVI_KEY_PATH), through
+// firebase-admin. The app itself no longer reads Firestore.
+//
 // WHO EDITS IT
 // Danny. To change an outline, edit fields.geojson (or draw it again in the
 // Earth Engine Code Editor) and run this again.
 
 import { readFile } from "node:fs/promises";
-import { doc, setDoc, terminate } from "firebase/firestore";
-import { db } from "../src/api/firebase.js";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { initializeApp, cert } from "firebase-admin/app";
+import { getFirestore } from "firebase-admin/firestore";
+
+const KEY_PATH = process.env.NDVI_KEY_PATH || join(homedir(), ".config", "chernozem", "ndvi-key.json");
+let key;
+try {
+  key = JSON.parse(await readFile(KEY_PATH, "utf8"));
+} catch {
+  console.error(`No service account key at ${KEY_PATH}.`);
+  console.error("Put the key there, or run with NDVI_KEY_PATH=/path/to/key.json");
+  process.exit(1);
+}
+initializeApp({ credential: cert(key), projectId: key.project_id });
+const db = getFirestore();
 
 const outlines = JSON.parse(await readFile(new URL("./fields.geojson", import.meta.url), "utf8"));
 
 for (const feature of outlines.features) {
   const { id, name } = feature.properties;
-  await setDoc(doc(db, "fields", id), { name, outline: JSON.stringify(feature.geometry) }, { merge: true });
+  await db.collection("fields").doc(id).set({ name, outline: JSON.stringify(feature.geometry) }, { merge: true });
   console.log(`Saved ${id}: ${name}`);
 }
 
 // Close the connection so the script can finish.
-await terminate(db);
+await db.terminate();
 console.log(`Done. ${outlines.features.length} field outlines are in Firestore.`);

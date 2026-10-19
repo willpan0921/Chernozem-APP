@@ -1,8 +1,8 @@
 // WHAT THIS FILE DOES
-// The message box at the bottom of an AI page: a text area, a row of
-// context chips under it (on the Field page "Whole farm ⌄"; the Atlas page
-// has none, its choices are in the "Using" column), a round green send
-// button, and the small warning line under the box.
+// The message box at the bottom of an AI page: a text area, an optional
+// row of context chips under it (neither AI page uses them now: their
+// choices are in the "Using" column), a round green send button, and the
+// small warning line under the box.
 //
 // Pressing Enter sends the message (Shift+Enter makes a new line). While an
 // answer is being written the send button becomes a stop button.

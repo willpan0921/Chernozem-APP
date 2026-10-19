@@ -1,0 +1,858 @@
+/*
+  WHAT THIS FILE DOES
+  The styling for the shared Field blocks in src/components/field (the
+  Field map, its legend, the metric tiles, the farm setup) and for the
+  loading, progress and setup screens in src/state/FieldData.jsx.
+
+  Prefixes: fm- the map, fl- the legend, mt- the metric tiles,
+  fs- the farm setup, fd- the FieldData screens.
+
+  WHO EDITS IT
+  Whoever changes how those blocks look. Colours come from tokens.css;
+  the zone colours are the --zone-* variables there.
+*/
+
+/* ---------- FieldMap ---------- */
+
+.fm-map {
+  position: relative;
+  width: 100%;
+  min-height: 200px;
+  border-radius: var(--r-md);
+  overflow: hidden;
+  isolation: isolate;
+  background: var(--zone-ground);
+}
+
+.fm-map .fm-canvas {
+  position: absolute;
+  inset: 0;
+  font-family: var(--font-sans);
+}
+
+.fm-map.is-zones .fm-canvas.leaflet-container {
+  background: var(--zone-ground);
+}
+
+.fm-map.is-satellite .fm-canvas.leaflet-container {
+  background: var(--c-ink-2);
+}
+
+.fm-canvas:focus-visible {
+  outline: 3px solid var(--zone-candidate);
+  outline-offset: -3px;
+}
+
+.fm-map.is-drawing .leaflet-container,
+.fm-map.is-drawing .leaflet-interactive {
+  cursor: crosshair;
+}
+
+.fm-map .leaflet-container .leaflet-control-attribution {
+  font-size: 10px;
+  line-height: 1.4;
+  padding: 1px 6px;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--c-muted);
+}
+
+.fm-map .leaflet-control-attribution:empty {
+  display: none;
+}
+
+.fm-zone-img {
+  image-rendering: auto;
+}
+
+.fm-shape {
+  cursor: pointer;
+}
+
+.fm-candidate {
+  cursor: pointer;
+  transition: fill-opacity 0.12s;
+}
+
+.fm-candidate:hover {
+  fill-opacity: 0.55;
+}
+
+/* Zoom buttons: white circles at the top right. */
+.fm-zoom {
+  position: absolute;
+  top: var(--s-3);
+  right: var(--s-3);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fm-btn {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--c-surface);
+  color: var(--c-text);
+  box-shadow: 0 6px 18px rgba(20, 20, 10, 0.22);
+  transition: background 0.12s;
+}
+
+.fm-btn:hover {
+  background: var(--c-surface-2);
+}
+
+.fm-btn:focus-visible {
+  outline: 2px solid var(--c-green);
+  outline-offset: 2px;
+}
+
+/* Name pills. The marker element has no size; the pill is centred on it. */
+.leaflet-marker-icon.fm-label {
+  width: 0 !important;
+  height: 0 !important;
+  overflow: visible;
+  background: none;
+  border: 0;
+  outline: none;
+}
+
+.fm-pill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -50%);
+  padding: 6px 12px;
+  border-radius: 9px;
+  background: var(--c-surface);
+  color: var(--c-text);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(20, 20, 10, 0.25);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.fm-label:hover .fm-pill {
+  background: var(--c-surface-2);
+}
+
+.fm-label.is-recovery .fm-pill {
+  background: var(--c-red-text);
+  color: var(--c-on-dark);
+}
+
+.fm-label.is-ready .fm-pill {
+  box-shadow: inset 0 0 0 2px var(--zone-ready), 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+.fm-label.is-selected .fm-pill {
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+  font-size: 14px;
+  padding: 7px 14px;
+}
+
+.fm-label:focus-visible .fm-pill {
+  outline: 3px solid var(--zone-candidate);
+  outline-offset: 2px;
+}
+
+/* A smaller pill where the normal one does not fit inside the field. */
+.fm-label.is-small .fm-pill {
+  padding: 4px 8px;
+  border-radius: 7px;
+  font-size: 11.5px;
+}
+
+.fm-label.is-tiny {
+  display: none;
+}
+
+.leaflet-tooltip.fm-tip {
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: var(--shadow-pop);
+}
+
+.leaflet-tooltip.fm-tip::before {
+  display: none;
+}
+
+/* Zones | Satellite: a white pill, the active option black. */
+.fm-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 14px;
+  background: var(--c-surface);
+  box-shadow: 0 6px 18px rgba(20, 20, 10, 0.22);
+}
+
+.fm-switch-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--c-text-2);
+}
+
+.fm-switch-option:hover {
+  color: var(--c-text);
+}
+
+.fm-switch-option.is-active {
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+}
+
+.fm-switch-option:focus-visible {
+  outline: 2px solid var(--c-green);
+  outline-offset: 1px;
+}
+
+/* "Oct 16 · Sentinel-2" */
+.fm-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 6px 18px rgba(20, 20, 10, 0.22);
+}
+
+.fm-chip-light {
+  background: var(--c-surface);
+  color: var(--c-text);
+}
+
+/* ---------- ConditionLegend ---------- */
+
+.fl-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--c-surface);
+  box-shadow: 0 6px 18px rgba(20, 20, 10, 0.18);
+  font-size: 12px;
+  color: var(--c-text-2);
+  width: max-content;
+  max-width: 100%;
+}
+
+.fl-legend.is-compact {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 8px 12px;
+}
+
+.fl-title {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--c-text);
+}
+
+.fl-scale {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.fl-end {
+  font-size: 12px;
+  color: var(--c-text-2);
+}
+
+.fl-end:first-child {
+  margin-right: 5px;
+}
+
+.fl-end:last-child {
+  margin-left: 5px;
+}
+
+.fl-swatch {
+  display: inline-block;
+  width: 22px;
+  height: 14px;
+  border-radius: 4px;
+  flex: 0 0 auto;
+}
+
+.fl-poor { background: var(--zone-poor); }
+.fl-fair { background: var(--zone-fair); }
+.fl-good { background: var(--zone-good); }
+.fl-great { background: linear-gradient(90deg, var(--zone-great), var(--zone-great-deep)); }
+
+.fl-marks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+
+.fl-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fl-recovery {
+  width: 16px;
+  background: repeating-linear-gradient(45deg, var(--zone-hatch-red) 0 3px, var(--zone-hatch-beige) 3px 7px);
+}
+
+.is-satellite .fl-recovery {
+  background: color-mix(in srgb, var(--c-red) 40%, transparent);
+  box-shadow: inset 0 0 0 2px var(--c-red);
+}
+
+/* Gold outline: ready to harvest, or due within two weeks. */
+.fl-ready {
+  width: 16px;
+  background: var(--zone-great);
+  box-shadow: inset 0 0 0 2.5px var(--zone-ready);
+}
+
+.fl-stress {
+  width: 14px;
+  border-radius: 50%;
+  border: 2px dashed var(--zone-stress);
+  background: var(--c-surface-2);
+}
+
+/* Pale straw with stubble lines, as on the map. --zone-stubble-ground
+   falls back to the hatch beige until tokens.css has it. */
+.fl-harvested {
+  width: 16px;
+  background:
+    repeating-linear-gradient(180deg, transparent 0 3px, var(--zone-stubble) 3px 4px),
+    var(--zone-stubble-ground, var(--zone-hatch-beige));
+  box-shadow: inset 0 0 0 1px var(--c-border-strong);
+}
+
+.is-satellite .fl-harvested {
+  background: color-mix(in srgb, var(--zone-stubble-ground, var(--zone-hatch-beige)) 60%, var(--c-surface-2));
+  box-shadow: inset 0 0 0 1.5px var(--c-muted);
+}
+
+/* ---------- MetricTile ---------- */
+
+.mt-tile {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px 16px 16px;
+  border-radius: 16px;
+  background: var(--c-surface);
+  box-shadow: var(--shadow-card);
+}
+
+.mt-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 22px;
+}
+
+.mt-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-text-2);
+}
+
+.mt-water .mt-label svg { color: var(--c-blue); }
+.mt-plantHealth .mt-label svg { color: var(--c-green); }
+.mt-stress .mt-label svg { color: var(--c-amber-text); }
+.mt-harvest .mt-label svg { color: var(--c-amber); }
+
+.mt-value {
+  font-size: clamp(20px, 15cqi, 32px);
+  line-height: 1.1;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--c-text);
+  overflow-wrap: anywhere;
+}
+
+.mt-tile.is-lg .mt-value {
+  font-size: clamp(24px, 17cqi, 40px);
+}
+
+.mt-line {
+  font-size: 12.5px;
+  color: var(--c-muted);
+  line-height: 1.35;
+}
+
+/* ---------- FieldData screens ---------- */
+
+.page.fd-center {
+  max-width: none;
+  align-items: center;
+  padding-top: clamp(16px, 10vh, 96px);
+}
+
+.card.fd-card {
+  width: 100%;
+  max-width: 560px;
+  padding: var(--s-8);
+  gap: var(--s-6);
+}
+
+.fd-card-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fd-card-head h1 {
+  font-size: 28px;
+  letter-spacing: -0.02em;
+}
+
+.fd-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.fd-progress-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--c-green);
+}
+
+.fd-progress-title {
+  font-size: 18px;
+  font-weight: 650;
+  color: var(--c-text);
+}
+
+.fd-progress.is-compact {
+  gap: 6px;
+}
+
+.fd-progress.is-compact .fd-progress-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.fd-progress-track {
+  height: 8px;
+  border-radius: var(--r-pill);
+  background: var(--c-surface-3);
+  overflow: hidden;
+}
+
+.fd-progress.is-compact .fd-progress-track {
+  height: 5px;
+}
+
+.fd-progress-fill {
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--c-green);
+  transition: width 0.5s ease-out;
+}
+
+.fd-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--c-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.fd-progress-msg {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fd-spin {
+  animation: fd-spin 1s linear infinite;
+}
+
+@keyframes fd-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.card.fd-error {
+  max-width: 640px;
+  gap: var(--s-3);
+}
+
+.fd-error-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--c-red-text);
+}
+
+.fd-error-text {
+  font-size: 13px;
+  color: var(--c-red-text);
+}
+
+.fd-skel {
+  border-radius: var(--r-md);
+  background: linear-gradient(90deg, var(--c-surface-3) 0%, var(--c-surface-2) 50%, var(--c-surface-3) 100%);
+  background-size: 200% 100%;
+  animation: fd-shimmer 1.3s ease-in-out infinite;
+}
+
+.fd-skel-title {
+  width: 240px;
+  height: 32px;
+}
+
+.fd-skel-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--s-3);
+}
+
+.fd-skel-stat {
+  height: 92px;
+}
+
+.fd-skel-map {
+  height: 380px;
+}
+
+@keyframes fd-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* ---------- FarmSetup ---------- */
+
+.page-full.fs-page {
+  background: var(--c-bg);
+}
+
+.fs {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(320px, 400px) minmax(0, 1fr);
+  height: 100%;
+}
+
+.fs-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  padding: 40px 28px 24px;
+  overflow-y: auto;
+  min-width: 0;
+  background: var(--c-surface);
+  border-right: 1px solid var(--c-border);
+}
+
+.fs-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fs-head h1 {
+  font-size: 30px;
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+}
+
+.fs-head p {
+  font-size: 15px;
+  color: var(--c-text-2);
+}
+
+.fs-side > .tabs-bar {
+  align-self: stretch;
+}
+
+.fs-side > .tabs-bar .tab {
+  flex: 1;
+  justify-content: center;
+}
+
+.fs-tab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.fs-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  height: 50px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--c-border-strong);
+  background: var(--c-surface);
+  color: var(--c-muted);
+}
+
+.fs-search:focus-within {
+  outline: 2px solid var(--c-green);
+  outline-offset: -1px;
+  border-color: transparent;
+}
+
+.fs-search-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 16px;
+  color: var(--c-text);
+}
+
+.fs-search-input:focus {
+  outline: none;
+}
+
+.fs-results {
+  display: flex;
+  flex-direction: column;
+  max-height: 260px;
+  overflow-y: auto;
+  border-radius: var(--r-md);
+  border: 1px solid var(--c-border);
+}
+
+.fs-results li + li {
+  border-top: 1px solid var(--c-border);
+}
+
+.fs-result {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 14px;
+  text-align: left;
+  color: var(--c-muted);
+}
+
+.fs-result:hover {
+  background: var(--c-surface-2);
+}
+
+.fs-result.is-picked {
+  background: var(--c-green-soft);
+  color: var(--c-green);
+}
+
+.fs-result-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--c-text);
+}
+
+.fs-result-check {
+  color: var(--c-green);
+}
+
+.fs-coords {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.fs-radius {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+}
+
+.fs-status {
+  font-size: 13px;
+  color: var(--c-muted);
+  min-height: 18px;
+}
+
+.fs-status.is-ok {
+  color: var(--c-green);
+  font-weight: 600;
+}
+
+.fs-status.is-error {
+  color: var(--c-red-text);
+  font-weight: 500;
+}
+
+.fs-finding {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: var(--c-green-soft);
+}
+
+.fs-finding-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--c-green);
+}
+
+.fs-foot {
+  margin-top: auto;
+  padding-top: var(--s-4);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.fs-demo {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-muted);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.fs-demo:hover:not(:disabled) {
+  color: var(--c-green);
+}
+
+.fs-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-text-2);
+}
+
+.fs-back:hover:not(:disabled) {
+  color: var(--c-text);
+}
+
+.fs-warning {
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: var(--c-amber-soft);
+  color: var(--c-amber-text);
+  font-size: 13px;
+}
+
+.fs-total {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.fs-total-big {
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  font-variant-numeric: tabular-nums;
+}
+
+.fs-total-area {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--c-text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.fs-map {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px;
+}
+
+.fs-map .fm-map {
+  height: 100%;
+  border-radius: 18px;
+}
+
+.fs-sample {
+  position: absolute;
+  top: var(--s-3);
+  left: var(--s-3);
+  z-index: 1000;
+  padding: 7px 11px;
+  font-size: 12px;
+}
+
+@media (max-width: 860px) {
+  .fs {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+  }
+
+  .fs-side {
+    padding: 24px 16px 16px;
+    border-right: 0;
+    overflow: visible;
+  }
+
+  .fs-head h1 {
+    font-size: 26px;
+  }
+
+  .fs-map {
+    height: 380px;
+    padding: 0 16px 16px;
+    background: var(--c-surface);
+  }
+
+  .fs-foot {
+    margin-top: 0;
+  }
+}

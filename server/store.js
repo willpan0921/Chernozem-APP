@@ -8,6 +8,8 @@
 //   areas/<id>.json   one file per area
 //   runs/<id>.json    one file per monthly run (with its grid cells)
 //   chats/<id>.json   one file per AI chat thread
+//   farm.json, field-analysis/, field-history/, reports/, uploads/
+//                     the Field product (see the Field section at the end)
 //
 // Files are written safely (to a temporary file first, then renamed), and
 // ids may only contain a-z, 0-9 and "-", so a request can never reach a
@@ -361,4 +363,171 @@ export async function deleteChat(id) {
     if (error.code === "ENOENT") return false;
     throw error;
   }
+}
+
+// ---------- Field: the farm, its analyses, history, reports and photos ----------
+// Added for the Field product (owner: field-core). Same safety rules as
+// above: ids are checked, writes are atomic, everything lives in dataDir().
+//
+//   farm.json                       the one farm (or absent)
+//   field-analysis/<fieldId>.json   the latest analysis of one field
+//   field-history/<fieldId>.json    { fieldId, months: [...] } since 2019
+//   reports/<id>.json               "Tell us what happened" reports
+//   uploads/<photoId>.<jpg|png|webp> the photos sent with them
+//   weather-cache.json              the last weather answer (1 h)
+
+export async function getFarm() {
+  return readFile(path.join(dataDir(), "farm.json"));
+}
+
+export async function saveFarm(farm) {
+  await writeFile(path.join(dataDir(), "farm.json"), farm);
+  return farm;
+}
+
+export async function deleteFarm() {
+  try {
+    await fs.unlink(path.join(dataDir(), "farm.json"));
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+}
+
+// Changes the farm one request at a time (like updateWorkspace).
+// change(farm) gets the saved farm (or null) and gives back the new one,
+// or undefined to keep the edited object. Gives back the saved farm.
+const farmLock = (globalThis.__chernozemFarmLock ??= { chain: Promise.resolve() });
+export function updateFarm(change) {
+  const next = farmLock.chain.then(async () => {
+    const farm = await getFarm();
+    const changed = await change(farm);
+    const result = changed === undefined ? farm : changed;
+    if (result) await saveFarm(result);
+    return result;
+  });
+  farmLock.chain = next.catch(() => {});
+  return next;
+}
+
+// Runs work(farm) in the same queue as updateFarm without saving the farm,
+// so nothing can change the farm while it runs. Used to save a field's
+// analysis only while the field is still on the farm.
+export function whileFarmLocked(work) {
+  const next = farmLock.chain.then(async () => work(await getFarm()));
+  farmLock.chain = next.catch(() => {});
+  return next;
+}
+
+async function removeFile(file) {
+  try {
+    await fs.unlink(file);
+    return true;
+  } catch (error) {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+export async function getFieldAnalysis(fieldId) {
+  if (!isSafeId(fieldId)) return null;
+  return readFile(fileFor("field-analysis", fieldId));
+}
+
+export async function saveFieldAnalysis(analysis) {
+  await writeFile(fileFor("field-analysis", analysis.fieldId), analysis);
+  return analysis;
+}
+
+export async function listFieldAnalyses() {
+  const ids = await listFiles("field-analysis");
+  return (await Promise.all(ids.map((id) => getFieldAnalysis(id)))).filter(Boolean);
+}
+
+export async function getFieldHistory(fieldId) {
+  if (!isSafeId(fieldId)) return null;
+  return readFile(fileFor("field-history", fieldId));
+}
+
+export async function saveFieldHistory(history) {
+  await writeFile(fileFor("field-history", history.fieldId), history);
+  return history;
+}
+
+// Removes a field's analysis and history (the field itself is in farm.json).
+export async function deleteFieldData(fieldId) {
+  assertSafeId(fieldId);
+  await Promise.all([removeFile(fileFor("field-analysis", fieldId)), removeFile(fileFor("field-history", fieldId))]);
+}
+
+export async function getReport(id) {
+  if (!isSafeId(id)) return null;
+  return readFile(fileFor("reports", id));
+}
+
+export async function saveReport(report) {
+  await writeFile(fileFor("reports", report.id), report);
+  return report;
+}
+
+// Newest first.
+export async function listReports() {
+  const ids = await listFiles("reports");
+  const reports = (await Promise.all(ids.map((id) => getReport(id)))).filter(Boolean);
+  return reports.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+}
+
+export async function deleteReport(id) {
+  if (!isSafeId(id)) return false;
+  return removeFile(fileFor("reports", id));
+}
+
+const PHOTO_TYPES = { jpg: "image/jpeg", png: "image/png", webp: "image/webp" };
+
+function photoFile(photoId, ext) {
+  assertSafeId(photoId);
+  if (!PHOTO_TYPES[ext]) {
+    const error = new Error("Photos must be JPEG, PNG or WebP.");
+    error.status = 400;
+    error.code = "bad_photo";
+    throw error;
+  }
+  return path.join(dataDir(), "uploads", `${photoId}.${ext}`);
+}
+
+// ext is "jpg", "png" or "webp"; buffer is the file's bytes.
+export async function savePhoto(photoId, ext, buffer) {
+  const file = photoFile(photoId, ext);
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.${randomBytes(3).toString("hex")}.tmp`;
+  await fs.writeFile(tmp, buffer);
+  await fs.rename(tmp, file);
+  return { photoId, ext, type: PHOTO_TYPES[ext] };
+}
+
+// { buffer, type } or null.
+export async function readPhoto(photoId) {
+  if (!isSafeId(photoId)) return null;
+  for (const [ext, type] of Object.entries(PHOTO_TYPES)) {
+    try {
+      return { buffer: await fs.readFile(photoFile(photoId, ext)), type };
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+  return null;
+}
+
+export async function deletePhoto(photoId) {
+  if (!isSafeId(photoId)) return;
+  await Promise.all(Object.keys(PHOTO_TYPES).map((ext) => removeFile(photoFile(photoId, ext))));
+}
+
+// The weather answer kept for an hour: { at, lat, lon, data } or null.
+export async function getWeatherCache() {
+  return readFile(path.join(dataDir(), "weather-cache.json"));
+}
+
+export async function saveWeatherCache(entry) {
+  await writeFile(path.join(dataDir(), "weather-cache.json"), entry);
+  return entry;
 }

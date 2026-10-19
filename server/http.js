@@ -1,6 +1,7 @@
 // WHAT THIS FILE DOES
 // Small helpers every server route uses to read a request and answer it:
-//   readJson(req)                       the request body as an object
+//   readJson(req, { maxBytes })         the request body as an object
+//                                       (maxBytes: a bigger limit for one route)
 //   sendJson(res, status, body)         answer with JSON
 //   sendError(res, status, code, text)  answer with { error: { code, message } }
 //   openSse(res)                        start a live stream (used by the AI chat)
@@ -22,10 +23,11 @@ export class HttpError extends Error {
 const MAX_BODY_BYTES = 1024 * 1024;
 
 // Reads the request body as JSON. An empty body gives {}.
-export async function readJson(req) {
+// maxBytes raises the limit for one route (the Field photo reports).
+export async function readJson(req, { maxBytes = MAX_BODY_BYTES } = {}) {
   // Some frameworks have already read the body.
   if (req.body && typeof req.body === "object" && !Buffer.isBuffer(req.body)) return req.body;
-  const text = (await readBody(req)).toString("utf8").trim();
+  const text = (await readBody(req, maxBytes)).toString("utf8").trim();
   if (!text) return {};
   try {
     const value = JSON.parse(text);
@@ -41,15 +43,17 @@ export async function readJson(req) {
 // The raw body. A body over the limit is read to the end but thrown away,
 // so the sender still gets the "too large" answer (stopping half-way would
 // cut the connection). A body far over the limit cuts the connection.
-function readBody(req) {
+function readBody(req, maxBytes = MAX_BODY_BYTES) {
+  const limit = Number.isFinite(maxBytes) && maxBytes > 0 ? maxBytes : MAX_BODY_BYTES;
+  const limitText = `${Math.round(limit / (1024 * 1024))} MB`;
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
-    let tooLarge = Number(req.headers?.["content-length"]) > MAX_BODY_BYTES;
+    let tooLarge = Number(req.headers?.["content-length"]) > limit;
     req.on("data", (chunk) => {
       size += chunk.length;
-      if (size > MAX_BODY_BYTES) tooLarge = true;
-      if (size > MAX_BODY_BYTES * 16) {
+      if (size > limit) tooLarge = true;
+      if (size > Math.max(limit * 2, MAX_BODY_BYTES * 16)) {
         req.destroy();
         reject(new HttpError(413, "too_large", "The request is too large."));
         return;
@@ -57,7 +61,7 @@ function readBody(req) {
       if (!tooLarge) chunks.push(chunk);
     });
     req.on("end", () => {
-      if (tooLarge) reject(new HttpError(413, "too_large", "The request is too large (the limit is 1 MB)."));
+      if (tooLarge) reject(new HttpError(413, "too_large", `The request is too large (the limit is ${limitText}).`));
       else resolve(Buffer.concat(chunks));
     });
     req.on("error", reject);

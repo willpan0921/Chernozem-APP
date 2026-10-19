@@ -20,7 +20,7 @@
 //     product: "atlas",                 // "atlas" or "field"
 //     threadId: "chat-1a2b3c4d",        // leave out to start a new chat
 //     context: { runId, settings, timeframe, selectedCellId },   // Atlas
-//     //  or   { farm: { ...a short farm summary } }               // Field
+//     //  or   { reportId? }   // Field: the server reads the farm itself
 //     onThread: ({ threadId, title }) => {},  // the chat was saved (new chats get an id here)
 //     onText:   (piece, wholeSoFar) => {},    // more of the answer arrived
 //     onTool:   ({ name, status }) => {},     // the AI is looking something up

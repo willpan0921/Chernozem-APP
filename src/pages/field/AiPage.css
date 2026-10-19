@@ -1,12 +1,13 @@
 /*
   WHAT THIS FILE DOES
   Styling that belongs only to the Field AI page (/field/ai). The chat
-  itself is styled in src/components/chat/chat.css; this file only wraps it.
+  itself is styled in src/components/chat/chat.css; this file only wraps
+  it. Every class starts with "fai-" (Field AI).
 
   WHO EDITS IT
   Danny.
 */
 
-.ai-page {
+.fai-page {
   min-width: 0;
 }

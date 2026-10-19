@@ -87,6 +87,7 @@ test("country search, create, analyze, runs and compare", async () => {
   const job = await waitForJob(started.json.job.id);
   assert.equal(job.status, "done", job.error);
   assert.equal(job.runIds.length, 3);
+  assert.match(job.message, /: 3 months analyzed$/);
 
   const runs = (await call("GET", `/api/runs?areaId=${area.id}`)).json.runs;
   assert.equal(runs.length, 3);
@@ -180,6 +181,7 @@ test("contract edges: other areas, arrays, extra path parts, body size, status o
   const box = (await call("POST", "/api/areas", { source: "bbox", name: "Small box", north: 50.05, south: 50, east: 30.05, west: 30 })).json.area;
   const job = await waitForJob((await call("POST", "/api/analyze", { areaId: box.id, months: 1 })).json.job.id);
   assert.equal(job.status, "done", job.error);
+  assert.equal(job.message, "Small box: 1 month analyzed");
   const all = (await call("GET", "/api/runs")).json.runs;
   const other = all.find((run) => run.areaId !== box.id);
   const mixed = await call("GET", `/api/runs/compare?a=${other.id}&b=${job.runIds[0]}`);

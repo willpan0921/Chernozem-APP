@@ -1,612 +1,604 @@
 // WHAT THIS FILE DOES
-// The Fields page (/field/fields): the farm map on the left and a detail
-// panel for the selected field on the right.
+// The Fields page (/field/fields): the farm map on the left and the
+// selected field on the right.
 //
-//   LEFT  - a real satellite map (Leaflet with Esri World Imagery) with
-//           the seven real field outlines on top. In Zones view the fields
-//           are filled with their status colour; in Satellite view only the
-//           outlines show. Floating on top: the Zones/Satellite switch, the
-//           layer picker, the date chip, zoom buttons, the legend and the
-//           "Field 7 needs recovery" call-out.
-//   RIGHT - everything about the selected field: four metric tiles, the
-//           "Plant health this season" chart, the "What if" card, the next
-//           steps checklist and the two buttons at the bottom.
+//   MAP    the shared Field map (src/components/field/FieldMap.jsx) in one
+//          of two views: "Zones" (a flat zone picture, no imagery; the
+//          default) or "Satellite" (real imagery with the fields tinted).
+//          ONE layer only: Field condition (water, plant health, stress
+//          and harvest readiness together, from method.js). On top: the
+//          view switch, the date of the latest satellite pass, the legend
+//          and the zoom buttons.
+//   PANEL  the selected field: its name, status and crop · area, the four
+//          big tiles (Water, Plant health, Stress, Harvest readiness: one
+//          big value, at most one status word, at most one short line), a
+//          small "Plant health this season" chart against the normal, and
+//          one button: "Ask AI about <field>".
 //
-// Clicking a field on the map selects it and the right panel switches to
-// that field. The outlines come from Firestore (src/api/fieldsApi.js); all
-// the words and numbers still come from src/data/farm.js, matched by id.
+// "?field=<field id>" in the address picks the field (an unknown id is
+// replaced by the first field's); clicking a field on the map (or the
+// arrows by its name) puts it in the address, so a link opens the same
+// field. Picking a field with the arrows or a link brings it into view on
+// the map if it is off screen. On screens 860 px or narrower the map sits
+// on top and the field below; clicking a field there scrolls to it.
+//
+// All numbers come from the real analyses in src/state/FieldData.jsx; the
+// rules (what is normal, stressed, ready) from src/lib/field/method.js, as
+// the server applied them; the wording helpers from src/lib/field/format.js.
 //
 // WHO EDITS IT
-// Whoever changes how the Fields page looks. To change a number, a date or
-// a sentence, edit src/data/farm.js instead.
+// Whoever changes how the Fields page looks. The map itself is
+// src/components/field/FieldMap.jsx; the rules are in src/lib/field/method.js.
 
-import { useEffect, useRef, useState } from "react";
-import { MapContainer, TileLayer, Polygon, Tooltip } from "react-leaflet";
-import "leaflet/dist/leaflet.css";
-import {
-  Bug,
-  Calendar,
-  ChevronRight,
-  ChevronsUpDown,
-  Check,
-  Droplet,
-  Eye,
-  FileText,
-  LayoutGrid,
-  Layers,
-  MessageSquare,
-  Minus,
-  Plus,
-  Search,
-  ShieldAlert,
-  SlidersHorizontal,
-  Sprout,
-  Wheat,
-  ArrowDown,
-  ArrowUp,
-} from "lucide-react";
-import { Badge, Button, Segmented, ChipSelect } from "../../components/ui/index.js";
-import { fields, fieldDetails, fieldsMap, dataLayers } from "../../data/farm.js";
-import { useFieldOutlines, fieldAreaHa } from "../../api/fieldsApi.js";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { ChevronLeft, ChevronRight, MessageSquare, ShieldAlert } from "lucide-react";
+import { Badge, Button } from "../../components/ui/index.js";
+import { FarmGate, FieldProgress, useFieldData } from "../../state/FieldData.jsx";
+import FieldMap, { FieldMapViewSwitch, fieldsBounds } from "../../components/field/FieldMap.jsx";
+import ConditionLegend from "../../components/field/ConditionLegend.jsx";
+import MetricTile from "../../components/field/MetricTile.jsx";
+import { formatArea, formatDay, formatIndex, stageWord, stressWord } from "../../lib/field/format.js";
+import { BASELINE } from "../../lib/field/method.js";
 import "./FieldsPage.css";
 
-/* =========================================================================
-   MAP SETTINGS
-   The satellite picture under the fields and where the map starts.
-   ========================================================================= */
+// The width at which the page stacks (keep in step with FieldsPage.css).
+const NARROW = "(max-width: 860px)";
+// Room kept round the fields when the map fits them: little at the sides,
+// more at the top and bottom for the view switch and the legend.
+const FIT_PADDING = [18, 60];
 
-// Esri World Imagery: free satellite photos with no key. The photo's date is
-// not known and differs from place to place. The credit line is required.
-const BASEMAP = {
-  url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-  attribution:
-    'Powered by <a href="https://www.esri.com">Esri</a> | Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
-  maxZoom: 18,
-};
-
-// Where the map looks before the outlines arrive: the farm near Kupiansk.
-// Once they arrive, the map zooms to fit all the fields.
-const FARM_CENTRE = [49.7225, 37.5365];
-const FARM_ZOOM = 14;
-
-// Turns a GeoJSON Polygon (corners as [longitude, latitude]) into the
-// [latitude, longitude] lists Leaflet draws.
-function toLatLngs(outline) {
-  return outline.coordinates.map((ring) => ring.map(([lng, lat]) => [lat, lng]));
+function useNarrow() {
+  const query = () => (typeof window !== "undefined" && window.matchMedia ? window.matchMedia(NARROW) : null);
+  const [narrow, setNarrow] = useState(() => !!query()?.matches);
+  useEffect(() => {
+    const media = query();
+    if (!media) return undefined;
+    const onChange = () => setNarrow(media.matches);
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, []);
+  return narrow;
 }
 
-/* =========================================================================
-   ICONS
-   The data module names icons as words ("droplet"); this maps the words to
-   Lucide icon components.
-   ========================================================================= */
+// ---------- The four tiles ----------
 
-// Two short labels and the field open by default, which the data module
-// does not carry yet.
-// TODO move to src/data/farm.js (e.g. fieldDetails[id].nextStepsTitle and
-// fieldsMap.selectedFieldId).
-const NEXT_STEPS_TITLE = "Next steps";
-const NO_DETAIL_TEXT = "No details for this field yet.";
-const DEFAULT_FIELD_ID = "field-4";
+const isNum = (value) => typeof value === "number" && Number.isFinite(value);
+const round2 = (value) => Math.round(value * 100) / 100;
 
-const ICONS = {
-  droplet: Droplet,
-  bug: Bug,
-  sprout: Sprout,
-  wheat: Wheat,
-  shield: ShieldAlert,
-  calendar: Calendar,
-};
+const VERSUS_TONES = { below: "amber", normal: "green", above: "blue" };
+const STRESS_TONES = { low: "green", medium: "amber", high: "red" };
+const WATER_WORDS = { below: "Drier than usual", normal: "Normal", above: "Wetter than usual" };
+const HEALTH_WORDS = { below: "Below normal", normal: "Normal", above: "Above normal" };
 
-/* =========================================================================
-   THE PAGE
-   ========================================================================= */
+// "Usual 0.26 to 0.29" (one number when both ends print the same).
+function usualRange(normal) {
+  if (!isNum(normal?.low) || !isNum(normal?.high)) return null;
+  const low = formatIndex(normal.low);
+  const high = formatIndex(normal.high);
+  return low === high ? `Usual ${low}` : `Usual ${low} to ${high}`;
+}
 
-export default function FieldsPage() {
-  // Which field is open in the right panel (Field 4 to start, like the mockup).
-  const [selectedId, setSelectedId] = useState(DEFAULT_FIELD_ID);
-  // Zones or Satellite view and the chosen layer.
-  const [viewMode, setViewMode] = useState(fieldsMap.viewMode);
-  const [layer, setLayer] = useState(fieldsMap.layer);
-  // The real field outlines from Firestore, keyed by field id, and whether
-  // they are still loading ("loading", "ready" or "error").
-  // The newest clear NDVI reading per field comes with them.
-  const { outlines, latestNdvi, status: outlineStatus } = useFieldOutlines();
+// The status word of a reading. The server decides below / normal / above
+// (method.js versusNormal, which allows a small margin); "Normal" is said
+// only when the printed value is inside the printed range, and "Near
+// normal" when it is just outside it.
+function readingStatus(reading, value, words) {
+  if (!isNum(value) || !reading?.versus) return { word: null, tone: null };
+  if (reading.versus === "normal" && isNum(reading.normal?.low) && isNum(reading.normal?.high)) {
+    const v = round2(value);
+    const inside = v >= round2(reading.normal.low) && v <= round2(reading.normal.high);
+    return { word: inside ? "Normal" : "Near normal", tone: "green" };
+  }
+  return { word: words[reading.versus] || null, tone: VERSUS_TONES[reading.versus] || null };
+}
 
-  const selectedField = fields.find((field) => field.id === selectedId) || fields[0];
+// The highest normal plant health of the year (2019 to 2021), or null.
+function usualPeak(normalCurve) {
+  const values = (normalCurve || []).map((point) => point?.median).filter(isNum);
+  return values.length ? Math.max(...values) : null;
+}
 
-  // "Next field" button in the panel header: cycles through the fields.
-  function selectNextField() {
-    const index = fields.findIndex((field) => field.id === selectedId);
-    setSelectedId(fields[(index + 1) % fields.length].id);
+// The four tiles of the selected field: { id, label, value, word, tone, line }.
+// One big value, at most one status word, at most one line, nothing said twice.
+function panelTiles(analysis, { units = "ha", weather = null } = {}) {
+  const a = analysis || {};
+  const water = a.water || {};
+  const health = a.plantHealth || {};
+  const stress = a.stress || {};
+  const harvest = a.harvest || {};
+
+  const waterStatus = readingStatus(water, water.ndwi, WATER_WORDS);
+  const waterTile = { id: "water", label: "Water", value: formatIndex(water.ndwi), ...waterStatus, line: usualRange(water.normal) };
+
+  // A field that never greened up this season is not "Normal", whatever
+  // its bare-soil reading today.
+  let healthTile;
+  if (harvest.stage === "notSown") {
+    const peak = usualPeak(a.normalCurve);
+    healthTile = {
+      id: "plantHealth",
+      label: "Plant health",
+      value: formatIndex(health.ndvi),
+      word: "No crop",
+      tone: "amber",
+      line: isNum(harvest.peak) && isNum(peak) ? `Peak ${formatIndex(harvest.peak)}, usual ${formatIndex(peak)}` : "Did not green up this season",
+    };
+  } else {
+    healthTile = { id: "plantHealth", label: "Plant health", value: formatIndex(health.ndvi), ...readingStatus(health, health.ndvi, HEALTH_WORDS), line: usualRange(health.normal) };
   }
 
+  const share = isNum(stress.share) ? stress.share : null;
+  const stressedHa = isNum(stress.stressedHa) && stress.stressedHa > 0 ? stress.stressedHa : null;
+  const patches = Array.isArray(stress.patches) ? stress.patches.length : 0;
+  let stressTile;
+  if (share == null) {
+    stressTile = { id: "stress", label: "Stress", value: "–", word: null, tone: null, line: null };
+  } else if (share > 0 || stressedHa) {
+    const pct = share * 100 < 1 ? "Under 1%" : `${Math.round(share * 100)}%`;
+    stressTile = {
+      id: "stress",
+      label: "Stress",
+      value: stressedHa ? formatArea(stressedHa, units) : pct,
+      word: stress.level ? stressWord(stress.level) : null,
+      tone: STRESS_TONES[stress.level] || null,
+      line: [stressedHa ? `${pct} of the field` : null, patches ? `${patches} ${patches === 1 ? "patch" : "patches"}` : null].filter(Boolean).join(" · ") || null,
+    };
+  } else {
+    stressTile = { id: "stress", label: "Stress", value: "None", word: null, tone: null, line: "No weak patches" };
+  }
+
+  const rain = weather?.rain?.likely ? weather.rain : null;
+  const rainNote = harvest.rainBefore && rain?.from ? `Rain ${formatDay(rain.from)} · harvest first` : harvest.rainBefore ? "Rain due · harvest first" : null;
+  let word = null;
+  let tone = null;
+  let line = null;
+  switch (harvest.stage) {
+    case "ready":
+      line = rainNote || (harvest.window?.to ? `Best by ${formatDay(harvest.window.to)}` : null);
+      break;
+    case "ripening":
+      word = "Ripening";
+      tone = "blue";
+      line = rainNote || (harvest.window?.from ? `Ready about ${formatDay(harvest.window.from)}` : null);
+      break;
+    case "harvested":
+      line = harvest.lastDate ? `By ${formatDay(harvest.lastDate)}` : null;
+      break;
+    case "growing":
+      line = isNum(harvest.peak) ? `Greenest so far ${formatIndex(harvest.peak)}` : null;
+      break;
+    case "notSown":
+      break;
+    default:
+      line = "Waiting for a clear pass";
+  }
+  const harvestTile = { id: "harvest", label: "Harvest readiness", value: stageWord(harvest), word, tone, line };
+
+  return [waterTile, healthTile, stressTile, harvestTile];
+}
+
+// ---------- The page ----------
+
+function FieldsView() {
+  const { farm, analyses, provider, job, weather, actions } = useFieldData();
+  const [params, setParams] = useSearchParams();
+  const [view, setView] = useState("zones");
+  const narrow = useNarrow();
+  const mapApi = useRef(null);
+  const panelRef = useRef(null);
+  const pickedOnMap = useRef(false);
+
+  const fields = farm.fields;
+  const wanted = params.get("field");
+  const selected = fields.find((field) => field.id === wanted) || fields[0];
+  const index = fields.indexOf(selected);
+  const analysis = analyses[selected?.id] || null;
+
+  const select = (id) => {
+    if (!id || id === params.get("field")) return;
+    const next = new URLSearchParams(params);
+    next.set("field", id);
+    setParams(next, { replace: true });
+  };
+  const step = (by) => select(fields[(index + by + fields.length) % fields.length]?.id);
+
+  // A field picked on the map is already in view; on a phone, show its
+  // details (they are below the map).
+  const selectOnMap = (id) => {
+    pickedOnMap.current = id !== selected?.id;
+    select(id);
+    if (narrow) requestAnimationFrame(() => panelRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }));
+  };
+
+  // An unknown ?field= id becomes the first field's, so the address
+  // always names the field shown.
+  const unknown = Boolean(wanted) && fields.length > 0 && !fields.some((field) => field.id === wanted);
+  useEffect(() => {
+    if (!unknown || !fields[0]) return;
+    const next = new URLSearchParams(params);
+    next.set("field", fields[0].id);
+    setParams(next, { replace: true });
+  }, [unknown, fields, params, setParams]);
+
+  // A field picked with the arrows or a link: bring it into view if it is
+  // off screen, without zooming in (zooming out if it does not fit).
+  // Only a change of field does this (not a refresh of the same field).
+  const selectedId = selected?.id;
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  useEffect(() => {
+    if (pickedOnMap.current) {
+      pickedOnMap.current = false;
+      return;
+    }
+    const map = mapApi.current?.getMap?.();
+    const bounds = selectedRef.current && fieldsBounds([selectedRef.current]);
+    if (!map || !bounds?.isValid()) return;
+    if (map.getBounds().contains(bounds)) return;
+    map.flyToBounds(bounds, { padding: [56, 56], maxZoom: map.getZoom(), duration: 0.6 });
+  }, [selectedId]);
+
+  // The newest clear satellite pass over any of the fields.
+  const latestPass = useMemo(
+    () =>
+      Object.values(analyses)
+        .map((item) => item?.latestPass?.date)
+        .filter(Boolean)
+        .sort()
+        .pop() || null,
+    [analyses],
+  );
+  // "Sample" follows the readings shown, not the current data source.
+  const shown = Object.values(analyses).filter(Boolean);
+  const sample = shown.length ? shown.some((item) => item.provider !== "gee") : provider?.id === "sample";
+  const fitKey = `${farm.id}:${fields.map((field) => field.id).join(",")}`;
+
   return (
-    <div className="page-full ff-page">
-      <FarmMap
-        selectedId={selectedId}
-        onSelect={setSelectedId}
-        viewMode={viewMode}
-        onViewMode={setViewMode}
-        layer={layer}
-        onLayer={setLayer}
-        outlines={outlines}
-        outlineStatus={outlineStatus}
-      />
-      {/* "key" resets the panel's own state (checked steps, chosen what-if)
-          when a different field is selected. */}
-      <DetailPanel
-        key={selectedId}
-        field={selectedField}
-        areaText={areaText(selectedField, outlines[selectedField.id], outlineStatus)}
-        ndvi={latestNdvi[selectedField.id]}
-        ndviStatus={outlineStatus}
-        onNext={selectNextField}
-      />
+    <div className="page-full fp">
+      <section className="fp-map" aria-label="Farm map">
+        <FieldMap
+          ref={mapApi}
+          fields={fields}
+          analyses={analyses}
+          selectedId={selectedId}
+          onSelect={selectOnMap}
+          view={view}
+          fitKey={fitKey}
+          fitPadding={FIT_PADDING}
+          height="100%"
+          ariaLabel={`Map of ${farm.name}`}
+        >
+          <div className="fp-map-top">
+            <FieldMapViewSwitch value={view} onChange={setView} />
+            {latestPass && (
+              <span className="fm-chip fp-pass" title={`Latest clear satellite pass: ${formatDay(latestPass)}${sample ? " (sample data)" : " (Sentinel-2)"}`}>
+                <span>
+                  {formatDay(latestPass)}
+                  <span className="fp-pass-long">{sample ? " · Sample data" : " · Sentinel-2"}</span>
+                  {sample && <span className="fp-pass-short"> · Sample</span>}
+                </span>
+              </span>
+            )}
+          </div>
+          <div className="fp-map-legend">
+            <ConditionLegend view={view} compact={narrow} />
+          </div>
+        </FieldMap>
+      </section>
+
+      <aside ref={panelRef} className="fp-panel" aria-label={selected ? `${selected.name} details` : "Field details"}>
+        {selected && (
+          <FieldPanel
+            key={selected.id}
+            field={selected}
+            analysis={analysis}
+            units={farm.units}
+            weather={weather}
+            job={job}
+            count={fields.length}
+            onStep={step}
+            onAnalyze={() => actions.analyze([selected.id])}
+          />
+        )}
+      </aside>
     </div>
   );
 }
 
-/* =========================================================================
-   THE MAP (left side)
-   ========================================================================= */
+// ---------- The selected field ----------
 
-function FarmMap({ selectedId, onSelect, viewMode, onViewMode, layer, onLayer, outlines, outlineStatus }) {
-  const { legend, callout } = fieldsMap;
-  const satellite = viewMode === "Satellite";
-  // The Leaflet map itself, for the zoom buttons and zoom-to-fit.
-  const [map, setMap] = useState(null);
-  const fitted = useRef(false);
+function FieldPanel({ field, analysis, units, weather, job, count, onStep, onAnalyze }) {
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState(null);
+  const tiles = panelTiles(analysis, { units, weather });
+  const status = analysis?.status;
+  const damage = analysis?.damage;
+  const analysing = job?.kind !== "field-detect";
+  const running = job?.status === "running" && analysing;
+  const failed = job?.status === "error" && analysing ? job.error : null;
+  const meta = [field.crop, formatArea(field.areaHa, units)].filter(Boolean).join(" · ");
 
-  // The first time the outlines arrive, zoom the map to fit all the fields.
-  useEffect(() => {
-    const corners = Object.values(outlines).flatMap((outline) => toLatLngs(outline).flat());
-    if (!map || fitted.current || corners.length === 0) return;
-    map.fitBounds(corners, { padding: [70, 70] });
-    fitted.current = true;
-  }, [map, outlines]);
-
-  const viewOptions = [
-    { value: fieldsMap.viewModes[0], label: fieldsMap.viewModes[0], icon: <LayoutGrid size={13} /> },
-    { value: fieldsMap.viewModes[1], label: fieldsMap.viewModes[1], icon: <Layers size={13} /> },
-  ];
-  const layerOptions = dataLayers.map((name) => ({ value: name, label: name }));
+  const analyse = async () => {
+    setStarting(true);
+    setStartError(null);
+    try {
+      await onAnalyze();
+    } catch (err) {
+      setStartError(err);
+    } finally {
+      setStarting(false);
+    }
+  };
 
   return (
-    <div className={satellite ? "ff-map ff-map-satellite" : "ff-map"}>
-      {/* The satellite map with the field outlines. */}
-      <MapContainer
-        ref={setMap}
-        className="ff-leaflet"
-        center={FARM_CENTRE}
-        zoom={FARM_ZOOM}
-        maxZoom={BASEMAP.maxZoom}
-        zoomControl={false}
-      >
-        <TileLayer url={BASEMAP.url} attribution={BASEMAP.attribution} maxZoom={BASEMAP.maxZoom} />
-        {fields.map((field) =>
-          outlines[field.id] ? (
-            <FieldOutline
-              // The key includes "selected" so the outline is redrawn with
-              // its new look when the selection changes.
-              key={`${field.id}-${field.id === selectedId}`}
-              field={field}
-              outline={outlines[field.id]}
-              selected={field.id === selectedId}
-              onSelect={() => onSelect(field.id)}
-            />
-          ) : null
+    <div className="fp-field">
+      <header className="fp-head">
+        <div className="fp-title-row">
+          <h1 className="fp-name">{field.name}</h1>
+          {count > 1 && (
+            <div className="fp-steps">
+              <button type="button" className="fp-step" aria-label="Previous field" title="Previous field" onClick={() => onStep(-1)}>
+                <ChevronLeft size={18} />
+              </button>
+              <button type="button" className="fp-step" aria-label="Next field" title="Next field" onClick={() => onStep(1)}>
+                <ChevronRight size={18} />
+              </button>
+            </div>
+          )}
+        </div>
+        <div className="fp-meta">
+          {status && <Badge tone={status.tone || "outline"}>{status.label}</Badge>}
+          <span>{meta}</span>
+        </div>
+        {damage?.detected && (
+          <p className="fp-damage">
+            <ShieldAlert size={15} aria-hidden="true" />
+            {Number.isFinite(damage.damagedHa) && damage.damagedHa > 0 ? `War damage on ${formatArea(damage.damagedHa, units)}` : "War damage found"}
+          </p>
         )}
-      </MapContainer>
+      </header>
 
-      {outlineStatus !== "ready" && (
-        <p className="ff-map-status">
-          {outlineStatus === "loading" ? "Loading field outlines…" : "Could not load the field outlines. Refresh to try again."}
-        </p>
-      )}
-
-      {/* Top-left controls. */}
-      <div className="ff-controls">
-        <Segmented options={viewOptions} value={viewMode} onChange={onViewMode} ariaLabel="Map view" />
-        <ChipSelect prefix={fieldsMap.layerLabel} options={layerOptions} value={layer} onChange={onLayer} />
-        <span className="ff-date-chip">{fieldsMap.dateLabel}</span>
-      </div>
-
-      {/* Top-right round buttons. */}
-      <div className="ff-map-buttons">
-        <button type="button" className="ff-round-btn" title="Not connected yet" aria-label="Search">
-          <Search size={15} />
-        </button>
-        <div className="ff-round-group">
-          <button type="button" className="ff-round-btn" onClick={() => map?.zoomIn()} aria-label="Zoom in">
-            <Plus size={15} />
-          </button>
-          <button type="button" className="ff-round-btn" onClick={() => map?.zoomOut()} aria-label="Zoom out">
-            <Minus size={15} />
-          </button>
-          <button type="button" className="ff-round-btn" title="Not connected yet" aria-label="Layers">
-            <Layers size={15} />
-          </button>
-        </div>
-      </div>
-
-      {/* Bottom-left legend and the little Satellite thumbnail. */}
-      <div className="ff-map-bottom">
-        <div className="ff-legend-row">
-          <div className="ff-legend-card">
-            <strong>{layer}</strong>
-            <div className="ff-legend-scale">
-              <span>{legend.low}</span>
-              {legend.scale.map((token) => (
-                <span key={token} className="swatch" style={{ "--swatch": `var(--c-${token})` }} />
-              ))}
-              <span>{legend.high}</span>
-            </div>
-            <div className="legend-item">
-              <span className="swatch swatch-striped" />
-              {legend.needsRecovery}
-            </div>
-            <div className="legend-item">
-              <span className="swatch swatch-round swatch-dashed" />
-              {legend.unusualStress}
-            </div>
+      {analysis ? (
+        <>
+          <div className="fp-tiles">
+            {tiles.map((tile) => (
+              <MetricTile key={tile.id} {...tile} size="lg" />
+            ))}
           </div>
-          <button
-            type="button"
-            className={satellite ? "ff-sat-thumb is-active" : "ff-sat-thumb"}
-            onClick={() => onViewMode(satellite ? fieldsMap.viewModes[0] : fieldsMap.viewModes[1])}
-            aria-pressed={satellite}
-          >
-            <svg viewBox="0 0 44 36" width="44" height="36" aria-hidden="true">
-              <rect width="44" height="36" rx="5" fill="#4d5733" />
-              <rect x="3" y="3" width="18" height="14" rx="2" fill="var(--c-field-harvested)" />
-              <rect x="23" y="3" width="18" height="14" rx="2" fill="var(--c-field-healthy)" />
-              <rect x="3" y="19" width="18" height="14" rx="2" fill="var(--c-field-watch)" />
-              <rect x="23" y="19" width="18" height="14" rx="2" fill="#5f6b3d" />
-            </svg>
-            <span>{fieldsMap.satelliteThumbLabel}</span>
-          </button>
+          <SeasonChart season={analysis.season} normalCurve={analysis.normalCurve} />
+        </>
+      ) : running ? (
+        <div className="fp-empty">
+          <FieldProgress job={job} compact />
         </div>
-
-        {/* Bottom-right call-out about Field 7. */}
-        <div className="ff-callout">
-          <button type="button" className="ff-callout-title" onClick={() => onSelect(callout.fieldId)}>
-            <ShieldAlert size={14} />
-            {callout.title}
-          </button>
-          <p className="ff-callout-text">{callout.text}</p>
-          <Button variant="ghost" size="sm" to="/field" className="ff-callout-link">
-            {callout.link}
-            <ChevronRight size={14} />
+      ) : (
+        <div className="fp-empty">
+          <p className="fp-empty-title">Not analysed yet</p>
+          {(startError || failed) && <p className="fp-error">{startError?.message || failed}</p>}
+          <Button variant="secondary" onClick={analyse} disabled={starting}>
+            {starting ? "Starting…" : "Analyse now"}
           </Button>
         </div>
-      </div>
-    </div>
-  );
-}
-
-// One field on the map: its real outline and a name label in the middle.
-// Click it to select it. The colours come from FieldsPage.css: the fill is
-// the field's colour token, white edge when selected, red on a field that
-// needs recovery.
-function FieldOutline({ field, outline, selected, onSelect }) {
-  const damaged = field.status === "recovery";
-  const shapeClass = [
-    "ff-shape",
-    `ff-shape-${field.colorToken}`,
-    damaged ? "is-damaged" : "",
-    selected ? "is-selected" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-  const labelClass = ["ff-label", damaged ? "is-damaged" : "", selected ? "is-selected" : ""].filter(Boolean).join(" ");
-
-  return (
-    <Polygon positions={toLatLngs(outline)} pathOptions={{ className: shapeClass }} eventHandlers={{ click: onSelect }}>
-      <Tooltip permanent direction="center" className={labelClass}>
-        {damaged ? `${field.name} · ${field.statusLabel}` : field.name}
-      </Tooltip>
-    </Polygon>
-  );
-}
-
-/* =========================================================================
-   THE DETAIL PANEL (right side)
-   ========================================================================= */
-
-// The field's area for the panel: worked out from its real outline, "… ha"
-// while the outlines load, or the old number from farm.js if the field has
-// no outline.
-function areaText(field, outline, outlineStatus) {
-  if (outline) return `${fieldAreaHa(outline).toFixed(1)} ha`;
-  if (outlineStatus === "loading") return "… ha";
-  return `${field.areaHa.toFixed(1)} ha`;
-}
-
-// The plant health tile with the field's real NDVI from Firestore in place
-// of the number in farm.js: "0.29" and "Sentinel-2 reading from Oct 12.",
-// "…" while loading, or a dash when there is no clear reading. The badge
-// still comes from farm.js.
-function withRealNdvi(metric, reading, status) {
-  const words = fieldsMap.ndviTile;
-  if (reading) {
-    const day = new Date(`${reading.date}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-    return { ...metric, value: reading.value.toFixed(2), text: words.measured.replace("{date}", day) };
-  }
-  if (status === "loading") return { ...metric, value: words.loading };
-  return { ...metric, value: words.none, text: words.noneText };
-}
-
-function DetailPanel({ field, areaText, ndvi, ndviStatus, onNext }) {
-  const detail = fieldDetails[field.id];
-
-  // Fallback for a field with no detail entry in the data module.
-  if (!detail) {
-    return (
-      <aside className="ff-panel">
-        <div className="ff-panel-head">
-          <div className="ff-panel-title">
-            <h2>{field.name}</h2>
-            {field.badgeTone !== undefined && <Badge tone={field.badgeTone}>{field.statusLabel}</Badge>}
-          </div>
-          <p className="ff-panel-sub">{`${field.crop} · ${areaText} · ${field.sownDisplay} · ${field.soil}`}</p>
-        </div>
-        <p className="muted small">{NO_DETAIL_TEXT}</p>
-      </aside>
-    );
-  }
-
-  return (
-    <aside className="ff-panel">
-      {/* Title, "things to watch" badge and the next-field button. */}
-      <div className="ff-panel-head">
-        <div className="ff-panel-title">
-          <h2>{field.name}</h2>
-          <Badge tone={detail.thingsToWatch > 0 ? (field.status === "recovery" ? "red" : "amber") : "green"}>
-            {field.status === "recovery" ? <ShieldAlert size={11} /> : <Eye size={11} />}
-            {detail.thingsToWatchLabel}
-          </Badge>
-          <button type="button" className="ff-switch-btn" onClick={onNext} aria-label="Next field">
-            <ChevronsUpDown size={14} />
-          </button>
-        </div>
-        <p className="ff-panel-sub">{detail.subline.replace("{area}", areaText)}</p>
-      </div>
-
-      {/* The four metric tiles. */}
-      <div className="ff-metrics">
-        {detail.metrics.map((metric) => (
-          <MetricTile
-            key={metric.key}
-            metric={metric.key === "plantHealth" ? withRealNdvi(metric, ndvi, ndviStatus) : metric}
-          />
-        ))}
-      </div>
-
-      <SeasonChart series={detail.seasonSeries} />
-      <WhatIf whatIf={detail.whatIf} />
-      <NextSteps steps={detail.nextSteps} />
-
-      <div className="ff-actions">
-        <Button variant="primary" to="/field/ai" icon={<MessageSquare size={14} />}>
-          {detail.actions.askAi}
-        </Button>
-        <Button variant="secondary" to="/field/notes" icon={<FileText size={14} />}>
-          {detail.actions.addNote}
-        </Button>
-      </div>
-    </aside>
-  );
-}
-
-// One metric tile: icon + label, badge, big value, optional bar, sentence.
-function MetricTile({ metric }) {
-  const Icon = ICONS[metric.icon] || Sprout;
-  return (
-    <div className="ff-metric">
-      <div className="ff-metric-top">
-        <span className="ff-metric-label">
-          <Icon size={12} />
-          {metric.label}
-        </span>
-        <Badge tone={metric.badgeTone || undefined}>{metric.badge}</Badge>
-      </div>
-      <span className="ff-metric-value mono">{metric.value}</span>
-      {metric.bar?.type === "marker" && (
-        <div className="ff-bar ff-bar-marker">
-          <span className="ff-bar-tick" style={{ left: `${metric.bar.position * 100}%` }} />
-        </div>
       )}
-      {metric.bar?.type === "fill" && (
-        <div className="ff-bar">
-          <span className={`ff-bar-fill ff-bar-fill-${metric.bar.tone || "green"}`} style={{ width: `${metric.bar.value * 100}%` }} />
-        </div>
-      )}
-      <p className="ff-metric-text">{metric.text}</p>
+
+      <Button
+        variant="primary"
+        size="lg"
+        block
+        className="fp-ask"
+        icon={<MessageSquare size={17} />}
+        to={`/field/ai?about=${encodeURIComponent(field.id)}`}
+      >
+        {`Ask AI about ${field.name}`}
+      </Button>
     </div>
   );
 }
 
-/* ---------- "Plant health this season" chart ---------- */
+// ---------- Plant health this season vs normal ----------
 
-// Chart box in drawing units.
-const CHART = { width: 260, height: 112, left: 30, right: 252, top: 8, bottom: 88 };
+const DAY_MS = 86400000;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const CHART_H = 150;
+const PAD = { top: 12, right: 14, bottom: 22, left: 30 };
 
-function chartX(fraction) {
-  return CHART.left + fraction * (CHART.right - CHART.left);
+const toTime = (iso) => Date.parse(`${String(iso).slice(0, 10)}T00:00:00Z`);
+
+// "Normal 0.26–0.29", or "Normal 0.22" when both ends print the same.
+function normalText(low, high) {
+  const a = formatIndex(low);
+  const b = formatIndex(high);
+  return a === b ? `Normal ${a}` : `Normal ${a}–${b}`;
 }
-function chartY(value) {
-  return CHART.bottom - value * (CHART.bottom - CHART.top);
-}
 
-// Turns a list of {x, y} points into a smooth curve ("M x y C ..."). The
-// curve passes through every point.
-function smoothPath(points) {
-  if (points.length < 2) return "";
-  let d = `M ${points[0].x} ${points[0].y}`;
-  for (let i = 0; i < points.length - 1; i += 1) {
-    const p0 = points[i - 1] || points[i];
-    const p1 = points[i];
-    const p2 = points[i + 1];
-    const p3 = points[i + 2] || p2;
-    const c1x = p1.x + (p2.x - p0.x) / 6;
-    const c1y = p1.y + (p2.y - p0.y) / 6;
-    const c2x = p2.x - (p3.x - p1.x) / 6;
-    const c2y = p2.y - (p3.y - p1.y) / 6;
-    d += ` C ${c1x} ${c1y}, ${c2x} ${c2y}, ${p2.x} ${p2.y}`;
+// The baseline normal (given as "MM-DD" days) laid out on the real dates
+// the chart covers, so it can be drawn and read at any date.
+function normalOnDates(normalCurve, from, to) {
+  if (!normalCurve?.length) return [];
+  const out = [];
+  const first = new Date(from).getUTCFullYear() - 1;
+  const last = new Date(to).getUTCFullYear() + 1;
+  for (let year = first; year <= last; year += 1) {
+    for (const point of normalCurve) {
+      if (![point.low, point.high, point.median].every(Number.isFinite)) continue;
+      const time = toTime(`${year}-${point.day}`);
+      if (Number.isFinite(time)) out.push({ time, low: point.low, high: point.high, median: point.median });
+    }
   }
-  return d;
+  out.sort((a, b) => a.time - b.time);
+  // Keep one point either side of the chart so the band reaches its edges.
+  const start = Math.max(0, out.findIndex((p) => p.time >= from) - 1);
+  let end = out.findIndex((p) => p.time > to);
+  end = end === -1 ? out.length : end + 1;
+  return out.slice(start, end);
 }
 
-function SeasonChart({ series }) {
-  const { points, marker, yTicks, axisLabels, legend } = series;
-  const count = points.length - 1;
-  const toXY = (value, i) => ({ x: chartX(i / count), y: chartY(value) });
+function normalAt(normal, time) {
+  if (!normal.length) return null;
+  const after = normal.findIndex((p) => p.time >= time);
+  if (after <= 0) return normal[Math.max(0, after)] || normal[normal.length - 1];
+  const a = normal[after - 1];
+  const b = normal[after];
+  const t = (time - a.time) / (b.time - a.time || 1);
+  const mix = (key) => a[key] + (b[key] - a[key]) * t;
+  return { time, low: mix("low"), high: mix("high"), median: mix("median") };
+}
 
-  const line = points.map((p, i) => toXY(p.value, i));
-  const high = points.map((p, i) => toXY(p.normalHigh, i));
-  const low = points.map((p, i) => toXY(p.normalLow, i)).reverse();
+function SeasonChart({ season, normalCurve }) {
+  const boxRef = useRef(null);
+  const [width, setWidth] = useState(340);
+  const [hover, setHover] = useState(null);
 
-  // The last month is a forecast, drawn dotted: split the line there.
-  const firstProjected = points.findIndex((p) => p.projected);
-  const solid = firstProjected > 0 ? line.slice(0, firstProjected) : line;
-  const dotted = firstProjected > 0 ? line.slice(firstProjected - 1) : [];
+  useEffect(() => {
+    const box = boxRef.current;
+    if (!box) return undefined;
+    const observer = new ResizeObserver(([entry]) => setWidth(Math.max(220, Math.round(entry.contentRect.width))));
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, []);
 
-  const markerX = chartX(marker.position);
-  const markerY = chartY(marker.value);
-  const tipWidth = 80;
-  const tipX = markerX - tipWidth - 6;
-  const tipY = Math.min(markerY + 6, CHART.bottom - 30);
-
-  return (
-    <div className="ff-chart-card">
-      <div className="spread">
-        <strong className="ff-chart-title">{series.title}</strong>
-        <span className="ff-chart-sub">{series.subtitle}</span>
-      </div>
-      <svg viewBox={`0 0 ${CHART.width} ${CHART.height}`} className="ff-chart" role="img" aria-label={`${series.title}, ${marker.display}`}>
-        {/* Y axis ticks. */}
-        {yTicks.map((tick) => (
-          <g key={tick}>
-            <line x1={CHART.left} x2={CHART.right} y1={chartY(tick)} y2={chartY(tick)} stroke="var(--c-border)" strokeWidth="0.6" />
-            <text x={CHART.left - 6} y={chartY(tick) + 2.5} fontSize="7" textAnchor="end" fill="var(--c-muted)" fontFamily="var(--font-mono)">
-              {tick.toFixed(2)}
-            </text>
-          </g>
-        ))}
-        {/* The normal band: top edge forward, bottom edge back. */}
-        <path d={`${smoothPath(high)} L ${low[0].x} ${low[0].y} ${smoothPath(low).slice(1)} Z`} fill="var(--c-surface-3)" />
-        {/* This season. */}
-        <path d={smoothPath(solid)} fill="none" stroke="var(--c-green)" strokeWidth="2" strokeLinecap="round" />
-        {dotted.length > 1 && <path d={smoothPath(dotted)} fill="none" stroke="var(--c-green)" strokeWidth="2" strokeDasharray="2 3" strokeLinecap="round" />}
-        {/* Today's marker, dot and tooltip. */}
-        <line x1={markerX} x2={markerX} y1={CHART.top - 4} y2={CHART.bottom + 4} stroke="var(--c-muted)" strokeWidth="1" strokeDasharray="3 3" />
-        <circle cx={markerX} cy={markerY} r="3.5" fill="var(--c-green)" stroke="var(--c-surface)" strokeWidth="1.5" />
-        <g>
-          <rect x={tipX} y={tipY} width={tipWidth} height="24" rx="5" fill="var(--c-ink)" />
-          <text x={tipX + 8} y={tipY + 10} fontSize="7" fontWeight="700" fill="var(--c-on-dark)" fontFamily="var(--font-sans)">
-            {marker.display}
-          </text>
-          <text x={tipX + 8} y={tipY + 19} fontSize="6" fill="var(--c-on-dark)" opacity="0.8" fontFamily="var(--font-sans)">
-            {marker.normalDisplay}
-          </text>
-        </g>
-        {/* X axis labels. */}
-        {axisLabels.map((label, i) => (
-          <text key={label} x={chartX(i / (axisLabels.length - 1))} y={CHART.height - 4} fontSize="7.5" textAnchor="middle" fill="var(--c-muted)" fontFamily="var(--font-sans)">
-            {label}
-          </text>
-        ))}
-      </svg>
-      <div className="legend">
-        <span className="legend-item">
-          <span className="ff-legend-line" />
-          {legend[0]}
-        </span>
-        <span className="legend-item">
-          <span className="swatch" style={{ "--swatch": "var(--c-surface-3)" }} />
-          {legend[1]}
-        </span>
-      </div>
-    </div>
+  const points = useMemo(
+    () => (season || []).filter((p) => p?.date && Number.isFinite(p.ndvi)).map((p) => ({ ...p, time: toTime(p.date) })).sort((a, b) => a.time - b.time),
+    [season],
   );
-}
 
-/* ---------- "What if" card ---------- */
+  const chart = useMemo(() => {
+    if (!points.length) return null;
+    const from = points[0].time;
+    const to = Math.max(points[points.length - 1].time, from + 30 * DAY_MS);
+    const normal = normalOnDates(normalCurve, from, to);
+    const values = [...points.map((p) => p.ndvi), ...normal.filter((p) => p.time >= from && p.time <= to).flatMap((p) => [p.low, p.high])];
+    let low = Math.floor((Math.min(...values) - 0.04) * 10) / 10;
+    let high = Math.ceil((Math.max(...values) + 0.04) * 10) / 10;
+    low = Math.max(-0.2, low);
+    high = Math.min(1, Math.max(high, low + 0.2));
+    const innerW = width - PAD.left - PAD.right;
+    const innerH = CHART_H - PAD.top - PAD.bottom;
+    const x = (time) => PAD.left + ((time - from) / (to - from)) * innerW;
+    const y = (value) => PAD.top + (1 - (value - low) / (high - low)) * innerH;
+    const clampX = (time) => Math.min(to, Math.max(from, time));
 
-function WhatIf({ whatIf }) {
-  const [choice, setChoice] = useState(whatIf.selected);
-  const option = whatIf.options.find((item) => item.id === choice) || whatIf.options[0];
-  const YieldArrow = option.yieldDirection === "up" ? ArrowUp : ArrowDown;
+    // The band: the normal range, clipped to the chart's dates.
+    const inside = normal.length > 1 ? [normalAt(normal, from), ...normal.filter((p) => p.time > from && p.time < to), normalAt(normal, to)] : [];
+    const band = inside.length
+      ? `M${inside.map((p) => `${x(clampX(p.time)).toFixed(1)},${y(p.high).toFixed(1)}`).join("L")}L${[...inside]
+          .reverse()
+          .map((p) => `${x(clampX(p.time)).toFixed(1)},${y(p.low).toFixed(1)}`)
+          .join("L")}Z`
+      : null;
+    const median = inside.length ? `M${inside.map((p) => `${x(clampX(p.time)).toFixed(1)},${y(p.median).toFixed(1)}`).join("L")}` : null;
+    const line = `M${points.map((p) => `${x(p.time).toFixed(1)},${y(p.ndvi).toFixed(1)}`).join("L")}`;
+
+    // A grid line every 0.2 (or 0.1 on a narrow range).
+    const stepY = high - low > 0.5 ? 0.2 : 0.1;
+    const ticksY = [];
+    for (let v = Math.ceil(low / stepY) * stepY; v <= high + 1e-9; v += stepY) ticksY.push(Math.round(v * 100) / 100);
+
+    // A month name at the start of each month (every other one when tight).
+    const months = [];
+    const d = new Date(from);
+    let cursor = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + (d.getUTCDate() > 1 ? 1 : 0), 1);
+    while (cursor <= to) {
+      months.push(cursor);
+      const c = new Date(cursor);
+      cursor = Date.UTC(c.getUTCFullYear(), c.getUTCMonth() + 1, 1);
+    }
+    const every = months.length * 34 > innerW ? 2 : 1;
+    const ticksX = months.filter((_, i) => i % every === 0);
+
+    return { from, to, normal, x, y, band, median, line, ticksY, ticksX, innerW };
+  }, [points, normalCurve, width]);
+
+  const last = points[points.length - 1];
+  const lastNormal = chart && last ? normalAt(chart.normal, last.time) : null;
+  const label = last
+    ? `Plant health this season. Latest ${formatIndex(last.ndvi)} on ${formatDay(last.date)}${lastNormal ? `, ${normalText(lastNormal.low, lastNormal.high).toLowerCase()}` : ""}.`
+    : "No clear satellite passes yet this season.";
+
+  const onMove = (event) => {
+    if (!chart) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const px = ((event.clientX - rect.left) / rect.width) * width;
+    let best = points[0];
+    for (const p of points) if (Math.abs(chart.x(p.time) - px) < Math.abs(chart.x(best.time) - px)) best = p;
+    setHover(best);
+  };
+
+  const hoverNormal = chart && hover ? normalAt(chart.normal, hover.time) : null;
 
   return (
-    <div className="ff-whatif">
-      <div className="ff-whatif-head">
-        <SlidersHorizontal size={14} />
-        <strong>{whatIf.title}</strong>
-      </div>
-      <p className="ff-whatif-sub">{whatIf.subtitle}</p>
-      <div className="ff-chips" role="group" aria-label={whatIf.title}>
-        {whatIf.options.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            className={item.id === choice ? "ff-chip is-active" : "ff-chip"}
-            onClick={() => setChoice(item.id)}
-            aria-pressed={item.id === choice}
-          >
-            {item.label}
-          </button>
-        ))}
-      </div>
-      <div className="ff-whatif-rows">
-        <div className="ff-whatif-row">
-          <span className="ff-whatif-label">{whatIf.rowLabels.yield}</span>
-          <span className="ff-whatif-value">
-            <YieldArrow size={13} />
-            {option.yield}
+    <section className="fp-chart" aria-label="Plant health this season vs normal">
+      <div className="fp-chart-head">
+        <h2>Plant health this season</h2>
+        <div className="fp-chart-key" aria-hidden="true">
+          <span className="fp-key">
+            <span className="fp-key-line" />
+            This season
+          </span>
+          <span className="fp-key">
+            <span className="fp-key-band" />
+            {`Normal ${BASELINE.from}–${String(BASELINE.to).slice(2)}`}
           </span>
         </div>
-        <div className="ff-whatif-row">
-          <span className="ff-whatif-label">{whatIf.rowLabels.why}</span>
-          <span className="ff-whatif-value ff-whatif-why">{option.why}</span>
-        </div>
-        <div className="ff-whatif-row">
-          <span className="ff-whatif-label">{whatIf.rowLabels.diseaseRisk}</span>
-          <span className="ff-whatif-value">{option.diseaseRisk}</span>
-        </div>
       </div>
-      <p className="ff-whatif-foot">{whatIf.footnote}</p>
-    </div>
+      <div ref={boxRef} className="fp-chart-box">
+        {chart ? (
+          <>
+            <svg
+              width={width}
+              height={CHART_H}
+              viewBox={`0 0 ${width} ${CHART_H}`}
+              role="img"
+              aria-label={label}
+              onPointerMove={onMove}
+              onPointerLeave={() => setHover(null)}
+            >
+              {chart.ticksY.map((v) => (
+                <g key={v}>
+                  <line className="fp-grid" x1={PAD.left} x2={width - PAD.right} y1={chart.y(v)} y2={chart.y(v)} />
+                  <text className="fp-axis" x={PAD.left - 6} y={chart.y(v) + 3.5} textAnchor="end">
+                    {formatIndex(v, 1)}
+                  </text>
+                </g>
+              ))}
+              {chart.ticksX.map((t) => (
+                <text key={t} className="fp-axis" x={chart.x(t)} y={CHART_H - 6} textAnchor="middle">
+                  {MONTHS[new Date(t).getUTCMonth()]}
+                </text>
+              ))}
+              {chart.band && <path className="fp-band" d={chart.band} />}
+              {chart.median && <path className="fp-median" d={chart.median} />}
+              <path className="fp-line" d={chart.line} />
+              {hover && (
+                <>
+                  <line className="fp-cross" x1={chart.x(hover.time)} x2={chart.x(hover.time)} y1={PAD.top} y2={CHART_H - PAD.bottom} />
+                  <circle className="fp-dot" cx={chart.x(hover.time)} cy={chart.y(hover.ndvi)} r={4.5} />
+                </>
+              )}
+              {!hover && last && <circle className="fp-dot" cx={chart.x(last.time)} cy={chart.y(last.ndvi)} r={4.5} />}
+              <rect x={PAD.left} y={0} width={chart.innerW} height={CHART_H} fill="transparent" />
+            </svg>
+            {hover && (
+              <div className="fp-tip" style={{ left: `${Math.min(Math.max(chart.x(hover.time), 70), width - 70)}px` }} aria-hidden="true">
+                <strong>{formatIndex(hover.ndvi)}</strong>
+                <span>{formatDay(hover.date)}</span>
+                {hoverNormal && <span className="fp-tip-normal">{normalText(hoverNormal.low, hoverNormal.high)}</span>}
+              </div>
+            )}
+          </>
+        ) : (
+          <p className="fp-chart-empty">No clear satellite passes yet this season.</p>
+        )}
+      </div>
+    </section>
   );
 }
 
-/* ---------- "Next steps" checklist ---------- */
-
-function NextSteps({ steps }) {
-  // The ids of the steps ticked off so far.
-  const [done, setDone] = useState(() => steps.filter((step) => step.done).map((step) => step.id));
-
-  function toggle(id) {
-    setDone((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
-  }
-
+export default function FieldsPage() {
   return (
-    <div className="ff-steps">
-      <h3 className="ff-steps-title">{NEXT_STEPS_TITLE}</h3>
-      <div className="divider" />
-      {steps.map((step) => {
-        const checked = done.includes(step.id);
-        return (
-          <button key={step.id} type="button" className={checked ? "check-item ff-step is-done" : "check-item ff-step"} onClick={() => toggle(step.id)} aria-pressed={checked}>
-            <span className={checked ? "check-box is-checked" : "check-box"}>{checked && <Check size={11} strokeWidth={3} />}</span>
-            <span className="row-text">
-              <span className="row-title">{step.title}</span>
-              <span className="row-help">{step.help}</span>
-            </span>
-          </button>
-        );
-      })}
-    </div>
+    <FarmGate>
+      <FieldsView />
+    </FarmGate>
   );
 }

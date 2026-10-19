@@ -1,9 +1,19 @@
 // WHAT THIS FILE DOES
 // A stand-in for the Google Earth Engine library (@google/earthengine),
-// for tests only. It has just the parts gee.js uses (Image,
+// for tests only. It has just the parts gee.js and field-gee.js use (Image,
 // ImageCollection, FeatureCollection, Feature, Geometry, Reducer, Filter,
-// Dictionary, Number, Algorithms.If, Join, data.authenticateViaPrivateKey,
-// initialize, evaluate/getInfo).
+// Dictionary, Number, Algorithms.If, Algorithms.CannyEdgeDetector, Join,
+// data.authenticateViaPrivateKey, initialize, evaluate/getInfo,
+// getDownloadURL).
+//
+// For the Field provider it also answers: ImageCollection.map(...).flatten()
+// (one made-up image per ~3 days of the filterDate window, each with its
+// date, so per-pass values follow a crop season), Image.reduceToVectors
+// (made-up parcels inside the region, or small stress patches), Image.
+// sampleRectangle (a grid shaped by the reproject crsTransform and the
+// region, -1 / defaultValue outside the clip outline), Geometry area /
+// centroid / bounds / buffer, FeatureCollection sort / toList, and the
+// filters gt / gte / lt / notNull.
 //
 // Like the real library, building images does nothing until evaluate() is
 // called. The stand-in:
@@ -18,10 +28,21 @@
 //
 // Options for createFakeEe({ ... }):
 //   sizes      { datasetId: number of images }  (default 6 for every collection)
-//   assets     { assetId: { bands: [{ id }] } | "missing" }  (default: has b1)
+//   assets     { assetId: { bands: [{ id }], properties? } | "missing" }
+//              (default: has b1 and no properties)
 //   authError  a message: signing in fails with it
 //   fail       (request) => message | null; a message makes that request fail
 //   delayMs    how long each request takes (default 1 ms)
+//   nestedCollections  "describe" answers a FeatureCollection nested inside
+//              an ee.Dictionary or ee.List the way REAL Earth Engine does:
+//              { type: "FeatureCollection", columns: {} } with NO features
+//              (use .toList(n) to send features). This is the default;
+//              "full" sends the features anyway (NOT what Earth Engine does).
+//   downloadError  a message: getDownloadURL fails with it
+//   parcelGrid  reduceToVectors cuts a region into parcelGrid x parcelGrid
+//              made-up parcels (default 3; 0 = finds nothing)
+//   gaul2      the FAO GAUL level 2 rows place names come from (default
+//              one district of Kharkiv oblast)
 //
 // WHO EDITS IT
 // Whoever changes gee.js and starts using a part of Earth Engine that is
@@ -51,7 +72,18 @@ function hasNull(value) {
 
 // What kind of object a method gives back, by the kind it is called on.
 const RESULT_KIND = {
-  Image: { reduceRegions: "FeatureCollection", stratifiedSample: "FeatureCollection", sample: "FeatureCollection", reduceRegion: "Dictionary", projection: "Projection", date: "Date", get: "Object", bandNames: "List" },
+  Image: {
+    reduceRegions: "FeatureCollection",
+    reduceToVectors: "FeatureCollection",
+    sampleRectangle: "Feature",
+    stratifiedSample: "FeatureCollection",
+    sample: "FeatureCollection",
+    reduceRegion: "Dictionary",
+    projection: "Projection",
+    date: "Date",
+    get: "Object",
+    bandNames: "List",
+  },
   ImageCollection: {
     size: "Number",
     aggregate_max: "Number",
@@ -66,11 +98,12 @@ const RESULT_KIND = {
     sum: "Image",
     reduce: "Image",
     toList: "List",
+    flatten: "FeatureCollection",
   },
-  FeatureCollection: { size: "Number", aggregate_max: "Number", aggregate_array: "List", first: "Feature", geometry: "Geometry", distance: "Image", reduceToImage: "Image" },
-  Feature: { get: "Object", geometry: "Geometry" },
-  Geometry: { area: "Number" },
-  Date: { get: "Number", millis: "Number" },
+  FeatureCollection: { size: "Number", aggregate_max: "Number", aggregate_array: "List", first: "Feature", geometry: "Geometry", distance: "Image", reduceToImage: "Image", toList: "List" },
+  Feature: { get: "Object", geometry: "Geometry", area: "Number" },
+  Geometry: { area: "Number", coordinates: "List" },
+  Date: { get: "Number", millis: "Number", format: "String" },
   Dictionary: { get: "Object" },
   List: { get: "Object", size: "Number" },
   Join: { apply: "FeatureCollection" },
@@ -78,7 +111,9 @@ const RESULT_KIND = {
 const SAME_KIND_AS = { Number: "Number", Object: "Number", String: "String" };
 
 // Made-up values per output name, for one feature (u is 0..1, fixed per cell).
-function fakeValue(name, u, areaKm2) {
+function fakeValue(name, u, areaKm2, ctx = {}) {
+  const field = fieldValue(name, u, ctx);
+  if (field !== undefined) return field;
   switch (name) {
     case "chernozemCrop":
       return 0.35 + 0.6 * u;
@@ -105,7 +140,11 @@ function fakeValue(name, u, areaKm2) {
     case "fireDay":
       return 1 + Math.floor(27 * u);
     case "socRaw":
-      return 4 + 4 * u;
+      return 300 + 200 * u; // SoilGrids dg/kg
+    case "greatGroup":
+      return 290; // Hapludolls
+    case "blackSoil":
+      return 1;
     case "worldCover":
       return 40;
     case "assetRaw":
@@ -115,9 +154,33 @@ function fakeValue(name, u, areaKm2) {
   }
 }
 
+// A crop season: NDVI near 0.2 in winter, about 0.8 at the end of June.
+function seasonalNdvi(dayOfYear, u) {
+  return 0.2 + 0.6 * Math.exp(-(((dayOfYear - 175) / 45) ** 2)) + 0.06 * (u - 0.5);
+}
+const dayOfYear = (ms) => Math.floor((ms - Date.UTC(new Date(ms).getUTCFullYear(), 0, 1)) / 86400000) + 1;
+
+// Values for the Field provider's band names (undefined: not one of them).
+function fieldValue(name, u, { date } = {}) {
+  if (name === "ndvi") return Number.isFinite(date) ? seasonalNdvi(dayOfYear(date), u) : 0.3 + 0.5 * u;
+  if (name === "ndwi") return Number.isFinite(date) ? seasonalNdvi(dayOfYear(date), u) * 0.7 - 0.25 : -0.1 + 0.4 * u;
+  if (name === "clear") return u < 0.25 ? u : 0.6 + 0.4 * u;
+  if (/^n20\d\d_ndvi$/.test(name)) return 0.3 + 0.5 * u;
+  if (/^n20\d\d_ndwi$/.test(name)) return -0.1 + 0.4 * u;
+  const curve = name.match(/^c20\d\d_(\d\d)$/);
+  if (curve) return seasonalNdvi(Number(curve[1]) * 15.2 + 1, u);
+  if (name === "stressed") return 0.2 * u;
+  if (name === "radarChanged") return 0.15 * u;
+  if (name === "fires") return Math.floor(6 * u);
+  if (name === "chernozem") return 0.35 + 0.6 * u;
+  if (name === "condition") return 0.3 + 0.7 * u;
+  if (name === "med" || name === "shift") return 0.5 * u;
+  return undefined;
+}
+
 // Area (km²) of a GeoJSON rectangle-like polygon, roughly.
 function roughAreaKm2(geometry) {
-  const ring = geometry?.type === "Polygon" ? geometry.coordinates?.[0] : null;
+  const ring = geometry?.type === "Polygon" ? geometry.coordinates?.[0] : geometry?.type === "MultiPolygon" ? geometry.coordinates?.[0]?.[0] : null;
   if (!ring?.length) return 1;
   const lons = ring.map((p) => p[0]);
   const lats = ring.map((p) => p[1]);
@@ -137,12 +200,74 @@ const GAUL2 = [{ ADM0_NAME: "Ukraine", ADM1_NAME: "Kharkivs'ka", ADM2_NAME: "Chu
 function boxPolygon([w, s, e, n]) {
   return { type: "Polygon", coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] };
 }
+
+// Outer rings of a Polygon / MultiPolygon.
+function outerRings(geometry) {
+  if (geometry?.type === "Polygon") return [geometry.coordinates[0]];
+  if (geometry?.type === "MultiPolygon") return geometry.coordinates.map((p) => p[0]);
+  return [];
+}
+function ringBox(ring) {
+  const lons = ring.map((p) => p[0]);
+  const lats = ring.map((p) => p[1]);
+  return [Math.min(...lons), Math.min(...lats), Math.max(...lons), Math.max(...lats)];
+}
+function inRing(lon, lat, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    if (yi > lat !== yj > lat && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+const inGeometry = (lon, lat, geometry) => outerRings(geometry).some((ring) => inRing(lon, lat, ring));
+
+// A circle of `radiusM` metres around a point, as a 24-sided polygon.
+function circlePolygon([lon, lat], radiusM) {
+  const ring = [];
+  for (let i = 0; i <= 24; i += 1) {
+    const a = ((i % 24) / 24) * 2 * Math.PI;
+    ring.push([lon + (radiusM * Math.cos(a)) / (111320 * Math.cos((lat * Math.PI) / 180)), lat + (radiusM * Math.sin(a)) / 110574]);
+  }
+  return { type: "Polygon", coordinates: [ring] };
+}
+
+// Made-up field parcels inside a region: its box cut into a k x k grid
+// with ~15 m gaps; cells whose centre is inside the region are parcels.
+function fakeParcels(regionGeometry, k = 3) {
+  const out = [];
+  for (const ring of outerRings(regionGeometry)) {
+    const [w, s, e, n] = ringBox(ring);
+    const gapLon = 15 / (111320 * Math.cos((((s + n) / 2) * Math.PI) / 180));
+    const gapLat = 15 / 110574;
+    for (let r = 0; r < k; r += 1) {
+      for (let c = 0; c < k; c += 1) {
+        const cell = [w + ((e - w) * c) / k + gapLon, s + ((n - s) * r) / k + gapLat, w + ((e - w) * (c + 1)) / k - gapLon, s + ((n - s) * (r + 1)) / k - gapLat];
+        if (inGeometry((cell[0] + cell[2]) / 2, (cell[1] + cell[3]) / 2, regionGeometry)) out.push(feature(boxPolygon(cell), { label: 1, count: 1000 }));
+      }
+    }
+  }
+  return out;
+}
+
+// Made-up stress patches: one ~80 m square near the middle of each polygon.
+function fakePatches(regionGeometry) {
+  return outerRings(regionGeometry).map((ring) => {
+    const [w, s, e, n] = ringBox(ring);
+    const lon = (w + e) / 2;
+    const lat = (s + n) / 2;
+    const dLon = 40 / (111320 * Math.cos((lat * Math.PI) / 180));
+    const dLat = 40 / 110574;
+    return feature(boxPolygon([lon - dLon, lat - dLat, lon + dLon, lat + dLat]), { label: 1, count: 64 });
+  });
+}
 function feature(geometry, properties) {
   return { type: "Feature", geometry: geometry ?? null, properties: { ...(properties || {}) } };
 }
 
 export function createFakeEe(options = {}) {
-  const { sizes = {}, assets = {}, authError = null, fail = null, delayMs = 1 } = options;
+  const { sizes = {}, assets = {}, authError = null, fail = null, delayMs = 1, nestedCollections = "describe", downloadError = null, parcelGrid = 3, gaul2 = GAUL2 } = options;
   const calls = [];
   const requests = [];
   const stats = { evaluations: 0, active: 0, peakActive: 0 };
@@ -156,6 +281,7 @@ export function createFakeEe(options = {}) {
         if (prop === NODE) return target;
         if (typeof prop === "symbol" || prop === "then" || prop === "toJSON") return undefined;
         if (prop === "evaluate" || prop === "getInfo") return (callback) => runRequest(target, callback);
+        if (prop === "getDownloadURL") return (params, callback) => downloadUrl(target, params, callback);
         return (...args) => callMethod(target, prop, args);
       },
     });
@@ -190,6 +316,10 @@ export function createFakeEe(options = {}) {
       }
       case "normalizedDifference":
         return [{ name: "nd", empty }];
+      case "addBands":
+        return [...from, ...bandsOf(args[0])];
+      case "reduce":
+        return [{ name: from.length === 1 ? from[0].name : "max", empty }];
       case "updateMask":
         return isZeroConstant(args[0]) ? from.map((b) => ({ ...b, empty: true })) : from;
       case "unmask":
@@ -229,7 +359,8 @@ export function createFakeEe(options = {}) {
   }
   image.constant = (value) => {
     calls.push({ name: "Image.constant", args: [value] });
-    return make("Image", "Image.constant", [value], { bands: [{ name: "constant", empty: false }] });
+    const bands = Array.isArray(value) ? value.map((_, i) => ({ name: `constant_${i}`, empty: false })) : [{ name: "constant", empty: false }];
+    return make("Image", "Image.constant", [value], { bands });
   };
   image.cat = (...list) => {
     const parts = Array.isArray(list[0]) ? list[0] : list;
@@ -256,7 +387,7 @@ export function createFakeEe(options = {}) {
   };
   geometry.Polygon = (coords) => make("Geometry", "Geometry.Polygon", [coords]);
 
-  const reducer = (name) => () => {
+  const reducer = (name) => (...args) => {
     calls.push({ name: `Reducer.${name}`, args: [] });
     return make("Reducer", `Reducer.${name}`, [], { reducerName: name });
   };
@@ -277,6 +408,7 @@ export function createFakeEe(options = {}) {
     Image: image,
     ImageCollection(id) {
       calls.push({ name: "ImageCollection", args: [id] });
+      if (Array.isArray(id)) return make("ImageCollection", "ImageCollection.fromImages", [id], { dataset: null, bands: bandsOf(id[0]) });
       return make("ImageCollection", "ImageCollection.load", [id], { dataset: id, bands: [] });
     },
     FeatureCollection(value) {
@@ -288,7 +420,16 @@ export function createFakeEe(options = {}) {
       return make("Feature", "Feature", [geom, props]);
     },
     Geometry: geometry,
-    Reducer: { mean: reducer("mean"), sum: reducer("sum"), max: reducer("max"), min: reducer("min"), first: reducer("first"), count: reducer("count") },
+    Reducer: {
+      mean: reducer("mean"),
+      median: reducer("median"),
+      sum: reducer("sum"),
+      max: reducer("max"),
+      min: reducer("min"),
+      first: reducer("first"),
+      count: reducer("count"),
+      countEvery: reducer("countEvery"),
+    },
     Filter: filter,
     Join: {
       saveFirst(opts) {
@@ -313,6 +454,12 @@ export function createFakeEe(options = {}) {
       return make("List", "List", [value]);
     },
     Algorithms: {
+      CannyEdgeDetector(input, threshold, sigma) {
+        const opts = unwrap(input) ? { image: input, threshold, sigma } : input || {};
+        calls.push({ name: "Algorithms.CannyEdgeDetector", args: [opts] });
+        if (hasNull([opts.threshold ?? 0, opts.sigma ?? 1])) throw new Error("fake-ee: null in CannyEdgeDetector.");
+        return make("Image", "Algorithms.CannyEdgeDetector", [opts.image, opts.threshold, opts.sigma], { bands: bandsOf(opts.image) });
+      },
       If(condition, whenTrue, whenFalse) {
         calls.push({ name: "Algorithms.If", args: [condition, whenTrue, whenFalse] });
         if ([condition, whenTrue, whenFalse].some(hasNull)) throw new Error("fake-ee: a JavaScript null inside ee.Algorithms.If (Earth Engine rejects this).");
@@ -380,6 +527,20 @@ export function createFakeEe(options = {}) {
     return out;
   }
 
+  // getDownloadURL(params, callback(url, error)), like the real client.
+  function downloadUrl(node, params, callback) {
+    calls.push({ name: "Image.getDownloadURL", args: [params] });
+    if (hasNull(params)) throw new Error("fake-ee: a JavaScript null inside getDownloadURL params.");
+    const request = { node, nodes: walk(node), download: params, has: () => false, find: () => [] };
+    requests.push(request);
+    setTimeout(() => {
+      if (!initialized) return callback(null, "Earth Engine client library not initialized.");
+      const message = downloadError || (fail ? fail(request) : null);
+      if (message) return callback(null, message);
+      callback(`https://earthengine.googleapis.com/v1/projects/test/thumbnails/fake-${requests.length}:getPixels`);
+    }, delayMs);
+  }
+
   function runRequest(node, callback) {
     const nodes = walk(node);
     const request = {
@@ -432,10 +593,10 @@ export function createFakeEe(options = {}) {
         return scope.get(node);
       case "Number":
       case "String":
-      case "List":
         return arg(0);
       case "Dictionary":
-        return arg(0);
+      case "List":
+        return nestedCollections === "describe" ? describeNested(arg(0)) : arg(0);
       case "If":
         return arg(0) ? arg(1) : arg(2);
       case "Geometry.Rectangle":
@@ -455,7 +616,7 @@ export function createFakeEe(options = {}) {
         const source = node.args[0];
         if (Array.isArray(source)) return { type: "FeatureCollection", features: resolve(source, scope) };
         if (source === "FAO/GAUL/2015/level1") return { type: "FeatureCollection", features: GAUL1.map(({ box, ...p }) => feature(boxPolygon(box), p)) };
-        if (source === "FAO/GAUL/2015/level2") return { type: "FeatureCollection", features: GAUL2.map((p) => feature(null, p)) };
+        if (source === "FAO/GAUL/2015/level2") return { type: "FeatureCollection", features: gaul2.map((p) => feature(null, p)) };
         return { type: "FeatureCollection", features: [] };
       }
     }
@@ -470,6 +631,7 @@ export function createFakeEe(options = {}) {
       throw new Error(`fake-ee: Number.${method} is not in the stand-in.`);
     }
     if (kind === "ImageCollection") {
+      if (method === "flatten") return flattenImages(node.parent, scope);
       if (method === "size") return collectionSize(node.parent);
       if (method === "aggregate_max" || method === "aggregate_min") {
         const window = dateWindow(node.parent);
@@ -485,8 +647,18 @@ export function createFakeEe(options = {}) {
         const changes = typeof node.args[0] === "string" ? { [arg(0)]: arg(1) } : arg(0);
         return { ...f, properties: { ...f.properties, ...changes } };
       }
+      if (method === "setGeometry") return { ...f, geometry: arg(0) };
+      if (method === "area") return roughAreaKm2(f?.geometry) * 1e6;
+      if (["simplify", "buffer", "transform", "copyProperties"].includes(method)) return f; // same outline
     }
-    if (kind === "Geometry") return parent(); // simplify, buffer, ...: same outline
+    if (kind === "Geometry") return geometryMethod(parent(), method, node, scope);
+    if (kind === "Image" && method === "date") return resolve(node.parent, scope)?.date ?? 0;
+    if (kind === "Date") {
+      const ms = parent();
+      if (method === "format") return new Date(ms).toISOString().slice(0, 10);
+      if (method === "millis") return ms;
+      throw new Error(`fake-ee: Date.${method} is not in the stand-in.`);
+    }
     if (kind === "Join" && method === "apply") {
       const matchKey = resolve(node.parent.args[0], scope)?.matchKey || "match";
       const right = arg(1).features;
@@ -498,6 +670,57 @@ export function createFakeEe(options = {}) {
     throw new Error(`fake-ee: cannot answer ${kind}.${method}.`);
   }
 
+  // Real Earth Engine sends a collection nested in a Dictionary / List as a
+  // description only (no features).
+  function describeNested(value) {
+    const strip = (v) => (v && v.type === "FeatureCollection" && Array.isArray(v.features) ? { type: "FeatureCollection", columns: {} } : v);
+    if (Array.isArray(value)) return value.map(strip);
+    if (value && typeof value === "object" && !value.type) return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, strip(v)]));
+    return value;
+  }
+
+  function geometryMethod(g, method, node, scope) {
+    const arg = (i) => resolve(node.args[i], scope);
+    switch (method) {
+      case "area":
+        return roughAreaKm2(g) * 1e6;
+      case "centroid": {
+        const ring = outerRings(g)[0];
+        if (!ring) return g?.type === "Point" ? g : { type: "Point", coordinates: [0, 0] };
+        const [w, s, e, n] = ringBox(ring);
+        return { type: "Point", coordinates: [(w + e) / 2, (s + n) / 2] };
+      }
+      case "bounds": {
+        const ring = outerRings(g)[0];
+        return ring ? boxPolygon(ringBox(ring)) : g;
+      }
+      case "coordinates":
+        return g?.coordinates ?? [];
+      case "buffer":
+        return g?.type === "Point" ? circlePolygon(g.coordinates, arg(0)) : g;
+      default:
+        return g; // simplify, intersection, transform, ...: same outline
+    }
+  }
+
+  // ImageCollection.map(fn).flatten(): one made-up image per ~3 days of the
+  // collection's date window, each bound to the map's placeholder.
+  function flattenImages(mapNode, scope) {
+    if (mapNode?.op !== "map") throw new Error("fake-ee: flatten() is only answered after map().");
+    const window = dateWindow(mapNode);
+    const startMs = window ? Date.parse(`${window.start}T00:00:00Z`) : 0;
+    const endMs = window ? Date.parse(`${window.end}T00:00:00Z`) : 0;
+    const days = Math.max(0, Math.round((endMs - startMs) / 86400000));
+    const count = sizes[mapNode.dataset] ?? Math.min(150, Math.ceil(days / 3));
+    const features = [];
+    for (let i = 0; i < count; i += 1) {
+      const image = { fakeImage: true, index: i, date: startMs + Math.floor((i * days) / Math.max(1, count)) * 86400000 };
+      const body = resolve(mapNode.body, new Map([...scope, [mapNode.placeholder, image]]));
+      features.push(...(body?.features || []));
+    }
+    return { type: "FeatureCollection", features };
+  }
+
   function matches(filterValue, properties, scope) {
     const f = unwrap(filterValue);
     if (!f) return true;
@@ -507,6 +730,14 @@ export function createFakeEe(options = {}) {
         return !(a(0) in properties) || properties[a(0)] === a(1);
       case "Filter.stringContains":
         return String(properties[a(0)] ?? "").includes(a(1));
+      case "Filter.gt":
+        return Number(properties[a(0)]) > a(1);
+      case "Filter.gte":
+        return Number(properties[a(0)]) >= a(1);
+      case "Filter.lt":
+        return Number(properties[a(0)]) < a(1);
+      case "Filter.notNull":
+        return a(0).every((name) => properties[name] !== null && properties[name] !== undefined);
       case "Filter.or":
         return f.args.some((sub) => matches(sub, properties, scope));
       case "Filter.and":
@@ -533,6 +764,14 @@ export function createFakeEe(options = {}) {
         return { ...fc, features: fc.features.filter((f) => matches(node.args[0], f.properties, scope)) };
       case "limit":
         return { ...fc, features: fc.features.slice(0, arg(0)) };
+      case "toList":
+        return fc.features.slice(0, arg(0));
+      case "sort": {
+        const key = arg(0);
+        const ascending = node.args[1] !== false;
+        const sorted = [...fc.features].sort((x, y) => (Number(x.properties[key]) - Number(y.properties[key])) * (ascending ? 1 : -1));
+        return { ...fc, features: sorted };
+      }
       case "select": {
         const keep = arg(0);
         const all = keep.includes(".*");
@@ -563,7 +802,18 @@ export function createFakeEe(options = {}) {
   }
 
   // The outputs a reducer gives for an image, one value per name.
-  function reduceOne(imageNode, reducerValue, f) {
+  // The made-up image (with its date) a map() body is working on, if any.
+  function imageContext(imageNode, scope) {
+    for (let n = imageNode; n; n = n.parent) {
+      if (n.op === "placeholder") {
+        const value = scope.get(n);
+        return value?.fakeImage ? value : null;
+      }
+    }
+    return null;
+  }
+
+  function reduceOne(imageNode, reducerValue, f, scope = new Map()) {
     const red = unwrap(reducerValue);
     let reducerName = "mean";
     let outputs = null;
@@ -572,13 +822,14 @@ export function createFakeEe(options = {}) {
       if (r.reducerName) reducerName = r.reducerName;
     }
     const bands = imageNode.bands || [];
-    const id = String(f.properties?.id ?? f.properties?.aid ?? JSON.stringify(f.geometry?.coordinates));
+    const image = imageContext(imageNode, scope);
+    const id = String(f.properties?.id ?? f.properties?.fid ?? f.properties?.aid ?? JSON.stringify(f.geometry?.coordinates)) + (image ? `|${image.date}` : "");
     const areaKm2 = roughAreaKm2(f.geometry);
     const out = {};
     bands.forEach((band, i) => {
       const name = outputs ? outputs[i] : bands.length === 1 && reducerName !== "first" ? reducerName : band.name;
       if (!name || band.empty) return; // no pixels: Earth Engine leaves the value out
-      out[name] = fakeValue(outputs ? name : band.name, unitHash(`${id}|${band.name}|${name}`), areaKm2);
+      out[name] = fakeValue(outputs ? name : band.name, unitHash(`${id}|${band.name}|${name}`), areaKm2, { date: image?.date });
     });
     return out;
   }
@@ -590,12 +841,18 @@ export function createFakeEe(options = {}) {
       const fc = resolve(options.collection, scope);
       return {
         type: "FeatureCollection",
-        features: fc.features.map((f) => ({ ...f, properties: { ...f.properties, ...reduceOne(imageNode, options.reducer, f) } })),
+        features: fc.features.map((f) => ({ ...f, properties: { ...f.properties, ...reduceOne(imageNode, options.reducer, f, scope) } })),
       };
     }
     if (method === "reduceRegion") {
-      return reduceOne(imageNode, options.reducer, feature(resolve(options.geometry, scope), { id: "point" }));
+      return reduceOne(imageNode, options.reducer, feature(resolve(options.geometry, scope), { id: "point" }), scope);
     }
+    if (method === "reduceToVectors") {
+      const region = resolve(options.geometry, scope);
+      const bandNames = (imageNode.bands || []).map((b) => b.name);
+      return { type: "FeatureCollection", features: bandNames.includes("patch") ? fakePatches(region) : fakeParcels(region, parcelGrid) };
+    }
+    if (method === "sampleRectangle") return sampleGrid(imageNode, options, scope);
     if (method === "stratifiedSample" || method === "sample") {
       return {
         type: "FeatureCollection",
@@ -603,6 +860,40 @@ export function createFakeEe(options = {}) {
       };
     }
     throw new Error(`fake-ee: cannot answer Image.${method} directly.`);
+  }
+
+  // sampleRectangle: the grid comes from the nearest reproject crsTransform
+  // ([dx, 0, west, 0, -dy, north]) and the region; pixels whose centre is
+  // outside a clip() outline get the default value.
+  function sampleGrid(imageNode, options, scope) {
+    let transform = null;
+    let clipShape = null;
+    for (let n = imageNode; n; n = n.parent) {
+      if (!transform && n.op === "reproject") transform = (unwrap(n.args[0]) ? null : n.args[0])?.crsTransform || null;
+      if (!clipShape && n.op === "clip") clipShape = resolve(n.args[0], scope);
+    }
+    const box = ringBox(outerRings(resolve(options.region, scope))[0] || [[0, 0]]);
+    if (!transform) throw new Error("fake-ee: sampleRectangle needs a reproject with crsTransform in the stand-in.");
+    const [dx, , west, , negDy, north] = transform;
+    const dy = -negDy;
+    const cols = Math.max(1, Math.round((box[2] - box[0]) / dx + 0.5));
+    const rows = Math.max(1, Math.round((box[3] - box[1]) / dy + 0.5));
+    if (cols * rows > 262144) throw new Error("Image.sampleRectangle: Too many pixels in sample; must be <= 262144.");
+    const firstCol = Math.floor((box[0] - west) / dx);
+    const firstRow = Math.floor((north - box[3]) / dy);
+    const fallback = options.defaultValue ?? 0;
+    const properties = {};
+    for (const band of imageNode.bands || []) {
+      properties[band.name] = Array.from({ length: rows }, (_, r) =>
+        Array.from({ length: cols }, (_, c) => {
+          const lon = west + (firstCol + c + 0.5) * dx;
+          const lat = north - (firstRow + r + 0.5) * dy;
+          if (band.empty || (clipShape && !inGeometry(lon, lat, clipShape))) return fallback;
+          return fakeValue(band.name, unitHash(`${band.name}|${firstRow + r}|${firstCol + c}`), 0);
+        }),
+      );
+    }
+    return feature(boxPolygon(box), properties);
   }
 
   return ee;
