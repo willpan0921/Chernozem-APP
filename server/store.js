@@ -179,6 +179,20 @@ export async function saveArea(area) {
   return area;
 }
 
+// Removes an area and every monthly run made for it. Gives back how many
+// runs went with it. A missing area is not an error (gives back 0).
+export async function deleteArea(id) {
+  if (!isSafeId(id)) return 0;
+  const runs = await listRuns(id);
+  for (const run of runs) await deleteRun(run.id);
+  try {
+    await fs.unlink(fileFor("areas", id));
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  return runs.length;
+}
+
 // ---------- Runs ----------
 // The run list is read often, and run files are large (they hold every
 // cell), so the summaries are kept in memory after the first read. If the

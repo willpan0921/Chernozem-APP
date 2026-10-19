@@ -152,6 +152,32 @@ test("coordinates and bbox areas, with validation", async () => {
   assert.equal(list[0].geometry, undefined);
 });
 
+test("areas can be renamed and removed (with their runs)", async () => {
+  const made = await call("POST", "/api/areas", { source: "bbox", name: "Old name", north: 48.1, south: 48.0, east: 1.7, west: 1.6 });
+  assert.equal(made.status, 201, made.text);
+  const id = made.json.area.id;
+
+  const renamed = await call("PATCH", `/api/areas/${id}`, { name: "  Beauce   test  " });
+  assert.equal(renamed.status, 200, renamed.text);
+  assert.equal(renamed.json.area.name, "Beauce test");
+  assert.equal((await call("PATCH", `/api/areas/${id}`, { name: "   " })).status, 400);
+  assert.equal((await call("PATCH", "/api/areas/area-missing", { name: "x" })).status, 404);
+
+  // Analyze one month, make it the current area, then remove it.
+  const job = (await call("POST", "/api/analyze", { areaId: id, months: 1 })).json.job;
+  assert.equal((await waitForJob(job.id)).status, "done");
+  assert.equal((await call("GET", `/api/runs?areaId=${id}`)).json.runs.length, 1);
+  await call("PATCH", "/api/workspace", { currentAreaId: id });
+
+  const removed = await call("DELETE", `/api/areas/${id}`);
+  assert.equal(removed.status, 200, removed.text);
+  assert.equal(removed.json.removedRuns, 1);
+  assert.equal((await call("GET", `/api/areas/${id}`)).status, 404);
+  assert.equal((await call("GET", `/api/runs?areaId=${id}`)).json.runs.length, 0);
+  assert.equal((await call("GET", "/api/workspace")).json.workspace.currentAreaId, null);
+  assert.equal((await call("DELETE", `/api/areas/${id}`)).status, 404);
+});
+
 test("workspace settings are cleaned", async () => {
   const res = await call("PATCH", "/api/workspace", { settings: { weights: { soil: -5, damage: 300, access: 100 }, gatePercentile: 99 } });
   assert.equal(res.status, 200);

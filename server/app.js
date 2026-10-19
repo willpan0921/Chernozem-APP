@@ -8,7 +8,10 @@
 //   POST   /api/areas                   save an area (country, coordinates, box, drawn)
 //   GET    /api/areas                   saved areas
 //   GET    /api/areas/:id               one area with its outline
-//   GET    /api/workspace               settings, team, budget... (a current
+//   PATCH  /api/areas/:id               rename an area ({ name })
+//   DELETE /api/areas/:id               remove an area and its runs (not while
+//                                       it is being analyzed)
+//   GET    /api/workspace              settings, team, budget... (a current
 //                                       area that no longer exists is cleared)
 //   PATCH  /api/workspace               change any of those
 //   POST   /api/team                    add a team member
@@ -35,6 +38,7 @@
 import { HttpError, readJson, sendError, sendJson } from "./http.js";
 import { config } from "./env.js";
 import {
+  deleteArea,
   getArea,
   getRun,
   getWorkspace,
@@ -399,6 +403,31 @@ async function route(req, res, url) {
       const area = await getArea(second);
       if (!area) throw notFound("That area does not exist.");
       return sendJson(res, 200, { area: areaForClient(area, { full: q.get("full") === "1" }) });
+    }
+    if (second && !third && method === "PATCH") {
+      const area = await getArea(second);
+      if (!area) throw notFound("That area does not exist.");
+      const body = await readJson(req);
+      const name = cleanName(body?.name, "");
+      if (!name) throw bad("Give the area a name.");
+      area.name = name;
+      area.updatedAt = new Date().toISOString();
+      await saveArea(area);
+      return sendJson(res, 200, { area: areaForClient(area) });
+    }
+    if (second && !third && method === "DELETE") {
+      const area = await getArea(second);
+      if (!area) throw notFound("That area does not exist.");
+      if (listJobs({ areaId: area.id, status: "running" }).length) {
+        throw new HttpError(409, "busy", `${area.name} is being analyzed right now. Remove it once the analysis has finished.`);
+      }
+      const removedRuns = await deleteArea(area.id);
+      // If it was the area on screen, show none rather than a missing one.
+      await updateWorkspace((ws) => {
+        if (ws.currentAreaId === area.id) ws.currentAreaId = null;
+        return ws;
+      });
+      return sendJson(res, 200, { ok: true, removedRuns });
     }
   }
 
