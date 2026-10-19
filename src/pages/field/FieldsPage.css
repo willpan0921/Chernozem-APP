@@ -1,7 +1,7 @@
 /*
   WHAT THIS FILE DOES
   The styling for the Field "Fields" page (src/pages/field/FieldsPage.jsx):
-  the farm map, the things floating on it (view switch, date chip, legend),
+  the farm map, the things floating on it (date chip, legend),
   and the selected field's panel (name, the four tiles, season chart, Ask
   AI). Every class starts with "fp-" so it never clashes with another page.
 
@@ -32,7 +32,7 @@
   border-radius: 20px;
 }
 
-/* View switch and date, top left; the zoom buttons own the right edge. */
+/* The date, top left; the zoom buttons own the right edge. */
 .fp-map-top {
   position: absolute;
   top: 12px;
@@ -51,7 +51,7 @@
 }
 
 /* "Oct 16 · Sample data": shortened on a narrow map so it stays on one
-   line next to the view switch. */
+   line. */
 .fp-pass-short {
   display: none;
 }
@@ -68,15 +68,6 @@
 
   .fp-pass-short {
     display: inline;
-  }
-
-  .fp-map .fm-switch-option {
-    padding: 8px 11px;
-    font-size: 13px;
-  }
-
-  .fp-map .fm-switch-option svg {
-    display: none;
   }
 }
 

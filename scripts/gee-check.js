@@ -11,9 +11,13 @@
 // When it ends with "Earth Engine is ready", restart `npm run dev` and the
 // Atlas uses real satellite data. Step-by-step setup: docs/CONNECT-DATA.md.
 //
-// A quick test of your own place (latitude, longitude, size of the square
-// in km), for example a 5 km square around Poltava:
+// A quick test of your own place anywhere on Earth (latitude, longitude,
+// size of the square in km), for example a 5 km square around Poltava, or
+// 40 km in Iowa:
 //   npm run gee:check -- --area=49.59,34.55,5
+//   npm run gee:check -- --area=42.03,-93.62,40
+// The growing season follows the place's latitude, and the war (if one in
+// src/config/conflicts.js covers it) decides where damage is counted from.
 //
 // WHO EDITS IT
 // Whoever changes the Earth Engine provider (server/providers/gee.js).
@@ -23,6 +27,8 @@ import { cellAreaKm2, planGrid } from "../server/geo.js";
 import { latestCompleteMonth, monthLabel } from "../server/runs.js";
 import { acledStatus } from "../server/providers/acled.js";
 import gee, { connect, probePoint, setupProblems, socToChernozem, monthWindows, reduceScale, chunkSizeFor, SOC, BLACK_SOIL_SOURCE } from "../server/providers/gee.js";
+import { conflictForArea } from "../server/conflicts.js";
+import { climateBand } from "../src/lib/season.js";
 
 const TEST = { lat: 49.74, lon: 37.54, sizeDeg: 0.01 };
 const DOCS = "docs/CONNECT-DATA.md";
@@ -227,6 +233,7 @@ const COLUMNS = [
   ["chernozem", (r) => r.chernozem],
   ["cropland", (r) => r.croplandShare],
   ["CHI drop", (r) => r.chiDrop ?? "n/a"],
+  ["radar dB", (r) => r.radarDb ?? "n/a"],
   ["heavy", (r) => r.heavyShare],
   ["fires/100km2", (r) => r.firesPer100Km2],
   ["fighting km", (r) => r.conflictKm],
@@ -249,8 +256,9 @@ function printRanges(readings) {
     ["chernozem", "chernozem"],
     ["croplandShare", "cropland"],
     ["chiDrop", "CHI drop"],
+    ["radarDb", "radar dB"],
     ["heavyShare", "heavy"],
-    ["firesPer100Km2", "fires/100km2"],
+    ["firesPer100Km2", "extra fires/100km2"],
     ["conflictKm", "fighting km"],
     ["popPerKm2", "people/km2"],
     ["lights", "lights"],
@@ -279,12 +287,21 @@ const sane = (result, cells) => result.readings.length === cells.length && resul
 
 // ---------- 4. One cell, timed ----------
 
+// The season and the war for a place, in one line.
+function windowsLine(lat, lon, month) {
+  const conflict = conflictForArea({ bbox: [lon, lat, lon, lat] });
+  const windows = monthWindows(month, undefined, { lat, conflict });
+  const war = conflict
+    ? `${conflict.name}: damage counted since ${conflict.since}`
+    : `no war in the app's list: damage counted from ${windows.damage?.start} (fires above the 2019-2021 rate, radar change), distance to fighting not measured`;
+  return `   ${climateBand(lat)} band, last complete season ${windows.season.start} to ${windows.season.end} (the analysis reads each place's own season from MODIS) vs the same window in ${windows.baselines.map((b) => b.start.slice(0, 4)).join(", ")}; ${war}`;
+}
+
 async function analysisSteps() {
   const month = latestCompleteMonth();
-  const windows = monthWindows(month);
   line();
   line(`4. Analyzing 1 cell (${TEST.sizeDeg}°, about 0.7 x 1.1 km) at ${TEST.lat}° N, ${TEST.lon}° E for ${monthLabel(month)}`);
-  line(`   Season ${windows.season.start} to ${windows.season.end} vs the same months of ${windows.baselines[0].start.slice(0, 4)}-${windows.baseline.end.slice(0, 4)}; pixel size ${reduceScale(TEST.sizeDeg, TEST.lat)} m`);
+  line(`${windowsLine(TEST.lat, TEST.lon, month)}; pixel size ${reduceScale(TEST.sizeDeg, TEST.lat)} m`);
   const one = rowOfCells(TEST, 1);
   const single = await timedAnalyze({ ...one, cellSizeDeg: TEST.sizeDeg, month });
   line();
@@ -314,6 +331,7 @@ async function analysisSteps() {
   line(
     `   ${grid.cells.length} cells of ${grid.cellSizeDeg}° (about ${grid.cellSizeKm} km), ${Math.ceil(grid.cells.length / perRequest)} Earth Engine request(s) of up to ${perRequest} cells; pixel size ${reduceScale(grid.cellSizeDeg, midLat)} m`,
   );
+  line(windowsLine(CUSTOM.lat, CUSTOM.lon, month));
   const run = await timedAnalyze({ area, cells: grid.cells, cellSizeDeg: grid.cellSizeDeg, month });
   line();
   if (run.result.readings.length <= 12) printTable(run.result.readings);

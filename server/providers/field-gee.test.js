@@ -39,6 +39,9 @@ import {
   analysisWindows,
   latestWindowFor,
   normalWindow,
+  normalWindows,
+  fireWindows,
+  excessFiresOf,
   zoneGrid,
   readZones,
   oneReadingPerDay,
@@ -49,7 +52,19 @@ import {
   normalCurve,
   toCandidates,
   splitByFinerEdges,
+  withoutOverlaps,
   largestPolygon,
+  fillSmallHoles,
+  coverWithin,
+  farmlandSpots,
+  pickFarmland,
+  compassFrom,
+  historyScale,
+  parcelShapes,
+  profileDifference,
+  parcelsTouch,
+  sameCropGroups,
+  joinGroups,
   monthRange,
   encodeGeoTiff,
   isThumbnailPermissionError,
@@ -99,31 +114,90 @@ test("the UTM zone of the demo farm is 37 N", () => {
 
 test("detection uses the last complete season and the one before, never the future", () => {
   assert.deepEqual(
-    detectionWindows("2026-10-18").map((w) => w.start),
+    detectionWindows("2026-10-18", 49.73).map((w) => w.start),
     ["2026-04-01", "2026-06-01", "2026-08-01", "2025-04-01", "2025-06-01", "2025-08-01"],
   );
-  const july = detectionWindows("2026-07-10");
+  const july = detectionWindows("2026-07-10", 49.73);
   assert.equal(july[0].start, "2025-04-01");
   assert.ok(july.every((w) => w.end <= "2026-07-10"));
+  // South: October to March, across the new year.
+  const pampas = detectionWindows("2026-10-18", -34.9);
+  assert.equal(pampas[0].start, "2025-10-01");
+  assert.equal(pampas[2].end, "2026-04-01");
+  assert.equal(pampas[3].start, "2024-10-01");
+  // Tropics: the last 12 whole months, and the 12 before.
+  const tropics = detectionWindows("2026-10-18", -12.55);
+  assert.equal(tropics[0].start, "2025-10-01");
+  assert.equal(tropics[2].end, "2026-10-01");
+  assert.equal(tropics[3].start, "2024-10-01");
+  for (const list of [pampas, tropics]) assert.ok(list.every((w) => w.start < w.end && w.end <= "2026-10-18"));
 });
 
-test("analysis windows stop at today", () => {
-  const w = analysisWindows(TODAY);
+test("analysis windows stop at today (north)", () => {
+  const w = analysisWindows(TODAY, 49.73);
+  assert.equal(w.band, "north");
   assert.equal(w.seasonStart, "2026-03-01");
   assert.deepEqual(w.passes, { start: "2026-03-01", end: TODAY });
   assert.deepEqual(w.chiSeason, { start: "2026-04-01", end: "2026-10-01" });
   assert.deepEqual(w.chiBaseline.map((x) => x.start), ["2019-04-01", "2020-04-01", "2021-04-01"], "the soil health index baseline is 2019-2021, as in the Atlas");
-  assert.deepEqual(w.radarSeason, { start: "2026-06-01", end: "2026-09-01" });
-  assert.deepEqual(w.radarBaselines.map((x) => x.start), ["2019-06-01", "2020-06-01", "2021-06-01"]);
-  assert.deepEqual(w.firesWar, { start: "2022-02-24", end: TODAY });
-  // Early in the year: the last 8 months, and last year's summer for radar.
-  const feb = analysisWindows("2026-02-10");
-  assert.equal(feb.seasonStart, "2025-06-12");
-  assert.equal(feb.passes.start, "2025-06-12");
-  assert.deepEqual(feb.radarSeason, { start: "2025-06-01", end: "2025-09-01" });
+  // Radar compares the growing season too (not a fixed June to August).
+  assert.deepEqual(w.radarSeason, { start: "2026-04-01", end: "2026-10-01" });
+  assert.deepEqual(w.radarBaselines, [
+    { start: "2019-04-01", end: "2019-10-01" },
+    { start: "2020-04-01", end: "2020-10-01" },
+    { start: "2021-04-01", end: "2021-10-01" },
+  ]);
+  // Out of season: last year's whole season (from a month before it), and last year's season for radar.
+  const feb = analysisWindows("2026-02-10", 49.73);
+  assert.equal(feb.seasonStart, "2025-03-01");
+  assert.equal(feb.passes.start, "2025-03-01");
+  assert.deepEqual(feb.radarSeason, { start: "2025-04-01", end: "2025-10-01" });
   assert.deepEqual(feb.chiSeason, { start: "2025-04-01", end: "2025-10-01" });
   // In April the passes reach back 90 days for the latest clear view.
-  assert.equal(analysisWindows("2026-04-15").passes.start, "2026-01-15");
+  assert.equal(analysisWindows("2026-04-15", 49.73).passes.start, "2026-01-15");
+});
+
+test("analysis windows in the south cross the new year; the tropics use the last 12 months", () => {
+  const south = analysisWindows(TODAY, -34.9);
+  assert.equal(south.band, "south");
+  // The season that started on 1 Oct 2026 is running: its curve starts a month before.
+  assert.equal(south.seasonStart, "2026-09-01");
+  assert.equal(south.passes.start, "2026-07-20", "90 days back reaches further than the season start");
+  assert.deepEqual(south.chiSeason, { start: "2025-10-01", end: "2026-04-01" });
+  // The normal years END in 2019, 2020 and 2021 (never reaching into 2022).
+  assert.deepEqual(south.radarBaselines, [
+    { start: "2018-10-01", end: "2019-04-01" },
+    { start: "2019-10-01", end: "2020-04-01" },
+    { start: "2020-10-01", end: "2021-04-01" },
+  ]);
+  const tropics = analysisWindows(TODAY, -12.55);
+  assert.equal(tropics.band, "tropics");
+  assert.equal(tropics.seasonStart, "2026-02-17", "the last 8 months");
+  assert.deepEqual(tropics.chiSeason, { start: "2025-10-01", end: "2026-10-01" });
+  assert.deepEqual(tropics.chiBaseline.map((w) => w.end), ["2019-10-01", "2020-10-01", "2021-10-01"]);
+  for (const w of [south, tropics]) assert.ok([w.passes, w.chiSeason, w.radarSeason].every((x) => x.end <= TODAY));
+});
+
+test("fire windows: from the war start inside a known war, else the last 2 years; normal rate from 2019-2021", () => {
+  const war = fireWindows({ id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" }, TODAY);
+  assert.deepEqual(war.window, { start: "2022-02-24", end: TODAY });
+  assert.deepEqual(war.conflict, { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" });
+  assert.deepEqual(war.baselines, [{ start: "2019-01-01", end: "2022-01-01" }], "a window over a year long is compared with the whole of 2019-2021");
+  assert.equal(war.baselineDays, 1096);
+  const peace = fireWindows(null, TODAY);
+  assert.deepEqual(peace.window, { start: "2024-10-18", end: TODAY });
+  assert.equal(peace.days, 730);
+  assert.equal(peace.conflict, null);
+  assert.equal(peace.key, "none");
+  // A war that began less than a year ago: the same calendar span of each normal year.
+  const recent = fireWindows({ id: "x", name: "X", since: "2026-03-01" }, TODAY);
+  assert.deepEqual(recent.baselines.map((w) => w.start), ["2019-03-01", "2020-03-01", "2021-03-01"]);
+  assert.equal(recent.baselineDays, 3 * recent.days);
+  // Excess: detections minus the normal rate x window length, never below 0.
+  assert.deepEqual(excessFiresOf(8, 12, peace), { fires: 8, firesNormal: 8, excessFires: 0 });
+  assert.deepEqual(excessFiresOf(2, 12, peace), { fires: 2, firesNormal: 8, excessFires: 0 });
+  assert.deepEqual(excessFiresOf(20, 3, war), { fires: 20, firesNormal: 4.6, excessFires: 15.4 });
+  assert.deepEqual(excessFiresOf(null, 3, war), { fires: null, firesNormal: null, excessFires: null });
 });
 
 test("the latest window is the last 30 days, or the 30 days up to an older clear pass", () => {
@@ -134,9 +208,12 @@ test("the latest window is the last 30 days, or the 30 days up to an older clear
 });
 
 test("the normal is the same weeks of each baseline year", () => {
-  assert.deepEqual(normalWindow({ start: "2026-09-18", end: "2026-10-18" }, 2019), { start: "2019-09-18", end: "2019-10-19" });
+  assert.deepEqual(normalWindow({ start: "2026-09-18", end: "2026-10-18" }, 2019), { start: "2019-09-18", end: "2019-10-18" });
+  assert.deepEqual(normalWindows({ start: "2026-09-18", end: "2026-10-18" }).map((w) => w.start), ["2019-09-18", "2020-09-18", "2021-09-18"]);
+  // Across the new year (southern summer): both ends move together.
+  assert.deepEqual(normalWindow({ start: "2025-12-20", end: "2026-01-19" }, 2019), { start: "2019-12-20", end: "2020-01-19" });
   // 29 February in a year without it.
-  assert.deepEqual(normalWindow({ start: "2028-02-14", end: "2028-03-16" }, 2019), { start: "2019-02-13", end: "2019-03-16" });
+  assert.deepEqual(normalWindow({ start: "2028-02-14", end: "2028-02-29" }, 2019), { start: "2019-02-14", end: "2019-03-01" });
   assert.equal(CURVE_DAYS.length, 24);
   assert.deepEqual(CURVE_DAYS.slice(0, 3), ["01-01", "01-16", "02-01"]);
 });
@@ -251,18 +328,25 @@ test("the field's scores are the medians of the pixel scores (what the zones sho
 });
 
 test("fires alone (about 1 km pixels) do not make a field damaged", () => {
+  // A field inside a known war (near Kupiansk).
+  const plan = { ...PLAN, fire: fireWindows({ id: "ukraine-2022", name: "Russia's full-scale invasion of Ukraine", since: "2022-02-24" }, TODAY) };
   // Real Earth Engine near the front: 3-5 fire days on every field, radar change 0-3.5%.
-  const quiet = buildAnalysis(PLAN, measuredFor({ fires: 5, means: { radarChanged: 0.035, chiDrop: 0.02 } }), null, { today: TODAY, updatedAt: "x" });
+  const quiet = buildAnalysis(plan, measuredFor({ fires: 5, means: { radarChanged: 0.035, chiDrop: 0.02 } }), null, { today: TODAY, updatedAt: "x" });
   assert.equal(quiet.damage.detected, false);
   assert.equal(quiet.damage.damagedHa, null);
   // Fires backed by a soil-index drop: damaged, but with no radar extent the area is unknown.
-  const burnt = buildAnalysis(PLAN, measuredFor({ fires: 5, means: { radarChanged: 0.02, chiDrop: 0.15 } }), null, { today: TODAY, updatedAt: "x" });
+  const burnt = buildAnalysis(plan, measuredFor({ fires: 5, means: { radarChanged: 0.02, chiDrop: 0.15 } }), null, { today: TODAY, updatedAt: "x" });
   assert.equal(burnt.damage.detected, true);
   assert.equal(burnt.damage.damagedHa, null);
   // Radar change over a fifth of the field: damaged, with its area.
-  const cratered = buildAnalysis(PLAN, measuredFor({ fires: 1, means: { radarChanged: 0.2 } }), null, { today: TODAY, updatedAt: "x" });
+  const cratered = buildAnalysis(plan, measuredFor({ fires: 1, means: { radarChanged: 0.2 } }), null, { today: TODAY, updatedAt: "x" });
   assert.equal(cratered.damage.detected, true);
   assert.equal(cratered.damage.damagedHa, 10);
+  // The same radar change on a field no war covers (real data, Beauce, France:
+  // ploughing or a new crop): not damage. With unusual fire too, it is.
+  const peaceful = { ...PLAN, fire: fireWindows(null, TODAY) };
+  assert.equal(buildAnalysis(peaceful, measuredFor({ fires: 0, means: { radarChanged: 0.38 } }), null, { today: TODAY, updatedAt: "x" }).damage.detected, false);
+  assert.equal(buildAnalysis(peaceful, measuredFor({ fires: 6, means: { radarChanged: 0.2 } }), null, { today: TODAY, updatedAt: "x" }).damage.detected, true);
 });
 
 test("the normal curve is low / high / median of the three years", () => {
@@ -288,6 +372,95 @@ test("detected shapes: the largest polygon, holes kept, numbered north-west firs
   assert.ok(candidates[0].centroid[0] > 49.8 && candidates[0].areaHa > 100);
 });
 
+test("detected shapes: small holes (edge noise) are filled, broken whole-globe shapes dropped", () => {
+  const outer = [[37.50, 49.70], [37.52, 49.70], [37.52, 49.71], [37.50, 49.71], [37.50, 49.70]];
+  const speck = [[37.505, 49.703], [37.5052, 49.703], [37.5052, 49.7032], [37.505, 49.703]]; // about 0.02 ha
+  const pond = [[37.51, 49.703], [37.513, 49.703], [37.513, 49.706], [37.51, 49.706], [37.51, 49.703]]; // about 7 ha
+  assert.equal(fillSmallHoles({ type: "Polygon", coordinates: [outer, speck, pond] }).coordinates.length, 2, "the pond stays a hole");
+  // Real Earth Engine, Kenya (-0.354, 35.996), 2026-10-19: one traced field came back as the whole globe.
+  const globe = { type: "Polygon", coordinates: [[[-180, -90], [180, -90], [180, 90], [-180, 90], [-180, -90]]] };
+  const candidates = toCandidates([{ geometry: globe }, { geometry: { type: "Polygon", coordinates: [outer] } }]);
+  assert.equal(candidates.length, 1);
+  assert.ok(candidates[0].areaHa < DETECT.maxHa);
+});
+
+test("touching parcels of the same crop are joined into one field; different crops stay apart", () => {
+  const box = (w, s, e, n) => ({ type: "Polygon", coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] });
+  const profile = (ndvi, ndwi = 0.1) => Object.fromEntries([0, 1, 2, 3, 4, 5].flatMap((i) => [[`n${i}`, ndvi + i * 0.01], [`w${i}`, ndwi]]));
+  // Three parcels in a row, each grown back 10 m over the 1-pixel line between them.
+  const west = { geometry: box(-60.96, -34.91, -60.9499, -34.90), properties: profile(0.6) };
+  const middle = { geometry: box(-60.9501, -34.91, -60.94, -34.90), properties: profile(0.62) }; // same crop (0.02 apart)
+  const east = { geometry: box(-60.9401, -34.91, -60.93, -34.90), properties: profile(0.3) }; // another crop
+  const far = { geometry: box(-60.90, -34.91, -60.89, -34.90), properties: profile(0.6) }; // same crop, across a road
+  const parcels = parcelShapes([west, middle, east, far]);
+  assert.equal(parcels.length, 4);
+  assert.ok(profileDifference(parcels[0].profile, parcels[1].profile) <= DETECT.mergeMaxDiff);
+  assert.ok(profileDifference(parcels[1].profile, parcels[2].profile) > 0.25);
+  assert.equal(profileDifference({ n0: 0.5 }, { n0: 0.5 }), null, "too few windows to judge");
+  assert.equal(parcelsTouch(parcels[0], parcels[1]), true);
+  assert.equal(parcelsTouch(parcels[0], parcels[3]), false);
+  const groups = sameCropGroups(parcels);
+  assert.deepEqual(groups, [[0, 1], [2], [3]]);
+  // The joined outline replaces the parts; a join that came back broken keeps them.
+  const joined = joinGroups(parcels, groups, [box(-60.96, -34.91, -60.94, -34.90)]);
+  assert.equal(joined.length, 3);
+  assert.ok(Math.abs(joined[0].areaHa / (parcels[0].areaHa + parcels[1].areaHa) - 1) < 0.03, "the whole, less the overlap");
+  assert.equal(joinGroups(parcels, groups, [box(-60.96, -34.91, -60.959, -34.909)]).length, 4);
+  assert.equal(joinGroups(parcels, groups, []).length, 4);
+  // A finer trace does not split a parcel into pieces of one crop.
+  const whole = parcelShapes([{ geometry: box(-60.96, -34.91, -60.94, -34.90), properties: profile(0.6) }]);
+  assert.equal(splitByFinerEdges(whole, parcels.slice(0, 2), { minHa: 1 }).length, 1);
+  assert.equal(splitByFinerEdges(whole, parcelShapes([west, { ...middle, properties: profile(0.3) }]), { minHa: 1 }).length, 2);
+});
+
+test("the share of a search circle covered by fields (to widen a search that landed in a town)", () => {
+  const center = { lat: 42.03, lon: -93.62 };
+  const near = { centroid: [42.031, -93.621], areaHa: 100 };
+  const far = { centroid: [42.2, -93.62], areaHa: 1000 };
+  const circleHa = (Math.PI * 1200 * 1200) / 1e4;
+  assert.ok(Math.abs(coverWithin([near, far], center, 1200) - 100 / circleHa) < 1e-9, "only fields centred inside count");
+  assert.equal(coverWithin([], center, 1200), 0);
+});
+
+test("detectFields around a point in a town searches the nearest farmland and says so", async () => {
+  // No fields anywhere: the nearest farmland is looked for once, then "No fields found".
+  const { ee, provider } = fakeProvider({ parcelGrid: 0 });
+  const empty = await provider.detectFields({ center: { lat: 42.03, lon: -93.62 }, radiusM: 1200 });
+  assert.equal(empty.candidates.length, 0);
+  assert.match(empty.warnings.at(-1), /No fields found here/);
+  assert.deepEqual(empty.center, { lat: 42.03, lon: -93.62 });
+  const circles = ee.calls.filter((c) => c.name === "Geometry.buffer").map((c) => c.args[0]);
+  assert.ok(circles.filter((r) => r === 1200).length >= 1 + farmlandSpots({ lat: 42.03, lon: -93.62 }, 1200).length, "the circle and each farmland spot");
+  assert.ok(circles.every((r) => r <= 1200 * DETECT.pointPad), "never a bigger circle");
+  assert.ok(ee.callsNamed("Image.reduceRegions").some((c) => c.args[0].scale === 30), "cropland share of each spot");
+  // Plenty of fields at once: no farmland search, the circle asked for is given back.
+  const { ee: ee2, provider: p2 } = fakeProvider();
+  const full = await p2.detectFields({ center: { lat: 49.73, lon: 37.54 }, radiusM: 1200 });
+  assert.deepEqual([full.center, full.radiusM], [{ lat: 49.73, lon: 37.54 }, 1200]);
+  assert.ok(!full.warnings.some((w) => /nearest farmland/.test(w)));
+  assert.equal(ee2.calls.filter((c) => c.name === "Geometry.buffer").length, 2);
+});
+
+test("the nearest farmland: the closest circle that is mostly cropland, else the best one, else none", () => {
+  const center = { lat: 42.03, lon: -93.62 };
+  const spots = farmlandSpots(center, 1200);
+  assert.equal(farmlandSpots(center, 300).length, spots.length, "small circles: no more spots");
+  assert.ok(spots.length > 100 && spots.every((s) => Math.hypot((s.lat - center.lat) * 110.574, (s.lon - center.lon) * 111.32 * Math.cos((42.03 * Math.PI) / 180)) <= DETECT.farmlandMaxKm + 1e-6));
+  const at = (dx, dy, cropland) => ({ lat: center.lat + dy / 110.574, lon: center.lon + dx / (111.32 * Math.cos((42.03 * Math.PI) / 180)), cropland });
+  const near = at(2.4, 0, 0.75);
+  const far = at(0, -7.2, 0.98);
+  const picked = pickFarmland([at(1.2, 0, 0.1), far, near], center);
+  assert.deepEqual(picked, { lat: far.lat, lon: far.lon }, "all cropland first, even further away");
+  const full = at(4.8, 0, 0.92);
+  assert.deepEqual(pickFarmland([full, far, near], center), { lat: full.lat, lon: full.lon }, "the nearest that is all cropland");
+  assert.deepEqual(pickFarmland([at(1.2, 0, 0.1), near, at(0, -7.2, 0.8)], center), { lat: near.lat, lon: near.lon }, "else the nearest mostly cropland");
+  assert.deepEqual(pickFarmland([at(1.2, 0, 0.1), at(3.6, 0, 0.3)], center), { lat: at(3.6, 0, 0.3).lat, lon: at(3.6, 0, 0.3).lon });
+  assert.equal(pickFarmland([at(1.2, 0, 0.05)], center), null);
+  assert.equal(compassFrom(center, near), "east");
+  assert.equal(compassFrom(center, far), "south");
+  assert.equal(compassFrom(center, at(-3, 3, 1)), "north-west");
+});
+
 test("a finer trace splits a parcel only into big pieces covering most of it", () => {
   const box = (w, s, e, n) => ({ type: "Polygon", coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] });
   const shape = (geometry) => ({ geometry, areaHa: areaHa(geometry), centroid: [(geometry.coordinates[0][0][1] + geometry.coordinates[0][2][1]) / 2, (geometry.coordinates[0][0][0] + geometry.coordinates[0][2][0]) / 2] });
@@ -307,6 +480,39 @@ test("a finer trace splits a parcel only into big pieces covering most of it", (
   // toCandidates applies it and numbers the result.
   const features = (list) => list.map((p) => ({ geometry: p.geometry }));
   assert.deepEqual(toCandidates(features([merged, other]), features([south, north])).map((c) => c.id), ["cand-1", "cand-2", "cand-3"]);
+});
+
+test("no two candidates for the same ground: a shape around them all and duplicate pieces go", () => {
+  const box = (w, s, e, n) => ({ type: "Polygon", coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] });
+  const shape = (geometry) => ({ geometry, areaHa: areaHa(geometry), centroid: [(geometry.coordinates[0][0][1] + geometry.coordinates[0][2][1]) / 2, (geometry.coordinates[0][0][0] + geometry.coordinates[0][2][0]) / 2] });
+  // Real case (Beauce, France, 2026-10-19): one shape equal to the drawn
+  // boundary around every field, and a piece lying inside another field.
+  const whole = shape(box(1.60, 48.20, 1.62, 48.21));
+  const a = shape(box(1.600, 48.200, 1.609, 48.2095));
+  const b = shape(box(1.6102, 48.200, 1.62, 48.2095));
+  const piece = shape(box(1.601, 48.201, 1.607, 48.208)); // mostly inside a
+  const kept = withoutOverlaps([whole, a, b, piece]);
+  assert.deepEqual(kept.map((f) => f.geometry), [a.geometry, b.geometry].sort((x, y) => areaHa(y) - areaHa(x)));
+  // Neighbours that overlap only along a shared edge both stay.
+  const left = shape(box(1.600, 48.200, 1.6102, 48.21));
+  const right = shape(box(1.6100, 48.200, 1.62, 48.21));
+  assert.equal(withoutOverlaps([left, right]).length, 2);
+  // A finer piece larger than the parcel is not a part of it.
+  const small = shape(box(1.600, 48.200, 1.605, 48.205));
+  assert.equal(splitByFinerEdges([small], [whole, shape(box(1.601, 48.201, 1.602, 48.202))]).length, 1);
+});
+
+test("detectFields inside a boundary drops a broken whole-globe shape cut down to the boundary", async () => {
+  const globe = { type: "Polygon", coordinates: [[[-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85]]] };
+  const { provider } = fakeProvider({ extraParcels: [globe] });
+  const boundary = [[49.735, 37.512], [49.735, 37.562], [49.702, 37.562], [49.702, 37.512]];
+  const outline = { type: "Polygon", coordinates: [[...boundary, boundary[0]].map(([lat, lon]) => [lon, lat])] };
+  const boundaryHa = areaHa(outline);
+  const { candidates } = await provider.detectFields({ boundary });
+  assert.ok(candidates.length >= 4, `found ${candidates.length}`);
+  assert.ok(candidates.every((c) => c.areaHa < boundaryHa * 0.5), candidates.map((c) => c.areaHa).join(", "));
+  const total = candidates.reduce((sum, c) => sum + c.areaHa, 0);
+  assert.ok(total <= boundaryHa, `${total} ha of fields in a ${boundaryHa} ha boundary`);
 });
 
 test("detect input: corner points, a GeoJSON outline or a place", () => {
@@ -407,7 +613,7 @@ test("detectFields finds fields inside a boundary (Canny edges + reduceToVectors
   assert.ok(ee.callsNamed("Geometry.intersection").length > 0 || ee.calls.some((c) => c.name.endsWith(".intersection")));
   assert.ok(ee.callsNamed("ImageCollection.linkCollection").every((c) => c.args[1][0] === CLOUD_SCORE_BAND));
   assert.ok(dateWindows(ee).every((w) => w.start <= w.end && w.end <= TODAY));
-  assert.equal(ee.requests.length, 1, "one request");
+  assert.equal(ee.requests.length, 2, "one request for the growing season, one for the fields");
   assert.equal(progress.at(-1)[0], 1);
 });
 
@@ -430,7 +636,7 @@ test("detectFields says so when nothing is found", async () => {
 
 // Every key of spec section 3 (FieldAnalysis) except `status`, which the
 // route layer adds with the harvest window.
-function assertAnalysis(a, field) {
+function assertAnalysis(a, field, seasonFrom = "2026-03-01") {
   const inRange = (value, min, max, label) => assert.ok(value === null || (Number.isFinite(value) && value >= min && value <= max), `${field.id} ${label} = ${value}`);
   assert.equal(a.fieldId, field.id);
   assert.equal(a.provider, "gee");
@@ -450,21 +656,25 @@ function assertAnalysis(a, field) {
   assert.ok([null, "low", "medium", "high"].includes(a.stress.level));
   assert.ok(a.stress.patches.length <= 3);
   for (const p of a.stress.patches) assert.ok(Number.isFinite(p.lat) && Number.isFinite(p.lon) && p.radiusM >= 15 && p.ha > 0);
-  assert.deepEqual(Object.keys(a.harvest).sort(), ["daysToReady", "lastDate", "peak", "peakDate", "rainBefore", "stage", "window"]);
+  assert.deepEqual(Object.keys(a.harvest).sort(), ["daysToReady", "harvestedOn", "lastDate", "peak", "peakDate", "rainBefore", "stage", "window"]);
   assert.ok(["unknown", "notSown", "growing", "ripening", "ready", "harvested"].includes(a.harvest.stage));
   assert.equal(a.harvest.window, null);
   inRange(a.condition.score, 0, 1, "condition.score");
   assert.ok(a.condition.class === null || CONDITION_CLASSES.some((c) => c.id === a.condition.class));
-  assert.deepEqual(Object.keys(a.damage).sort(), ["chiDrop", "damagedHa", "detected", "firesSinceWar", "radarChangedShare"]);
+  assert.deepEqual(Object.keys(a.damage).sort(), ["chiDrop", "damagedHa", "detected", "excessFires", "fires", "firesNormal", "radarChangedShare", "since"]);
   assert.equal(typeof a.damage.detected, "boolean");
   inRange(a.damage.radarChangedShare, 0, 1, "radarChangedShare");
-  inRange(a.damage.firesSinceWar, 0, 1e5, "firesSinceWar");
+  inRange(a.damage.fires, 0, 1e5, "fires");
+  inRange(a.damage.excessFires, 0, 1e5, "excessFires");
+  if (a.damage.fires !== null) assert.ok(a.damage.excessFires <= a.damage.fires);
+  assert.match(a.damage.since, /^\d{4}-\d{2}-\d{2}$/);
+  assert.ok(a.conflict === null || (a.conflict.id && a.conflict.name && a.conflict.since));
   inRange(a.damage.chiDrop, -1, 1, "chiDrop");
   inRange(a.soil.chernozemProbability, 0, 1, "chernozem");
   assert.ok([null, "chernozem"].includes(a.soil.soilTypeId));
   assert.ok(Array.isArray(a.season));
   for (const [i, p] of a.season.entries()) {
-    assert.ok(p.date >= "2026-03-01" && p.date < TODAY);
+    assert.ok(p.date >= seasonFrom && p.date < TODAY);
     if (i) assert.ok(p.date > a.season[i - 1].date, "one reading per day, in order");
     assert.ok(p.clearPct >= 50 && Number.isFinite(p.ndvi));
   }
@@ -490,13 +700,15 @@ test("analyzeFields measures the 7 demo fields in a few batched requests", async
   for (const field of DEMO) assertAnalysis(analyses[field.id], field);
   assert.ok(Array.isArray(warnings));
   // 1 image check + 1 passes + 1 stats + 1 zones request, NOT one per field.
-  assert.equal(ee.requests.length, 4, `requests: ${ee.requests.length}`);
+  assert.equal(ee.requests.length, 5, `requests (the growing season + 4): ${ee.requests.length}`);
   // Each fields collection sent carries all 7 fields.
   const fieldFeatures = ee.callsNamed("Feature").filter((c) => c.args[1]?.fid);
   assert.equal(new Set(fieldFeatures.map((c) => c.args[1].fid)).size, 7);
   // Real values came back (the stats were not lost inside the Dictionary).
   const some = Object.values(analyses);
-  assert.ok(some.every((a) => a.plantHealth.normal.median !== null && a.soil.chernozemProbability !== null && a.damage.firesSinceWar !== null));
+  assert.ok(some.every((a) => a.plantHealth.normal.median !== null && a.soil.chernozemProbability !== null && a.damage.fires !== null));
+  // The demo farm is in Ukraine: damage is counted from the war's start.
+  assert.ok(some.every((a) => a.conflict?.id === "ukraine-2022" && a.damage.since === "2022-02-24"));
   assert.ok(some.some((a) => a.season.length >= 10), "a season curve");
   assert.ok(some.some((a) => a.zones.values.some((v) => v === null) && a.zones.values.some((v) => v !== null)), "zones: nulls outside the outline");
   assert.ok(some.every((a) => a.normalCurve.length === 24));
@@ -511,7 +723,21 @@ test("analyzeFields measures the 7 demo fields in a few batched requests", async
   assert.ok(yearlySets.length >= 2, `yearly normals: ${yearlySets.length}`);
   // Never a future date.
   assert.ok(dateWindows(ee).every((w) => w.start <= w.end && w.end <= TODAY), JSON.stringify(dateWindows(ee).filter((w) => w.end > TODAY)));
+  // The normal curve reads each half-month on its own (a whole year of
+  // cloud-masked passes ran out of memory on real Earth Engine in Iowa).
+  const curveWindows = dateWindows(ee).filter((w) => w.start >= "2018-12-01" && w.end <= "2022-01-31");
+  assert.ok(curveWindows.length >= 72, `curve windows: ${curveWindows.length}`);
+  assert.ok(!dateWindows(ee).some((w) => w.start.endsWith("-12-20") && w.end.endsWith("-01-12")), "no year-long curve collection");
   assert.ok(progress.length >= 4 && progress.at(-1)[0] === 1);
+  // Radar is compared from one orbit direction only (the same ground looks
+  // different from the east and from the west): the radar change image
+  // (the request with "abs") filters every Sentinel-1 collection by it.
+  const passes = ee.calls.filter((c) => c.name === "Filter.eq" && c.args[0] === "orbitProperties_pass").map((c) => c.args[1]);
+  assert.ok(passes.includes("ASCENDING") && passes.includes("DESCENDING"), "both directions counted");
+  const stats = ee.requests.find((r) => r.has("abs"));
+  assert.ok(stats, "the stats request measures radar change");
+  const used = new Set(stats.find("Filter.eq").filter((n) => n.args[0] === "orbitProperties_pass").map((n) => n.args[1]));
+  assert.equal(used.size, 1, `one orbit direction in the radar change: ${[...used]}`);
 });
 
 test("the zones grid is sampled on each field's own grid", async () => {
@@ -535,7 +761,7 @@ test("many fields go in chunks of FIELDS_PER_REQUEST", async () => {
   const { analyses } = await provider.analyzeFields({ fields, today: TODAY });
   assert.equal(Object.keys(analyses).length, 20);
   const chunks = Math.ceil(20 / FIELDS_PER_REQUEST);
-  assert.equal(ee.requests.length, 1 + 3 * chunks);
+  assert.equal(ee.requests.length, 2 + 3 * chunks); // + the growing season
   assert.ok(ee.stats.peakActive <= 2, "at most 2 requests at once");
 });
 
@@ -567,6 +793,93 @@ test("a 'today' in the future is not used", async () => {
   assert.ok(dateWindows(ee).every((w) => w.end <= TODAY));
 });
 
+// ---------- Anywhere on Earth ----------
+
+// A square field of about 40 ha with its south-west corner at lat, lon.
+function squareField(id, lat, lon, d = 0.006) {
+  return { id, name: id, geometry: { type: "Polygon", coordinates: [[[lon, lat], [lon + d, lat], [lon + d, lat + d], [lon, lat + d], [lon, lat]]] } };
+}
+const PAMPAS = squareField("fld-pampas", -34.9, -60.95);
+const MATO_GROSSO = squareField("fld-mt", -12.55, -55.72);
+const IOWA = squareField("fld-iowa", 42.03, -93.62);
+
+test("a southern-hemisphere farm: October-to-March seasons, no war, damage over the last 2 years", async () => {
+  const { ee, provider } = fakeProvider();
+  const { analyses } = await provider.analyzeFields({ fields: [PAMPAS], today: TODAY });
+  const a = analyses[PAMPAS.id];
+  assertAnalysis(a, PAMPAS, "2026-09-01");
+  assert.equal(a.conflict, null);
+  assert.equal(a.damage.since, "2024-10-18");
+  const asked = dateWindows(ee).map((w) => `${w.start}/${w.end}`);
+  for (const w of ["2025-10-01/2026-04-01", "2018-10-01/2019-04-01", "2020-10-01/2021-04-01", "2024-10-18/2026-10-18", "2019-01-01/2022-01-01", "2026-07-20/2026-10-18"]) {
+    assert.ok(asked.includes(w), `${w} in ${[...new Set(asked)].join(" ")}`);
+  }
+  assert.ok(!asked.includes("2026-04-01/2026-10-01"), "no northern season");
+  assert.ok(!asked.some((w) => w.startsWith("2022-02-24")), "no Ukraine war window");
+  assert.ok(a.season.every((p) => p.date >= "2026-09-01"));
+});
+
+test("a farm's own greenest month sets its season (a winter-wheat farm, peak in August)", async () => {
+  // MODIS NDVI of 2019-2021 greenest in August, at a southern latitude.
+  const values = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`ndvi${String(i + 1).padStart(2, "0")}`, 0.25 + 0.5 * Math.exp(-(Math.min(Math.abs(i + 1 - 8), 12 - Math.abs(i + 1 - 8)) ** 2) / 2)]));
+  const { ee, provider } = fakeProvider({ values });
+  const { analyses } = await provider.analyzeFields({ fields: [PAMPAS], today: TODAY });
+  assert.ok(analyses[PAMPAS.id]);
+  const asked = dateWindows(ee).map((w) => `${w.start}/${w.end}`);
+  // May to October, not the latitude's October to March.
+  for (const w of ["2025-05-01/2025-11-01", "2019-05-01/2019-11-01", "2021-05-01/2021-11-01"]) assert.ok(asked.includes(w), `${w} in ${[...new Set(asked)].join(" ")}`);
+  assert.ok(!asked.includes("2025-10-01/2026-04-01"), "no band season");
+  const windows = analysisWindows(TODAY, -34.9, 8);
+  assert.deepEqual(windows.chiSeason, { start: "2025-05-01", end: "2025-11-01" });
+  assert.equal(windows.seasonLabel, "May to October");
+});
+
+test("a southern farm in February reads the dry-down after a December peak", async () => {
+  const ee = createFakeEe({ nestedCollections: "describe" });
+  const provider = createFieldGeeProvider({ ee, getConfig: () => TEST_CFG, now: () => new Date("2026-02-15T12:00:00Z") });
+  const { analyses } = await provider.analyzeFields({ fields: [PAMPAS], today: "2026-02-15" });
+  const a = analyses[PAMPAS.id];
+  assert.ok(a.season.length >= 10 && a.season[0].date >= "2025-09-01");
+  assert.ok(a.harvest.peakDate >= "2025-12-01" && a.harvest.peakDate <= "2026-01-31", a.harvest.peakDate);
+  assert.ok(["ripening", "ready", "harvested"].includes(a.harvest.stage), a.harvest.stage);
+});
+
+test("a tropical farm: the last 12 months, no war", async () => {
+  const { ee, provider } = fakeProvider();
+  const { analyses } = await provider.analyzeFields({ fields: [MATO_GROSSO], today: TODAY });
+  const a = analyses[MATO_GROSSO.id];
+  assertAnalysis(a, MATO_GROSSO, "2026-02-17");
+  assert.equal(a.conflict, null);
+  const asked = dateWindows(ee).map((w) => `${w.start}/${w.end}`);
+  for (const w of ["2025-10-01/2026-10-01", "2018-10-01/2019-10-01", "2020-10-01/2021-10-01", "2026-02-17/2026-10-18"]) assert.ok(asked.includes(w), w);
+  // Fields are traced from the last two 12-month spans too.
+  const { ee: ee2, provider: p2 } = fakeProvider();
+  await p2.detectFields({ center: { lat: -12.55, lon: -55.72 }, radiusM: 1200 });
+  const traced = dateWindows(ee2).map((w) => w.start);
+  assert.ok(traced.includes("2025-10-01") && traced.includes("2024-10-01") && !traced.includes("2026-04-01"), traced.join(" "));
+});
+
+test("a peaceful farm that burns its stubble every year is NOT damaged; the same fires above the war-time normal are", async () => {
+  // 8 fire days in the last 2 years, 12 in 2019-2021 (4 a year): just the usual burning.
+  // A soil-index drop that would back up fires is there too.
+  const values = { fires: 8, firesBase: 12, chiDrop: 0.15, radarChanged: 0.01 };
+  const { provider } = fakeProvider({ values });
+  const { analyses } = await provider.analyzeFields({ fields: [IOWA], today: TODAY });
+  const a = analyses[IOWA.id];
+  assert.equal(a.conflict, null);
+  assert.deepEqual([a.damage.fires, a.damage.firesNormal, a.damage.excessFires], [8, 8, 0]);
+  assert.equal(a.damage.detected, false);
+  assert.equal(a.damage.damagedHa, null);
+  // Near Kupiansk: 20 fire days since the invasion against about 1 a year before it.
+  const war = fakeProvider({ values: { ...values, fires: 20, firesBase: 3 } });
+  const result = await war.provider.analyzeFields({ fields: DEMO.slice(0, 1), today: TODAY });
+  const b = result.analyses[DEMO[0].id];
+  assert.equal(b.conflict.id, "ukraine-2022");
+  assert.equal(b.damage.since, "2022-02-24");
+  assert.equal(b.damage.excessFires, 15.4);
+  assert.equal(b.damage.detected, true);
+});
+
 test("fieldHistory reads monthly values since 2019 in chunks of 30 months", async () => {
   const { ee, provider } = fakeProvider();
   const months = await provider.fieldHistory({ field: DEMO[0], from: "2019-01" });
@@ -585,6 +898,16 @@ test("fieldHistory reads monthly values since 2019 in chunks of 30 months", asyn
   assert.ok(dateWindows(ee).every((w) => w.start <= w.end && w.end <= TODAY));
   // Never before 2019, never after this month.
   assert.equal((await provider.fieldHistory({ field: DEMO[0], from: "2010-01", to: "2030-01" })).length, 94);
+  // A big field is read at coarser pixels (a field mean needs no more).
+  assert.equal(historyScale(1.6), 10);
+  assert.equal(historyScale(30), 20);
+  assert.equal(historyScale(624), 50);
+  assert.equal(historyScale(5000), 100);
+  const big = fakeProvider();
+  const square = { id: "big", name: "Big", geometry: { type: "Polygon", coordinates: [[[-55.7, -12.55], [-55.675, -12.55], [-55.675, -12.525], [-55.7, -12.525], [-55.7, -12.55]]] } };
+  await big.provider.fieldHistory({ field: square, from: "2026-01" });
+  const scales = big.ee.callsNamed("Image.reduceRegion").map((c) => c.args[0].scale);
+  assert.ok(scales.length && scales.every((x) => x >= 50), JSON.stringify(scales));
 });
 
 test("geotiffUrl gives Earth Engine's download link", async () => {
@@ -622,6 +945,14 @@ test("Earth Engine failures become clear errors", async () => {
   const once = fakeProvider({ fail: (request) => (request.has("reduceToVectors") && !failed ? ((failed = true), "Computation timed out.") : null) });
   const { candidates } = await once.provider.detectFields({ center: [49.73, 37.54] });
   assert.ok(candidates.length > 0);
+
+  // A dropped connection is tried once more, as it is.
+  let dropped = false;
+  const flaky = createFakeEe({ nestedCollections: "describe", fail: (request) => (request.has("reduceToVectors") && !dropped ? ((dropped = true), "Server returned HTTP code: -1 for POST /v1/projects/test-proj/value:compute") : null) });
+  const retried = createFieldGeeProvider({ ee: flaky, getConfig: () => TEST_CFG, now: () => new Date(`${TODAY}T12:00:00Z`), retryDelayMs: 0 });
+  const again = await retried.detectFields({ center: [49.73, 37.54] });
+  assert.ok(dropped && again.candidates.length > 0);
+  assert.deepEqual(flaky.callsNamed("Image.reduceToVectors").map((c) => c.args[0].scale), [10, 10, 10, 10], "same pixels on the retry");
 
   const bad = fakeProvider();
   await assert.rejects(bad.provider.analyzeFields({ fields: [] }), (error) => error.code === "bad_request");

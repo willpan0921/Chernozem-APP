@@ -9,7 +9,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { scorePlaces } from "./scoring.js";
 import { groupHotspots } from "./hotspots.js";
-import { describeAlert, imageryText, kpis, nextSteps, recoveryCost, springPlan, summarize, weightsText } from "./overview.js";
+import { atPeace, describeAlert, imageryText, kpis, nextSteps, recoveryCost, ruleText, springPlan, summarize, timeframeLabel, timeframeOptions, weightsText } from "./overview.js";
 import { makePlaces } from "./testPlaces.js";
 
 const { places, settings } = scorePlaces(makePlaces(12, 12));
@@ -41,6 +41,11 @@ test("the four big numbers are short and labelled", () => {
   assert.deepEqual(list.map((k) => k.label), ["Cropland analyzed", "Black-soil cropland", "Heavily damaged", "People on damaged land"]);
   // A farm reads in plain hectares.
   assert.deepEqual(kpis({ croplandHa: 31.4, blackSoilHa: 27.2, heavyDamageHa: 8.04, peopleOnDamagedSoil: 3 }).map((k) => k.value), ["31 ha", "27 ha", "8 ha", "3"]);
+  // The damage number is red in a war, neutral at peace (Moldova, real data).
+  const tone = (run) => kpis({ croplandHa: 1, blackSoilHa: 1, heavyDamageHa: 3187, peopleOnDamagedSoil: 0 }, run).find((k) => k.id === "heavy-damage").tone;
+  assert.equal(tone({ id: "r", conflict: { id: "ukraine-2022" } }), "red");
+  assert.equal(tone({ id: "r" }), "red", "older runs were made in a war");
+  assert.equal(tone({ id: "r", conflict: null }), undefined);
 });
 
 test("next steps come from the top areas and the radar alerts", () => {
@@ -59,6 +64,28 @@ test("next steps come from the top areas and the radar alerts", () => {
   // Ids stay the same when the weights (and so the top areas) change.
   const other = nextSteps({ run, hotspots: hotspots.slice().reverse(), alerts });
   assert.deepEqual(other.map((s) => s.id), steps.map((s) => s.id));
+});
+
+test("at peace: no demining, no 'new damage', no war words", () => {
+  const peaceRun = { ...run, conflict: null, accessSource: "none" };
+  assert.equal(atPeace(peaceRun), true);
+  assert.equal(atPeace(run), false, "older runs (no conflict field) were made in a war");
+  const steps = nextSteps({ run: peaceRun, hotspots, alerts, settings });
+  assert.equal(steps[0].title, `Plan soil surveys in ${hotspots[0].label} and ${hotspots[1].label}`);
+  assert.equal(steps[1].title, "Check the radar change near 48.59° N, 38.00° E");
+  assert.equal(steps[1].tone, "amber");
+  assert.equal(steps[2].title, `Test soil in ${hotspots[2].label}`);
+  for (const step of steps) assert.doesNotMatch(step.title, /demining|cleared|damage/i);
+  // Same ids as in a war, so ticked steps stay ticked.
+  assert.deepEqual(steps.map((s) => s.id), nextSteps({ run, hotspots, alerts }).map((s) => s.id));
+  assert.match(ruleText("nearTerm", settings, peaceRun), /nothing is set aside/);
+  assert.doesNotMatch(ruleText("nearTerm", settings, peaceRun), /nearest the fighting/);
+  assert.match(ruleText("nearTerm", settings, run), /nearest the fighting/);
+  // With an ACLED file, battles are measured even at peace.
+  assert.match(ruleText("nearTerm", settings, { ...peaceRun, accessSource: "acled" }), /set aside/);
+  assert.equal(timeframeLabel("postwar", peaceRun), "Long term");
+  assert.equal(timeframeLabel("postwar", run), "Postwar");
+  assert.deepEqual(timeframeOptions(peaceRun).map((o) => o.label), ["Near term", "Long term"]);
 });
 
 test("no run, no steps; no top areas, only the report", () => {
@@ -92,5 +119,7 @@ test("recovery cost uses the method's per-hectare costs", () => {
 
 test("run description lines", () => {
   assert.equal(imageryText(run), "Imagery from April to September 2026, compared with 2019 to 2021");
+  const mixed = { ...run, imagery: { from: "2025-04", to: "2025-09", label: "April to September 2025 (80% of the area); May to October 2025 (20% of the area)" } };
+  assert.equal(imageryText(mixed), "Imagery from April to September 2025 (80% of the area); May to October 2025 (20% of the area), compared with 2019 to 2021");
   assert.equal(weightsText(settings), "Soil 30 · Damage 40 · Access 30");
 });

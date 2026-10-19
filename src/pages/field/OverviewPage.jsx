@@ -10,9 +10,10 @@
 //     (recovery of damaged fields with its cost, fields ready to harvest
 //     before the rain, stress patches...), or "Nothing urgent",
 //   - "Tell us what happened": a report with up to 4 photos; Send saves it
-//     and opens the AI chat about it (/field/ai?report=<id>),
-//   - on the right, "Your fields": the zone map and the list of fields
-//     (click one to open it on the Fields map).
+//     and opens the AI chat about it (/field/ai?report=<id>). "Shelling" is
+//     offered only where a known war covers the farm (analysis.conflict),
+//   - on the right, "Your fields": a small satellite map and the list of
+//     fields (click one to open it on the Fields map).
 //
 // Everything comes from the farm and its analyses (useFieldData). The rules
 // (what counts as damaged, ready, stressed...) are in
@@ -63,7 +64,7 @@ const FieldMap = lazy(() => import("../../components/field/FieldMap.jsx"));
 
 const MAX_PHOTOS = 4;
 const ITEMS_SHOWN = 5;
-// The small zone map: the farm fills the frame.
+// The small satellite map: the farm fills the frame.
 const MAP_FIT_PADDING = [14, 14];
 
 export default function OverviewPage() {
@@ -154,7 +155,7 @@ function Overview() {
       <div className="fo-grid">
         <div className="fo-main">
           <NeedsDoing items={items} onAnalyze={actions.analyze} />
-          <TellUs farm={farm} onSent={(report) => navigate(`/field/ai?report=${encodeURIComponent(report.id)}`)} />
+          <TellUs farm={farm} inWar={Object.values(analyses || {}).some((item) => item?.conflict)} onSent={(report) => navigate(`/field/ai?report=${encodeURIComponent(report.id)}`)} />
         </div>
 
         <section className="card fo-fields" aria-labelledby="fo-fields-title">
@@ -171,12 +172,11 @@ function Overview() {
                 analyses={analyses}
                 selectedId={hoveredId}
                 onSelect={(id) => id && navigate(`/field/fields?field=${encodeURIComponent(id)}`)}
-                view="zones"
                 height="100%"
                 fitPadding={MAP_FIT_PADDING}
                 interactive={false}
                 showLabels={false}
-                ariaLabel="Zone map of your fields"
+                ariaLabel="Satellite map of your fields"
               />
             </Suspense>
           </div>
@@ -359,7 +359,10 @@ function TodoItem({ item, onRun, retry }) {
 
 // ---------- Tell us what happened ----------
 
-function TellUs({ farm, onSent }) {
+// Shelling is a choice only where a known war covers the farm.
+const kindsFor = (inWar) => (inWar ? REPORT_KINDS : REPORT_KINDS.filter((item) => item.id !== "shelling"));
+
+function TellUs({ farm, inWar, onSent }) {
   const { actions } = useFieldData();
   const [fieldId, setFieldId] = useState("");
   const [kind, setKind] = useState(null);
@@ -429,7 +432,7 @@ function TellUs({ farm, onSent }) {
         </div>
 
         <div className="fo-kinds" role="group" aria-label="What happened">
-          {REPORT_KINDS.map((item) => (
+          {kindsFor(inWar).map((item) => (
             <button
               key={item.id}
               type="button"

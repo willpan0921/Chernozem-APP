@@ -109,7 +109,10 @@ export function needsDoing({ farm, analyses = {}, weather = null, job = null }) 
     });
   }
 
-  // War damage: one item for all damaged fields, with the recovery cost.
+  // Damage: one item for all damaged fields, with the recovery cost. The
+  // advice about explosives is given only where a known war covers the
+  // farm (analysis.conflict, src/config/conflicts.js); elsewhere damage is
+  // unusual fire or ground disturbance from any cause.
   const damaged = on("recovery");
   if (damaged.length) {
     let damagedHa = 0;
@@ -134,7 +137,7 @@ export function needsDoing({ farm, analyses = {}, weather = null, job = null }) 
         { id: "fast", label: "Quick fix", value: usdRange(cost.fast.total) },
         { id: "full", label: "Full restore", value: usdRange(cost.full.total) },
       ],
-      line: "Have it checked for explosives first",
+      line: damaged.some((field) => analyses[field.id]?.conflict) ? "Have it checked for explosives first" : "Check it on the ground first",
       action: { label: "Plan recovery", to: aiLink(damaged[0]) },
     });
   }

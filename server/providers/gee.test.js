@@ -19,6 +19,10 @@ import path from "node:path";
 import {
   monthBounds,
   monthWindows,
+  daysBetween,
+  seasonGroups,
+  cellBoxes,
+  pickPass,
   shiftDays,
   daysBefore,
   lastDay,
@@ -51,12 +55,17 @@ import {
   coarserScale,
   populationPlan,
   isTooMuchWorkError,
+  isTransientError,
   isUnknownArgumentError,
   fromSentinel,
   cleanCounts,
   DATASETS,
+  NO_WAR_WARNING,
 } from "./gee.js";
 import { createFakeEe } from "./fake-ee.js";
+import { buildRun } from "../runs.js";
+import { scorePlaces } from "../../src/lib/atlas/scoring.js";
+import { HEAVY_DAMAGE } from "../../src/lib/atlas/method.js";
 import { parseCsvRecords, parseCsv, parseAcledDate, toEvent, battlePoints, acledWindow, acledBattlesFor, acledStatus } from "./acled.js";
 
 // ---------- Date windows ----------
@@ -66,35 +75,138 @@ test("monthBounds gives the month with an exclusive end", () => {
   assert.deepEqual(monthBounds("2026-12"), { start: "2026-12-01", end: "2027-01-01" });
 });
 
-test("growing-season months compare with the same months of 2019-2021", () => {
-  const w = monthWindows("2026-09");
-  assert.deepEqual(w.season, { start: "2026-04-01", end: "2026-10-01", from: "2026-04", to: "2026-09" });
-  assert.deepEqual(w.baseline, { start: "2021-04-01", end: "2021-10-01" });
-  assert.deepEqual(monthWindows("2026-04").baseline, { start: "2021-04-01", end: "2021-05-01" });
-  // The CHI "before" picture: the same months of 2019, 2020 and 2021.
-  assert.deepEqual(w.baselines, [
+test("each month compares the last COMPLETE growing season with the same season of 2019-2021", () => {
+  // June and September 2026 both use the 2025 season (2026's is not over).
+  const jun = monthWindows("2026-06", "2026-10-18");
+  const sep = monthWindows("2026-09", "2026-10-18");
+  assert.deepEqual(sep.season, { start: "2025-04-01", end: "2025-10-01", from: "2025-04", to: "2025-09", label: "April to September", peakMonth: null });
+  assert.deepEqual([jun.season.start, jun.season.end], [sep.season.start, sep.season.end]);
+  assert.deepEqual(jun.baselines, sep.baselines);
+  assert.deepEqual(sep.baselines, [
     { start: "2019-04-01", end: "2019-10-01" },
     { start: "2020-04-01", end: "2020-10-01" },
     { start: "2021-04-01", end: "2021-10-01" },
   ]);
-  assert.deepEqual(monthWindows("2026-02").baselines.map((b) => b.end), ["2019-11-01", "2020-11-01", "2021-11-01"]);
-  assert.deepEqual(monthWindows("2026-09", "2026-09-15").baselines.map((b) => b.end), ["2019-09-15", "2020-09-15", "2021-09-15"], "cut short like the season");
+  assert.deepEqual(sep.baseline, { start: "2021-04-01", end: "2021-10-01" });
+  // October is the first month to use the 2026 season.
+  const oct = monthWindows("2026-10", "2026-10-25");
+  assert.deepEqual([oct.season.start, oct.season.end], ["2026-04-01", "2026-10-01"]);
+  // The current month never uses a season that is not over by today.
+  assert.equal(monthWindows("2026-09", "2026-09-15").season.start, "2025-04-01");
+  // Radar and fire alerts: the month against the same month of 2019-2021,
+  // cut short like the month.
+  assert.deepEqual(monthWindows("2026-09", "2026-09-15").monthBaselines.map((b) => b.end), ["2019-09-15", "2020-09-15", "2021-09-15"]);
 });
 
-test("winter months use the last full April-October season", () => {
-  const feb = monthWindows("2026-02");
-  assert.deepEqual(feb.season, { start: "2025-04-01", end: "2025-11-01", from: "2025-04", to: "2025-10" });
-  assert.deepEqual(feb.baseline, { start: "2021-04-01", end: "2021-11-01" });
-  const dec = monthWindows("2025-12");
+test("months outside the northern season use the last whole April-September season", () => {
+  const feb = monthWindows("2026-02", "2026-10-18");
+  assert.deepEqual([feb.season.start, feb.season.end, feb.season.from, feb.season.to], ["2025-04-01", "2025-10-01", "2025-04", "2025-09"]);
+  assert.deepEqual(feb.baseline, { start: "2021-04-01", end: "2021-10-01" });
+  const dec = monthWindows("2025-12", "2026-10-18", { lat: 49 });
   assert.equal(dec.season.start, "2025-04-01");
-  assert.equal(dec.season.end, "2025-11-01");
+  assert.equal(dec.season.end, "2025-10-01");
+});
+
+test("southern hemisphere: the October-March season crosses the new year", () => {
+  // The Pampas, January 2026: the 2025-26 season is not over, so the last
+  // complete one (October 2024 to March 2025) is compared.
+  const jan = monthWindows("2026-01", "2026-10-18", { lat: -34.9 });
+  assert.deepEqual([jan.season.start, jan.season.end], ["2024-10-01", "2025-04-01"]);
+  // Its normal years END in 2019, 2020 and 2021 (never in 2022).
+  assert.deepEqual(jan.baselines, [
+    { start: "2018-10-01", end: "2019-04-01" },
+    { start: "2019-10-01", end: "2020-04-01" },
+    { start: "2020-10-01", end: "2021-04-01" },
+  ]);
+  // August is winter there: the last whole season, October 2025 to March 2026.
+  const aug = monthWindows("2026-08", "2026-10-18", { lat: -34.9 });
+  assert.deepEqual([aug.season.start, aug.season.end, aug.season.from, aug.season.to], ["2025-10-01", "2026-04-01", "2025-10", "2026-03"]);
+  assert.deepEqual(aug.baseline, { start: "2020-10-01", end: "2021-04-01" });
+});
+
+test("a place's own peak month sets its season (Australia's winter wheat)", () => {
+  const w = monthWindows("2026-12", "2026-12-20", { lat: -31.5, peakMonth: 8 });
+  assert.deepEqual([w.season.start, w.season.end, w.season.label], ["2026-05-01", "2026-11-01", "May to October"]);
+  assert.deepEqual(w.baselines.map((b) => b.start), ["2019-05-01", "2020-05-01", "2021-05-01"]);
+});
+
+test("tropics: the season is the 12 whole months before the month", () => {
+  const w = monthWindows("2026-08", "2026-10-18", { lat: -0.3 });
+  assert.deepEqual([w.season.start, w.season.end], ["2025-08-01", "2026-08-01"]);
+  assert.deepEqual(w.baselines.map((b) => b.end), ["2019-08-01", "2020-08-01", "2021-08-01"]);
+  for (let i = 1; i < 3; i += 1) assert.ok(w.baselines[i].start >= w.baselines[i - 1].end, "no overlap");
+});
+
+test("cells are grouped by growing season, at most three groups", () => {
+  const cells = Array.from({ length: 20 }, (_, i) => ({ id: `c${i}`, lat: 48 + i * 0.1, lon: 30 }));
+  const peaks = new Map(cells.map((cell, i) => [cell.id, i < 12 ? 6 : i < 17 ? 7 : i < 19 ? 3 : null]));
+  const groups = seasonGroups(cells, peaks);
+  assert.deepEqual(groups.map((g) => [g.peakMonth, g.cells.length]), [[6, 12], [7, 6], [3, 2]]);
+  // A cell without a peak takes its band's season: July in the north.
+  assert.ok(groups[1].cells.some((cell) => cell.id === "c19"));
+  // Small groups join the nearest kept season.
+  const few = seasonGroups(cells, new Map(cells.map((cell, i) => [cell.id, i === 0 ? 1 : 6])), { minShare: 0.1 });
+  assert.deepEqual(few.map((g) => [g.peakMonth, g.cells.length]), [[6, 20]]);
+  // The tropics without a clear season: all year.
+  const tropics = seasonGroups([{ id: "t", lat: -0.3, lon: 36 }], new Map());
+  assert.deepEqual(tropics.map((g) => [g.peakMonth, g.seasonLat]), [[null, 0]]);
+});
+
+test("the Earth Engine region comes from the cells, split at the 180 degree line", () => {
+  // Russia-like: cells on both sides of 180°, and Kaliningrad apart.
+  const cells = [
+    { lat: 54.7, lon: 20.5 },
+    { lat: 55.7, lon: 37.5 },
+    { lat: 55.7, lon: 38.5 },
+    { lat: 64.0, lon: 179.5 },
+    { lat: 65.0, lon: -179.5 },
+    { lat: 66.0, lon: -172.5 },
+  ];
+  const boxes = cellBoxes(cells, 1);
+  assert.equal(boxes.length, 5);
+  for (const [west, , east] of boxes) assert.ok(east - west < 180, `${west}..${east} is not a band around the globe`);
+  assert.deepEqual(boxes[0], [-180, 64.5, -179, 65.5]);
+  assert.deepEqual(cellBoxes([{ lat: 50, lon: 30 }, { lat: 50.5, lon: 30.5 }], 0.5), [[29.75, 49.75, 30.75, 50.75]]);
+  // Many islands: at most MAX_BOXES boxes.
+  const islands = Array.from({ length: 30 }, (_, i) => ({ lat: 0, lon: 100 + i * 3 }));
+  assert.equal(cellBoxes(islands, 0.5).length, 8);
+});
+
+test("radar compares one orbit direction: the one with the most passes in both windows", () => {
+  assert.equal(pickPass({ ASCENDING: 10, DESCENDING: 2 }, { ASCENDING: 30, DESCENDING: 40 }), "ASCENDING");
+  assert.equal(pickPass({ ASCENDING: 0, DESCENDING: 5 }, { ASCENDING: 30, DESCENDING: 1 }), "DESCENDING");
+  assert.equal(pickPass({ ASCENDING: 5, DESCENDING: 0 }, { ASCENDING: 0, DESCENDING: 9 }), null);
+});
+
+test("damage window: from the war's start inside a known war, else the last two years", () => {
+  const ukraine = { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" };
+  const war = monthWindows("2026-01", "2026-10-18", { lat: 49, conflict: ukraine });
+  assert.deepEqual(war.damage, { start: "2022-02-24", end: "2026-02-01" });
+  assert.deepEqual(war.conflict, ukraine);
+  // Radar alerts: new change in a war (the 3 months before), the same month
+  // of 2019-2021 at peace.
+  assert.deepEqual(war.radarBefore, [{ start: "2025-10-01", end: "2026-01-01" }]);
+  const peace = monthWindows("2026-01", "2026-10-18", { lat: 42 });
+  assert.deepEqual(peace.damage, { start: "2024-01-31", end: "2026-02-01" });
+  assert.equal(peace.conflict, null);
+  assert.deepEqual(peace.radarBefore.map((w) => w.start), ["2019-01-01", "2020-01-01", "2021-01-01"]);
+  // Fires count above the place's normal 2019-2021 rate for that long.
+  assert.deepEqual(peace.fireNormal, { start: "2019-01-01", end: "2022-01-01" });
+  assert.ok(Math.abs(peace.fireNormalShare - 732 / 1096) < 1e-9, String(peace.fireNormalShare));
+  assert.ok(Math.abs(war.fireNormalShare - 1438 / 1096) < 1e-9, String(war.fireNormalShare));
+  // Before the war began there is nothing to count.
+  assert.equal(monthWindows("2021-06", "2026-10-18", { conflict: ukraine }).damage, null);
+  assert.deepEqual(monthWindows("2022-02", "2026-10-18", { conflict: ukraine }).damage, { start: "2022-02-24", end: "2022-03-01" });
 });
 
 test("radar, fire and night-light windows", () => {
   const w = monthWindows("2026-01");
   assert.deepEqual(w.month, { start: "2026-01-01", end: "2026-02-01" });
-  assert.deepEqual(w.s1Prior, { start: "2025-10-01", end: "2026-01-01" });
-  assert.deepEqual(w.firmsWar, { start: "2022-02-24", end: "2026-02-01" });
+  assert.deepEqual(w.monthBaselines, [
+    { start: "2019-01-01", end: "2019-02-01" },
+    { start: "2020-01-01", end: "2020-02-01" },
+    { start: "2021-01-01", end: "2021-02-01" },
+  ]);
   // Distance to fighting: the last 12 months against the same 12 months of 2019-2021.
   assert.deepEqual(w.lastYear, { start: "2025-02-01", end: "2026-02-01" });
   assert.deepEqual(w.fireBaselines, [
@@ -103,8 +215,6 @@ test("radar, fire and night-light windows", () => {
     { start: "2020-02-01", end: "2021-02-01" },
   ]);
   assert.deepEqual(w.viirsSearch, { start: "2025-08-01", end: "2026-02-01" });
-  assert.equal(monthWindows("2021-06").firmsWar, null);
-  assert.deepEqual(monthWindows("2022-02").firmsWar, { start: "2022-02-24", end: "2022-03-01" });
 });
 
 test("day arithmetic", () => {
@@ -179,7 +289,7 @@ test("toReading maps Earth Engine means and sums to the raw reading", () => {
   const cell = { id: "r1c2", lat: 49.74, lon: 37.54 };
   const reading = toReading(
     cell,
-    { id: "r1c2", chernozemCrop: 0.81234, chernozemAll: 0.5, cropland: 0.7, chiDrop: 0.123456, heavy: 0.3, firesWar: 0.12, conflictM: 15500, lights: 2.5 },
+    { id: "r1c2", chernozemCrop: 0.81234, chernozemAll: 0.5, cropland: 0.7, chiDrop: 0.123456, radarDb: 1.2345, heavy: 0.3, firesWar: 0.12, conflictM: 15500, lights: 2.5 },
     { id: "r1c2", people: 1234.6 },
     { cellSizeDeg: 0.01, names: { admin1: "Kharkivs'ka", admin2: "Chuhuivs'kyi" } },
   );
@@ -189,6 +299,7 @@ test("toReading maps Earth Engine means and sums to the raw reading", () => {
     croplandShare: 0.7,
     firesPer100Km2: 12,
     chiDrop: 0.1235,
+    radarDb: 1.23,
     conflictKm: 15.5,
     popPerKm2: Math.round((1234.6 / ((0.01 * 111.32) ** 2 * Math.cos((49.74 * Math.PI) / 180))) * 100) / 100,
     lights: 2.5,
@@ -259,6 +370,27 @@ test("pickAlerts groups touching cells, alternates kinds, keeps 6", () => {
   assert.equal(alerts[1].unit, "detections");
   assert.equal(alerts[1].magnitude, 10);
   assert.ok(alerts.every((a) => a.id && Array.isArray(a.cellIds)));
+});
+
+test("pickAlerts: a change that is everywhere in a large area is not an alert; a cell well above it is", () => {
+  // 10 x 10 cells that all changed about 30% (a late harvest across the
+  // region), and one that changed 90%.
+  const cells = [];
+  for (let r = 0; r < 10; r += 1) for (let c = 0; c < 10; c += 1) cells.push(cand(`r${r}c${c}`, 50 - r * 0.1, 30 + c * 0.1, { radarShare: 0.28 + ((r + c) % 3) * 0.02, radarKm2: 20 }));
+  cells[55] = { ...cells[55], radarShare: 0.9, radarKm2: 60 };
+  const alerts = pickAlerts(cells, { cellSizeDeg: 0.1, month: "2026-09" });
+  assert.equal(alerts.length, 1);
+  assert.deepEqual(alerts[0].cellIds, ["r5c5"]);
+  assert.equal(alerts[0].magnitude, 60);
+});
+
+test("pickAlerts: one alert covers at most a 5 x 5 block around its strongest cell", () => {
+  // A line of 12 touching cells that all changed a lot (a front line).
+  const line = Array.from({ length: 12 }, (_, i) => cand(`c${i}`, 48, 35 + i * 0.1, { radarShare: i === 5 ? 0.9 : 0.6, radarKm2: i === 5 ? 60 : 40 }));
+  const alerts = pickAlerts(line, { cellSizeDeg: 0.1, month: "2026-09" });
+  assert.deepEqual(alerts[0].cellIds.sort(), ["c3", "c4", "c5", "c6", "c7"]);
+  assert.ok(alerts.every((a) => a.cellIds.length <= 25));
+  assert.equal(alerts.reduce((n, a) => n + a.cellIds.length, 0), 12, "every changed cell is in one alert");
 });
 
 test("pickAlerts with nothing notable gives no alerts", () => {
@@ -448,11 +580,15 @@ test("date windows never reach past today", () => {
   assert.deepEqual(clampWindow({ start: "2026-10-01", end: "2026-11-01" }, "2026-10-18"), { start: "2026-10-01", end: "2026-10-18" });
   assert.deepEqual(clampWindow({ start: "2026-11-01", end: "2026-12-01" }, "2026-10-18"), { start: "2026-10-18", end: "2026-10-18" });
   const w = monthWindows("2026-10", "2026-10-18");
-  for (const window of [w.month, w.season, w.s1Prior, w.firmsWar, w.lastYear, w.viirsSearch, ...w.baselines, ...w.fireBaselines]) assert.ok(window.end <= "2026-10-18", JSON.stringify(window));
+  for (const window of [w.month, w.season, w.damage, w.lastYear, w.viirsSearch, ...w.monthBaselines, ...w.baselines, ...w.fireBaselines]) assert.ok(window.end <= "2026-10-18", JSON.stringify(window));
   assert.deepEqual(w.month, { start: "2026-10-01", end: "2026-10-18" });
-  assert.equal(w.season.end, "2026-10-18");
-  // The baseline stops on the same day of 2021, so like is compared with like.
-  assert.deepEqual(w.baseline, { start: "2021-04-01", end: "2021-10-18" });
+  // October is after the northern season: the whole April-September season.
+  assert.equal(w.season.end, "2026-10-01");
+  // The southern season is running, so the last complete one is used.
+  const south = monthWindows("2026-10", "2026-10-18", { lat: -34.9 });
+  assert.deepEqual([south.season.start, south.season.end], ["2025-10-01", "2026-04-01"]);
+  assert.deepEqual(south.baseline, { start: "2020-10-01", end: "2021-04-01" });
+  assert.deepEqual(w.monthBaselines.at(-1), { start: "2021-10-01", end: "2021-10-18" });
   assert.deepEqual(w.lastYear, { start: "2025-10-18", end: "2026-10-18" });
   assert.deepEqual(w.fireBaselines.at(-1), { start: "2020-10-18", end: "2021-10-18" });
   // A finished month is not changed.
@@ -481,6 +617,7 @@ test("population: WorldPop's own pixels for small cells, density x area for big 
 
 test("which errors are worth one coarser retry", () => {
   assert.equal(isTooMuchWorkError(new Error("User memory limit exceeded.")), true);
+  assert.equal(isTooMuchWorkError(new Error("Earth Engine memory capacity exceeded.")), true);
   assert.equal(isTooMuchWorkError(explainGeeError(new Error("Computation timed out."))), true);
   assert.equal(isTooMuchWorkError(new GeeError("timeout", "took too long")), true);
   assert.equal(isTooMuchWorkError(new Error("Caller does not have required permission")), false);
@@ -493,10 +630,10 @@ test("-1 means nothing found", () => {
   assert.equal(fromSentinel(null), null);
   assert.equal(fromSentinel(1700000000000), 1700000000000);
   assert.equal(fromSentinel("12"), 12);
-  const counts = cleanCounts({ s2Current: 4, viirsLatest: -1, firmsWar: "3" });
+  const counts = cleanCounts({ s1Month_ASCENDING: 4, viirsLatest: -1, firmsDamage: "3" });
   assert.equal(counts.viirsLatest, null);
-  assert.equal(counts.s2Current, 4);
-  assert.equal(counts.firmsWar, 3);
+  assert.deepEqual(counts.s1Month, { ASCENDING: 4, DESCENDING: 0 });
+  assert.equal(counts.firmsDamage, 3);
   assert.equal(counts.worldPop, 0);
 });
 
@@ -561,7 +698,13 @@ test("analyze() on a 9-cell area gives every reading for every cell", async () =
   const progress = [];
   const result = await provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.01, onProgress: (share, message) => progress.push([share, message]) });
 
-  assert.deepEqual(Object.keys(result).sort(), ["alerts", "baseline", "readings", "warnings"]);
+  assert.deepEqual(Object.keys(result).sort(), ["accessSource", "alerts", "baseline", "conflict", "imagery", "readings", "warnings"]);
+  // August 2026 compares the last complete season, April to September 2025
+  // (the fake's NDVI peaks in July: the north's season).
+  assert.deepEqual(result.imagery, { from: "2025-04", to: "2025-09", label: "April to September 2025" });
+  assert.equal(result.accessSource, "fires");
+  // Kharkiv oblast: inside the war in Ukraine, found from the area's box.
+  assert.deepEqual(result.conflict, { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" });
   assert.equal(result.readings.length, 9);
   const ids = new Set(cells.map((c) => c.id));
   assert.deepEqual(new Set(result.readings.map((r) => r.id)), ids);
@@ -596,12 +739,18 @@ test("analyze() on a 9-cell area gives every reading for every cell", async () =
   assert.ok(ee.stats.peakActive <= 2);
   // The health index "before" picture is the same months of 2019, 2020 AND
   // 2021 (2021 alone made 8.8M ha of Ukraine "heavily damaged", real run).
-  const s2Windows = filterDates(ee).map(([start]) => start);
-  for (const year of [2019, 2020, 2021]) assert.ok(s2Windows.includes(`${year}-04-01`), `baseline ${year}`);
+  for (const year of [2019, 2020, 2021]) assert.ok(hasWindow(ee, `${year}-04-01`, `${year}-10-01`), `baseline ${year}`);
+  assert.ok(hasWindow(ee, "2025-04-01", "2025-10-01"), "the last complete season");
+  // Radar is compared within one orbit direction; inside the war, radar
+  // alerts are new change (the 3 months before), fire alerts are above the
+  // same month of 2019-2021.
+  assert.ok(ee.calls.some((c) => c.name === "Filter.eq" && c.args[0] === "orbitProperties_pass"));
+  for (const year of [2019, 2020, 2021]) assert.ok(hasWindow(ee, `${year}-08-01`, `${year}-09-01`), `same month ${year}`);
+  assert.ok(hasWindow(ee, "2026-05-01", "2026-08-01"), "3-months-before radar window in a war");
   assert.deepEqual(result.baseline, { from: 2019, to: 2021, label: "2019 to 2021 (same months)" });
   // Distance to fighting without ACLED: only fires far above the pre-war
   // normal for the place count (plain fires put Lviv 7 km from "fighting").
-  const focal = ee.calls.filter((c) => c.name === "Image.focal_mean").map((c) => c.args.slice(0, 3));
+  const focal = ee.calls.filter((c) => c.name === "Image.focal_mean" && c.args[0] === 10000).map((c) => c.args.slice(0, 3));
   assert.deepEqual(focal, [[10000, "circle", "meters"], [10000, "circle", "meters"], [10000, "circle", "meters"]]);
   const fireStarts = filterDates(ee).map(([start]) => start);
   for (const year of [2018, 2019, 2020]) assert.ok(fireStarts.includes(`${year}-09-01`), `pre-war fires ${year}`);
@@ -664,6 +813,34 @@ test("a chunk that runs out of memory is tried once more with coarser pixels", a
   assert.ok(result.warnings.some((w) => /coarser pixels/.test(w)));
 });
 
+test("a chunk whose connection drops is tried once more as it is", async () => {
+  const dropped = "Server returned HTTP code: -1 for POST https://earthengine.googleapis.com/v1/projects/test-proj/value:compute";
+  let failed = 0;
+  const ee = createFakeEe({
+    fail: (request) => {
+      const isChunk = request.find("reduceRegions").length > 0 && request.has("Dictionary");
+      if (isChunk && failed === 0) {
+        failed += 1;
+        return dropped;
+      }
+      return null;
+    },
+  });
+  const provider = createGeeProvider({ ee, getConfig: () => TEST_CFG, now: () => new Date(`${TODAY}T12:00:00Z`), retryDelayMs: 0 });
+  const { area, cells } = gridArea(3, 3, 0.05);
+  const result = await provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.05 });
+  assert.equal(failed, 1);
+  assert.equal(result.readings.length, 9);
+  assert.ok(!result.warnings.some((w) => /coarser pixels/.test(w)), "same pixels on the retry");
+  // Which failures count as a dropped request.
+  assert.equal(isTransientError(explainGeeError(new Error(dropped))), true);
+  for (const text of ["read ECONNRESET", "socket hang up", "connect ETIMEDOUT 1.2.3.4:443", "Server returned HTTP code: 503", "Server returned HTTP code: 429"]) assert.equal(isTransientError(new Error(text)), true, text);
+  for (const text of ["User memory limit exceeded.", "Permission denied", "Server returned HTTP code: 400"]) assert.equal(isTransientError(new Error(text)), false, text);
+  // A connection that keeps dropping still stops the analysis.
+  const down = createGeeProvider({ ee: createFakeEe({ fail: (request) => (request.has("Dictionary") && request.find("reduceRegions").length ? dropped : null) }), getConfig: () => TEST_CFG, now: () => new Date(`${TODAY}T12:00:00Z`), retryDelayMs: 0 });
+  await assert.rejects(down.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.05 }), /HTTP code: -1/);
+});
+
 test("GAUL's \"Administrative unit not available\" is dropped from place names", async () => {
   const { provider } = fakeProvider({ gaul2: [{ ADM0_NAME: "Ukraine", ADM1_NAME: "Kharkivs'ka", ADM2_NAME: "Administrative unit not available", ADM2_CODE: 31899 }] });
   const { area, cells } = gridArea(2, 2, 0.01);
@@ -707,10 +884,135 @@ test("the current month never asks for future images", async () => {
   for (const [start, end] of dates) {
     assert.ok(start <= TODAY && end <= TODAY, `${start}..${end}`);
   }
-  // FIRMS since the invasion stops at today too.
+  // FIRMS since the invasion stops at today too, and the normal years'
+  // fires (2019-2021) are subtracted.
   assert.ok(dates.some(([start, end]) => start === "2022-02-24" && end === TODAY));
+  assert.ok(dates.some(([start, end]) => start === "2019-01-01" && end === "2022-01-01"));
   assert.ok(result.warnings.some((w) => /not over yet/.test(w)));
   for (const alert of result.alerts) assert.ok(alert.date < TODAY);
+});
+
+// ---------- Anywhere on Earth ----------
+
+const hasWindow = (ee, start, end) => filterDates(ee).some(([a, b]) => a === start && b === end);
+
+test("two months of one season give the same heavy damage, and no made-up new damage", async () => {
+  const { area, cells } = gridArea(3, 3, 0.01);
+  const grid = cells.map((cell) => ({ ...cell, areaHa: 100 }));
+  const runFor = async (month) => {
+    const { ee, provider } = fakeProvider();
+    const result = await provider.analyze({ area, cells, month, cellSizeDeg: 0.01 });
+    const seasonWindows = filterDates(ee).filter(([start, end]) => daysBetween(start, end) > 120).map((w) => w.join(".."));
+    return { run: buildRun({ area, month, provider: "gee", ...result, cellSizeDeg: 0.01, cells: grid }), seasonWindows: new Set(seasonWindows) };
+  };
+  const jun = await runFor("2026-06");
+  const sep = await runFor("2026-09");
+  // Both compare April to September 2025 with the same months of 2019-2021.
+  assert.deepEqual(jun.run.imagery, sep.run.imagery);
+  for (const window of ["2025-04-01..2025-10-01", "2019-04-01..2019-10-01", "2021-04-01..2021-10-01"]) {
+    assert.ok(jun.seasonWindows.has(window) && sep.seasonWindows.has(window), window);
+  }
+  assert.ok(![...jun.seasonWindows].some((w) => w.startsWith("2026-04-01")), "no season-to-date window");
+  assert.equal(jun.run.totals.heavyDamageHa, sep.run.totals.heavyDamageHa);
+  assert.ok(jun.run.totals.heavyDamageHa > 0);
+  // Heavy damage is the paper's rule (radar, fire), never the health index.
+  assert.ok(sep.run.cells.every((cell) => Number.isFinite(cell.radar)));
+  assert.deepEqual(sep.run.method.components.damage, ["firms", "radar"]);
+  // Inside the war, strong radar change counts on its own (3 dB).
+  assert.ok(sep.run.conflict?.id === "ukraine-2022");
+});
+
+test("heavy damage: strong radar change counts on its own only inside a known war; at peace it needs an unusual fire too", async () => {
+  const strong = (ee) => ee.calls.filter((c) => c.name === "Image.gte" && c.args[0] === HEAVY_DAMAGE.radarDb).length;
+  const withFire = (ee) => ee.calls.filter((c) => c.name === "Image.gte" && c.args[0] === HEAVY_DAMAGE.radarWithFireDb).length;
+  const war = fakeProvider();
+  const ukraine = gridArea(3, 3, 0.01);
+  await war.provider.analyze({ area: ukraine.area, cells: ukraine.cells, month: "2026-09", cellSizeDeg: 0.01 });
+  assert.ok(strong(war.ee) > 0 && withFire(war.ee) > 0);
+  // Iowa: a new crop or a ploughed meadow changes the radar by 3 dB too, and
+  // harvest fires sit next to 2 dB rotation changes: only strong radar
+  // change AND an unusual fire within 1 km count.
+  const peace = fakeProvider();
+  const iowa = gridArea(3, 3, 0.01, 42.05, -93.65);
+  await peace.provider.analyze({ area: iowa.area, cells: iowa.cells, month: "2026-09", cellSizeDeg: 0.01 });
+  assert.ok(strong(peace.ee) > 0);
+  assert.equal(withFire(peace.ee), 0);
+
+});
+
+test("a peaceful area (Iowa): no war, fully safe everywhere, fires above the normal rate, nothing set aside", async () => {
+  const { ee, provider } = fakeProvider();
+  const { area, cells } = gridArea(3, 3, 0.01, 42.05, -93.65);
+  const result = await provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.01 });
+  assert.equal(result.conflict, null);
+  assert.ok(result.warnings.includes(NO_WAR_WARNING), result.warnings.join(" | "));
+  assert.ok(!result.warnings.some((w) => /unusual fires/.test(w)));
+  // No fighting is made up from farm fires: every cell is 300 km away.
+  assert.ok(result.readings.every((r) => r.conflictKm === 300));
+  assert.equal(ee.calls.filter((c) => c.name === "Image.focal_mean" && c.args[0] === 10000).length, 0, "no fire-anomaly front");
+  assert.equal(result.accessSource, "none");
+  assert.equal(ee.calls.filter((c) => c.name === "Image.stratifiedSample").length, 0);
+  // Damage: the last two years, minus the place's own 2019-2021 rate.
+  assert.ok(hasWindow(ee, "2024-08-31", "2026-09-01"), JSON.stringify(filterDates(ee)));
+  assert.ok(hasWindow(ee, "2019-01-01", "2022-01-01"));
+  assert.ok(!filterDates(ee).some(([start]) => start === "2022-02-24"), "no war start outside a war");
+  // Excess fires are worked out for the whole cell (not clamped pixel by
+  // pixel, which turned rotating stubble burning into "excess"); the
+  // reading is never below 0.
+  assert.ok(!ee.calls.some((c) => c.name === "Image.max" && c.args[0] === 0), "no per-pixel clamp");
+  assert.ok(result.readings.every((r) => r.firesPer100Km2 >= 0));
+  // The last complete northern season, April to September 2025, against the
+  // same months of 2019-2021.
+  for (const year of [2019, 2020, 2021]) assert.ok(hasWindow(ee, `${year}-04-01`, `${year}-10-01`), `baseline ${year}`);
+
+  const grid = cells.map((cell) => ({ ...cell, areaHa: 100 }));
+  const run = buildRun({ area, month: "2026-08", provider: "gee", ...result, cellSizeDeg: 0.01, cells: grid });
+  assert.equal(run.conflict, null);
+  assert.ok(run.cells.every((cell) => cell.distance === 1));
+  assert.ok(run.checks.warnings.includes(NO_WAR_WARNING));
+  const { places } = scorePlaces(run.cells, {});
+  assert.equal(places.filter((p) => p.nearTerm.tier === "setAside").length, 0, "nothing set aside at peace");
+});
+
+test("a southern-hemisphere area (the Pampas): the season crosses the new year", async () => {
+  const { ee, provider } = fakeProvider();
+  const { area, cells } = gridArea(2, 2, 0.01, -34.88, -60.97);
+  const result = await provider.analyze({ area, cells, month: "2026-01", cellSizeDeg: 0.01 });
+  assert.equal(result.readings.length, 4);
+  assert.equal(result.conflict, null);
+  // The last complete season: October 2024 to March 2025 (the fake's NDVI
+  // peaks in January there); the normal years END in 2019, 2020 and 2021.
+  assert.ok(hasWindow(ee, "2024-10-01", "2025-04-01"), JSON.stringify(filterDates(ee)));
+  for (const year of [2019, 2020, 2021]) assert.ok(hasWindow(ee, `${year - 1}-10-01`, `${year}-04-01`), `baseline ${year}`);
+  assert.ok(!filterDates(ee).some(([start, end]) => end > "2022-01-01" && end <= "2022-12-31"), "no normal year reaches into 2022");
+  assert.ok(!filterDates(ee).some(([start]) => /-04-01$/.test(start)), "no northern April start");
+  assert.ok(result.warnings.includes(NO_WAR_WARNING));
+  const run = buildRun({ area, month: "2026-01", provider: "gee", ...result, cellSizeDeg: 0.01, cells });
+  assert.deepEqual(run.imagery, { from: "2024-10", to: "2025-03", label: "October 2024 to March 2025" });
+});
+
+test("a tropical area (Kenya): the season is the last 12 months", async () => {
+  const { ee, provider } = fakeProvider();
+  const { area, cells } = gridArea(2, 2, 0.01, -0.28, 36.03);
+  const result = await provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.01 });
+  assert.equal(result.conflict, null);
+  // No clear season in the fake's flat tropical NDVI: the 12 whole months
+  // before August, and the same 12 months ENDING in each normal year.
+  assert.ok(hasWindow(ee, "2025-08-01", "2026-08-01"), JSON.stringify(filterDates(ee)));
+  for (const year of [2019, 2020, 2021]) assert.ok(hasWindow(ee, `${year - 1}-08-01`, `${year}-08-01`), `baseline ${year}`);
+  assert.ok(!hasWindow(ee, "2025-08-01", "2026-09-01"), "never 13 months");
+  assert.ok(result.readings.every((r) => r.conflictKm === 300));
+});
+
+test("the war given by the job is used as it is (a known war elsewhere)", async () => {
+  const { ee, provider } = fakeProvider();
+  const { area, cells } = gridArea(2, 2, 0.01, 13.2, 30.2);
+  const sudan = { id: "sudan-2023", name: "War in Sudan", since: "2023-04-15" };
+  const result = await provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.01, conflict: sudan });
+  assert.deepEqual(result.conflict, sudan);
+  assert.ok(hasWindow(ee, "2023-04-15", "2026-09-01"));
+  assert.ok(!result.warnings.includes(NO_WAR_WARNING));
+  assert.ok(result.warnings.some((w) => /unusual fires of the last 12 months/.test(w)));
 });
 
 test("no Sentinel-2 or radar images: damage unknown, warnings say so", async () => {

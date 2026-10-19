@@ -285,7 +285,7 @@ function InlineName({ value, label, className = "", maxLength = 60, onSave, onEr
 // ---------- Farm: one field in the list ----------
 
 // What the list shows next to a field's name, matching the map: the
-// "Needs recovery" stripes and pill, or a "Watch" badge.
+// red "Needs recovery" tint and pill, or a "Watch" badge.
 function statusMark(analysis) {
   const id = analysis?.status?.id;
   if (STATUS_GROUPS.recovery.includes(id)) return { swatch: "is-recovery", badge: { tone: "red", label: "Recovery" } };
@@ -516,12 +516,11 @@ function FarmCard({ onChangeFarm }) {
   );
   const replaceLine = `Saving replaces your ${plural(fields.length, "field")}${keptNames ? `; ${keptNames} keep${keptNames === 1 ? "s its name" : " their names"}` : ""}.`;
 
-  // The map: the farm's zones, or the satellite map to draw on or to pick
-  // the fields found.
+  // The satellite map: the farm's fields, the field being drawn, or the
+  // fields found to pick from.
   let mapProps;
   if (mode === "draw") {
     mapProps = {
-      view: "satellite",
       fields,
       analyses,
       // No name pills while drawing, so they never catch a click meant for a corner.
@@ -535,7 +534,6 @@ function FarmCard({ onChangeFarm }) {
   } else if (mode === "find") {
     const body = found?.body;
     mapProps = {
-      view: "satellite",
       fields: candidates.length ? [] : fields,
       candidates,
       selectedCandidateIds: chosen,
@@ -549,7 +547,6 @@ function FarmCard({ onChangeFarm }) {
     };
   } else {
     mapProps = {
-      view: "zones",
       fields,
       analyses,
       selectedId,

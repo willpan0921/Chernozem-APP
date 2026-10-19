@@ -2,14 +2,15 @@
 // The Fields page (/field/fields): the farm map on the left and the
 // selected field on the right.
 //
-//   MAP    the shared Field map (src/components/field/FieldMap.jsx) in one
-//          of two views: "Zones" (a flat zone picture, no imagery; the
-//          default) or "Satellite" (real imagery with the fields tinted).
+//   MAP    the shared Field map (src/components/field/FieldMap.jsx): real
+//          satellite imagery with each field tinted by its condition.
 //          ONE layer only: Field condition (water, plant health, stress
 //          and harvest readiness together, from method.js). On top: the
-//          view switch, the date of the latest satellite pass, the legend
-//          and the zoom buttons.
-//   PANEL  the selected field: its name, status and crop · area, the four
+//          date of the latest satellite pass, the legend and the zoom
+//          buttons.
+//   PANEL  the selected field: its name, status and crop · area, a
+//          damage line when damage was found (called war damage only
+//          where a known war covers the farm: analysis.conflict), the four
 //          big tiles (Water, Plant health, Stress, Harvest readiness: one
 //          big value, at most one status word, at most one short line), a
 //          small "Plant health this season" chart against the normal, and
@@ -35,7 +36,7 @@ import { useSearchParams } from "react-router-dom";
 import { ChevronLeft, ChevronRight, MessageSquare, ShieldAlert } from "lucide-react";
 import { Badge, Button } from "../../components/ui/index.js";
 import { FarmGate, FieldProgress, useFieldData } from "../../state/FieldData.jsx";
-import FieldMap, { FieldMapViewSwitch, fieldsBounds } from "../../components/field/FieldMap.jsx";
+import FieldMap, { fieldsBounds } from "../../components/field/FieldMap.jsx";
 import ConditionLegend from "../../components/field/ConditionLegend.jsx";
 import MetricTile from "../../components/field/MetricTile.jsx";
 import { formatArea, formatDay, formatIndex, stageWord, stressWord } from "../../lib/field/format.js";
@@ -45,7 +46,7 @@ import "./FieldsPage.css";
 // The width at which the page stacks (keep in step with FieldsPage.css).
 const NARROW = "(max-width: 860px)";
 // Room kept round the fields when the map fits them: little at the sides,
-// more at the top and bottom for the view switch and the legend.
+// more at the top and bottom for the date chip and the legend.
 const FIT_PADDING = [18, 60];
 
 function useNarrow() {
@@ -163,7 +164,7 @@ function panelTiles(analysis, { units = "ha", weather = null } = {}) {
       line = rainNote || (harvest.window?.from ? `Ready about ${formatDay(harvest.window.from)}` : null);
       break;
     case "harvested":
-      line = harvest.lastDate ? `By ${formatDay(harvest.lastDate)}` : null;
+      line = harvest.harvestedOn ? `Cut about ${formatDay(harvest.harvestedOn)}` : harvest.lastDate ? `By ${formatDay(harvest.lastDate)}` : null;
       break;
     case "growing":
       line = isNum(harvest.peak) ? `Greenest so far ${formatIndex(harvest.peak)}` : null;
@@ -183,7 +184,6 @@ function panelTiles(analysis, { units = "ha", weather = null } = {}) {
 function FieldsView() {
   const { farm, analyses, provider, job, weather, actions } = useFieldData();
   const [params, setParams] = useSearchParams();
-  const [view, setView] = useState("zones");
   const narrow = useNarrow();
   const mapApi = useRef(null);
   const panelRef = useRef(null);
@@ -263,14 +263,12 @@ function FieldsView() {
           analyses={analyses}
           selectedId={selectedId}
           onSelect={selectOnMap}
-          view={view}
           fitKey={fitKey}
           fitPadding={FIT_PADDING}
           height="100%"
           ariaLabel={`Map of ${farm.name}`}
         >
           <div className="fp-map-top">
-            <FieldMapViewSwitch value={view} onChange={setView} />
             {latestPass && (
               <span className="fm-chip fp-pass" title={`Latest clear satellite pass: ${formatDay(latestPass)}${sample ? " (sample data)" : " (Sentinel-2)"}`}>
                 <span>
@@ -282,7 +280,7 @@ function FieldsView() {
             )}
           </div>
           <div className="fp-map-legend">
-            <ConditionLegend view={view} compact={narrow} />
+            <ConditionLegend compact={narrow} />
           </div>
         </FieldMap>
       </section>
@@ -307,6 +305,14 @@ function FieldsView() {
 }
 
 // ---------- The selected field ----------
+
+// "War damage on 12 ha" inside a known war (src/config/conflicts.js),
+// "Damage on 12 ha" anywhere else (unusual fire or ground disturbance
+// against the normal years, from any cause).
+function damageLine(damage, conflict, units) {
+  const what = conflict ? "War damage" : "Damage";
+  return Number.isFinite(damage?.damagedHa) && damage.damagedHa > 0 ? `${what} on ${formatArea(damage.damagedHa, units)}` : `${what} found`;
+}
 
 function FieldPanel({ field, analysis, units, weather, job, count, onStep, onAnalyze }) {
   const [starting, setStarting] = useState(false);
@@ -354,7 +360,7 @@ function FieldPanel({ field, analysis, units, weather, job, count, onStep, onAna
         {damage?.detected && (
           <p className="fp-damage">
             <ShieldAlert size={15} aria-hidden="true" />
-            {Number.isFinite(damage.damagedHa) && damage.damagedHa > 0 ? `War damage on ${formatArea(damage.damagedHa, units)}` : "War damage found"}
+            {damageLine(damage, analysis?.conflict, units)}
           </p>
         )}
       </header>

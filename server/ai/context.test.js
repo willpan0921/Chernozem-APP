@@ -10,7 +10,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { buildAtlasContext, fallbackGroupHotspots, coordLabel, placeLabel, ATLAS_TOOLS } from "./context.js";
+import { buildAtlasContext, fallbackGroupHotspots, coordLabel, placeLabel, ATLAS_TOOLS, conflictLine } from "./context.js";
 import { scorePlaces } from "../../src/lib/atlas/scoring.js";
 
 // A 6 x 6 grid with a strong corner (top left) and a weak rest.
@@ -76,6 +76,21 @@ function fakeStore(cells) {
     },
   };
 }
+
+test("the war line: a known war, no war, ACLED at peace, older runs", () => {
+  const war = conflictLine({ id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" });
+  assert.match(war, /^War: Full-scale invasion of Ukraine, since 2022-02-24\./);
+  assert.match(war, /distance to recorded fighting/);
+  const peace = conflictLine(null, "none");
+  assert.match(peace, /none in the app's list covers this area/);
+  assert.match(peace, /does NOT mean the land is safe/);
+  assert.match(peace, /Do not talk about a war, a front line or demining/);
+  assert.doesNotMatch(peace, /safe to reach|counts as safe/i);
+  const acled = conflictLine(null, "acled");
+  assert.match(acled, /battles in the ACLED file/);
+  assert.doesNotMatch(acled, /nothing is set aside/);
+  assert.equal(conflictLine(undefined), "");
+});
 
 test("labels", () => {
   assert.equal(coordLabel(49.6234, 37.7412), "49.62° N, 37.74° E");

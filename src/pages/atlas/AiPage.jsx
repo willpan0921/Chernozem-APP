@@ -30,12 +30,10 @@ import { Segmented } from "../../components/ui/index.js";
 import { AtlasGate, useAtlasData, useTimeframe } from "../../state/AtlasData.jsx";
 import { findFocus, placeLabel } from "../../lib/atlas/hotspots.js";
 import { weightItems } from "./overviewHelpers.js";
-import { atlasSuggestions, atlasSmallAreaSuggestions, SMALL_AREA_HA, composer } from "../../data/chats.js";
+import { atPeace, timeframeOptions } from "../../lib/atlas/overview.js";
+import { atlasStarterQuestions, SMALL_AREA_HA, composer } from "../../data/chats.js";
 
-const TIMEFRAMES = [
-  { value: "nearTerm", label: "Near term" },
-  { value: "postwar", label: "Postwar" },
-];
+// The Near term | Postwar switch ("Long term" where no war is listed): timeframeOptions(run).
 
 // $10,000,000 -> "$10M", $2,500,000 -> "$2.5M", $750,000 -> "$750k".
 function shortUsd(amount) {
@@ -101,7 +99,7 @@ function AtlasAi() {
       key: "ranking",
       icon: "list-ordered",
       label: "Ranking",
-      control: <Segmented options={TIMEFRAMES} value={timeframe} onChange={setTimeframe} ariaLabel="Ranking" light />,
+      control: <Segmented options={timeframeOptions(run)} value={timeframe} onChange={setTimeframe} ariaLabel="Ranking" light />,
     },
     { key: "source", icon: "database", label: "Source", value: run.provider === "gee" ? "Earth Engine" : "Sample data", to: "/atlas/settings" },
     { key: "weights", icon: "sliders-horizontal", label: "Weights", control: <WeightsChip settings={settings} timeframe={timeframe} />, to: "/atlas/map" },
@@ -109,14 +107,16 @@ function AtlasAi() {
   ];
 
   const values = { area: area.name, budget: shortUsd(workspace?.budgetUsd) };
+  // No war in the app's list: no talk of deminers or fighting.
+  const peace = atPeace(run);
   const text = {
     placeholder: fill(composer.atlas.placeholder, values),
-    disclaimer: composer.atlas.disclaimer,
+    disclaimer: peace ? composer.atlas.disclaimerPeace : composer.atlas.disclaimer,
     welcome: fill(composer.atlas.welcome, values),
   };
   // A farm-sized area gets farm-sized questions.
   const small = Number.isFinite(area.areaHa) && area.areaHa < SMALL_AREA_HA;
-  const suggestions = (small ? atlasSmallAreaSuggestions : atlasSuggestions).map((question) => fill(question, values));
+  const suggestions = atlasStarterQuestions({ small, peace }).map((question) => fill(question, values));
 
   return (
     <div className="aai-page">

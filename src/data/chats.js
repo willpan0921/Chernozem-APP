@@ -68,21 +68,39 @@ export const atlasSmallAreaSuggestions = [
   "What would restoring it cost?",
   "How far is it from the fighting?",
 ];
+// The same where no war in the app's list covers the area (the run's
+// conflict is null): no question about fighting.
+export const atlasSmallAreaPeaceSuggestions = [
+  "Which part of this area should we start with?",
+  "What changed since last month?",
+  "What would restoring it cost?",
+  "What caused the damage here?",
+];
+// The questions for an area: small or not, at war or at peace.
+//   small  the area is under SMALL_AREA_HA
+//   peace  true when no war in the app's list covers it
+export function atlasStarterQuestions({ small = false, peace = false } = {}) {
+  if (!small) return atlasSuggestions;
+  return peace ? atlasSmallAreaPeaceSuggestions : atlasSmallAreaSuggestions;
+}
 
 // The message box at the bottom of each AI page.
 //   placeholder - grey hint text in the empty box
-//   disclaimer  - the small note under the box
+//   disclaimer  - the small note under the box; disclaimerPeace where no
+//                 war is recorded (no mention of deminers)
 //   welcome     - the line in an empty new chat ("{area}" is the area name,
 //                 "{farm}" the farm name)
 export const composer = {
   field: {
     placeholder: "Ask about your farm",
     disclaimer: "AI can make mistakes. It never decides whether land is safe. Only official deminers can.",
+    disclaimerPeace: "AI can make mistakes. It never decides whether land is safe.",
     welcome: "Ask about {farm}",
   },
   atlas: {
     placeholder: "Ask about {area}",
     disclaimer: "AI can make mistakes. It never decides whether land is safe. Only certified deminers can.",
+    disclaimerPeace: "AI can make mistakes. It never decides whether land is safe.",
     welcome: "Ask about {area}",
   },
 };

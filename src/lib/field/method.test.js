@@ -23,6 +23,7 @@ import {
   stressLevel,
   versusNormal,
   waterScore,
+  READY_MAX_DAYS,
 } from "./method.js";
 
 // A season curve: green-up to a peak, then a dry-down.
@@ -109,6 +110,28 @@ test("a real harvest in a field's average: barley near Kupiansk, 2026 (Earth Eng
   assert.equal(stage.harvestedOn, "2026-08-23");
 });
 
+test("a field flat at the ready level for months is harvested, not ready (real Pampas soy, Earth Engine)", () => {
+  // Field 9 near -34.90, -60.95 (Buenos Aires province): peak 0.84 on
+  // 2026-01-02, down to 0.32 by May 10, then flat at 0.30-0.56 (stubble,
+  // weeds) to October. It read "Ready to harvest" 275 days after the peak.
+  const curve = "251002:54 251004:49 251007:43 251009:38 251011:34 251014:32 251029:30 251031:28 251101:27 251113:37 251118:46 251123:42 251126:36 251128:36 251203:42 251206:45 251210:50 251216:65 251218:64 251223:78 251226:83 251228:82 251230:80 251231:81 260102:84 260105:83 260112:78 260115:79 260117:79 260120:79 260122:77 260125:66 260127:75 260130:74 260201:73 260206:80 260211:78 260214:77 260221:66 260224:73 260226:67 260301:68 260308:59 260311:61 260313:56 260316:54 260318:58 260323:54 260326:59 260331:60 260405:60 260410:62 260412:59 260422:57 260425:57 260427:56 260430:45 260502:46 260510:32 260512:31 260515:31 260517:32 260520:30 260522:30 260530:31 260611:40 260614:43 260616:38 260619:42 260626:36 260629:34 260701:32 260708:30 260726:43 260729:40 260807:56 260810:51 260823:47 260828:47 260830:40 260902:40 260904:48 260907:46 260914:43 260916:41 260917:40 260919:42 260922:43 261004:42";
+  const points = curve.split(" ").map((item) => {
+    const [d, v] = item.split(":");
+    return { date: `20${d.slice(0, 2)}-${d.slice(2, 4)}-${d.slice(4, 6)}`, ndvi: Number(v) / 100 };
+  });
+  const stage = harvestStage(points, "2026-10-19");
+  // The soy was cut when it reached the ready level (May 10); the August
+  // green-up to 0.56 is a new cycle (a winter crop), read on its own.
+  assert.equal(stage.stage, "growing");
+  const cut = harvestStage(points.filter((p) => p.date <= "2026-07-08"), "2026-07-10");
+  assert.equal(cut.stage, "harvested");
+  assert.equal(cut.harvestedOn, "2026-05-10");
+  // The same curve cut at mid-May (a week at the ready level) is still ready.
+  const early = harvestStage(points.filter((p) => p.date <= "2026-05-17"), "2026-05-18");
+  assert.equal(early.stage, "ready");
+  assert.ok(READY_MAX_DAYS >= 21 && READY_MAX_DAYS <= 45);
+});
+
 test("a full second crop after an early harvest is read as its own season", () => {
   // Barley harvested late June, then a second crop that greens up to 0.78.
   const points = [
@@ -116,6 +139,29 @@ test("a full second crop after an early harvest is read as its own season", () =
     ["2026-06-25", 0.2], ["2026-07-10", 0.25], ["2026-07-25", 0.4], ["2026-08-10", 0.6], ["2026-08-25", 0.74], ["2026-09-05", 0.78],
   ].map(([date, ndvi]) => ({ date, ndvi }));
   assert.equal(harvestStage(points, "2026-09-07").stage, "growing");
+});
+
+test("a cereal that dried down to bare soil is harvested, even with no sharp drop and a new crop coming up", () => {
+  // Real shape, Beauce, France (2026): winter wheat, peak in May, dry-down
+  // in June, bare from July to September, the next crop emerging in October.
+  const dates = ["2026-04-14", "2026-05-09", "2026-05-27", "2026-06-13", "2026-06-18", "2026-06-20", "2026-06-23", "2026-06-28", "2026-07-08", "2026-08-10", "2026-09-14", "2026-10-01", "2026-10-06", "2026-10-14"];
+  const ndvi = [0.86, 0.909, 0.899, 0.571, 0.429, 0.324, 0.261, 0.21, 0.172, 0.14, 0.135, 0.25, 0.299, 0.409];
+  const stage = harvestStage(dates.map((date, i) => ({ date, ndvi: ndvi[i] })), "2026-10-19");
+  assert.equal(stage.stage, "harvested");
+  assert.equal(stage.harvestedOn, "2026-06-23");
+  // A dry crop still standing just above bare soil stays "ready".
+  const standing = harvestStage(["2026-06-24", "2026-08-03", "2026-09-07", "2026-09-29", "2026-10-07", "2026-10-12"].map((date, i) => ({ date, ndvi: [0.848, 0.733, 0.437, 0.333, 0.333, 0.35][i] })), "2026-10-19");
+  assert.equal(standing.stage, "ready");
+});
+
+test("a decline too slow to be a dry-down is still growing (a cut forage crop that grew back)", () => {
+  // Real shape, Nakuru, Kenya (2026): green in March, cut in June (down to
+  // 0.36, not bare), grown back to 0.78 by late August, fading slowly in October.
+  const dates = ["2026-03-21", "2026-04-30", "2026-06-04", "2026-06-14", "2026-06-19", "2026-07-14", "2026-08-25", "2026-09-14", "2026-09-27", "2026-10-04", "2026-10-12", "2026-10-17"];
+  const ndvi = [0.875, 0.84, 0.7, 0.36, 0.37, 0.61, 0.77, 0.757, 0.741, 0.684, 0.66, 0.663];
+  const stage = harvestStage(dates.map((date, i) => ({ date, ndvi: ndvi[i] })), "2026-10-19");
+  assert.equal(stage.stage, "growing");
+  assert.equal(stage.daysToReady ?? null, null);
 });
 
 test("a single cloudy outlier does not end the season", () => {
@@ -133,6 +179,20 @@ test("damage needs radar change, or repeated fires backed by radar or soil healt
   assert.equal(damageDetected({ chiDrop: 0.15, radarChangedShare: 0.06 }), true);
   assert.equal(damageDetected({ chiDrop: 0.15, radarChangedShare: 0.01 }), false);
   assert.equal(damageDetected({}), false);
+});
+
+test("away from any war, radar change alone is not damage; unusual fire with radar change is", () => {
+  // Real data, Beauce, France (2026-10-19): 38% of a peaceful field changed on radar (ploughing, a new crop).
+  assert.equal(damageDetected({ radarChangedShare: 0.38, excessFires: 0, atWar: false }), false);
+  assert.equal(damageDetected({ radarChangedShare: 0.38, excessFires: 0, atWar: true }), true);
+  assert.equal(damageDetected({ radarChangedShare: 0.38, excessFires: 0 }), true, "left out = at war (older analyses)");
+  // A field that really burnt: fires above the usual rate AND radar change.
+  assert.equal(damageDetected({ radarChangedShare: 0.06, excessFires: 4, atWar: false }), true);
+  // The health index never decides it.
+  assert.equal(damageDetected({ radarChangedShare: 0.01, excessFires: 4, chiDrop: 0.3, atWar: false }), false);
+  assert.equal(damageDetected({ chiDrop: 0.5, atWar: false }), false);
+  assert.equal(damagedArea({ radarChangedShare: 0.38, excessFires: 0, atWar: false }, 50), null);
+  assert.equal(damagedArea({ radarChangedShare: 0.1, excessFires: 5, atWar: false }, 50), 5);
 });
 
 test("damaged area comes from the radar extent, or is unknown", () => {

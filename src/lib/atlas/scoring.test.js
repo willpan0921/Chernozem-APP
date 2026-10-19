@@ -82,8 +82,8 @@ test("when most squares are fully safe, Near term still ranks them by soil and d
   assert.equal(best.wrb, 0.9);
 });
 
-test("the cutoff splits ties: with 80% of places at full safe access, 55% sets aside about 55%", () => {
-  // 80 places tie at access 1; their raw distance to fighting breaks the tie.
+test("fully safe places are never set aside: the cutoff only takes places near fighting", () => {
+  // 80 places are 100 km or more from fighting (access 1), 20 are close.
   const rows = Array.from({ length: 100 }, (_, i) => ({
     id: `r0c${String(i).padStart(3, "0")}`,
     wrb: 0.5,
@@ -94,20 +94,27 @@ test("the cutoff splits ties: with 80% of places at full safe access, 55% sets a
     blackSoilHa: 100,
     raw: { conflictKm: i < 80 ? 100 + i : 10 + i / 10 },
   }));
+  // A 55% cutoff can only take the 20 places near fighting.
   const result = scorePlaces(rows, { settings: { gatePercentile: 55 } });
   const aside = result.places.filter((p) => p.nearTerm.tier === "setAside");
-  const share = aside.reduce((sum, p) => sum + p.blackSoilHa, 0) / 10000;
-  assert.ok(Math.abs(share - 0.55) <= 0.01, `set aside ${share}`);
-  close(result.setAsideShare, share);
-  // The 20 least safe go first, then the tied places nearest to fighting.
-  assert.ok(aside.some((p) => p.id === "r0c080") && aside.some((p) => p.id === "r0c000"));
-  assert.ok(!aside.some((p) => p.id === "r0c079"));
-  // Kept places tied at the top keep their full score.
+  assert.equal(aside.length, 20);
+  assert.ok(aside.every((p) => p.access < 1));
+  close(result.setAsideShare, 0.2);
+  // Kept places at full safe access keep their full score.
   const kept = result.places.filter((p) => p.nearTerm.tier !== "setAside");
   assert.ok(kept.every((p) => p.nearTerm.ramp === 1));
-  // A different cutoff gives a different split.
-  const fewer = scorePlaces(rows, { settings: { gatePercentile: 30 } }).places.filter((p) => p.nearTerm.tier === "setAside");
-  assert.equal(fewer.length, 30);
+  // A smaller cutoff takes the least safe first.
+  const fewer = scorePlaces(rows, { settings: { gatePercentile: 10 } }).places.filter((p) => p.nearTerm.tier === "setAside");
+  assert.equal(fewer.length, 10);
+  assert.ok(fewer.some((p) => p.id === "r0c080") && !fewer.some((p) => p.id === "r0c099"));
+});
+
+test("an area at peace keeps every place", () => {
+  const rows = Array.from({ length: 50 }, (_, i) => ({ id: `p${i}`, wrb: 0.3 + i / 100, agOutput: 0.5, firms: 0, chi: 0.05, distance: 1, blackSoilHa: 10 }));
+  const result = scorePlaces(rows, { settings: { gatePercentile: 30 } });
+  assert.equal(result.places.filter((p) => p.nearTerm.tier === "setAside").length, 0);
+  assert.equal(result.setAsideShare, 0);
+  assert.ok(result.places.every((p) => Number.isFinite(p.nearTerm.rank)));
 });
 
 test("the cutoff counts black-soil hectares, not places", () => {

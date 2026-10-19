@@ -2,7 +2,7 @@
   WHAT THIS FILE DOES
   The styling that only the Field overview page (/field) needs: the status
   sentence, the five big tiles, "What needs doing", "Tell us what
-  happened" and the "Your fields" card (zone map + list). Every class starts
+  happened" and the "Your fields" card (satellite map + list). Every class starts
   with "fo-" (Field Overview). Colours, spacing and corners come from
   src/styles/tokens.css (the softer shades are color-mix() of tokens).
 
@@ -489,7 +489,7 @@
 
 .fo-map-wait {
   height: 100%;
-  background: var(--zone-ground);
+  background: var(--c-ink-2);
 }
 
 .fo-field-list {
@@ -535,14 +535,16 @@
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-ink) 12%, transparent);
 }
 
-.fo-swatch-poor { background: var(--zone-poor); }
-.fo-swatch-fair { background: var(--zone-fair); }
-.fo-swatch-good { background: var(--zone-good); }
-.fo-swatch-great { background: var(--zone-great); }
-.fo-swatch-nodata { background: var(--zone-nodata); }
+.fo-swatch-poor { background: var(--fmap-poor); }
+.fo-swatch-fair { background: var(--fmap-fair); }
+.fo-swatch-good { background: var(--fmap-good); }
+.fo-swatch-great { background: var(--fmap-great); }
+.fo-swatch-nodata { background: var(--fmap-nodata); }
 
+/* "Needs recovery": the red tint and outline it has on the map. */
 .fo-swatch.is-recovery {
-  background: repeating-linear-gradient(135deg, var(--zone-hatch-red) 0 3px, var(--zone-hatch-beige) 3px 6px);
+  background: color-mix(in srgb, var(--c-red) 40%, transparent);
+  box-shadow: inset 0 0 0 2px var(--c-red);
 }
 
 .fo-field-text {

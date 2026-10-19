@@ -3,9 +3,10 @@
 // the farmer's saved farm (nothing is sent by the page):
 //   - a short "context text" that goes at the top of every Field chat:
 //     the farm, every field with its status, area, crop, the four readings
-//     (water, plant health, stress, harvest readiness), condition, war
-//     damage and soil, the weather, the last 5 reports, and where the data
-//     comes from (it says clearly when it is SAMPLE DATA);
+//     (water, plant health, stress, harvest readiness), condition, damage
+//     and soil, the weather, the last 5 reports, where the data comes from
+//     (it says clearly when it is SAMPLE DATA), and whether a known war
+//     covers the farm (src/config/conflicts.js; most farms are at peace);
 //   - the tools Claude may call to look things up: get_field,
 //     get_field_history, get_weather and get_reports;
 //   - the photos of one "Tell us what happened" report, when the chat is
@@ -23,6 +24,7 @@
 
 import { CONDITION_CLASSES, conditionClass, recoveryCost, UNITS, convertArea, BASELINE } from "../../src/lib/field/method.js";
 import { soilTypes } from "../../src/data/soilTypes.js";
+import { conflictAt } from "../conflicts.js";
 
 // ---------- Tool definitions (sent to Claude) ----------
 // strict: true makes Claude's tool inputs always match these shapes.
@@ -32,7 +34,7 @@ export const FIELD_TOOLS = [
   {
     name: "get_field",
     description:
-      "Everything about one field: status, condition, the four readings (water, plant health, stress, harvest readiness) with their normal ranges for 2019 to 2021, stress patches, war damage and recovery cost, soil, this season's plant-health and water curve from each clear satellite pass, the normal curve, and how much of the field is in each condition zone. Call this when the farmer asks about a particular field. name_or_id is the field's name (like \"Field 3\"), its number, or its id.",
+      "Everything about one field: status, condition, the four readings (water, plant health, stress, harvest readiness) with their normal ranges for 2019 to 2021, stress patches, damage (war or other unusual fire and ground change) and recovery cost, soil, this season's plant-health and water curve from each clear satellite pass, the normal curve, and how much of the field is in each condition zone. Call this when the farmer asks about a particular field. name_or_id is the field's name (like \"Field 3\"), its number, or its id.",
     strict: true,
     input_schema: {
       type: "object",
@@ -46,7 +48,7 @@ export const FIELD_TOOLS = [
   {
     name: "get_field_history",
     description:
-      "Monthly plant health (NDVI) and water (NDWI) of one field since January 2019, newest last, each month with its normal (the same month in 2019 to 2021). Call this for questions about past years, trends, or how the field changed since the war began (24 Feb 2022).",
+      "Monthly plant health (NDVI) and water (NDWI) of one field since January 2019, newest last, each month with its normal (the same month in 2019 to 2021). Call this for questions about past years, trends, or how the field changed since a war began where one covers the farm.",
     strict: true,
     input_schema: {
       type: "object",
@@ -88,7 +90,6 @@ const MAX_IMAGES = 4;
 // Claude takes base64 images up to 5 MB each.
 const MAX_IMAGE_BASE64 = 5 * 1024 * 1024;
 const WEATHER_TIMEOUT_MS = 8000;
-const WAR_START = "2022-02-24";
 
 const round = (value, digits = 0) => {
   if (!Number.isFinite(value)) return null;
@@ -304,7 +305,7 @@ function harvestText(h) {
       text = "ready to harvest now";
       break;
     case "harvested":
-      text = "harvested";
+      text = h.harvestedOn ? `harvested (the satellite first saw it cut or at stubble level on ${h.harvestedOn})` : "harvested";
       break;
     default:
       text = "not enough clear images to tell";
@@ -314,23 +315,32 @@ function harvestText(h) {
   return text;
 }
 
-function damageText(d, units) {
+function damageText(d, units, conflict) {
   if (!d) return "unknown";
   const evidence = [];
   if (Number.isFinite(d.radarChangedShare)) evidence.push(`radar change on ${pct(d.radarChangedShare)} of the field`);
-  if (Number.isFinite(d.firesSinceWar)) evidence.push(`${d.firesSinceWar} fire detection(s) since 24 Feb 2022`);
+  if (Number.isFinite(d.excessFires)) {
+    const all = Number.isFinite(d.fires) ? ` (${d.fires} in all, ${Number.isFinite(d.firesNormal) ? d.firesNormal : "?"} usual)` : "";
+    evidence.push(`${d.excessFires} fire detection(s) above the ${BASELINE.label} rate${d.since ? ` since ${d.since}` : ""}${all}`);
+  } else if (Number.isFinite(d.firesSinceWar)) {
+    evidence.push(`${d.firesSinceWar} fire detection(s) since ${conflict?.since || "the war began"}`);
+  }
   if (Number.isFinite(d.chiDrop)) evidence.push(`soil health index down ${fixed(d.chiDrop, 2)}`);
   if (!d.detected) return `none detected${evidence.length ? ` (${evidence.join(", ")})` : ""}`;
   let text = `DETECTED (${evidence.join(", ") || "see field"})`;
   if (Number.isFinite(d.damagedHa)) {
     const cost = recoveryCost(d.damagedHa);
     const usd = ([lo, hi]) => `$${Math.round(lo).toLocaleString("en-US")}–$${Math.round(hi).toLocaleString("en-US")}`;
-    text += `, about ${areaText(d.damagedHa, units)} damaged; recovery ${usd(cost.fast.total)} fast path or ${usd(cost.full.total)} full, before demining`;
+    text += `, about ${areaText(d.damagedHa, units)} damaged; recovery ${usd(cost.fast.total)} fast path or ${usd(cost.full.total)} full${conflict ? ", before demining" : ""}`;
   }
   return text;
 }
 
-function fieldLine(field, analysis, units, mixed) {
+// The war for one field's analysis: its own, or (for an analysis saved
+// before that was stored) the farm's.
+const conflictFor = (analysis, farmWar) => (analysis && analysis.conflict !== undefined ? analysis.conflict : farmWar) || null;
+
+function fieldLine(field, analysis, units, mixed, farmWar = null) {
   const head = `- ${field.name || field.id} (id ${field.id}): ${field.crop || "crop not set"}, ${areaText(field.areaHa, units)}.`;
   if (!analysis) return `${head} Not analysed yet.`;
   const ph = analysis.plantHealth || {};
@@ -345,7 +355,7 @@ function fieldLine(field, analysis, units, mixed) {
     `Water NDWI ${fixed(w.ndwi, 2)} (normal ${fixed(w.normal?.low, 2)} to ${fixed(w.normal?.high, 2)}, ${VERSUS_WORDS[w.versus] || "no normal"}).`,
     `Stress ${s.level || "unknown"}${Number.isFinite(s.share) ? `, ${pct(s.share)} of the field` : ""}${Number.isFinite(s.stressedHa) ? ` (${areaText(s.stressedHa, units)})` : ""}.`,
     `Harvest: ${harvestText(analysis.harvest)}.`,
-    `War damage: ${damageText(analysis.damage, units)}.`,
+    `${conflictFor(analysis, farmWar) ? "War damage" : "Damage"}: ${damageText(analysis.damage, units, conflictFor(analysis, farmWar))}.`,
   ];
   if (Number.isFinite(analysis.soil?.chernozemProbability)) {
     parts.push(`Soil: ${soilName(analysis.soil.soilTypeId) || "unknown"} (black-soil probability ${pct(analysis.soil.chernozemProbability)}).`);
@@ -391,6 +401,22 @@ function reportLine(report, fields) {
   return `- ${String(report.createdAt || "").slice(0, 10)}, ${reportFieldName(report, fields) || "no field chosen"}, ${report.kind || "other"}: "${text}"${photos ? ` (${photos} photo${photos > 1 ? "s" : ""})` : ""}`;
 }
 
+// The known war covering the farm: from its analyses, else from its place.
+// { id, name, since } or null.
+export function farmConflict(farm, analyses = {}) {
+  const analysed = Object.values(analyses || {}).filter((a) => a && a.conflict !== undefined);
+  if (analysed.length) return analysed.find((a) => a.conflict)?.conflict || null;
+  const lat = Number(farm?.location?.lat);
+  const lon = Number(farm?.location?.lon);
+  const found = Number.isFinite(lat) && Number.isFinite(lon) ? conflictAt(lat, lon) : null;
+  return found ? { id: found.id, name: found.name, since: found.since } : null;
+}
+
+function conflictLine(conflict) {
+  if (conflict) return `A known war covers this farm: ${conflict.name}, since ${conflict.since}. Damage is counted from that day, as fire and ground change above the ${BASELINE.label} normal.`;
+  return `No war is recorded at this farm. "Damage" here means unusual fire or ground change over the last 2 years compared with ${BASELINE.label}, from any cause (fires above the usual rate only, so yearly stubble burning does not count).`;
+}
+
 export function fieldContextText({ farm, fields, analyses, reports, weather, today, report, reportId, images = [], skippedPhotos = 0 }) {
   const lines = [`Today: ${today}.`];
   if (!farm || !fields.length) {
@@ -403,11 +429,13 @@ export function fieldContextText({ farm, fields, analyses, reports, weather, tod
   lines.push(`Farm: ${farm.name || "My farm"}${where ? `, ${where}` : ""}${farm.demo ? " (the demo farm)" : ""}. ${fields.length} field${fields.length > 1 ? "s" : ""}, ${areaText(totalHa, units)} in total.`);
   if (units !== "ha" && UNITS[units]) lines.push(`The farmer uses ${UNITS[units].label.toLowerCase()} (${UNITS[units].short}); give areas in that unit.`);
   lines.push(dataSourceLine(analyses));
-  lines.push(`"Normal" means the same weeks of ${BASELINE.label}, before the full-scale war. Condition classes: ${CONDITION_CLASSES.map((c) => c.label).join(", ")}.`);
+  lines.push(`"Normal" means the same weeks of the normal years ${BASELINE.label}. Condition classes: ${CONDITION_CLASSES.map((c) => c.label).join(", ")}.`);
+  const farmWar = farmConflict(farm, analyses);
+  lines.push(conflictLine(farmWar));
 
   const providers = new Set(Object.values(analyses).map((a) => a.provider));
   lines.push("", "Fields:");
-  for (const field of fields) lines.push(fieldLine(field, analyses[field.id], units, providers.size > 1));
+  for (const field of fields) lines.push(fieldLine(field, analyses[field.id], units, providers.size > 1, farmWar));
 
   lines.push("", ...weatherLines(weather));
 
@@ -449,7 +477,7 @@ function noField(fields, query) {
 
 const NO_FARM = { error: "The farmer has not set up a farm yet." };
 
-export function fieldDetail(field, analysis, units) {
+export function fieldDetail(field, analysis, units, farmWar = null) {
   const base = { id: field.id, name: field.name, crop: field.crop || null, areaHa: round(field.areaHa, 2), source: field.source || null };
   if (units && units !== "ha" && UNITS[units]) base.area = `${round(convertArea(field.areaHa, units), 1)} ${UNITS[units].short}`;
   if (!analysis) return { field: base, analysed: false, note: "Not analysed yet." };
@@ -470,8 +498,9 @@ export function fieldDetail(field, analysis, units) {
       recoveryCostUsd: d.detected && Number.isFinite(d.damagedHa)
         ? Object.fromEntries(Object.entries(recoveryCost(d.damagedHa)).map(([id, p]) => [id, p.total.map((x) => Math.round(x))]))
         : null,
-      note: "Costs exclude demining. Satellites cannot see mines.",
+      note: conflictFor(analysis, farmWar) ? "Costs exclude demining. Satellites cannot see mines." : "Costs are rough ranges for restoring the soil.",
     },
+    conflict: conflictFor(analysis, farmWar),
     soil: analysis.soil ? { ...analysis.soil, soilType: soilName(analysis.soil.soilTypeId) } : null,
     season: (analysis.season || []).map((p) => ({ date: p.date, ndvi: round(p.ndvi, 3), ndwi: round(p.ndwi, 3), clearPct: round(p.clearPct) })),
     normalCurve: (analysis.normalCurve || []).map((p) => ({ day: p.day, low: round(p.low, 3), median: round(p.median, 3), high: round(p.high, 3) })),
@@ -515,7 +544,7 @@ export async function runFieldTool(name, input = {}, data) {
       if (!farm || !fields.length) return NO_FARM;
       const field = findField(fields, input.name_or_id);
       if (!field) return noField(fields, input.name_or_id);
-      return fieldDetail(field, analyses[field.id], farm.units);
+      return fieldDetail(field, analyses[field.id], farm.units, farmConflict(farm, analyses));
     }
     case "get_field_history": {
       if (!farm || !fields.length) return NO_FARM;
@@ -528,7 +557,8 @@ export async function runFieldTool(name, input = {}, data) {
       return {
         field: field.name,
         dataSource: analyses[field.id]?.provider === "gee" ? "Google Earth Engine (real)" : "SAMPLE DATA (made up for testing)",
-        warStarted: WAR_START,
+        war: farmConflict(farm, analyses),
+        warStarted: farmConflict(farm, analyses)?.since || null,
         normalYears: BASELINE.label,
         months,
       };

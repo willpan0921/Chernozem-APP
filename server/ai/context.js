@@ -251,6 +251,23 @@ async function safe(fn) {
 
 // ---------- The context text ----------
 
+// The war covering the area, as the AI should read it. Older runs have no
+// `conflict` field: then nothing is said.
+//   accessSource  where distance to fighting came from (run.accessSource:
+//                 "acled", "fires", "none" or null)
+export function conflictLine(conflict, accessSource = null) {
+  if (conflict === undefined) return "";
+  if (conflict && conflict.since) {
+    return `War: ${conflict.name || conflict.id}, since ${conflict.since}. Damage is counted from that day; safe access is the distance to recorded fighting.`;
+  }
+  const damage = "Damage means unusual fire and radar change compared with the normal years 2019 to 2021, from any cause (harvest and tillage, drought, wildfire, flooding).";
+  const access =
+    accessSource === "acled"
+      ? "Safe access is the distance to battles in the ACLED file."
+      : "Distance to fighting is not measured here, so nothing is set aside for it. That does NOT mean the land is safe: never call land safe, and point to local authorities for unexploded ordnance or security questions.";
+  return `War: none in the app's list covers this area (wars are matched by country only). ${damage} ${access} Do not talk about a war, a front line or demining for this area unless the user raises it.`;
+}
+
 function hotspotLine(h, index) {
   const coords = coordLabel(h.lat, h.lon);
   // A repeated name already ends in " · <coords>" (see labelHasCoords in
@@ -274,6 +291,8 @@ export function contextText({ workspace, area, run, summaries, scored, settings,
   const source = run.provider === "gee" ? "Google Earth Engine (real satellite data)" : "SAMPLE DATA (synthetic, for testing only — not real measurements)";
   lines.push(`Month: ${run.label || run.month} (imagery ${run.imagery?.from || "?"} to ${run.imagery?.to || "?"}, baseline ${run.baseline?.label || "2019 to 2021"}).`);
   lines.push(`Data source: ${source}.`);
+  const war = conflictLine(run.conflict, run.accessSource);
+  if (war) lines.push(war);
   lines.push(`Grid: ${run.cellCount ?? run.cells?.length ?? 0} cells of about ${round(run.cellSizeKm, 2)} km.`);
   const t = run.totals || {};
   lines.push(

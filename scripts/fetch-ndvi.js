@@ -2,8 +2,13 @@
 // Gets real NDVI (plant health) for every field from Earth Engine and saves
 // it to Firestore. Run it from the project folder with:
 //
-//   node scripts/fetch-ndvi.js               (every pass since 1 April)
+//   node scripts/fetch-ndvi.js               (every pass of this growing season)
 //   node scripts/fetch-ndvi.js 2026-09-01    (every pass since that date)
+//
+// "This growing season" depends on where the field is (src/lib/season.js
+// seasonCurveStart, by the field's latitude): from a month before the
+// season in the north (March) and the south (September), the last 8 months
+// in the tropics, or the last 8 months early in a new season.
 //
 // For each field in the Firestore "fields" collection it:
 //   1. reads the field's outline,
@@ -28,13 +33,26 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import ee from "@google/earthengine";
+import { seasonCurveStart } from "../src/lib/season.js";
 import { initializeApp, cert } from "firebase-admin/app";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 
 const KEY_PATH = process.env.NDVI_KEY_PATH || join(homedir(), ".config", "chernozem", "ndvi-key.json");
 
-// First day to look at ("2026-04-01"), from the command line or 1 April.
-const START_DATE = process.argv[2] || `${new Date().getFullYear()}-04-01`;
+// First day to look at ("2026-04-01"), from the command line; without one,
+// each field's own season start (startFor below).
+const START_DATE = /^\d{4}-\d{2}-\d{2}$/.test(process.argv[2] || "") ? process.argv[2] : null;
+const TODAY = new Date().toISOString().slice(0, 10);
+
+// The first day for one field: the date given, else where this season's
+// curve starts at the field's latitude (the middle of its outline).
+function startFor(outline) {
+  if (START_DATE) return START_DATE;
+  const points = JSON.stringify(outline).match(/-?\d+(\.\d+)?,\s*-?\d+(\.\d+)?/g) || [];
+  const lats = points.map((pair) => Number(pair.split(",")[1])).filter(Number.isFinite);
+  const lat = lats.length ? (Math.min(...lats) + Math.max(...lats)) / 2 : NaN;
+  return seasonCurveStart(lat, TODAY);
+}
 
 // A pixel counts as clear when its Cloud Score+ value is at least this
 // (0 = surely cloud, 1 = surely clear). 0.6 is Google's suggested start.
@@ -72,14 +90,14 @@ await new Promise((resolve, reject) =>
 // Every Sentinel-2 pass over one outline, as a list of
 // { date, ndvi, clear } where "clear" is the share of the field (0 to 1)
 // that was clear and inside the picture.
-function fetchPasses(outline) {
+function fetchPasses(outline, startDate) {
   const area = ee.Geometry(outline);
   const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
 
   const passes = ee
     .ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
     .filterBounds(area)
-    .filterDate(START_DATE, tomorrow)
+    .filterDate(startDate, tomorrow)
     .linkCollection(ee.ImageCollection("GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED"), ["cs"])
     .map((image) => {
       const clear = image.select("cs").gte(CLEAR_PIXEL_SCORE);
@@ -145,16 +163,17 @@ async function saveReadings(fieldId, readings) {
    RUN
    ------------------------------------------------------------------------- */
 
-console.log(`Getting NDVI since ${START_DATE}…`);
+console.log(START_DATE ? `Getting NDVI since ${START_DATE}…` : "Getting NDVI for each field's growing season…");
 const fields = await db.collection("fields").get();
 
 for (const field of fields.docs) {
   const outline = JSON.parse(field.data().outline);
-  const readings = oneReadingPerDay(await fetchPasses(outline));
+  const start = startFor(outline);
+  const readings = oneReadingPerDay(await fetchPasses(outline, start));
   const latest = await saveReadings(field.id, readings);
   const clearCount = readings.filter((reading) => (reading.clear ?? 0) >= MIN_CLEAR_SHARE).length;
   console.log(
-    `${field.id}: ${readings.length} passes, ${clearCount} clear` +
+    `${field.id}: ${readings.length} passes since ${start}, ${clearCount} clear` +
       (latest ? `, latest NDVI ${latest.value.toFixed(2)} on ${latest.date}` : ", no clear pass yet")
   );
 }

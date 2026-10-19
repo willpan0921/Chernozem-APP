@@ -10,6 +10,10 @@
 //   recoveryCost(ha, costs)      what recovering some hectares costs
 //   imageryText(run)             "Imagery from April to September 2026, ..."
 //   weightsText(settings)        "Soil 30 · Damage 40 · Access 30"
+//   atPeace(run)                 true when no war in the app's list covers the run
+//   timeframeLabel(tf, run)      "Near term", and "Postwar" (a war) or "Long term"
+//   timeframeOptions(run)        the two time frames for a Near term | ... switch
+//   ruleText(tf, settings, run)  the one-line rule of a time frame
 //
 // Plain functions with no React, like scoring.js, so they can be tested and
 // reused by the report and the server.
@@ -41,12 +45,14 @@ export function summarize(places) {
   };
 }
 
-// The four big numbers along the top of the overview.
-export function kpis(summary) {
+// The four big numbers along the top of the overview. The damage number is
+// red only inside a war (`run` with a conflict, or an older run); at peace
+// it is radar change, not an alarm.
+export function kpis(summary, run = null) {
   return [
     { id: "cropland", label: "Cropland analyzed", value: formatHaShort(summary.croplandHa) },
     { id: "black-soil", label: "Black-soil cropland", value: formatHaShort(summary.blackSoilHa) },
-    { id: "heavy-damage", label: "Heavily damaged", value: formatHaShort(summary.heavyDamageHa), tone: "red" },
+    { id: "heavy-damage", label: "Heavily damaged", value: formatHaShort(summary.heavyDamageHa), tone: atPeace(run) ? undefined : "red" },
     { id: "people", label: "People on damaged land", value: formatCount(summary.peopleOnDamagedSoil) },
   ];
 }
@@ -70,12 +76,16 @@ export function todayFor() {
 }
 
 // "Imagery from April to September 2026, compared with 2019 to 2021".
+// Where parts of the area have different growing seasons (Earth Engine
+// says so in run.imagery.label): "Imagery from April to September 2025 (80%
+// of the area); May to October 2025 (20% of the area), compared with ...".
 export function imageryText(run) {
-  const { from, to } = run?.imagery || {};
+  const { from, to, label } = run?.imagery || {};
   if (!from || !to) return "";
+  const baseline = run.baseline?.label ? `, compared with ${run.baseline.label}` : "";
+  if (label && label.includes(";")) return `Imagery from ${label}${baseline}`;
   const sameYear = from.slice(0, 4) === to.slice(0, 4);
   const start = sameYear ? monthName(`${from}-01`) : formatMonthYear(from);
-  const baseline = run.baseline?.label ? `, compared with ${run.baseline.label}` : "";
   return `Imagery from ${start} to ${formatMonthYear(to)}${baseline}`;
 }
 
@@ -85,10 +95,35 @@ export function weightsText(settings) {
   return `Soil ${w.soil ?? "–"} · Damage ${w.damage ?? "–"} · Access ${w.access ?? "–"}`;
 }
 
+// True when the run says no war in src/config/conflicts.js covers its area
+// (conflict null). Older runs without the field were all made inside the
+// war in Ukraine, so they are not at peace.
+export function atPeace(run) {
+  return Boolean(run) && run.conflict === null;
+}
+
+// The name of a time frame. Without a war "postwar" means nothing, so the
+// blended ranking is called "Long term" there.
+export function timeframeLabel(timeframe, run) {
+  if (timeframe === "postwar") return atPeace(run) ? "Long term" : "Postwar";
+  return "Near term";
+}
+
+// The options for a Near term | Postwar (or Long term) switch.
+export function timeframeOptions(run) {
+  return ["nearTerm", "postwar"].map((value) => ({ value, label: timeframeLabel(value, run) }));
+}
+
 // The one-line rule for each time frame (for the report).
-export function ruleText(timeframe, settings) {
+export function ruleText(timeframe, settings, run) {
+  const peace = atPeace(run);
   if (timeframe === "postwar") {
-    return "All three scores are blended, so heavy damage can outweigh lower access once fighting ends.";
+    return peace
+      ? "All three scores are blended into one long-term ranking."
+      : "All three scores are blended, so heavy damage can outweigh lower access once fighting ends.";
+  }
+  if (peace && run?.accessSource !== "acled") {
+    return "No war in the app's list covers this area, so nothing is set aside for distance to fighting. Places are ranked by soil value and damage.";
   }
   return `The least safe ${settings?.gatePercentile ?? 30}% of black soil (nearest the fighting) is set aside. The rest is ranked by soil value and damage.`;
 }
@@ -122,15 +157,19 @@ export function nextSteps({ run, hotspots = [], alerts = [] }) {
   if (!run) return [];
   const steps = [];
   const published = publishedOn(run);
+  // No war in the app's list: no demining, no "cleared land", and radar
+  // change is just change (harvest, tillage, flooding) until someone looks.
+  const peace = atPeace(run);
 
-  // 1. Demining surveys come first in the two best Near-term areas.
+  // 1. Demining surveys (in a war) or soil surveys (at peace) come first in
+  // the two best Near-term areas.
   if (hotspots.length >= 1) {
     const names = hotspots.slice(0, 2).map((hotspot) => hotspot.label);
     steps.push({
       id: `${run.id}-demining`,
-      title: `Fund demining surveys in ${listNames(names)}`,
+      title: peace ? `Plan soil surveys in ${listNames(names)}` : `Fund demining surveys in ${listNames(names)}`,
       due: addMonths(published, 1),
-      icon: "shield",
+      icon: peace ? "soil" : "shield",
       tone: "green",
       to: `/atlas/map?focus=${hotspots[0].id}`,
     });
@@ -141,19 +180,19 @@ export function nextSteps({ run, hotspots = [], alerts = [] }) {
     const focus = alert.cellIds?.[0];
     steps.push({
       id: `${run.id}-${alert.id}-review`,
-      title: `Review new damage near ${alert.place}`,
+      title: peace ? `Check the radar change near ${alert.place}` : `Review new damage near ${alert.place}`,
       due: alert.date ? addDays(alert.date, 7) : published,
       icon: "alert",
-      tone: "red",
+      tone: peace ? "amber" : "red",
       to: focus ? `/atlas/map?focus=${focus}&view=postwar&color=damage` : "/atlas/map?color=damage",
     });
   }
 
-  // 3. Soil testing on cleared land in the third area.
+  // 3. Soil testing (on cleared land, in a war) in the third area.
   if (hotspots.length >= 3) {
     steps.push({
       id: `${run.id}-soil-test`,
-      title: `Test soil on cleared land in ${hotspots[2].label}`,
+      title: peace ? `Test soil in ${hotspots[2].label}` : `Test soil on cleared land in ${hotspots[2].label}`,
       due: addMonths(published, 2),
       icon: "soil",
       tone: "amber",

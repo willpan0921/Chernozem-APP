@@ -28,15 +28,12 @@ import { AnalysisProgress, AtlasGate, useAtlasData, useTimeframe } from "../../s
 import AtlasMap from "../../components/atlas/AtlasMap.jsx";
 import MapLegend from "../../components/atlas/MapLegend.jsx";
 import RunPicker from "../../components/atlas/RunPicker.jsx";
-import { describeAlert, kpis, springPlan, summarize } from "../../lib/atlas/overview.js";
+import { describeAlert, kpis, springPlan, summarize, timeframeOptions } from "../../lib/atlas/overview.js";
 import { dueLabel, formatHaShort, formatUsd, listNames, toDay } from "../../lib/format.js";
-import { areaOfAlert, atlasLink, haFixed, nameAreas, planSteps, useMonthInUrl, weightItems } from "./overviewHelpers.js";
+import { areaOfAlert, atlasLink, haFixed, nameAreas, planSteps, useMonthInUrl, warNote, weightItems } from "./overviewHelpers.js";
 import "./OverviewPage.css";
 
-const TIMEFRAMES = [
-  { value: "nearTerm", label: "Near term" },
-  { value: "postwar", label: "Postwar" },
-];
+// The Near term | Postwar switch ("Long term" where no war is listed): timeframeOptions(run).
 
 // How many top areas and alerts show before "Show all".
 const TOP_COUNT = 5;
@@ -69,6 +66,8 @@ function Overview() {
   const isLatest = runs[0]?.id === run.id;
   const reanalyzing = job?.status === "running" && job.areaId === area.id;
   const fromEarthEngine = run.provider === "gee";
+  // The war marker: only when the run counted damage from a known war.
+  const war = warNote(run);
 
   // Hovering or focusing a top area outlines it on the map; if the map has
   // been moved so the area is not fully in view, glide over to it.
@@ -96,12 +95,17 @@ function Overview() {
             ) : (
               <Badge tone="amber">Sample data</Badge>
             )}
+            {war?.war && (
+              <span title={war.line}>
+                <Badge tone="outline">{war.badge}</Badge>
+              </span>
+            )}
           </span>
         }
         actions={
           <>
             <RunPicker />
-            <Segmented options={TIMEFRAMES} value={timeframe} onChange={setTimeframe} ariaLabel="Time frame" />
+            <Segmented options={timeframeOptions(run)} value={timeframe} onChange={setTimeframe} ariaLabel="Time frame" />
             <Button variant="primary" icon={<FileText size={14} />} to={withView("/atlas/report")}>
               Report
             </Button>
@@ -121,7 +125,7 @@ function Overview() {
       )}
 
       <div className="ao-stats">
-        {kpis(summary).map((item) => (
+        {kpis(summary, run).map((item) => (
           <Stat
             key={item.id}
             label={item.label}
@@ -168,7 +172,7 @@ function Overview() {
             />
           </div>
           {/* The key sits under the map so it never covers squares. */}
-          <MapLegend colorBy="priority" timeframe={timeframe} className="ao-legend" />
+          <MapLegend colorBy="priority" timeframe={timeframe} run={run} className="ao-legend" />
 
           <div className="ao-top">
             <div className="ao-top-head">

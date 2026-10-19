@@ -37,6 +37,17 @@ export const LEGENDS = {
   access: { title: "Distance to fighting", low: "Under 20 km", high: "100 km +" },
 };
 
+// The legend for a colour mode and a run. Where no war in the app's list
+// covers the run (and no ACLED file was used), distance to fighting is not
+// measured: every square reads 100 km +, which is not the same as safe.
+export function legendFor(colorBy, run) {
+  const legend = LEGENDS[colorBy] || LEGENDS.priority;
+  if (colorBy === "access" && run && run.conflict === null && run.accessSource !== "acled") {
+    return { ...legend, title: "Distance to fighting: not measured", high: "No war listed" };
+  }
+  return legend;
+}
+
 function stepFromCuts(value, cuts) {
   if (!Number.isFinite(value)) return STEP_NONE;
   let step = 1;

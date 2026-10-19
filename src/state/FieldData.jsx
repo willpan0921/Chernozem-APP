@@ -1,7 +1,7 @@
 // WHAT THIS FILE DOES
 // Keeps the Field product's data in one place and shares it with every
 // Field page and the sidebar: the farm and its fields, each field's latest
-// analysis (with the zones grid and season curve), the data source
+// analysis (with its season curve), the data source
 // (Earth Engine or sample), the running analysis and the weather.
 //
 // It is mounted ONCE around the whole app (src/App.jsx, next to the Atlas

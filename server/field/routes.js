@@ -3,7 +3,7 @@
 // and /api/geocode request here (after the access-code check).
 //
 //   GET    /api/farm                       the farm, each field's latest analysis (?full=1: with
-//                                          season, normal curve and zones), the data source, the running job
+//                                          season and normal curve; zones stay in downloads), the data source, the running job
 //   POST   /api/farm/demo                  load the demo farm (7 real fields near Kupiansk) and analyse it
 //   POST   /api/farm/detect                find fields: { source: "boundary", points: [[lat, lon], ...] }
 //                                          or { source: "point", lat, lon, radiusM? } -> { job }
@@ -259,12 +259,21 @@ function locationFor(farm) {
 
 // ---------- Farm ----------
 
-async function analysesMap({ full = false } = {}) {
+// full: each analysis with its season and normal curves; zones too only
+// with zones: true (the downloads). The pages show the satellite map only,
+// so /farm?full=1 leaves the zones grid out.
+async function analysesMap({ full = false, zones = false } = {}) {
   const farm = await getFarm();
   const ids = new Set((farm?.fields || []).map((field) => field.id));
   const out = {};
   for (const analysis of await listFieldAnalyses()) {
-    if (ids.has(analysis.fieldId)) out[analysis.fieldId] = full ? analysis : stripForList(analysis);
+    if (!ids.has(analysis.fieldId)) continue;
+    if (!full) out[analysis.fieldId] = stripForList(analysis);
+    else if (zones) out[analysis.fieldId] = analysis;
+    else {
+      const { zones: _grid, ...rest } = analysis;
+      out[analysis.fieldId] = rest;
+    }
   }
   return out;
 }
@@ -494,7 +503,7 @@ function sendFile(res, status, type, body, filename) {
 async function exportsData() {
   const farm = await getFarm();
   if (!farm) throw notFound("There is no farm yet.", "no_farm");
-  const analyses = await analysesMap({ full: true });
+  const analyses = await analysesMap({ full: true, zones: true });
   return { farm, analyses };
 }
 

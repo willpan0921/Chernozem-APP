@@ -212,7 +212,7 @@ export function fieldTiles(analysis, { units = "ha", weather = null } = {}) {
       break;
     case "harvested":
       word = "Done";
-      line = harvest.lastDate ? `Seen ${formatDay(harvest.lastDate)}` : null;
+      line = harvest.harvestedOn ? `Cut about ${formatDay(harvest.harvestedOn)}` : harvest.lastDate ? `Seen ${formatDay(harvest.lastDate)}` : null;
       break;
     case "growing":
       word = "Not yet";

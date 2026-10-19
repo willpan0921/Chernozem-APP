@@ -8,7 +8,8 @@
 //
 //   status()               is Earth Engine set up, and does signing in work?
 //   analyze({ area, cells, month, cellSizeDeg, onProgress })
-//                          -> { readings, alerts, warnings, baseline } (one reading per cell)
+//                          -> { readings, alerts, warnings, baseline, conflict,
+//                               imagery, accessSource } (one reading per cell)
 //   searchAdmin1(q)        regions (provinces, oblasts, states) by name
 //   admin1Boundary(id)     one of those regions: { id, name, country, geometry }
 //
@@ -23,19 +24,35 @@
 //                  (projects/soilgrids-isric/soc_mean, 0-5 cm), see SOC
 //   croplandShare  ESA/WorldCover/v200, share of pixels with class 40 (cropland)
 //   chiDrop        drop of the Chernozem Health Index (COPERNICUS/S2_SR_HARMONIZED,
-//                  formula below) from the 2019-2021 baseline (the same
-//                  months, one composite) to this year's season
-//   heavyShare     share of cropland pixels whose drop is at least
-//                  HEAVY_DAMAGE_CHI_DROP (method.js)
-//   firesPer100Km2 FIRMS (band T21) detections since 24 Feb 2022, per 100 km²
-//   conflictKm     distance to recent battles (ACLED file, acled.js), or to
-//                  unusual fire detections of the last 12 months when there
-//                  is no file (FIGHTING_FIRES)
+//                  formula below) from the same season of 2019-2021 (one
+//                  composite) to the last complete growing season. A
+//                  DIAGNOSTIC only: crop rotation moves it, so it is not
+//                  part of the damage score or of heavy damage
+//   radarDb        mean |change| of Sentinel-1 VV (COPERNICUS/S1_GRD, one
+//                  orbit direction) over the cell's cropland: the last
+//                  complete season's median against the same season's
+//                  median in 2019-2021 (the owner's paper)
+//   heavyShare     share of cropland pixels heavily damaged (method.js
+//                  HEAVY_DAMAGE): radar change of 3 dB or more, or of 2 dB
+//                  or more within 1 km of an unusual fire; away from any
+//                  known war 3 dB or more AND within 1 km of an unusual fire
+//   firesPer100Km2 FIRMS (band T21) detections in the damage window MINUS
+//                  the cell's normal rate (2019-2021) for that long, for the
+//                  whole cell, never below 0, per 100 km². The damage window
+//                  starts the day a known war began (src/config/conflicts.js),
+//                  else two years back, so farm burning that comes every year
+//                  does not count
+//   conflictKm     distance to recent battles (ACLED file, acled.js); without
+//                  a file, inside a known war, to unusual fire detections of
+//                  the last 12 months (FIGHTING_FIRES); outside any known war
+//                  without a file, not measured: 300 km everywhere, so nothing
+//                  is set aside for it (which does not make the land safe)
 //   population     WorldPop/GP/100m/pop (2020), people living in the cell
 //   lights         NASA/VIIRS/002/VNP46A2 night lights, median of the month
 //   admin1/admin2  FAO/GAUL/2015/level2 names (best effort)
-// Alerts: Sentinel-1 radar change (COPERNICUS/S1_GRD, VV) and FIRMS fires
-// in the month.
+// Alerts: Sentinel-1 radar change (COPERNICUS/S1_GRD, VV, one orbit
+// direction) in the month against the same month of 2019-2021, and FIRMS
+// fires in the month above the same month's 2019-2021 count.
 //
 // Safety rules that keep a first real run from failing (each one is a
 // problem Earth Engine really has):
@@ -49,6 +66,14 @@
 //     populationPlan)
 //   - date windows stop at today, so nothing asks for future images
 //
+// Works anywhere on Earth: each cell's growing season comes from its own
+// greenest month in 2019-2021 (MODIS NDVI, MODIS/061/MOD13A2; see
+// src/lib/season.js), or from its latitude where that is not clear; cells
+// are measured in groups of the same season. The war, if any, comes from
+// server/conflicts.js. The result says which war it used (`conflict`, or
+// null at peace), which season it compared (`imagery`) and where distance
+// to fighting came from (`accessSource`).
+//
 // Nothing here runs until Earth Engine credentials are in .env (see
 // docs/CONNECT-DATA.md). `npm run gee:check` tries it on real data.
 // Tests (gee.test.js) run the whole analysis against a stand-in for Earth
@@ -60,8 +85,11 @@
 
 import { config, missingGeeSettings } from "../env.js";
 import { cellAreaKm2, formatCoord } from "../geo.js";
-import { addMonths, imageryWindow } from "../runs.js";
-import { HEAVY_DAMAGE_CHI_DROP } from "../../src/lib/atlas/method.js";
+import { NO_WAR_WARNING, addMonths, cleanConflict } from "../runs.js";
+import { HEAVY_DAMAGE } from "../../src/lib/atlas/method.js";
+import { baselineWindows, climateBand, lastCompleteSeason, peakMonthFrom, sameWindowIn, windowLabel } from "../../src/lib/season.js";
+import { damageWindow } from "../../src/config/conflicts.js";
+import { conflictForArea } from "../conflicts.js";
 import { acledBattlesFor, expandBbox } from "./acled.js";
 
 // ---------- Fixed choices ----------
@@ -73,6 +101,7 @@ export const DATASETS = {
   blackSoil: "OpenLandMap/SOL/SOL_GRTGROUP_USDA-SOILTAX_C/v01",
   soc: "projects/soilgrids-isric/soc_mean",
   firms: "FIRMS",
+  modisNdvi: "MODIS/061/MOD13A2",
   viirs: "NASA/VIIRS/002/VNP46A2",
   worldPop: "WorldPop/GP/100m/pop",
   gaul1: "FAO/GAUL/2015/level1",
@@ -88,6 +117,7 @@ export const BANDS = {
   viirs: "Gap_Filled_DNB_BRDF_Corrected_NTL",
   worldPop: "population",
   sentinel1: "VV",
+  modisNdvi: "NDVI", // x 0.0001
 };
 
 // The "before" picture: the same months of 2019, 2020 and 2021, in one
@@ -101,8 +131,15 @@ export const BASELINE_FROM = 2019;
 export const BASELINE_YEAR = 2021; // the last baseline year
 export const BASELINE_YEARS = Array.from({ length: BASELINE_YEAR - BASELINE_FROM + 1 }, (_, i) => BASELINE_FROM + i);
 export const GEE_BASELINE = { from: BASELINE_FROM, to: BASELINE_YEAR, label: `${BASELINE_FROM} to ${BASELINE_YEAR} (same months)` };
-// Fire counting starts with the full-scale invasion, as in the deposit.
+// The start of the full-scale invasion of Ukraine. Kept for the Field
+// provider; the Atlas takes the war's start from src/config/conflicts.js.
 export const WAR_START = "2022-02-24";
+// The normal fire rate of a place: all its FIRMS detections in 2019, 2020
+// and 2021 (whole years), per day. Fires in the damage window count only
+// above that rate times the window's length.
+export const FIRE_NORMAL = { start: `${BASELINE_FROM}-01-01`, end: `${BASELINE_YEAR + 1}-01-01` };
+// What a run says when there is no war and no ACLED file (runs.js).
+export { NO_WAR_WARNING };
 // Sentinel-2 scenes cloudier than this are skipped (deposit: 55%).
 export const MAX_CLOUD_PERCENT = 55;
 // Distance to fighting is measured up to 300 km; farther counts as 300 km.
@@ -118,8 +155,30 @@ export const MAX_CONFLICT_M = 300000;
 // 100, Poltava 140, Lviv and Uzhhorod 300+. A 90-day window failed in
 // winter (too few fires anywhere: Kherson 295 km), so 12 months are used.
 export const FIGHTING_FIRES = { radiusM: 10000, timesPrewar: 3, minPerKm2: 1 };
-// A radar pixel "changed" when its VV backscatter moved by more than 2 dB.
+// A radar pixel "changed" when its VV backscatter moved by more than 2 dB
+// (radar alerts: the month against the same month of 2019-2021).
 export const RADAR_CHANGE_DB = 2;
+// A season's median VV below this (dB) is open water, not farmland.
+export const WATER_VV_DB = -18;
+// Radar alerts: the median change within this many km of the cells (at
+// this pixel size, m) is the neighbourhood's own shift.
+export const RADAR_SHIFT = { aroundKm: 20, scale: 500 };
+// Radar alerts in a large area: a cell must have changed this many times as
+// much as the area's median cell (with at least minCells cells to judge).
+// An alert joins touching cells up to `reach` cells from its strongest one
+// (a 5 x 5 block at most), so one alert is one event, not a whole front.
+export const RADAR_ALERT = { timesTypical: 2, minCells: 20, reach: 2 };
+// Sentinel-1 orbit directions; one is used per comparison (pickPass).
+export const ORBIT_PASSES = ["ASCENDING", "DESCENDING"];
+// Unusual fire for heavy damage: the fire density over this radius (m)
+// above the normal years' (the paper smooths fire over 5 km).
+export const FIRE_SMOOTH_M = 5000;
+// Finding each place's growing season (src/lib/season.js): the mean MODIS
+// NDVI of each calendar month in 2019-2021 over the cell's cropland,
+// reduced at a pixel size between minScale and maxScale (m). At most
+// maxGroups different seasons per area (smaller groups join the nearest
+// season), each kept only when it has at least minShare of the cells.
+export const SEASON_FINDER = { start: "2019-01-01", end: "2022-01-01", ndviScale: 0.0001, minScale: 250, maxScale: 1000, maxGroups: 3, minShare: 0.05 };
 // The most cells in one Earth Engine request (small cells), the fewest
 // (huge cells), and roughly how much ground one request covers (km²).
 // The deposit measured all of Ukraine (~600,000 km²) in one request at
@@ -215,10 +274,16 @@ export function socToChernozem(rawValue) {
 
 // ---------- The provider ----------
 
+// The pause before the one retry of a request whose connection dropped
+// (isTransientError).
+export const TRANSIENT_RETRY_MS = 8000;
+
 // Makes a provider. The app uses the ready-made one below; tests pass
 //   ee         a stand-in Earth Engine library (fake-ee.js)
 //   getConfig  settings to use instead of .env
 //   now        the clock, () => Date (so "today" can be fixed in tests)
+//   retryDelayMs  the pause before retrying a dropped request (default
+//              TRANSIENT_RETRY_MS; tests use 0)
 // Anything else in `options` is ignored (providers/index.js passes the
 // .env settings here).
 export function createGeeProvider(options = {}) {
@@ -228,7 +293,8 @@ export function createGeeProvider(options = {}) {
   const now = typeof opts.now === "function" ? opts.now : () => new Date();
   // The real library signs in once for the whole server; a stand-in gets its own state.
   const state = injectedEe ? newState(injectedEe) : sharedState();
-  const deps = { getConfig, now, state, connect: (cfg = getConfig()) => connectWith(state, cfg) };
+  const retryDelayMs = Number.isFinite(opts.retryDelayMs) ? opts.retryDelayMs : TRANSIENT_RETRY_MS;
+  const deps = { getConfig, now, state, retryDelayMs, connect: (cfg = getConfig()) => connectWith(state, cfg) };
   return {
     id: "gee",
     label: "Earth Engine",
@@ -445,14 +511,17 @@ export function chiHealthImage(ee, region, window) {
     .rename("chi");
 }
 
-export function sentinel1(ee, region, window) {
-  return ee
+// pass: "ASCENDING" or "DESCENDING" to keep one orbit direction only
+// (radar compared across windows must look from the same side).
+export function sentinel1(ee, region, window, pass = null) {
+  let collection = ee
     .ImageCollection(DATASETS.sentinel1)
     .filterBounds(region)
     .filterDate(window.start, window.end)
     .filter(ee.Filter.eq("instrumentMode", "IW"))
-    .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VV"))
-    .select(BANDS.sentinel1);
+    .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VV"));
+  if (pass) collection = collection.filter(ee.Filter.eq("orbitProperties_pass", pass));
+  return collection.select(BANDS.sentinel1);
 }
 
 export function firms(ee, region, window) {
@@ -531,16 +600,20 @@ function populationImages(ee, region) {
 async function preflight(ee, { region, bufferRegion, windows, context }) {
   const latest = (collection) => ee.Algorithms.If(collection.size().gt(0), collection.aggregate_max("system:time_start"), ee.Number(NONE));
   const viirsSearch = viirs(ee, region, windows.viirsSearch);
+  const s1 = (list, pass) => list.map((w) => sentinel1(ee, region, w, pass)).reduce((all, next) => all.merge(next)).size();
   const counts = ee.Dictionary({
-    s2Current: sentinel2(ee, region, windows.season).size(),
-    s2Baseline: windows.baselines.map((w) => sentinel2(ee, region, w)).reduce((all, next) => all.merge(next)).size(),
-    s1Month: sentinel1(ee, region, windows.month).size(),
-    s1Prior: sentinel1(ee, region, windows.s1Prior).size(),
+    ...Object.fromEntries(ORBIT_PASSES.flatMap((pass) => [
+      [`s1Month_${pass}`, s1([windows.month], pass)],
+      [`s1MonthBase_${pass}`, s1(windows.radarBefore, pass)],
+    ])),
     viirsMonth: viirs(ee, region, windows.month).size(),
     viirsLatest: latest(viirsSearch),
-    firmsWar: windows.firmsWar ? firms(ee, region, windows.firmsWar).size() : ee.Number(0),
+    firmsDamage: windows.damage ? firms(ee, region, windows.damage).size() : ee.Number(0),
+    firmsNormal: firms(ee, region, windows.fireNormal).size(),
     firmsMonth: firms(ee, region, windows.month).size(),
-    firmsYear: firms(ee, bufferRegion, windows.lastYear).size(), // within 300 km, like the distance
+    firmsMonthBase: windows.monthBaselines.map((w) => firms(ee, region, w)).reduce((all, next) => all.merge(next)).size(),
+    // Within 300 km, like the distance; only needed inside a known war.
+    firmsYear: windows.conflict ? firms(ee, bufferRegion, windows.lastYear).size() : ee.Number(0),
     worldPop: worldPop(ee, region).size(),
   });
   const raw = await evaluate(counts, { timeoutMs: 2 * 60 * 1000, what: "Checking which satellite images exist", context });
@@ -569,7 +642,10 @@ export async function checkChernozemAsset(ee, assetId) {
 
 const lowerFirst = (text) => text.charAt(0).toLowerCase() + text.slice(1);
 
-async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress } = {}) {
+// conflict: the known war covering the area ({ id, name, since }) or null;
+// when it is not given it is looked up from the area's cells
+// (server/conflicts.js).
+async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conflict: givenConflict } = {}) {
   if (!area?.bbox || !Array.isArray(cells) || !cells.length) throw new GeeError("bad_request", "Nothing to analyze: the area has no cells.");
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(month))) throw new GeeError("bad_request", `Not a month: ${month}`);
   if (!(Number(cellSizeDeg) > 0)) throw new GeeError("bad_request", `Not a cell size: ${cellSizeDeg}`);
@@ -578,53 +654,71 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress } = {
   const context = contextOf(cfg);
   const warnings = [];
   const bbox = area.bbox;
-  const region = rect(ee, bbox);
-  const midLat = (bbox[1] + bbox[3]) / 2;
+  // The Earth Engine region is built from the cells themselves (one box per
+  // run of cells, split at the 180° line), not from the area's box: Russia's
+  // or the USA's box spans the whole globe.
+  const boxes = cellBoxes(cells, cellSizeDeg);
+  const region = boxesGeometry(ee, boxes);
+  const midLat = cellsMidLat(cells, bbox);
   const scale = reduceScale(cellSizeDeg, midLat);
   const tileScale = tileScaleFor(cellSizeDeg, midLat);
   const today = isoDay(deps.now());
-  const windows = monthWindows(month, today);
-  const chunks = chunk(cells, chunkSizeFor(cellSizeDeg, midLat));
-  const total = chunks.length + 3;
+  const conflict = cleanConflict(givenConflict !== undefined ? givenConflict : conflictForArea({ countryId: area.countryId, bbox, cells }));
+  const shared = monthWindows(month, today, { lat: midLat, conflict });
+  const chunkSize = chunkSizeFor(cellSizeDeg, midLat);
+  let total = Math.ceil(cells.length / chunkSize) * 2 + 3;
   let done = 0;
   // onProgress gets the share done (0..1) and a short message.
   const step = (message) => onProgress?.(Math.min(1, done++ / total), message);
-  if (windows.month.end < monthBounds(month).end) warnings.push(`${month} is not over yet; images up to ${shiftDays(today, -1)} were used.`);
+  if (shared.month.end < monthBounds(month).end) warnings.push(`${month} is not over yet; images up to ${shiftDays(today, -1)} were used.`);
 
-  // 1. What imagery is there, and can we read the chernozem map?
+  // 1. Each place's growing season, from its greenest month in 2019-2021
+  // (MODIS NDVI over its cropland); cells with the same season are measured
+  // together. Where the season is not clear, the latitude decides.
+  step("Finding each place's growing season");
+  const peaks = await seasonPeaks(ee, { cells, cellSizeDeg, scale, tileScale, chunkSize, state: deps.state, context }).catch((error) => {
+    warnings.push(`The growing season could not be read from the satellite record (${error.message}); it was taken from the latitude.`);
+    return new Map();
+  });
+  const groups = seasonGroups(cells, peaks).map((group) => {
+    const groupBoxes = cellBoxes(group.cells, cellSizeDeg);
+    return { ...group, region: boxesGeometry(ee, groupBoxes), windows: monthWindows(month, today, { lat: group.seasonLat, conflict, peakMonth: group.peakMonth }) };
+  });
+  total = groups.reduce((sum, group) => sum + Math.ceil(group.cells.length / chunkSize), 0) + Math.ceil(cells.length / chunkSize) + 3;
+
+  // 2. What imagery is there, and can we read the chernozem map?
   step("Checking satellite images");
-  const bufferRegion = rect(ee, expandBboxKm(bbox, MAX_CONFLICT_M / 1000));
-  const [have, asset] = await Promise.all([preflight(ee, { region, bufferRegion, windows, context }), checkChernozemAsset(ee, cfg.chernozemAsset)]);
+  const bufferRegion = boxesGeometry(ee, cellBoxes(cells, cellSizeDeg, MAX_CONFLICT_M / 1000));
+  const [have, asset, ...groupHave] = await Promise.all([
+    preflight(ee, { region, bufferRegion, windows: shared, context }),
+    checkChernozemAsset(ee, cfg.chernozemAsset),
+    ...groups.map((group) => seasonPreflight(ee, { region: group.region, windows: group.windows, context })),
+  ]);
   if (asset.warning) warnings.push(asset.warning);
 
-  // 2. Build the images (nothing is computed until a request below).
+  // 3. Build the images (nothing is computed until a request below).
   const cropland = croplandImage(ee);
   const chernozem = chernozemImage(ee, asset.assetId);
+  const fire = fireImages(ee, { region, windows: shared, have });
 
-  let chiDrop;
-  if (have.s2Current > 0 && have.s2Baseline > 0) {
-    chiDrop = chiHealthImage(ee, region, windows.baselines).subtract(chiHealthImage(ee, region, windows.season)).rename("chiDrop");
-  } else {
-    chiDrop = emptyBand(ee, "chiDrop");
-    warnings.push(`No usable Sentinel-2 images for ${have.s2Current > 0 ? `the ${GEE_BASELINE.from}-${GEE_BASELINE.to} baseline` : "this season"}; the soil health index could not be measured.`);
-  }
-  const heavy = chiDrop.gte(HEAVY_DAMAGE_CHI_DROP).updateMask(cropland).rename("heavy");
-
-  const firesWar =
-    windows.firmsWar && have.firmsWar > 0
-      ? firms(ee, region, windows.firmsWar).count().unmask(0).rename("firesWar")
-      : ee.Image.constant(0).rename("firesWar");
-
-  // Distance to fighting: ACLED battles, else recent fire detections.
-  const acled = acledBattlesFor({ csvPath: cfg.acledCsvPath, bbox, month });
+  // Distance to fighting: ACLED battles; else, inside a known war, unusual
+  // fire detections; at peace, not measured (every cell reads 300 km and
+  // nothing is set aside for it, which does not make the land safe).
+  const acled = acledBattlesFor({ csvPath: cfg.acledCsvPath, bbox: boxesBbox(boxes), month });
   if (acled.warning) warnings.push(acled.warning);
-  let conflictM;
+  let conflictM = null;
+  let accessSource = "none";
   if (acled.points.length) {
     const battles = ee.FeatureCollection(acled.points.map((point) => ee.Feature(ee.Geometry.Point(point))));
     conflictM = battles.distance(MAX_CONFLICT_M).unmask(MAX_CONFLICT_M).rename("conflictM");
+    accessSource = "acled";
+  } else if (!conflict) {
+    // Fires in peaceful farm country (harvest burning, wildfires) are not
+    // fighting, so nothing is estimated from them.
+    warnings.push(NO_WAR_WARNING);
   } else if (have.firmsYear > 0) {
-    warnings.push("Distance to fighting is estimated from unusual fires of the last 12 months (far more than before the war; no ACLED file), so treat safe access as rough.");
-    const fireBand = fightingFires(ee, bufferRegion, windows).rename("fire");
+    warnings.push(`Distance to fighting is estimated from unusual fires of the last 12 months (far more than in ${BASELINE_FROM}-${BASELINE_YEAR}; no ACLED file), so treat safe access as rough.`);
+    const fireBand = fightingFires(ee, bufferRegion, shared).rename("fire");
     const fires = fireBand.stratifiedSample({
       numPoints: 3000,
       classBand: "fire",
@@ -634,14 +728,16 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress } = {
       tileScale,
     });
     conflictM = fires.distance(MAX_CONFLICT_M).unmask(MAX_CONFLICT_M).rename("conflictM");
+    accessSource = "fires";
   } else {
     warnings.push("No conflict data and no recent fires near this area; every cell counts as 300 km or more from fighting.");
     conflictM = ee.Image.constant(MAX_CONFLICT_M).rename("conflictM");
+    accessSource = "fires";
   }
 
   let lights;
   if (have.viirsMonth > 0) {
-    lights = viirs(ee, region, windows.month).median().rename("lights");
+    lights = viirs(ee, region, shared.month).median().rename("lights");
   } else if (have.viirsLatest !== null) {
     const latestWindow = daysBefore(have.viirsLatest, 30);
     lights = viirs(ee, region, latestWindow).median().rename("lights");
@@ -651,42 +747,98 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress } = {
     warnings.push("No night-light images were found for this area.");
   }
 
+  // Radar alerts: this month against the same month of 2019-2021, one orbit
+  // direction only (ascending and descending passes see the ground at
+  // different angles, so mixing them reads as change).
+  // The change common to the whole neighbourhood (an early or late harvest,
+  // a wet or dry month: RADAR_SHIFT) is taken off first, so only patches
+  // that changed more than their surroundings count.
+  const monthPass = pickPass(have.s1Month, have.s1MonthBase);
   let radarShare;
-  if (have.s1Month > 0 && have.s1Prior > 0) {
-    radarShare = sentinel1(ee, region, windows.month)
+  if (monthPass) {
+    const change = sentinel1(ee, region, shared.month, monthPass)
       .median()
-      .subtract(sentinel1(ee, region, windows.s1Prior).median())
-      .abs()
-      .gt(RADAR_CHANGE_DB)
-      .rename("radarShare");
+      .subtract(mergedSentinel1(ee, region, shared.radarBefore, monthPass).median())
+      .rename("change");
+    const around = boxesGeometry(ee, cellBoxes(cells, cellSizeDeg, RADAR_SHIFT.aroundKm));
+    const shift = ee.Number(
+      change.reduceRegion({ reducer: ee.Reducer.median(), geometry: around, scale: RADAR_SHIFT.scale, bestEffort: true, maxPixels: 1e7, tileScale }).get("change", 0),
+    );
+    radarShare = change.subtract(shift).abs().gt(RADAR_CHANGE_DB).rename("radarShare");
   } else {
     radarShare = emptyBand(ee, "radarShare");
-    warnings.push("No Sentinel-1 radar images for this month; radar alerts are off.");
+    warnings.push(`No Sentinel-1 radar images from one orbit direction for both ${month} and the same month of ${BASELINE_FROM}-${BASELINE_YEAR}; radar alerts are off.`);
   }
-  const firesMonth = have.firmsMonth > 0 ? firms(ee, region, windows.month).count().unmask(0).rename("firesMonth") : ee.Image.constant(0).rename("firesMonth");
-
-  const meanImage = ee.Image.cat([
-    chernozem.updateMask(cropland).rename("chernozemCrop"),
-    chernozem.rename("chernozemAll"),
-    cropland,
-    chiDrop,
-    heavy,
-    firesWar,
-    conflictM,
-    lights,
-    radarShare,
-    firesMonth,
-  ]);
 
   const people = have.worldPop > 0 ? populationImages(ee, region) : null;
   if (!people) warnings.push("WorldPop has no population data for this area.");
 
-  // 3. Reduce over the cells, chunk by chunk, two requests at once. A chunk
-  // that runs out of memory or time is tried once more, coarser.
+  // The images that depend on the season: the health index (a diagnostic),
+  // the season's radar change, and heavy damage from them and the fires.
+  const seasonUsed = [];
+  for (const [i, group] of groups.entries()) {
+    const g = groupHave[i];
+    const label = windowLabel(group.windows.season);
+    seasonUsed.push({ label, from: group.windows.season.from, to: group.windows.season.to, cells: group.cells.length });
+    let chiDrop;
+    if (g.s2Current > 0 && g.s2Baseline > 0) {
+      chiDrop = chiHealthImage(ee, group.region, group.windows.baselines).subtract(chiHealthImage(ee, group.region, group.windows.season)).rename("chiDrop");
+    } else {
+      chiDrop = emptyBand(ee, "chiDrop");
+      warnings.push(`No usable Sentinel-2 images for ${g.s2Current > 0 ? `the same season of ${GEE_BASELINE.from}-${GEE_BASELINE.to}` : label}; the soil health index could not be measured there.`);
+    }
+    const seasonPass = pickPass(g.s1Season, g.s1SeasonBase);
+    let radarDb;
+    let heavy;
+    if (seasonPass) {
+      const now = sentinel1(ee, group.region, group.windows.season, seasonPass).median();
+      const before = mergedSentinel1(ee, group.region, group.windows.baselines, seasonPass).median();
+      // Open water in either season (a flooded field, a lake that rose) is
+      // left out: water is radar-dark, so it reads as a huge change that is
+      // not damage to the soil (real data: Lake Nakuru's shore, Kenya, 16 dB).
+      const land = now.gt(WATER_VV_DB).and(before.gt(WATER_VV_DB));
+      const change = now.subtract(before).abs().updateMask(land);
+      radarDb = change.updateMask(cropland).rename("radarDb");
+      // The paper's rule (method.js HEAVY_DAMAGE): strong radar change, or
+      // clear radar change next to an unusual fire. No health index.
+      // Where no known war covers the area, each piece of evidence alone
+      // has an everyday cause: strong radar change is land-use change (a
+      // new crop, ploughing, a meadow turned into a field, greenhouses),
+      // and a 2 dB change next to a harvest fire is ordinary rotation. There
+      // a pixel counts only with BOTH strong radar change and an unusual
+      // fire within 1 km, the same rule as a field's damage
+      // (src/lib/field/method.js damageDetected).
+      const strong = change.gte(HEAVY_DAMAGE.radarDb);
+      heavy = (conflict ? strong.or(change.gte(HEAVY_DAMAGE.radarWithFireDb).and(fire.near)) : strong.and(fire.near)).updateMask(cropland).rename("heavy");
+    } else {
+      radarDb = emptyBand(ee, "radarDb");
+      heavy = emptyBand(ee, "heavy");
+      warnings.push(`No Sentinel-1 radar images from one orbit direction for both ${label} and the same season of ${BASELINE_FROM}-${BASELINE_YEAR}; heavy damage could not be measured there.`);
+    }
+    group.meanImage = ee.Image.cat([
+      chernozem.updateMask(cropland).rename("chernozemCrop"),
+      chernozem.rename("chernozemAll"),
+      cropland,
+      chiDrop,
+      radarDb,
+      heavy,
+      fire.excess,
+      // Left out at peace: a missing distance reads as 300 km (toReading).
+      ...(conflictM ? [conflictM] : []),
+      lights,
+      radarShare,
+      fire.month,
+    ]);
+  }
+
+  // 4. Reduce over the cells, group by group and chunk by chunk, two
+  // requests at once. A chunk that runs out of memory or time is tried once
+  // more, coarser.
   const means = new Map();
   const sums = new Map();
   let coarserChunks = 0;
-  const measure = (part, plan) => {
+  let chunkCount = 0;
+  const measure = (part, meanImage, plan) => {
     const squares = cellCollection(ee, part, cellSizeDeg);
     const regionArgs = (extra) => ({ collection: squares, tileScale: plan.tileScale, ...(deps.state.noMaxPixelsArg ? {} : { maxPixelsPerRegion: MAX_PIXELS_PER_CELL }), ...extra });
     // Sent as LISTS of features: real Earth Engine answers a FeatureCollection
@@ -706,15 +858,18 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress } = {
     }
     return ee.Dictionary(answer);
   };
+  const work = groups.flatMap((group) => chunk(group.cells, chunkSize).map((part) => ({ part, meanImage: group.meanImage })));
+  chunkCount = work.length;
   let measured = 0;
-  await mapLimit(chunks, MAX_PARALLEL_CHUNKS, async (part) => {
+  await mapLimit(work, MAX_PARALLEL_CHUNKS, async ({ part, meanImage }) => {
     const label = `Measuring ${part.length} cells (${part[0].id} to ${part[part.length - 1].id}) of ${cells.length}`;
     let plan = { scale, tileScale };
     let retried = false;
     let result;
     for (;;) {
       try {
-        result = await evaluate(measure(part, plan), { what: label, context });
+        // A dropped connection is tried once more as it is (retryTransient).
+        result = await retryTransient(() => evaluate(measure(part, meanImage, plan), { what: label, context }), deps.retryDelayMs);
         break;
       } catch (error) {
         // An older Earth Engine without maxPixelsPerRegion: drop it, try again.
@@ -738,29 +893,36 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress } = {
     step(`Measured ${measured} of ${cells.length} cells`);
   });
   if (coarserChunks) {
-    warnings.push(`${coarserChunks} of ${chunks.length} groups of cells were measured with coarser pixels (${coarserScale(scale)} m) because Earth Engine ran short of memory or time.`);
+    warnings.push(`${coarserChunks} of ${chunkCount} groups of cells were measured with coarser pixels (${coarserScale(scale)} m) because Earth Engine ran short of memory or time.`);
   }
 
-  // 4. Place names (best effort: a failure only costs the names).
+  // 5. Place names (best effort: a failure only costs the names).
   step("Looking up place names");
   const names = await placeNames(ee, { region, cells, context }).catch((error) => {
     warnings.push(`Place names unavailable (${error.message}).`);
     return new Map();
   });
 
-  // 5. Readings.
+  // 6. Readings.
   const readings = [];
   let noHealth = 0;
+  let noRadar = 0;
   for (const cell of cells) {
-    const reading = toReading(cell, means.get(cell.id), people ? sums.get(cell.id) : { people: 0 }, { cellSizeDeg, names: names.get(cell.id) });
+    const props = means.get(cell.id);
+    // At peace without ACLED there is no distance band: 300 km everywhere.
+    const reading = toReading(cell, props && !conflictM ? { ...props, conflictM: MAX_CONFLICT_M } : props, people ? sums.get(cell.id) : { people: 0 }, { cellSizeDeg, names: names.get(cell.id) });
     if (reading.chiDrop === null) noHealth += 1;
+    if (reading.radarDb === null) noRadar += 1;
     readings.push(reading);
   }
-  if (noHealth > 0 && noHealth < cells.length && have.s2Current > 0) {
-    warnings.push(`${noHealth} of ${cells.length} cells had no cloud-free Sentinel-2 view; their damage uses fires only.`);
+  if (noRadar > 0 && noRadar < cells.length) {
+    warnings.push(`${noRadar} of ${cells.length} cells had no radar reading on cropland; their damage uses fires only.`);
+  }
+  if (noHealth > 0 && noHealth < cells.length && groupHave.some((g) => g.s2Current > 0)) {
+    warnings.push(`${noHealth} of ${cells.length} cells had no cloud-free Sentinel-2 view; the soil health index is missing there.`);
   }
 
-  // 6. Alerts, with the day each one was last seen.
+  // 7. Alerts, with the day each one was last seen.
   step("Finding alerts");
   const candidates = cells.map((cell) => {
     const props = means.get(cell.id) || {};
@@ -772,24 +934,171 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress } = {
       lon: cell.lon,
       radarShare: numberOr(props.radarShare, 0),
       radarKm2: numberOr(props.radarShare, 0) * areaKm2,
-      fires: numberOr(props.firesMonth, 0) * areaKm2, // FIRMS pixels are ~1 km², so mean × km² = detections
+      // Fires in the month above the same month's normal, for the whole cell
+      // (FIRMS pixels are ~1 km², so mean × km² = detections), never below 0.
+      fires: Math.max(0, numberOr(props.firesMonth, 0) * areaKm2),
       admin1: n.admin1,
       admin2: n.admin2,
     };
   });
   let alerts = pickAlerts(candidates, { cellSizeDeg, month });
   if (alerts.length) {
-    alerts = await alertDates(ee, { alerts, cells, cellSizeDeg, region, windows, month, scale, tileScale, context, hasFires: have.firmsMonth > 0 }).catch((error) => {
+    alerts = await alertDates(ee, { alerts, cells, cellSizeDeg, region, windows: shared, month, scale, tileScale, context, hasFires: have.firmsMonth > 0, radarPass: monthPass }).catch((error) => {
       warnings.push(`Alert dates unavailable (${error.message}); the last day of the month is shown.`);
       return alerts;
     });
   }
   // A month that is not over yet: no alert dated after the last day with images.
-  const lastImageDay = windows.month.end > windows.month.start ? shiftDays(windows.month.end, -1) : windows.month.start;
+  const lastImageDay = shared.month.end > shared.month.start ? shiftDays(shared.month.end, -1) : shared.month.start;
   alerts = alerts.map((alert) => (alert.date > lastImageDay ? { ...alert, date: lastImageDay } : alert));
   onProgress?.(1, "Done");
-  // Damage is measured against the same months of 2021 (see monthWindows).
-  return { readings, alerts, warnings, baseline: GEE_BASELINE };
+  // Damage is measured against the same season of 2019-2021 (see monthWindows).
+  return { readings, alerts, warnings, baseline: GEE_BASELINE, conflict, imagery: imageryOf(seasonUsed, cells.length), accessSource };
+}
+
+// The imagery a run says it compared: the season used for most cells, with
+// the others named in the label. -> { from, to, label }
+export function imageryOf(seasons, cellCount) {
+  if (!seasons.length) return null;
+  const sorted = [...seasons].sort((a, b) => b.cells - a.cells);
+  const main = sorted[0];
+  const share = (s) => `${Math.round((100 * s.cells) / Math.max(1, cellCount))}%`;
+  const label = sorted.length === 1 ? main.label : sorted.map((s) => `${s.label} (${share(s)} of the area)`).join("; ");
+  return { from: main.from, to: main.to, label };
+}
+
+// The fire images of a month (FIRMS, 1 km), shared by every season group:
+//   excess  detections in the damage window minus the normal years' rate
+//           for that long, smoothed over FIRE_SMOOTH_M (the paper's 5 km)
+//           and NOT clamped pixel by pixel, so the cell's mean is the
+//           excess of the cell and its surroundings (clamped at 0 in
+//           toReading): a pixel that burns now but not in 2019-2021 and one
+//           nearby that burned then but not now cancel out, like rotating
+//           stubble burning does, and one stray fire in a small cell does
+//           not max out the indicator
+//   near    1 within HEAVY_DAMAGE.fireNearM of an unusual fire: a pixel with
+//           a detection in the damage window where the fire density
+//           (smoothed over FIRE_SMOOTH_M) is above the normal years'
+//   month   detections in the month minus the same month's mean in
+//           2019-2021 (not clamped; alerts use the cell's total)
+function fireImages(ee, { region, windows, have }) {
+  const grid = (image) => image.setDefaultProjection("EPSG:4326", null, 1000);
+  const count = (window) => grid(firms(ee, region, window).count().unmask(0));
+  const zero = (name) => ee.Image.constant(0).rename(name);
+  let excess = zero("firesExcess");
+  let near = zero("fireNear");
+  if (windows.damage && have.firmsDamage > 0) {
+    const inWindow = count(windows.damage);
+    const normal = have.firmsNormal > 0 ? count(windows.fireNormal).multiply(windows.fireNormalShare) : ee.Image.constant(0);
+    const smooth = (image) => image.focal_mean(FIRE_SMOOTH_M, "circle", "meters");
+    const smoothExcess = smooth(inWindow.subtract(normal));
+    excess = smoothExcess.rename("firesExcess");
+    const unusual = smoothExcess.gt(0);
+    near = inWindow.gt(0).and(unusual).focal_max(HEAVY_DAMAGE.fireNearM, "circle", "meters").unmask(0).rename("fireNear");
+  }
+  let month = zero("firesMonth");
+  if (have.firmsMonth > 0) {
+    const now = count(windows.month);
+    const before =
+      have.firmsMonthBase > 0
+        ? grid(windows.monthBaselines.map((w) => firms(ee, region, w)).reduce((all, next) => all.merge(next)).count().unmask(0)).divide(windows.monthBaselines.length)
+        : ee.Image.constant(0);
+    month = now.subtract(before).rename("firesMonth");
+  }
+  return { excess, near, month };
+}
+
+// Sentinel-1 over several windows, one collection.
+function mergedSentinel1(ee, region, windows, pass) {
+  return windows.map((window) => sentinel1(ee, region, window, pass)).reduce((all, next) => all.merge(next));
+}
+
+// The orbit direction to compare radar with: the one with the most passes
+// in BOTH windows ({ ASCENDING, DESCENDING } counts each), or null when
+// neither direction has passes in both.
+export function pickPass(now = {}, before = {}) {
+  let best = null;
+  for (const pass of ORBIT_PASSES) {
+    const a = Number(now?.[pass]) || 0;
+    const b = Number(before?.[pass]) || 0;
+    if (a <= 0 || b <= 0) continue;
+    const score = Math.min(a, b) * 1e6 + a + b;
+    if (!best || score > best.score) best = { pass, score };
+  }
+  return best ? best.pass : null;
+}
+
+// The images of one season group: Sentinel-2 and Sentinel-1 (each orbit
+// direction) in the season and the same season of 2019-2021.
+async function seasonPreflight(ee, { region, windows, context }) {
+  const s1 = (list, pass) => list.map((w) => sentinel1(ee, region, w, pass)).reduce((all, next) => all.merge(next)).size();
+  const counts = ee.Dictionary({
+    s2Current: sentinel2(ee, region, windows.season).size(),
+    s2Baseline: windows.baselines.map((w) => sentinel2(ee, region, w)).reduce((all, next) => all.merge(next)).size(),
+    ...Object.fromEntries(ORBIT_PASSES.flatMap((pass) => [
+      [`s1Season_${pass}`, s1([windows.season], pass)],
+      [`s1SeasonBase_${pass}`, s1(windows.baselines, pass)],
+    ])),
+  });
+  const raw = (await evaluate(counts, { timeoutMs: 2 * 60 * 1000, what: "Checking which satellite images exist for the season", context })) || {};
+  const count = (key) => Math.max(0, numberOr(raw[key], 0));
+  return {
+    s2Current: count("s2Current"),
+    s2Baseline: count("s2Baseline"),
+    s1Season: Object.fromEntries(ORBIT_PASSES.map((pass) => [pass, count(`s1Season_${pass}`)])),
+    s1SeasonBase: Object.fromEntries(ORBIT_PASSES.map((pass) => [pass, count(`s1SeasonBase_${pass}`)])),
+  };
+}
+
+// The monthly NDVI climatology the season finder reads: 12 bands
+// ndvi01..ndvi12, the mean MODIS NDVI of each calendar month in 2019-2021,
+// over cropland only.
+export function ndviClimatology(ee) {
+  const ndvi = ee.ImageCollection(DATASETS.modisNdvi).filterDate(SEASON_FINDER.start, SEASON_FINDER.end).select(BANDS.modisNdvi);
+  return ee.Image.cat(
+    Array.from({ length: 12 }, (_, i) =>
+      ndvi
+        .filter(ee.Filter.calendarRange(i + 1, i + 1, "month"))
+        .mean()
+        .multiply(SEASON_FINDER.ndviScale)
+        .rename(`ndvi${pad(i + 1)}`),
+    ),
+  ).updateMask(croplandImage(ee));
+}
+
+// The peak month (1-12) of the cropland greenness in a region (a farm, a
+// search circle), or null when it is not clear or cannot be read. Used by
+// the Field provider for its season windows (src/lib/season.js).
+export async function peakMonthAt(ee, region, { context = {} } = {}) {
+  try {
+    const values = await evaluate(
+      ndviClimatology(ee).reduceRegion({ reducer: ee.Reducer.mean(), geometry: region, scale: 500, bestEffort: true, maxPixels: MAX_PIXELS_PER_CELL }),
+      { timeoutMs: 60 * 1000, what: "Finding the growing season", context },
+    );
+    return peakMonthFrom(Array.from({ length: 12 }, (_, i) => numberOr(values?.[`ndvi${pad(i + 1)}`], null)));
+  } catch {
+    return null;
+  }
+}
+
+// The peak month (1-12) of each cell's cropland greenness in 2019-2021, from
+// MODIS NDVI (MOD13A2, 1 km, 16 days): the mean of each calendar month,
+// then src/lib/season.js peakMonthFrom. -> Map(cell id -> month | null)
+async function seasonPeaks(ee, { cells, cellSizeDeg, scale, tileScale, chunkSize, state, context }) {
+  const monthly = ndviClimatology(ee);
+  const peaks = new Map();
+  const pixel = Math.max(SEASON_FINDER.minScale, Math.min(SEASON_FINDER.maxScale, scale));
+  await mapLimit(chunk(cells, chunkSize), MAX_PARALLEL_CHUNKS, async (part) => {
+    const squares = cellCollection(ee, part, cellSizeDeg);
+    const args = { collection: squares, reducer: ee.Reducer.mean(), scale: pixel, crs: "EPSG:4326", tileScale, ...(state.noMaxPixelsArg ? {} : { maxPixelsPerRegion: MAX_PIXELS_PER_CELL }) };
+    const result = await evaluate(monthly.reduceRegions(args).select([".*"], null, false).toList(part.length), { what: "Finding the growing season", context });
+    for (const feature of Array.isArray(result) ? result : result?.features || []) {
+      const p = feature?.properties || {};
+      const values = Array.from({ length: 12 }, (_, i) => numberOr(p[`ndvi${pad(i + 1)}`], null));
+      peaks.set(p.id, peakMonthFrom(values));
+    }
+  });
+  return peaks;
 }
 
 // Cells as Earth Engine squares, each carrying its id.
@@ -819,9 +1128,9 @@ async function placeNames(ee, { region, cells, context }) {
 }
 
 // For each alert: the last radar pass over it and the last fire day in it.
-async function alertDates(ee, { alerts, cells, cellSizeDeg, region, windows, month, scale, tileScale, context, hasFires }) {
+async function alertDates(ee, { alerts, cells, cellSizeDeg, region, windows, month, scale, tileScale, context, hasFires, radarPass = null }) {
   const byId = new Map(cells.map((cell) => [cell.id, cell]));
-  const s1Month = sentinel1(ee, region, windows.month);
+  const s1Month = sentinel1(ee, region, windows.month, radarPass);
   const seeds = ee.FeatureCollection(
     alerts.map((alert) => {
       const cell = byId.get(alert.cellIds[0]);
@@ -933,45 +1242,63 @@ export function monthBounds(month) {
 
 // Every date window one month's analysis needs ({ start, end }, end not
 // included, as Earth Engine's filterDate expects).
-//   season     this year's growing season up to the month (Apr..month;
-//              Nov–Mar use the last full Apr–Oct season), from runs.js
-//   baseline   the same months of 2021, so April is compared with April
-//              and a whole season with a whole season
-//   baselines  the same months of each baseline year, 2019 to 2021 (the
-//              CHI "before" composite uses all of them)
+//   season     the last growing season that was COMPLETE by the end of the
+//              month (src/lib/season.js lastCompleteSeason), with from / to
+//              ("YYYY-MM") and its label: every month of one season compares
+//              the same season, so an early or late spring is not damage.
+//              By the place's peak month when known, else by latitude: north
+//              April to September, south October to March (across the new
+//              year), tropics the 12 whole months before the month
+//   baselines  the same season in each normal year, 2019 to 2021 (a season
+//              across the new year ENDS in each normal year); `baseline` is
+//              the last of them
 //   month      the month itself (alerts, night lights)
-//   s1Prior    the 3 months before it (radar "before" picture)
-//   firmsWar   24 Feb 2022 to the end of the month (null before the war)
+//   monthBaselines  the same month in 2019, 2020 and 2021 (fire alerts
+//              compare the month with them), cut short like the month
+//   radarBefore what radar alerts compare the month with: at peace the same
+//              month of 2019-2021 (so harvest and tillage, which come every
+//              year, cancel out); inside a known war the 3 months before (so
+//              an alert is NEW change: against 2019-2021 a whole front reads
+//              as changed every month)
+//   damage     where damage is counted: from the day the known war began
+//              (null for a month before it), else the two years up to the
+//              end of the month (src/config/conflicts.js damageWindow)
+//   fireNormal 2019-2021 (whole years), and fireNormalShare = the damage
+//              window's length / fireNormal's length: the normal number of
+//              fires in the damage window is fireNormal's count times it
 //   lastYear   the 12 months up to the end of the month, and fireBaselines
-//              the same 12 months of each baseline year (distance to fighting)
+//              the same 12 months of each baseline year (distance to
+//              fighting, inside a known war only)
 //   viirsSearch the 6 months up to the end of the month (night lights are
 //              published with a delay)
+//   conflict   the war used ({ id, name, since }) or null
 // No window reaches past `today` ("YYYY-MM-DD", not included), so a month
 // that is not over yet only asks for images that exist.
-export function monthWindows(month, today = isoDay(new Date())) {
+//   lat        the place's latitude (no latitude: the north's season)
+//   peakMonth  the place's greenest month (1-12), when known
+export function monthWindows(month, today = isoDay(new Date()), { lat, conflict = null, peakMonth = null } = {}) {
   const stop = (window) => clampWindow(window, today);
   const own = stop(monthBounds(month));
-  const season = imageryWindow(month);
-  const seasonEnd = stop({ start: `${season.from}-01`, end: `${addMonths(season.to, 1)}-01` });
-  const seasonWindow = { ...seasonEnd, from: season.from, to: season.to };
-  // The same months of one baseline year. The season may span two
-  // calendar years (Nov-Mar use the last full season), so years shift by
-  // the same amount. When the season is cut short by today, the baseline
-  // stops on the same day.
-  const fullSeasonEnd = `${addMonths(season.to, 1)}-01`;
-  const sameMonths = (year) => {
-    const offset = year - Number(season.from.slice(0, 4));
-    const shift = (text) => `${Number(text.slice(0, 4)) + offset}${text.slice(4)}`;
-    const end = seasonEnd.end < fullSeasonEnd && seasonEnd.end > seasonEnd.start ? shift(seasonEnd.end) : shift(fullSeasonEnd);
-    return { start: shift(`${season.from}-01`), end };
-  };
+  // The season must be over by the end of the month AND by today.
+  const asOf = lastDay(month) < today ? lastDay(month) : shiftDays(today, -1);
+  const last = lastCompleteSeason(Number.isFinite(lat) ? lat : 50, asOf, peakMonth);
+  const fullSeason = { start: last.start, end: last.end };
+  const season = { ...stop(fullSeason), from: last.start.slice(0, 7), to: shiftDays(last.end, -1).slice(0, 7), label: last.label, peakMonth: last.peakMonth };
+  const baselines = baselineWindows(fullSeason, BASELINE_YEARS);
+  const war = cleanConflict(conflict);
+  const counted = damageWindow(war, lastDay(month));
+  const damage = counted.start < own.end ? stop({ start: counted.start, end: own.end }) : null;
   return {
     month: own,
-    season: seasonWindow,
-    baseline: sameMonths(BASELINE_YEAR),
-    baselines: BASELINE_YEARS.map(sameMonths),
-    s1Prior: stop({ start: `${addMonths(month, -3)}-01`, end: monthBounds(month).start }),
-    firmsWar: own.end > WAR_START ? stop({ start: WAR_START, end: own.end }) : null,
+    monthBaselines: BASELINE_YEARS.map((year) => sameWindowIn(own, year)),
+    radarBefore: war ? [stop({ start: `${addMonths(month, -3)}-01`, end: monthBounds(month).start })] : BASELINE_YEARS.map((year) => sameWindowIn(own, year)),
+    season,
+    baseline: baselines[baselines.length - 1],
+    baselines,
+    damage,
+    fireNormal: { ...FIRE_NORMAL },
+    fireNormalShare: damage ? daysBetween(damage.start, damage.end) / daysBetween(FIRE_NORMAL.start, FIRE_NORMAL.end) : 0,
+    conflict: war,
     lastYear: stop({ start: yearBefore(own.end), end: own.end }),
     fireBaselines: BASELINE_YEARS.map((year) => {
       const end = sameDayIn(year, own.end);
@@ -979,6 +1306,101 @@ export function monthWindows(month, today = isoDay(new Date())) {
     }),
     viirsSearch: stop({ start: `${addMonths(month, -5)}-01`, end: own.end }),
   };
+}
+
+// ---------- Where the cells are ----------
+
+// The boxes that cover some cells: one per run of neighbouring columns
+// (a gap of more than two cells starts a new box), so an area across the
+// 180° line (Russia, the USA, Fiji) becomes boxes on each side instead of a
+// band around the globe. At most MAX_BOXES (the closest runs are joined).
+//   padKm  grows each box by this much (for "within 300 km")
+// -> [[west, south, east, north], ...]
+export const MAX_BOXES = 8;
+export function cellBoxes(cells, cellSizeDeg, padKm = 0) {
+  const half = cellSizeDeg / 2;
+  const sorted = [...cells].filter((cell) => Number.isFinite(cell.lat) && Number.isFinite(cell.lon)).sort((a, b) => a.lon - b.lon);
+  if (!sorted.length) return [];
+  let runs = [[sorted[0]]];
+  for (const cell of sorted.slice(1)) {
+    const run = runs[runs.length - 1];
+    if (cell.lon - run[run.length - 1].lon > 2 * cellSizeDeg + 1e-9) runs.push([cell]);
+    else run.push(cell);
+  }
+  const boxOf = (run) => [run[0].lon - half, Math.min(...run.map((c) => c.lat)) - half, run[run.length - 1].lon + half, Math.max(...run.map((c) => c.lat)) + half];
+  let boxes = runs.map(boxOf);
+  // Too many boxes (islands): join the two closest neighbours until few
+  // enough (never across the gap that holds the 180° line: the largest).
+  while (boxes.length > MAX_BOXES) {
+    let best = 1;
+    for (let i = 1; i < boxes.length; i += 1) if (boxes[i][0] - boxes[i - 1][2] < boxes[best][0] - boxes[best - 1][2]) best = i;
+    const [a, b] = [boxes[best - 1], boxes[best]];
+    boxes.splice(best - 1, 2, [a[0], Math.min(a[1], b[1]), b[2], Math.max(a[3], b[3])]);
+  }
+  const clampLon = (lon) => Math.min(180, Math.max(-180, lon));
+  const clampLat = (lat) => Math.min(90, Math.max(-90, lat));
+  return boxes.map((box) => {
+    const [west, south, east, north] = padKm > 0 ? expandBbox(box, padKm) : box;
+    return [clampLon(west), clampLat(south), clampLon(east), clampLat(north)].map((v) => Number(v.toFixed(7)));
+  });
+}
+
+// Boxes as one Earth Engine geometry (planar, like the cells).
+export function boxesGeometry(ee, boxes) {
+  if (boxes.length === 1) return rect(ee, boxes[0]);
+  const ring = ([w, s, e, n]) => [[[w, s], [e, s], [e, n], [w, n], [w, s]]];
+  return ee.Geometry.MultiPolygon(boxes.map(ring), null, false);
+}
+
+// The box around some boxes ([west, south, east, north]).
+export function boxesBbox(boxes) {
+  return [Math.min(...boxes.map((b) => b[0])), Math.min(...boxes.map((b) => b[1])), Math.max(...boxes.map((b) => b[2])), Math.max(...boxes.map((b) => b[3]))];
+}
+
+// The middle latitude of the cells (pixel sizes are worked out for it).
+function cellsMidLat(cells, bbox) {
+  const lats = cells.map((cell) => cell.lat).filter(Number.isFinite);
+  if (!lats.length) return (bbox[1] + bbox[3]) / 2;
+  return (Math.min(...lats) + Math.max(...lats)) / 2;
+}
+
+// Cells sorted into growing seasons. Each cell's season is its peak month
+// (peaks: Map id -> 1..12 or null); without one, its latitude band's
+// season (north = a July peak, south = a January peak, tropics = all year).
+// The biggest seasons are kept (at most maxGroups, each with at least
+// minShare of the cells); the cells of the others join the kept season
+// whose peak is nearest in the year.
+// -> [{ peakMonth (null: all year), seasonLat, cells }], biggest first
+export function seasonGroups(cells, peaks = new Map(), { maxGroups = SEASON_FINDER.maxGroups, minShare = SEASON_FINDER.minShare } = {}) {
+  const BAND_PEAK = { north: 7, south: 1, tropics: 0 }; // 0: all year
+  const byKey = new Map();
+  for (const cell of cells) {
+    const peak = peaks.get(cell.id);
+    const key = Number.isInteger(peak) && peak >= 1 && peak <= 12 ? peak : BAND_PEAK[climateBand(cell.lat)];
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(cell);
+  }
+  const sorted = [...byKey.entries()].sort((a, b) => b[1].length - a[1].length || a[0] - b[0]);
+  const kept = sorted.filter(([, list], i) => i === 0 || (i < maxGroups && list.length >= minShare * cells.length)).map(([key, list]) => ({ key, cells: [...list] }));
+  const distance = (a, b) => (a === 0 || b === 0 ? (a === b ? 0 : 3) : Math.min(Math.abs(a - b), 12 - Math.abs(a - b)));
+  for (const [key, list] of sorted) {
+    if (kept.some((group) => group.key === key)) continue;
+    let target = kept[0];
+    for (const group of kept) if (distance(key, group.key) < distance(key, target.key)) target = group;
+    target.cells.push(...list);
+  }
+  return kept.map(({ key, cells: list }) => ({
+    peakMonth: key || null,
+    // "All year" needs a tropical latitude for season.js; a peak month does
+    // not depend on the latitude.
+    seasonLat: key ? list.reduce((sum, cell) => sum + cell.lat, 0) / list.length : 0,
+    cells: list,
+  }));
+}
+
+// Whole days from one "YYYY-MM-DD" to another.
+export function daysBetween(start, end) {
+  return Math.max(0, Math.round((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86400000));
 }
 
 // "2026-10-18" in another year ("2019-10-18"); 29 February becomes 1 March.
@@ -1085,8 +1507,33 @@ export function populationPlan(cellSizeDeg, lat, scale = reduceScale(cellSizeDeg
 // with coarser pixels)? Looks at the raw message too, not just ours.
 export function isTooMuchWorkError(error) {
   const texts = [error?.message, error?.cause?.message, typeof error === "string" ? error : ""].filter(Boolean).join(" ").toLowerCase();
-  if (/computation timed out|user memory limit exceeded|memory limit exceeded/.test(texts)) return true;
+  // "memory capacity exceeded": Earth Engine's own servers were full (real
+  // data, Nakuru, Kenya, 2026-10-19, reading a field's history while other
+  // requests ran); the retry with coarser pixels went through.
+  if (/computation timed out|user memory limit exceeded|memory limit exceeded|memory capacity exceeded/.test(texts)) return true;
   return error instanceof GeeError && error.code === "timeout";
+}
+
+// Did the request fail on the way (a dropped connection, a busy server)
+// rather than in the computation? Worth one more try of the same request
+// after a pause. Real data, 2026-10-19: a Brazil box run failed after
+// 321 s on "Server returned HTTP code: -1 for POST .../value:compute"
+// while other runs were going; the same request passed on a retry.
+export function isTransientError(error) {
+  const texts = [error?.message, error?.cause?.message, typeof error === "string" ? error : ""].filter(Boolean).join(" ");
+  return /HTTP code: -1\b|HTTP code: (429|5\d\d)\b|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|socket hang up|network error|fetch failed/i.test(texts);
+}
+
+// Runs `request` (a function giving a promise); on a transient failure
+// waits `delayMs` and runs it once more.
+export async function retryTransient(request, delayMs = TRANSIENT_RETRY_MS) {
+  try {
+    return await request();
+  } catch (error) {
+    if (!isTransientError(error)) throw error;
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, Number.isFinite(delayMs) ? delayMs : TRANSIENT_RETRY_MS)));
+    return request();
+  }
 }
 
 // Did Earth Engine refuse an argument it does not know (older API)?
@@ -1106,15 +1553,16 @@ export function fromSentinel(value) {
 export function cleanCounts(raw = {}) {
   const r = raw || {};
   const count = (key) => Math.max(0, numberOr(r[key], 0));
+  const passes = (key) => Object.fromEntries(ORBIT_PASSES.map((pass) => [pass, count(`${key}_${pass}`)]));
   return {
-    s2Current: count("s2Current"),
-    s2Baseline: count("s2Baseline"),
-    s1Month: count("s1Month"),
-    s1Prior: count("s1Prior"),
+    s1Month: passes("s1Month"),
+    s1MonthBase: passes("s1MonthBase"),
     viirsMonth: count("viirsMonth"),
     viirsLatest: fromSentinel(r.viirsLatest),
-    firmsWar: count("firmsWar"),
+    firmsDamage: count("firmsDamage"),
+    firmsNormal: count("firmsNormal"),
     firmsMonth: count("firmsMonth"),
+    firmsMonthBase: count("firmsMonthBase"),
     firmsYear: count("firmsYear"),
     worldPop: count("worldPop"),
   };
@@ -1175,14 +1623,17 @@ function cleanName(value) {
 }
 
 // One cell's Earth Engine results -> the raw reading the runs expect.
-//   means  { chernozemCrop, chernozemAll, cropland, chiDrop, heavy, firesWar,
-//            conflictM, lights, ... } (means over the cell; missing = no data)
+//   means  { chernozemCrop, chernozemAll, cropland, chiDrop, radarDb, heavy,
+//            firesExcess, conflictM, lights, ... } (means over the cell;
+//            missing = no data; firesWar is the older name of firesExcess;
+//            firesExcess is the cell's own excess, clamped at 0 here)
 //   sums   { people } (people in the cell)
 export function toReading(cell, means = {}, sums = {}, { cellSizeDeg, names } = {}) {
   const m = means || {};
   const areaKm2 = cellAreaKm2(cellSizeDeg, cell.lat);
   const population = Math.max(0, numberOr(sums?.people ?? sums?.sum, 0));
   const chiDrop = numberOr(m.chiDrop, null);
+  const radarDb = numberOr(m.radarDb, null);
   // Chernozem on the cell's cropland; on its land when it has no cropland.
   const chernozem = numberOr(m.chernozemCrop, numberOr(m.chernozemAll, 0));
   const reading = {
@@ -1190,8 +1641,11 @@ export function toReading(cell, means = {}, sums = {}, { cellSizeDeg, names } = 
     chernozem: round(clamp01(chernozem), 4),
     croplandShare: round(clamp01(numberOr(m.cropland, 0)), 4),
     // FIRMS pixels are ~1 km², so the mean count per pixel is detections per km².
-    firesPer100Km2: round(Math.max(0, numberOr(m.firesWar, 0)) * 100, 2),
+    firesPer100Km2: round(Math.max(0, numberOr(m.firesExcess, numberOr(m.firesWar, 0))) * 100, 2),
     chiDrop: chiDrop === null ? null : round(chiDrop, 4),
+    // Mean radar change (dB) over the cell's cropland, last complete season
+    // against the same season of 2019-2021 (null: no radar there).
+    radarDb: radarDb === null ? null : round(Math.max(0, radarDb), 2),
     conflictKm: round(Math.max(0, numberOr(m.conflictM, MAX_CONFLICT_M)) / 1000, 2),
     popPerKm2: round(areaKm2 > 0 ? population / areaKm2 : 0, 2),
     lights: round(Math.max(0, numberOr(m.lights, 0)), 3),
@@ -1215,7 +1669,19 @@ export function placeLabel({ admin1, admin2, lat, lon }) {
 // at least one fire detection (fire). Touching cells of the same kind join
 // the strongest one, so one event is one alert. Radar and fire alerts take
 // turns, strongest first, so both kinds are seen.
+// In a large area (RADAR_ALERT.minCells cells or more with a radar reading)
+// a cell must also have changed at least RADAR_ALERT.timesTypical times as
+// much as the area's typical cell: a month's change that is everywhere (a
+// harvest early or late across a whole region, a wet month) is not an
+// event, and joining every touching cell of it gave alerts of 35,000 to
+// 68,000 km² across Ukraine and of 320 km² in peaceful Iowa (real data,
+// 2026-09). A group also stops RADAR_ALERT.reach cells from its strongest
+// cell (with both rules, Ukraine 2026-09: 19,915 km² at most before the
+// reach limit, 92,625 km² before either).
 export function pickAlerts(candidates, { cellSizeDeg, month, max = 6, minRadarShare = 0.05, minFires = 1 } = {}) {
+  const shares = candidates.map((c) => c.radarShare).filter((v) => Number.isFinite(v) && v > 0).sort((a, b) => a - b);
+  const typical = shares.length >= RADAR_ALERT.minCells ? shares[Math.floor(shares.length / 2)] : 0;
+  const radarMin = Math.max(minRadarShare, RADAR_ALERT.timesTypical * typical);
   const near = (a, b) => Math.abs(a.lat - b.lat) <= cellSizeDeg * 1.01 && Math.abs(a.lon - b.lon) <= cellSizeDeg * 1.01;
   const groups = (kind, strength, keep) => {
     const pool = candidates.filter(keep).sort((a, b) => strength(b) - strength(a));
@@ -1225,10 +1691,12 @@ export function pickAlerts(candidates, { cellSizeDeg, month, max = 6, minRadarSh
       if (used.has(seed.id)) continue;
       used.add(seed.id);
       const members = [seed];
-      // Grow the group through touching cells.
+      // Grow the group through touching cells, up to RADAR_ALERT.reach
+      // cells from the seed.
+      const inReach = (other) => Math.max(Math.abs(other.lat - seed.lat), Math.abs(other.lon - seed.lon)) <= cellSizeDeg * (RADAR_ALERT.reach + 0.01);
       for (let i = 0; i < members.length; i += 1) {
         for (const other of pool) {
-          if (!used.has(other.id) && near(members[i], other)) {
+          if (!used.has(other.id) && near(members[i], other) && inReach(other)) {
             used.add(other.id);
             members.push(other);
           }
@@ -1249,7 +1717,7 @@ export function pickAlerts(candidates, { cellSizeDeg, month, max = 6, minRadarSh
     }
     return out;
   };
-  const radar = groups("radar", (c) => c.radarKm2, (c) => c.radarShare >= minRadarShare && c.radarKm2 > 0);
+  const radar = groups("radar", (c) => c.radarKm2, (c) => c.radarShare >= radarMin && c.radarKm2 > 0);
   const fire = groups("fire", (c) => c.fires, (c) => Math.round(c.fires) >= minFires);
   const alerts = [];
   for (let i = 0; alerts.length < max && (i < radar.length || i < fire.length); i += 1) {

@@ -24,6 +24,7 @@ import { getArea, getRun, listRuns, newId, saveRun } from "./store.js";
 import { planGrid } from "./geo.js";
 import { buildRun, latestCompleteMonth, linkNewDamage, monthLabel, monthsBack } from "./runs.js";
 import { getProvider } from "./providers/index.js";
+import { conflictForArea } from "./conflicts.js";
 
 // Kept on globalThis so the dev server, which reloads files after edits,
 // still finds jobs that were started before.
@@ -103,6 +104,10 @@ async function runJob(job, area, count, rerun) {
   const provider = await getProvider();
   job.provider = provider.id;
   const grid = planGrid(area.geometry);
+  // The known war covering the area (by its country, or its cells),
+  // or null: it decides where damage is counted from and whether distance
+  // to fighting means anything there (src/config/conflicts.js).
+  const conflict = conflictForArea({ countryId: area.countryId, bbox: area.bbox || grid.bbox, cells: grid.cells });
   const months = monthsBack(latestCompleteMonth(), count);
   const existing = new Map();
   for (const summary of await listRuns(area.id)) if (!existing.has(summary.month)) existing.set(summary.month, summary);
@@ -123,6 +128,7 @@ async function runJob(job, area, count, rerun) {
         cells: grid.cells,
         month,
         cellSizeDeg: grid.cellSizeDeg,
+        conflict,
         onProgress: (share) => {
           job.monthProgress = Math.max(0, Math.min(1, Number(share) || 0));
         },
@@ -137,6 +143,9 @@ async function runJob(job, area, count, rerun) {
         cellSizeDeg: grid.cellSizeDeg,
         cells: grid.cells,
         baseline: result.baseline,
+        conflict: result.conflict !== undefined ? result.conflict : conflict,
+        imagery: result.imagery,
+        accessSource: result.accessSource,
       });
       // Redoing a month keeps its id, so links to it keep working.
       if (old) run.id = old.id;

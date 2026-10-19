@@ -10,8 +10,12 @@
 // What is worked out here (never by a data source):
 //   water/plant health "below/normal/above" (versusNormal), stress level,
 //   condition class, the harvest stage from this season's curve, the
-//   harvest window and whether rain is due before it, war damage
-//   (damageDetected), the field's status and the soil type.
+//   harvest window and whether rain is due before it, damage
+//   (damageDetected, from fires ABOVE the normal years' rate, radar change
+//   and the health index; away from any war radar change alone is not
+//   damage), the field's status and the soil type; and which
+//   known war, if any, covers the field (analysis.conflict, from the data
+//   source or server/conflicts.js).
 //
 // WHO EDITS IT
 // Whoever changes how a field's analysis is put together. Thresholds live
@@ -32,7 +36,8 @@ import {
   versusNormal,
   waterScore,
 } from "../../src/lib/field/method.js";
-import { areaHa as sphericalAreaHa } from "../geo.js";
+import { areaHa as sphericalAreaHa, bboxOf } from "../geo.js";
+import { conflictAt } from "../conflicts.js";
 
 export { HARVEST_WINDOW_DAYS, soilTypeFor };
 
@@ -47,6 +52,19 @@ const DAY_MS = 86400000;
 const addDays = (iso, days) => new Date(Date.parse(`${iso}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10);
 const num = (value) => (typeof value === "number" && Number.isFinite(value) ? value : null);
 const round = (value, digits = 3) => (Number.isFinite(value) ? Math.round(value * 10 ** digits) / 10 ** digits : null);
+
+// The war covering a field: what the data source said, else looked up from
+// the field's centre. { id, name, since } or null.
+function conflictOf(raw, field) {
+  if (raw && raw.conflict !== undefined) {
+    const c = raw.conflict;
+    return c && c.id ? { id: String(c.id), name: String(c.name || c.id), since: typeof c.since === "string" ? c.since : null } : null;
+  }
+  if (!field?.geometry) return null;
+  const [west, south, east, north] = bboxOf(field.geometry);
+  const found = conflictAt((south + north) / 2, (west + east) / 2);
+  return found ? { id: found.id, name: found.name, since: found.since } : null;
+}
 
 function cleanNormal(normal) {
   return { low: num(normal?.low), high: num(normal?.high), median: num(normal?.median) };
@@ -107,17 +125,32 @@ export function finishAnalysis({ field, raw, weather = null, today, provider } =
     peak: num(stage.peak),
     peakDate: stage.peakDate || null,
     lastDate: stage.lastDate || null,
+    // The pass where the harvest shows (stage "harvested" only).
+    harvestedOn: stage.harvestedOn || null,
   };
 
+  // Fires count only above the normal years' rate (excessFires). An
+  // analysis saved before that was measured has only firesSinceWar, which
+  // method.js still reads.
+  // Away from any known war, radar change alone is not damage (method.js).
+  const excessFires = num(r.damage?.excessFires);
+  const conflict = conflictOf(r, field);
   const evidence = {
     radarChangedShare: num(r.damage?.radarChangedShare),
-    firesSinceWar: num(r.damage?.firesSinceWar),
+    ...(excessFires !== null || r.damage?.firesSinceWar === undefined ? { excessFires } : { firesSinceWar: num(r.damage?.firesSinceWar) }),
     chiDrop: num(r.damage?.chiDrop),
   };
-  const detected = damageDetected(evidence);
+  const detected = damageDetected({ ...evidence, atWar: Boolean(conflict) });
   // The damaged area always follows the method (radar extent, or unknown),
   // whatever the data source sent.
-  const damage = { detected, ...evidence, damagedHa: damagedArea(evidence, areaHa) };
+  const damage = {
+    detected,
+    ...evidence,
+    fires: num(r.damage?.fires),
+    firesNormal: num(r.damage?.firesNormal),
+    since: typeof r.damage?.since === "string" ? r.damage.since.slice(0, 10) : null,
+    damagedHa: damagedArea({ ...evidence, atWar: Boolean(conflict) }, areaHa),
+  };
 
   // The combined condition; a damaged field is never shown better than
   // "Fair" (conditionForDamage in method.js).
@@ -145,6 +178,7 @@ export function finishAnalysis({ field, raw, weather = null, today, provider } =
     harvest,
     condition,
     damage,
+    conflict,
     status,
     soil: { chernozemProbability, soilTypeId: soilTypeFor(chernozemProbability) },
     season,

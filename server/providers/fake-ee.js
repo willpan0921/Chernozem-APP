@@ -12,7 +12,7 @@
 // (made-up parcels inside the region, or small stress patches), Image.
 // sampleRectangle (a grid shaped by the reproject crsTransform and the
 // region, -1 / defaultValue outside the clip outline), Geometry area /
-// centroid / bounds / buffer, FeatureCollection sort / toList, and the
+// centroid / bounds / buffer, FeatureCollection sort / toList / union, and the
 // filters gt / gte / lt / notNull.
 //
 // Like the real library, building images does nothing until evaluate() is
@@ -41,8 +41,18 @@
 //   downloadError  a message: getDownloadURL fails with it
 //   parcelGrid  reduceToVectors cuts a region into parcelGrid x parcelGrid
 //              made-up parcels (default 3; 0 = finds nothing)
+//   extraParcels  GeoJSON geometries reduceToVectors adds to every parcel
+//              trace (e.g. a broken whole-globe shape, as real Earth
+//              Engine once sent)
 //   gaul2      the FAO GAUL level 2 rows place names come from (default
 //              one district of Kharkiv oblast)
+//   values     { outputName: number | (u, { date, lat, id }) => number }: fixed
+//              answers for some reduced values (e.g. { fires: 8 }), used
+//              before the made-up ones
+//
+// Field NDVI follows the hemisphere of the feature reduced: a crop season
+// peaking at the end of June in the north (and the tropics), at the end of
+// December south of 23.5° S.
 //
 // WHO EDITS IT
 // Whoever changes gee.js and starts using a part of Earth Engine that is
@@ -112,6 +122,10 @@ const SAME_KIND_AS = { Number: "Number", Object: "Number", String: "String" };
 
 // Made-up values per output name, for one feature (u is 0..1, fixed per cell).
 function fakeValue(name, u, areaKm2, ctx = {}) {
+  if (ctx.values && Object.hasOwn(ctx.values, name)) {
+    const fixed = ctx.values[name];
+    return typeof fixed === "function" ? fixed(u, ctx) : fixed;
+  }
   const field = fieldValue(name, u, ctx);
   if (field !== undefined) return field;
   switch (name) {
@@ -125,6 +139,8 @@ function fakeValue(name, u, areaKm2, ctx = {}) {
       return -0.05 + 0.4 * u;
     case "heavy":
       return 0.5 * u;
+    case "radarDb":
+      return 0.2 + 1.5 * u;
     case "firesWar":
       return 0.4 * u;
     case "conflictM":
@@ -154,24 +170,40 @@ function fakeValue(name, u, areaKm2, ctx = {}) {
   }
 }
 
-// A crop season: NDVI near 0.2 in winter, about 0.8 at the end of June.
-function seasonalNdvi(dayOfYear, u) {
-  return 0.2 + 0.6 * Math.exp(-(((dayOfYear - 175) / 45) ** 2)) + 0.06 * (u - 0.5);
+// A crop season: NDVI near 0.2 in winter, about 0.8 at the end of June
+// (at the end of December south of 23.5° S, where seasons are reversed).
+function seasonalNdvi(dayOfYear, u, lat) {
+  let days = dayOfYear - 175;
+  if (Number.isFinite(lat) && lat <= -23.5) days = ((((dayOfYear - 357) % 365) + 365 + 182) % 365) - 182;
+  return 0.2 + 0.6 * Math.exp(-((days / 45) ** 2)) + 0.06 * (u - 0.5);
 }
 const dayOfYear = (ms) => Math.floor((ms - Date.UTC(new Date(ms).getUTCFullYear(), 0, 1)) / 86400000) + 1;
 
+// The mean NDVI of one calendar month in 2019-2021 (the season finder's
+// bands ndvi01..ndvi12): greenest in July in the north, in January south of
+// 23.5° S, and flat (no clear season) in the tropics.
+function climatologyNdvi(month, u, lat) {
+  if (Number.isFinite(lat) && Math.abs(lat) < 23.5) return 0.6 + 0.01 * u;
+  const peak = Number.isFinite(lat) && lat <= -23.5 ? 1 : 7;
+  const gap = Math.min(Math.abs(month - peak), 12 - Math.abs(month - peak));
+  return 0.2 + 0.6 * Math.exp(-((gap / 1.6) ** 2)) + 0.02 * (u - 0.5);
+}
+
 // Values for the Field provider's band names (undefined: not one of them).
-function fieldValue(name, u, { date } = {}) {
-  if (name === "ndvi") return Number.isFinite(date) ? seasonalNdvi(dayOfYear(date), u) : 0.3 + 0.5 * u;
-  if (name === "ndwi") return Number.isFinite(date) ? seasonalNdvi(dayOfYear(date), u) * 0.7 - 0.25 : -0.1 + 0.4 * u;
+function fieldValue(name, u, { date, lat } = {}) {
+  const climate = name.match(/^ndvi(\d\d)$/);
+  if (climate) return climatologyNdvi(Number(climate[1]), u, lat);
+  if (name === "ndvi") return Number.isFinite(date) ? seasonalNdvi(dayOfYear(date), u, lat) : 0.3 + 0.5 * u;
+  if (name === "ndwi") return Number.isFinite(date) ? seasonalNdvi(dayOfYear(date), u, lat) * 0.7 - 0.25 : -0.1 + 0.4 * u;
   if (name === "clear") return u < 0.25 ? u : 0.6 + 0.4 * u;
   if (/^n20\d\d_ndvi$/.test(name)) return 0.3 + 0.5 * u;
   if (/^n20\d\d_ndwi$/.test(name)) return -0.1 + 0.4 * u;
   const curve = name.match(/^c20\d\d_(\d\d)$/);
-  if (curve) return seasonalNdvi(Number(curve[1]) * 15.2 + 1, u);
+  if (curve) return seasonalNdvi(Number(curve[1]) * 15.2 + 1, u, lat);
   if (name === "stressed") return 0.2 * u;
   if (name === "radarChanged") return 0.15 * u;
   if (name === "fires") return Math.floor(6 * u);
+  if (name === "firesBase") return Math.floor(4 * u);
   if (name === "chernozem") return 0.35 + 0.6 * u;
   if (name === "condition") return 0.3 + 0.7 * u;
   if (name === "med" || name === "shift") return 0.5 * u;
@@ -267,7 +299,7 @@ function feature(geometry, properties) {
 }
 
 export function createFakeEe(options = {}) {
-  const { sizes = {}, assets = {}, authError = null, fail = null, delayMs = 1, nestedCollections = "describe", downloadError = null, parcelGrid = 3, gaul2 = GAUL2 } = options;
+  const { sizes = {}, assets = {}, authError = null, fail = null, delayMs = 1, nestedCollections = "describe", downloadError = null, parcelGrid = 3, extraParcels = [], gaul2 = GAUL2, values = null } = options;
   const calls = [];
   const requests = [];
   const stats = { evaluations: 0, active: 0, peakActive: 0 };
@@ -386,6 +418,10 @@ export function createFakeEe(options = {}) {
     return make("Geometry", "Geometry.Point", [coords]);
   };
   geometry.Polygon = (coords) => make("Geometry", "Geometry.Polygon", [coords]);
+  geometry.MultiPolygon = (coords, proj, geodesic) => {
+    calls.push({ name: "Geometry.MultiPolygon", args: [coords, proj, geodesic] });
+    return make("Geometry", "Geometry.MultiPolygon", [coords]);
+  };
 
   const reducer = (name) => (...args) => {
     calls.push({ name: `Reducer.${name}`, args: [] });
@@ -605,6 +641,8 @@ export function createFakeEe(options = {}) {
         return { type: "Point", coordinates: arg(0) };
       case "Geometry.Polygon":
         return { type: "Polygon", coordinates: arg(0) };
+      case "Geometry.MultiPolygon":
+        return { type: "MultiPolygon", coordinates: arg(0) };
       case "Geometry":
         return arg(0);
       case "Feature": {
@@ -698,6 +736,17 @@ export function createFakeEe(options = {}) {
         return g?.coordinates ?? [];
       case "buffer":
         return g?.type === "Point" ? circlePolygon(g.coordinates, arg(0)) : g;
+      case "intersection": {
+        // A shape around the whole other one is cut down to it; anything
+        // else keeps its outline (close enough for parcels inside a region).
+        const other = arg(0);
+        const a = outerRings(g)[0];
+        const b = outerRings(other)[0];
+        if (!a || !b) return g;
+        const [aw, as, ae, an] = ringBox(a);
+        const [bw, bs, be, bn] = ringBox(b);
+        return aw <= bw && as <= bs && ae >= be && an >= bn ? other : g;
+      }
       default:
         return g; // simplify, intersection, transform, ...: same outline
     }
@@ -789,6 +838,14 @@ export function createFakeEe(options = {}) {
         return fc.features.length;
       case "first":
         return fc.features[0] ?? null;
+      case "union": {
+        // One feature: the box around every outline (the stand-in's "join").
+        const rings = fc.features.flatMap((f) => outerRings(f.geometry));
+        if (!rings.length) return { type: "FeatureCollection", features: [] };
+        const boxes = rings.map(ringBox);
+        const box = [Math.min(...boxes.map((b) => b[0])), Math.min(...boxes.map((b) => b[1])), Math.max(...boxes.map((b) => b[2])), Math.max(...boxes.map((b) => b[3]))];
+        return { type: "FeatureCollection", features: [feature(boxPolygon(box), {})] };
+      }
       case "aggregate_array":
         return fc.features.map((f) => f.properties[arg(0)]).filter((v) => v !== undefined);
       case "geometry": {
@@ -825,11 +882,13 @@ export function createFakeEe(options = {}) {
     const image = imageContext(imageNode, scope);
     const id = String(f.properties?.id ?? f.properties?.fid ?? f.properties?.aid ?? JSON.stringify(f.geometry?.coordinates)) + (image ? `|${image.date}` : "");
     const areaKm2 = roughAreaKm2(f.geometry);
+    const ring = outerRings(f.geometry)[0];
+    const lat = ring ? (ringBox(ring)[1] + ringBox(ring)[3]) / 2 : f.geometry?.type === "Point" ? f.geometry.coordinates[1] : undefined;
     const out = {};
     bands.forEach((band, i) => {
       const name = outputs ? outputs[i] : bands.length === 1 && reducerName !== "first" ? reducerName : band.name;
       if (!name || band.empty) return; // no pixels: Earth Engine leaves the value out
-      out[name] = fakeValue(outputs ? name : band.name, unitHash(`${id}|${band.name}|${name}`), areaKm2, { date: image?.date });
+      out[name] = fakeValue(outputs ? name : band.name, unitHash(`${id}|${band.name}|${name}`), areaKm2, { date: image?.date, lat, values, id: f.properties?.id });
     });
     return out;
   }
@@ -850,7 +909,7 @@ export function createFakeEe(options = {}) {
     if (method === "reduceToVectors") {
       const region = resolve(options.geometry, scope);
       const bandNames = (imageNode.bands || []).map((b) => b.name);
-      return { type: "FeatureCollection", features: bandNames.includes("patch") ? fakePatches(region) : fakeParcels(region, parcelGrid) };
+      return { type: "FeatureCollection", features: bandNames.includes("patch") ? fakePatches(region) : [...fakeParcels(region, parcelGrid), ...extraParcels.map((g) => feature(g, { label: 1, count: 1000 }))] };
     }
     if (method === "sampleRectangle") return sampleGrid(imageNode, options, scope);
     if (method === "stratifiedSample" || method === "sample") {

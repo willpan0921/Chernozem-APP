@@ -4,7 +4,7 @@
 // hectares, the area totals, the alerts and the quality checks. Also
 // compares two runs and works with months.
 //
-//   buildRun({ area, month, provider, readings, alerts, warnings, cellSizeDeg, cells })
+//   buildRun({ area, month, provider, readings, alerts, warnings, cellSizeDeg, cells, baseline, conflict, imagery, accessSource })
 //   summarizeRun(run)        the run without its cells and alerts (for lists)
 //   compareRuns(a, b)        what changed from run a to run b
 //   linkNewDamage(runs)      fills "new heavy damage" from each previous month
@@ -19,6 +19,7 @@
 
 import { COMPONENTS, SCALES, scaleIndicator } from "../src/lib/atlas/method.js";
 import { cellSizeKm } from "./geo.js";
+import { imageryMonths } from "../src/lib/season.js";
 import { newId } from "./store.js";
 
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -55,13 +56,47 @@ export function monthsBack(latest, count) {
   return Array.from({ length: count }, (_, i) => addMonths(latest, -i));
 }
 
-// The satellite season a month's damage reading uses. Crops are measured
-// April to October; a winter month uses the last full season.
-export function imageryWindow(month) {
-  const [year, mon] = month.split("-").map(Number);
-  if (mon >= 4 && mon <= 10) return { from: `${year}-04`, to: month };
-  const seasonYear = mon <= 3 ? year - 1 : year;
-  return { from: `${seasonYear}-04`, to: `${seasonYear}-10` };
+// The satellite season a month's damage reading compares with the same
+// season of 2019-2021 (src/lib/season.js): the last growing season that was
+// COMPLETE by the end of the month, so every month of one season gives the
+// same answer. By the area's centre latitude: in the north April to
+// September, in the south October to March (across the new year), in the
+// tropics the last 12 whole months. Earth Engine finds each place's own
+// season from its greenest month and gives the one it used (`imagery`);
+// this is the fallback. Without a latitude the northern season is used.
+//   imageryWindow("2026-09", 49)  -> { from: "2025-04", to: "2025-09" }
+//   imageryWindow("2026-10", 49)  -> { from: "2026-04", to: "2026-09" }
+//   imageryWindow("2026-05", -35) -> { from: "2025-10", to: "2026-03" }
+export function imageryWindow(month, lat, peakMonth) {
+  return imageryMonths(Number.isFinite(lat) ? lat : 50, month, peakMonth);
+}
+
+// The season a provider says it used: { from, to } ("YYYY-MM"), or null.
+function cleanImagery(value) {
+  if (!value || typeof value !== "object" || !isMonth(value.from) || !isMonth(value.to)) return null;
+  const out = { from: value.from, to: value.to };
+  if (typeof value.label === "string" && value.label.trim()) out.label = value.label.trim().slice(0, 240);
+  return out;
+}
+
+// What a run says when no war in src/config/conflicts.js covers the area and
+// there is no ACLED file: distance to fighting is then not measured (every
+// cell reads 300 km) and nothing is set aside for it.
+export const NO_WAR_WARNING =
+  "No war in the app's list covers this area, so distance to fighting is not measured and nothing is set aside for it. This does not mean the land is safe.";
+
+// Where the distance to fighting came from: "acled" (battles in the ACLED
+// file), "fires" (unusual fires inside a known war), "none" (no war in the
+// list, nothing measured), or null when the data source does not say.
+export const ACCESS_SOURCES = ["acled", "fires", "none"];
+function cleanAccessSource(value) {
+  return ACCESS_SOURCES.includes(value) ? value : null;
+}
+
+// The war stored on a run (or a field analysis): { id, name, since } or null.
+export function cleanConflict(value) {
+  if (!value || typeof value !== "object" || !value.id || !/^\d{4}-\d{2}-\d{2}$/.test(String(value.since || ""))) return null;
+  return { id: String(value.id), name: String(value.name || value.id), since: String(value.since) };
 }
 
 export const BASELINE = { from: 2019, to: 2021, label: "2019 to 2021" };
@@ -88,8 +123,14 @@ function providerId(provider) {
 }
 
 // baseline: what the data source compared this month with. Earth Engine
-// gives its own (the same months of 2021); otherwise BASELINE is used.
-export function buildRun({ area, month, provider, readings = [], alerts = [], warnings = [], cellSizeDeg, cells = [], baseline }) {
+// gives its own (the same months of 2019 to 2021); otherwise BASELINE is used.
+// conflict: the known war covering the area ({ id, name, since }, from
+// server/conflicts.js), or null for a place at peace. Damage there is
+// counted from the war's start; at peace, over the last two years.
+// imagery: the season the provider compared ({ from, to, label? }); without
+// it, imageryWindow() by the area's centre latitude.
+// accessSource: where distance to fighting came from (ACCESS_SOURCES).
+export function buildRun({ area, month, provider, readings = [], alerts = [], warnings = [], cellSizeDeg, cells = [], baseline, conflict = null, imagery = null, accessSource = null }) {
   if (!isMonth(month)) throw new Error(`Not a month: ${month}`);
   const byId = new Map(readings.map((reading) => [reading.id, reading]));
   const outCells = [];
@@ -102,7 +143,7 @@ export function buildRun({ area, month, provider, readings = [], alerts = [], wa
       missing += 1;
       continue;
     }
-    for (const key of ["chernozem", "croplandShare", "firesPer100Km2", "conflictKm", "popPerKm2", "lights", "heavyShare", "population"]) {
+    for (const key of ["chernozem", "croplandShare", "firesPer100Km2", "radarDb", "conflictKm", "popPerKm2", "lights", "heavyShare", "population"]) {
       if (raw[key] != null && (!Number.isFinite(raw[key]) || raw[key] < 0)) badValues += 1;
     }
     const chernozem = share(raw.chernozem);
@@ -119,6 +160,8 @@ export function buildRun({ area, month, provider, readings = [], alerts = [], wa
       wrb: r4(scaleIndicator("wrb", chernozem)),
       agOutput: r4(cropShare),
       firms: r4(scaleIndicator("firms", num(raw.firesPer100Km2))),
+      radar: r4(scaleIndicator("radar", num(raw.radarDb))),
+      // A diagnostic only: not part of the damage score (method.js).
       chi: r4(scaleIndicator("chi", num(raw.chiDrop))),
       distance: r4(scaleIndicator("distance", num(raw.conflictKm))),
       population: r4(scaleIndicator("population", num(raw.popPerKm2))),
@@ -131,6 +174,7 @@ export function buildRun({ area, month, provider, readings = [], alerts = [], wa
       // The raw readings, kept for the AI and the report.
       raw: {
         chiDrop: r4(num(raw.chiDrop)),
+        radarDb: num(raw.radarDb) == null ? null : r2(raw.radarDb),
         firesPer100Km2: r2(num(raw.firesPer100Km2) ?? 0),
         conflictKm: num(raw.conflictKm) == null ? null : r2(raw.conflictKm),
         popPerKm2: r2(num(raw.popPerKm2) ?? 0),
@@ -175,8 +219,10 @@ export function buildRun({ area, month, provider, readings = [], alerts = [], wa
     label: monthLabel(month),
     provider: providerId(provider),
     createdAt: new Date().toISOString(),
-    imagery: imageryWindow(month),
+    imagery: cleanImagery(imagery) || imageryWindow(month, midLat),
     baseline: cleanBaseline(baseline),
+    conflict: cleanConflict(conflict),
+    accessSource: cleanAccessSource(accessSource),
     cellSizeDeg,
     cellSizeKm: Math.round(cellSizeKm(cellSizeDeg, midLat) * 1000) / 1000,
     cellCount: outCells.length,

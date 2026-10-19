@@ -1,37 +1,29 @@
 // WHAT THIS FILE DOES
-// The Field map: the farm's fields on a real, zoomable map (Leaflet), in
-// one of two views. Every Field page that shows fields uses this one
-// component (the Fields page, the farm setup, Settings).
+// The Field map: the farm's fields on real satellite imagery (Esri World
+// Imagery) on a zoomable map (Leaflet). Every Field page that shows fields
+// uses this one component (the Fields page, the Overview, the farm setup,
+// Settings).
 //
-//   "zones"      a flat, illustrated zone map with NO satellite imagery:
-//                dark olive ground, beige tracks round each field, each
-//                field painted with its condition zones (from the
-//                analysis's zones grid, smoothed), a fine grid texture,
-//                white outlines (thick for the selected field), white
-//                name pills (dark for the selected one), a dashed circle
-//                round each stress patch, and red/beige stripes on a field
-//                that needs recovery. Harvested fields are pale straw with
-//                stubble lines (no condition colour: bare ground after
-//                harvest is not "Very good"). A faint grain on the land
-//                round the fields. Pills sit in each field's top-left
-//                corner when they fit, shrink or hide when they do not,
-//                never overlap, and stress circles are drawn above them.
-//   "satellite"  real satellite imagery (Esri World Imagery) with each
-//                field tinted by its condition class (harvested fields a
-//                neutral straw tint with a dashed white edge).
+// Each field is tinted by its condition class and outlined in white
+// (thick, with a soft halo, for the selected field). A field ready to
+// harvest, or due within two weeks, has a gold outline; a field that needs
+// recovery is red; a harvested field is a plain straw tint with a dashed
+// edge (bare ground after harvest is not "Very good"). Stress patches get
+// a dashed white circle. Name pills sit in each field's top-left corner
+// when they fit, shrink or hide when they do not, never overlap, and the
+// stress circles are drawn above them.
 //
 // "+" zooms in on the selected field when it is in view. Enter or Space
 // on a focused pill selects its field.
 //
 // The one map layer is "Field condition" (method.js conditionScore); the
-// colours are the --zone-* tokens in src/styles/tokens.css.
+// colours are the --fmap-* tokens in src/styles/tokens.css.
 //
 // WHAT IT RECEIVES
 //   fields       the farm's fields [{ id, name, geometry (GeoJSON Polygon, lon/lat) }]
-//   analyses     { [fieldId]: analysis } (useFieldData().analyses; zones need ?full=1, which it loads)
+//   analyses     { [fieldId]: analysis } (useFieldData().analyses)
 //   selectedId   the selected field's id (thick outline, dark pill)
 //   onSelect     called with a field id when a field or its pill is clicked
-//   view         "zones" (default) | "satellite"
 //   fitKey       change it to fit the map to the fields again
 //   height       a number (px) or any CSS height ("100%"); default 420
 //   candidates   fields found by the farm setup [{ id, geometry, areaHa }] (drawn on top, clickable)
@@ -46,25 +38,27 @@
 //   interactive  false turns off dragging, zooming and the buttons, and takes
 //                the map out of the Tab order (nothing to do there by keyboard)
 //   fitPadding   [x, y] px kept round the fields when the map fits them; default [36, 36]
-//   children     anything to float over the map (view switch, legend, date chip)
+//   children     anything to float over the map (legend, date chip)
 //   ref          gives { zoomIn, zoomOut, fit, flyToBounds(bounds), getMap }
 //
-// The wrapper carries data-zoom="<zoom level>" and data-view so tests can
-// check that zooming and switching worked.
+// With nothing to show yet the map opens on the whole world (Chernozem
+// works anywhere), and flies to the place once there is one.
 //
-// Also exported: FieldMapViewSwitch (the Zones | Satellite switch),
-// PassChip (the "Oct 16 · Sentinel-2" chip) and fieldsBounds(fields).
+// The wrapper carries data-zoom="<zoom level>" so tests can check that
+// zooming worked.
+//
+// Also exported: PassChip (the "Oct 16 · Sentinel-2" chip) and
+// fieldsBounds(fields).
 //
 // WHO EDITS IT
-// Whoever changes how the Field map looks or behaves. The zone picture
-// rules are in src/lib/field/zones.js; the class limits in method.js.
+// Whoever changes how the Field map looks or behaves. The class limits
+// are in method.js.
 
-import { useEffect, useId, useImperativeHandle, useRef, useState } from "react";
+import { useEffect, useImperativeHandle, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { Grid2x2, Layers, Maximize, Minus, Plus } from "lucide-react";
+import { Maximize, Minus, Plus } from "lucide-react";
 import { conditionClass } from "../../lib/field/method.js";
-import { NO_BAND, ZONE_BANDS, renderZoneBands, zoneBand } from "../../lib/field/zones.js";
 import { formatDay } from "../../lib/field/format.js";
 import "./field.css";
 
@@ -76,72 +70,34 @@ export const SATELLITE = {
   maxNativeZoom: 18,
 };
 const MAX_ZOOM = 19;
-const START_VIEW = { center: [49.72, 37.54], zoom: 13 };
+// The whole world, until there are fields or a place to show.
+const START_VIEW = { center: [25, 10], zoom: 3 };
 const FIT_PADDING = [36, 36];
-const TRACK_METRES = 14; // how wide the beige tracks round each field look
 const MIN_STRESS_PX = 11; // the smallest stress circle on screen (radius)
 
 // ---------- Colours (read once from tokens.css) ----------
 
 const TOKEN_NAMES = [
-  "--zone-poor",
-  "--zone-fair",
-  "--zone-good",
-  "--zone-great",
-  "--zone-great-deep",
-  "--zone-nodata",
-  "--zone-ground-2",
-  "--zone-road",
-  "--zone-outline",
-  "--zone-grid",
-  "--zone-stubble",
-  "--zone-stubble-ground",
-  "--zone-hatch-red",
-  "--zone-hatch-beige",
-  "--zone-crater",
-  "--zone-stress",
-  "--zone-ready",
-  "--zone-candidate",
-  "--zone-chosen",
+  "--fmap-poor",
+  "--fmap-fair",
+  "--fmap-good",
+  "--fmap-great",
+  "--fmap-nodata",
+  "--fmap-harvested",
+  "--fmap-ready",
+  "--fmap-candidate",
+  "--fmap-chosen",
   "--c-red",
 ];
 
-// A token that may not be in tokens.css yet falls back to a close one.
-const TOKEN_FALLBACKS = { "--zone-stubble-ground": "--zone-hatch-beige" };
-
 function readTokens(element) {
   const style = getComputedStyle(element);
-  const read = (name) => style.getPropertyValue(name).trim();
   const out = {};
-  for (const name of TOKEN_NAMES) out[name] = read(name) || (TOKEN_FALLBACKS[name] && read(TOKEN_FALLBACKS[name])) || "#999999";
+  for (const name of TOKEN_NAMES) out[name] = style.getPropertyValue(name).trim() || "#999999";
   return out;
 }
 
-// Any CSS colour -> [r, g, b].
-function rgbOf(color) {
-  const ctx = document.createElement("canvas").getContext("2d");
-  ctx.fillStyle = "#000000";
-  ctx.fillStyle = color;
-  const value = ctx.fillStyle;
-  if (value.startsWith("#")) return [1, 3, 5].map((i) => parseInt(value.slice(i, i + 2), 16));
-  const nums = value.match(/[\d.]+/g) || [0, 0, 0];
-  return nums.slice(0, 3).map(Number);
-}
-
-const mixRgb = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
-
-function bandPalette(tokens) {
-  const base = {
-    poor: rgbOf(tokens["--zone-poor"]),
-    fair: rgbOf(tokens["--zone-fair"]),
-    good: rgbOf(tokens["--zone-good"]),
-    great: rgbOf(tokens["--zone-great"]),
-    deep: rgbOf(tokens["--zone-great-deep"]),
-  };
-  return ZONE_BANDS.map((band) => (band.mix ? mixRgb(base[band.base], base[band.mix], band.amount) : base[band.base]));
-}
-
-const CLASS_TOKEN = { poor: "--zone-poor", fair: "--zone-fair", good: "--zone-good", great: "--zone-great" };
+const CLASS_TOKEN = { poor: "--fmap-poor", fair: "--fmap-fair", good: "--fmap-good", great: "--fmap-great" };
 
 // ---------- Shapes ----------
 
@@ -275,119 +231,6 @@ function pillFits(info, spot, size, mpp) {
 
 const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
-// ---------- The zone picture of one field ----------
-
-const zoneCache = new Map();
-
-function zoneImage(field, analysis, palette, nodata) {
-  const zones = analysis?.zones;
-  const key = `${field.id}|${analysis?.updatedAt || ""}|${JSON.stringify(field.geometry.coordinates[0]?.[0])}|${field.geometry.coordinates[0]?.length}|${palette.join()}`;
-  if (zoneCache.has(key)) return zoneCache.get(key);
-
-  const hasZones = zones && zones.cols > 0 && zones.rows > 0 && [zones.west, zones.south, zones.east, zones.north].every(Number.isFinite);
-  const box = hasZones ? { west: zones.west, south: zones.south, east: zones.east, north: zones.north } : bboxOfGeometry(field.geometry);
-  if (!box) return null;
-  const fallbackBand = zoneBand(analysis?.condition?.score);
-  let width;
-  let height;
-  let bands;
-  if (hasZones) ({ width, height, bands } = renderZoneBands(zones));
-  if (!width) {
-    const kx = Math.cos((((box.south + box.north) / 2) * Math.PI) / 180);
-    const aspect = ((box.east - box.west) * kx) / Math.max(1e-9, box.north - box.south);
-    width = Math.max(8, Math.round(aspect >= 1 ? 128 : 128 * aspect));
-    height = Math.max(8, Math.round(aspect >= 1 ? 128 / aspect : 128));
-    bands = new Uint8Array(width * height).fill(fallbackBand);
-  }
-
-  const paint = document.createElement("canvas");
-  paint.width = width;
-  paint.height = height;
-  const pctx = paint.getContext("2d");
-  const image = pctx.createImageData(width, height);
-  const fill = fallbackBand === NO_BAND ? nodata : palette[fallbackBand];
-  for (let i = 0; i < bands.length; i++) {
-    const rgb = bands[i] === NO_BAND ? fill : palette[bands[i]];
-    image.data[i * 4] = rgb[0];
-    image.data[i * 4 + 1] = rgb[1];
-    image.data[i * 4 + 2] = rgb[2];
-    image.data[i * 4 + 3] = 255;
-  }
-  pctx.putImageData(image, 0, 0);
-
-  // Cut the picture to the field's outline (holes left out).
-  const out = document.createElement("canvas");
-  out.width = width;
-  out.height = height;
-  const ctx = out.getContext("2d");
-  const px = (lon) => ((lon - box.west) / (box.east - box.west)) * width;
-  const py = (lat) => ((box.north - lat) / (box.north - box.south)) * height;
-  ctx.beginPath();
-  for (const ring of field.geometry.coordinates) {
-    ring.forEach(([lon, lat], i) => (i === 0 ? ctx.moveTo(px(lon), py(lat)) : ctx.lineTo(px(lon), py(lat))));
-    ctx.closePath();
-  }
-  ctx.clip("evenodd");
-  ctx.drawImage(paint, 0, 0);
-
-  const result = { url: out.toDataURL("image/png"), bounds: [[box.south, box.west], [box.north, box.east]] };
-  if (zoneCache.size > 200) zoneCache.delete(zoneCache.keys().next().value);
-  zoneCache.set(key, result);
-  return result;
-}
-
-// ---------- SVG patterns (grid, stubble, recovery hatch) ----------
-
-const SVG_NS = "http://www.w3.org/2000/svg";
-
-function svgEl(name, attrs, children = []) {
-  const el = document.createElementNS(SVG_NS, name);
-  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
-  children.forEach((child) => el.appendChild(child));
-  return el;
-}
-
-function addPatterns(svg, uid, t) {
-  if (!svg || svg.querySelector(`#${uid}-grid`)) return;
-  const grid = svgEl("pattern", { id: `${uid}-grid`, width: 15, height: 15, patternUnits: "userSpaceOnUse" }, [
-    svgEl("path", { d: "M15 0V15M0 15H15", stroke: t["--zone-grid"], "stroke-width": 1, fill: "none" }),
-  ]);
-  // A harvested field: pale straw ground with stubble lines (solid, so no
-  // condition colour shows through: bare stubble is not "Very good").
-  const stubble = svgEl("pattern", { id: `${uid}-stubble`, width: 15, height: 5, patternUnits: "userSpaceOnUse" }, [
-    svgEl("rect", { width: 15, height: 5, fill: t["--zone-stubble-ground"] }),
-    svgEl("path", { d: "M0 4.5H15", stroke: t["--zone-stubble"], "stroke-width": 1.2, fill: "none" }),
-    svgEl("path", { d: "M15 0V5", stroke: t["--zone-grid"], "stroke-width": 1, fill: "none" }),
-  ]);
-  // Red and beige stripes with a dark crater dot here and there.
-  const stripes = [0, 14, 28, 42, 56, 70].map((x) => svgEl("rect", { x, y: 0, width: 5, height: 84, fill: t["--zone-hatch-red"] }));
-  const hatch = svgEl("pattern", { id: `${uid}-hatch`, width: 84, height: 84, patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" }, [
-    svgEl("rect", { width: 84, height: 84, fill: t["--zone-hatch-beige"] }),
-    ...stripes,
-    svgEl("circle", { cx: 37.5, cy: 50, r: 4.6, fill: t["--zone-crater"] }),
-  ]);
-  const defs = svgEl("defs", {}, [grid, stubble, hatch]);
-  svg.insertBefore(defs, svg.firstChild);
-}
-
-// A faint grain on the land round the fields (Zones view), so empty ground
-// reads as land, not as a blank background. It sits in the ground layer and
-// pans with the map.
-const GRAIN_DOTS = [
-  [5, 7, 1.6], [19, 3, 1.1], [31, 12, 1.8], [43, 5, 1.2], [11, 22, 1.3], [26, 27, 1.7],
-  [40, 21, 1.1], [3, 37, 1.2], [17, 41, 1.8], [34, 38, 1.3], [46, 33, 1.6], [24, 47, 1.1],
-];
-
-function addGroundPattern(svg, uid, t) {
-  if (!svg || svg.querySelector(`#${uid}-grain`)) return;
-  const grain = svgEl(
-    "pattern",
-    { id: `${uid}-grain`, width: 50, height: 50, patternUnits: "userSpaceOnUse" },
-    GRAIN_DOTS.map(([cx, cy, r]) => svgEl("circle", { cx, cy, r, fill: t["--zone-ground-2"] })),
-  );
-  svg.insertBefore(svgEl("defs", {}, [grain]), svg.firstChild);
-}
-
 // ---------- The component ----------
 
 export default function FieldMap({
@@ -395,7 +238,6 @@ export default function FieldMap({
   analyses = {},
   selectedId = null,
   onSelect,
-  view = "zones",
   fitKey,
   height = 420,
   candidates,
@@ -417,13 +259,11 @@ export default function FieldMap({
   children,
   ref,
 }) {
-  const uid = `fm${useId().replace(/[^a-zA-Z0-9]/g, "")}`;
   const wrapRef = useRef(null);
   const mapDivRef = useRef(null);
   const mapRef = useRef(null);
   const tokensRef = useRef(null);
-  const paletteRef = useRef(null);
-  const renderers = useRef({ ground: null, shapes: null, stress: null });
+  const renderers = useRef({ shapes: null, stress: null });
   const layers = useRef({ tiles: null, fields: null, fieldIndex: new Map(), candidates: null, extras: null });
   const [zoom, setZoom] = useState(null);
   const lastFitAt = useRef(0);
@@ -445,8 +285,6 @@ export default function FieldMap({
     });
     map.attributionControl.setPrefix(false);
     map.setView(START_VIEW.center, START_VIEW.zoom);
-    map.createPane("fmGround").style.zIndex = 360;
-    map.createPane("fmZones").style.zIndex = 380;
     map.createPane("fmLabels").style.zIndex = 620;
     // Stress circles sit above the name pills so a pill never hides one;
     // they take no clicks, so the pills under them still work.
@@ -454,17 +292,15 @@ export default function FieldMap({
     stressPane.style.zIndex = 640;
     stressPane.style.pointerEvents = "none";
     tokensRef.current = readTokens(wrapRef.current);
-    paletteRef.current = bandPalette(tokensRef.current);
 
-    const ground = L.svg({ pane: "fmGround", padding: 0.5 });
+    // The satellite pictures.
+    layers.current.tiles = L.tileLayer(SATELLITE.url, { attribution: SATELLITE.attribution, maxNativeZoom: SATELLITE.maxNativeZoom, maxZoom: MAX_ZOOM }).addTo(map);
+
     const shapes = L.svg({ padding: 0.5 });
     const stress = L.svg({ pane: "fmStress", padding: 0.5 });
-    map.addLayer(ground);
     map.addLayer(shapes);
     map.addLayer(stress);
-    addPatterns(shapes._container, uid, tokensRef.current);
-    addGroundPattern(ground._container, uid, tokensRef.current);
-    renderers.current = { ground, shapes, stress };
+    renderers.current = { shapes, stress };
     mapRef.current = map;
 
     const syncZoom = () => setZoom(Math.round(map.getZoom() * 100) / 100);
@@ -496,8 +332,6 @@ export default function FieldMap({
       mapRef.current = null;
       layers.current = { tiles: null, fields: null, fieldIndex: new Map(), candidates: null, extras: null };
     };
-    // uid is stable for the life of the component.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ---------- Interaction on or off ----------
@@ -513,20 +347,9 @@ export default function FieldMap({
     map.getContainer().tabIndex = interactive ? 0 : -1;
   }, [interactive]);
 
-  // ---------- Satellite pictures (Satellite view only) ----------
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    layers.current.tiles?.remove();
-    layers.current.tiles = null;
-    if (view === "satellite") {
-      layers.current.tiles = L.tileLayer(SATELLITE.url, { attribution: SATELLITE.attribution, maxNativeZoom: SATELLITE.maxNativeZoom, maxZoom: MAX_ZOOM }).addTo(map);
-    }
-  }, [view]);
-
   // ---------- The fields ----------
   const fieldsKey = fields.map((f) => `${f.id}:${f.name}:${f.geometry?.coordinates?.[0]?.length}`).join("|");
-  const analysesKey = fields.map((f) => `${analyses[f.id]?.updatedAt || ""}:${analyses[f.id]?.zones ? 1 : 0}:${analyses[f.id]?.status?.id || ""}`).join("|");
+  const analysesKey = fields.map((f) => `${analyses[f.id]?.updatedAt || ""}:${analyses[f.id]?.status?.id || ""}`).join("|");
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -534,14 +357,7 @@ export default function FieldMap({
     layers.current.fields?.remove();
     layers.current.fieldIndex = new Map();
     const t = tokensRef.current;
-    const zonesView = view === "zones";
     const group = L.layerGroup();
-    if (zonesView) {
-      // The grain on the land round the fields (the renderer clips it to the view).
-      group.addLayer(
-        L.rectangle([[-85, -180], [85, 180]], { renderer: renderers.current.ground, interactive: false, stroke: false, fillColor: `url(#${uid}-grain)`, fillOpacity: 1 }),
-      );
-    }
 
     for (const field of fields) {
       if (!field?.geometry) continue;
@@ -554,28 +370,6 @@ export default function FieldMap({
       const ready = !recovery && (analysis?.status?.id === "ready" || analysis?.status?.id === "harvestSoon");
       const cls = conditionClass(analysis?.condition?.score)?.id;
       const entry = { field, recovery, harvested, ready, cls, parts: {} };
-
-      if (zonesView) {
-        entry.parts.track = L.polygon(rings, {
-          renderer: renderers.current.ground,
-          interactive: false,
-          fill: false,
-          color: t["--zone-road"],
-          opacity: 0.75,
-          weight: trackWeight(map),
-          lineJoin: "round",
-        });
-        group.addLayer(entry.parts.track);
-        // A recovery field shows its hatch and a harvested one its stubble,
-        // never condition zones (bare ground after harvest is not "Very good").
-        if (!recovery && !harvested) {
-          const img = zoneImage(field, analysis, paletteRef.current, rgbOf(t["--zone-nodata"]));
-          if (img) {
-            entry.parts.zones = L.imageOverlay(img.url, img.bounds, { pane: "fmZones", interactive: false, className: "fm-zone-img" });
-            group.addLayer(entry.parts.zones);
-          }
-        }
-      }
 
       entry.parts.halo = L.polygon(rings, {
         renderer: renderers.current.shapes,
@@ -593,7 +387,7 @@ export default function FieldMap({
         bubblingMouseEvents: false,
         lineJoin: "round",
         className: "fm-shape",
-        ...shapeStyle({ zonesView, recovery, harvested, ready, cls, selected: false, uid, t }),
+        ...shapeStyle({ recovery, harvested, ready, cls, selected: false, t }),
       });
       shape.on("click", (event) => {
         const now = latest.current;
@@ -616,12 +410,12 @@ export default function FieldMap({
           renderer: renderers.current.stress,
           radius: Math.max(radiusM, MIN_STRESS_PX * metresPerPixel(map)),
           interactive: false,
-          color: zonesView ? t["--zone-stress"] : "#ffffff",
+          color: "#ffffff",
           weight: 2.5,
           dashArray: "5 6",
           fill: true,
           fillColor: "#ffffff",
-          fillOpacity: zonesView ? 0.18 : 0.08,
+          fillOpacity: 0.08,
         });
         entry.parts.stress.push({ circle, radiusM });
         group.addLayer(circle);
@@ -681,15 +475,14 @@ export default function FieldMap({
     if (focusedId) layers.current.fieldIndex.get(focusedId)?.parts.label?.getElement()?.focus();
     // fieldsKey / analysesKey stand for fields / analyses.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fieldsKey, analysesKey, view, showLabels, interactive]);
+  }, [fieldsKey, analysesKey, showLabels, interactive]);
 
   // The selected field: thick white outline, soft halo, dark pill.
   function applySelection() {
     const t = tokensRef.current;
-    const zonesView = view === "zones";
     for (const [id, entry] of layers.current.fieldIndex) {
       const selected = id === latest.current.selectedId;
-      entry.parts.shape?.setStyle(shapeStyle({ zonesView, recovery: entry.recovery, harvested: entry.harvested, ready: entry.ready, cls: entry.cls, selected, uid, t }));
+      entry.parts.shape?.setStyle(shapeStyle({ recovery: entry.recovery, harvested: entry.harvested, ready: entry.ready, cls: entry.cls, selected, t }));
       entry.parts.halo?.setStyle({ opacity: selected ? 0.38 : 0 });
       if (selected) entry.parts.shape?.bringToFront();
       const el = entry.parts.label?.getElement();
@@ -707,7 +500,7 @@ export default function FieldMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
 
-  // Tracks keep their width in metres and stress circles a visible size.
+  // Stress circles keep a visible size.
   // Name pills are placed for the current zoom: in the field's top-left
   // corner when a full-size pill fits inside the field (clear of its stress
   // circles), else a small pill, else the small pill at the field's middle.
@@ -717,14 +510,12 @@ export default function FieldMap({
   function applyLabelSizes() {
     const map = mapRef.current;
     if (!map) return;
-    const weight = trackWeight(map);
     const mpp = metresPerPixel(map);
     const zoom = map.getZoom();
     const fontFamily = mapDivRef.current ? getComputedStyle(mapDivRef.current).fontFamily : "";
     const selectedId = latest.current.selectedId;
     const work = [];
     for (const [id, entry] of layers.current.fieldIndex) {
-      entry.parts.track?.setStyle({ weight });
       for (const { circle, radiusM } of entry.parts.stress || []) circle.setRadius(Math.max(radiusM, MIN_STRESS_PX * mpp));
       const marker = entry.parts.label;
       const el = marker?.getElement();
@@ -832,10 +623,10 @@ export default function FieldMap({
         renderer: renderers.current.shapes,
         bubblingMouseEvents: false,
         className: isChosen ? "fm-candidate is-chosen" : "fm-candidate",
-        color: isChosen ? "#ffffff" : t["--zone-candidate"],
+        color: isChosen ? "#ffffff" : t["--fmap-candidate"],
         weight: isChosen ? 2.5 : 1.8,
         dashArray: isChosen ? null : "5 5",
-        fillColor: isChosen ? t["--zone-chosen"] : t["--zone-candidate"],
+        fillColor: isChosen ? t["--fmap-chosen"] : t["--fmap-candidate"],
         fillOpacity: isChosen ? 0.42 : 0.12,
         lineJoin: "round",
       });
@@ -859,7 +650,7 @@ export default function FieldMap({
     layers.current.extras?.remove();
     const t = tokensRef.current;
     const group = L.layerGroup();
-    const lineColor = view === "zones" ? "#ffffff" : t["--zone-candidate"];
+    const lineColor = t["--fmap-candidate"];
     const rings = boundaryLatLngs(boundary);
     if (rings?.length) {
       group.addLayer(L.polygon(rings, { renderer: renderers.current.shapes, interactive: false, fill: false, color: lineColor, weight: 2, dashArray: "8 6", opacity: 0.95 }));
@@ -871,7 +662,7 @@ export default function FieldMap({
       group.addLayer(L.circleMarker(pin, { renderer: renderers.current.shapes, interactive: false, radius: 7, color: "#1c1c1a", weight: 3, fillColor: "#ffffff", fillOpacity: 1 }));
     }
     if (drawMode && drawPoints?.length) {
-      const color = t["--zone-candidate"];
+      const color = t["--fmap-candidate"];
       if (drawPoints.length >= 3) group.addLayer(L.polygon(drawPoints, { renderer: renderers.current.shapes, interactive: false, color, weight: 2.5, fillColor: color, fillOpacity: 0.15 }));
       else if (drawPoints.length === 2) group.addLayer(L.polyline(drawPoints, { renderer: renderers.current.shapes, interactive: false, color, weight: 2.5 }));
       drawPoints.forEach((point, index) => {
@@ -882,7 +673,7 @@ export default function FieldMap({
     layers.current.extras = group;
     // The keys stand for boundary, pin and drawPoints.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [boundaryKey, pinKey, drawKey, drawMode, view]);
+  }, [boundaryKey, pinKey, drawKey, drawMode]);
 
   // ---------- Fitting ----------
   function targetBounds() {
@@ -955,9 +746,9 @@ export default function FieldMap({
   }));
 
   const canFit = fields.length > 0 || (candidates?.length || 0) > 0 || Boolean(boundary) || Boolean(pin);
-  const classes = ["fm-map", `is-${view}`, drawMode ? "is-drawing" : "", interactive ? "" : "is-static", className].filter(Boolean).join(" ");
+  const classes = ["fm-map", drawMode ? "is-drawing" : "", interactive ? "" : "is-static", className].filter(Boolean).join(" ");
   return (
-    <div ref={wrapRef} className={classes} style={{ height: typeof height === "number" ? `${height}px` : height }} data-zoom={zoom ?? ""} data-view={view}>
+    <div ref={wrapRef} className={classes} style={{ height: typeof height === "number" ? `${height}px` : height }} data-zoom={zoom ?? ""}>
       <div ref={mapDivRef} className="fm-canvas" role="region" aria-label={ariaLabel} />
       {interactive && (
         <div className="fm-zoom">
@@ -979,31 +770,20 @@ export default function FieldMap({
   );
 }
 
-// How the field outline is drawn in each view and state.
-function shapeStyle({ zonesView, recovery, harvested, ready, cls, selected, uid, t }) {
-  // Ready to harvest (or due soon): the same fill, a gold outline.
-  const readyEdge = ready ? { color: t["--zone-ready"], weight: selected ? 6 : 4, opacity: 1, dashArray: null } : null;
-  if (zonesView) {
-    if (recovery) {
-      return { fillColor: `url(#${uid}-hatch)`, fillOpacity: 1, color: selected ? "#ffffff" : t["--zone-hatch-red"], weight: selected ? 5 : 3, opacity: 1, dashArray: selected ? null : "9 6" };
-    }
-    return { fillColor: `url(#${uid}-${harvested ? "stubble" : "grid"})`, fillOpacity: 1, color: t["--zone-outline"], weight: selected ? 5.5 : 2.5, opacity: 1, dashArray: null, ...readyEdge };
-  }
+// How a field's outline and tint are drawn in each state.
+function shapeStyle({ recovery, harvested, ready, cls, selected, t }) {
   if (recovery) return { fillColor: t["--c-red"], fillOpacity: 0.38, color: selected ? "#ffffff" : t["--c-red"], weight: selected ? 5 : 3, opacity: 1, dashArray: null };
   // Harvested: a neutral straw tint, not a condition colour.
-  if (harvested) return { fillColor: t["--zone-stubble-ground"], fillOpacity: selected ? 0.4 : 0.3, color: "#ffffff", weight: selected ? 5 : 2, opacity: selected ? 1 : 0.92, dashArray: selected ? null : "6 5" };
-  const fill = cls ? t[CLASS_TOKEN[cls]] : t["--zone-nodata"];
+  if (harvested) return { fillColor: t["--fmap-harvested"], fillOpacity: selected ? 0.4 : 0.3, color: "#ffffff", weight: selected ? 5 : 2, opacity: selected ? 1 : 0.92, dashArray: selected ? null : "6 5" };
+  // Ready to harvest (or due soon): the same tint, a gold outline.
+  const readyEdge = ready ? { color: t["--fmap-ready"], weight: selected ? 6 : 4, opacity: 1, dashArray: null } : null;
+  const fill = cls ? t[CLASS_TOKEN[cls]] : t["--fmap-nodata"];
   return { fillColor: fill, fillOpacity: selected ? 0.5 : 0.42, color: "#ffffff", weight: selected ? 5 : 2, opacity: selected ? 1 : 0.92, dashArray: null, ...readyEdge };
 }
 
 function metresPerPixel(map) {
   const centre = map.getCenter();
   return (40075016.686 * Math.cos((centre.lat * Math.PI) / 180)) / 2 ** (map.getZoom() + 8);
-}
-
-// The track width in pixels for TRACK_METRES at the current zoom.
-function trackWeight(map) {
-  return Math.max(2, Math.min(18, TRACK_METRES / metresPerPixel(map)));
 }
 
 function round6(value) {
@@ -1015,30 +795,6 @@ function wrapLon(lon) {
 }
 
 // ---------- Small parts the pages put on the map ----------
-
-// The Zones | Satellite switch (a dark pill over the map).
-export function FieldMapViewSwitch({ value, onChange }) {
-  const options = [
-    { value: "zones", label: "Zones", icon: <Grid2x2 size={14} /> },
-    { value: "satellite", label: "Satellite", icon: <Layers size={14} /> },
-  ];
-  return (
-    <div className="fm-switch" role="group" aria-label="Map view">
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          className={option.value === value ? "fm-switch-option is-active" : "fm-switch-option"}
-          aria-pressed={option.value === value}
-          onClick={() => onChange?.(option.value)}
-        >
-          {option.icon}
-          {option.label}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 // "Oct 16 · Sentinel-2": the date of the latest clear satellite pass.
 export function PassChip({ date, label = "Sentinel-2" }) {

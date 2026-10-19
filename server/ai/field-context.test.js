@@ -94,6 +94,32 @@ const recoveryAnalysis = analysis("fld-bbbb2222", {
   status: { id: "recovery", label: "Needs recovery", tone: "red" },
 });
 
+test("a farm at peace: no war wording, damage means fires above the usual rate", async () => {
+  const iowa = {
+    id: "farm-2",
+    name: "Story County",
+    location: { label: "Ames, Iowa", lat: 42.03, lon: -93.62 },
+    units: "ha",
+    demo: false,
+    fields: [{ id: "fld-aaaa1111", name: "Field 1", areaHa: 42.25, crop: "Corn", source: "detected" }],
+  };
+  const burnt = analysis("fld-aaaa1111", {
+    conflict: null,
+    damage: { detected: false, radarChangedShare: 0.01, fires: 8, firesNormal: 8, excessFires: 0, since: "2024-10-18", chiDrop: 0.15, damagedHa: null },
+  });
+  const store = fieldStore({ farm: iowa, analyses: { "fld-aaaa1111": burnt }, history: { "fld-aaaa1111": { months: [{ month: "2026-07", ndvi: 0.8, ndwi: 0.3 }] } } });
+  const ctx = await buildFieldContext({ store, getWeather: async () => null, today: "2026-10-18" });
+  assert.match(ctx.text, /No war is recorded at this farm/);
+  assert.match(ctx.text, /Damage: none detected \(radar change on 1% of the field, 0 fire detection\(s\) above the 2019 to 2021 rate since 2024-10-18 \(8 in all, 8 usual\)/);
+  assert.doesNotMatch(ctx.text, /War damage|full-scale|24 Feb 2022|demining/);
+  const detail = await ctx.runTool("get_field", { name_or_id: "Field 1" });
+  assert.equal(detail.conflict, null);
+  assert.doesNotMatch(detail.damage.note, /mines/);
+  const history = await ctx.runTool("get_field_history", { name_or_id: "Field 1", months: 1 });
+  assert.equal(history.war, null);
+  assert.equal(history.warStarted, null);
+});
+
 test("the context text lists every field with status and readings, and says SAMPLE DATA", async () => {
   const store = fieldStore({
     analyses: { "fld-aaaa1111": analysis("fld-aaaa1111"), "fld-bbbb2222": recoveryAnalysis },
@@ -213,6 +239,7 @@ test("tools: get_field gives the full analysis, get_field_history adds the norma
 
   const history = await ctx.runTool("get_field_history", { name_or_id: "Field 1", months: 2 });
   assert.equal(history.warStarted, "2022-02-24");
+  assert.equal(history.war.id, "ukraine-2022");
   assert.deepEqual(history.months, [
     { month: "2026-06", ndvi: 0.75, ndwi: 0.28, clearPct: 70, normalNdvi: null, normalNdwi: null },
     { month: "2026-07", ndvi: 0.5, ndwi: 0.1, clearPct: 95, normalNdvi: 0.7, normalNdwi: 0.25 },

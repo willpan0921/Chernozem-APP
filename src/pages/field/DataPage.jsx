@@ -4,8 +4,11 @@
 //                          against normal
 //   2. Since 2019          monthly plant health (NDVI) or water (NDWI) of the
 //                          field against the farm average, with the normal
-//                          years (2019 to 2021) shaded and the start of the
-//                          war marked. Hover, tap or use the arrow keys for
+//                          years (2019 to 2021) shaded. Where a known war
+//                          covers the farm (analysis.conflict, from
+//                          src/config/conflicts.js) the day it started is
+//                          marked with its name and date; elsewhere there is
+//                          no marker. Hover, tap or use the arrow keys for
 //                          a month's numbers (Page Up / Page Down jump a year).
 //   3. Satellite passes    this season's clear Sentinel-2 passes of the field
 //   4. Downloads           field outlines (GeoJSON), passes and monthly
@@ -40,11 +43,29 @@ const MEASURES = [
   { value: "ndwi", label: "Water", color: "var(--fdata-water)" },
 ];
 
-// 24 Feb 2022, the full-scale invasion: 23/28 of the way through February.
-// Each monthly point is drawn at the middle of its month, so the marker
-// sits at (February's point) + 23/28 - 1/2, just after it.
-const WAR_MONTH = "2022-02";
-const WAR_DAY_SHARE = 23 / 28;
+// Where the chart marks the start of a war ({ name, since: "YYYY-MM-DD" }),
+// in months from the first month: each monthly point is drawn at the
+// middle of its month, so a war that started on day d of month i sits at
+// i - 1/2 + (d - 1) / (days in that month). null when it is off the chart.
+function warPosition(months, conflict) {
+  const since = conflict?.since;
+  if (!since || !/^\d{4}-\d{2}-\d{2}$/.test(since)) return null;
+  const i = months.indexOf(since.slice(0, 7));
+  if (i < 0) return null;
+  const [y, m, d] = since.split("-").map(Number);
+  const days = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return i - 0.5 + (d - 1) / days;
+}
+
+// The war marker's label: "Full-scale invasion of Ukraine · Feb 24, 2022"
+// on one line when it fits the plot width, else the name and the date on
+// two lines. About 6 px a letter at the label's 11 px.
+const labelWidth = (text) => text.length * 6;
+function warLines(conflict, room) {
+  const date = dayText(conflict.since);
+  const full = `${conflict.name} · ${date}`;
+  return labelWidth(full) <= room ? [full] : [conflict.name, date];
+}
 
 const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const isNum = (value) => typeof value === "number" && Number.isFinite(value);
@@ -139,6 +160,8 @@ function FieldDataPage() {
   const asked = params.get("field");
   const field = fields.find((item) => item.id === asked) || fields[0];
   const analysis = analyses[field.id] || null;
+  // The war covering the farm, if any (every field of a farm shares it).
+  const conflict = analysis?.conflict || Object.values(analyses).find((item) => item?.conflict)?.conflict || null;
   const chooseField = (id) =>
     setParams(
       (prev) => {
@@ -229,6 +252,7 @@ function FieldDataPage() {
         >
           <HistoryBody
             chart={chart}
+            conflict={conflict}
             histories={histories}
             field={field}
             measure={measure}
@@ -244,7 +268,7 @@ function FieldDataPage() {
         </div>
       </div>
 
-      <PrintReport farm={farm} analyses={analyses} provider={provider} field={field} chart={chart} measure={measure} />
+      <PrintReport farm={farm} analyses={analyses} provider={provider} field={field} chart={chart} measure={measure} conflict={conflict} />
     </div>
   );
 }
@@ -263,7 +287,7 @@ function BigStat({ label, value, line }) {
 // The history chart card
 // ---------------------------------------------------------------------------
 
-function HistoryBody({ chart, histories, field, measure, showFarm, running, onAnalyze }) {
+function HistoryBody({ chart, conflict, histories, field, measure, showFarm, running, onAnalyze }) {
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState(null);
   const series = chart?.[measure.value];
@@ -310,7 +334,7 @@ function HistoryBody({ chart, histories, field, measure, showFarm, running, onAn
       </div>
     );
   }
-  return <HistoryChart months={chart.months} series={series} field={field} measure={measure} showFarm={showFarm} />;
+  return <HistoryChart months={chart.months} series={series} field={field} measure={measure} showFarm={showFarm} conflict={conflict} />;
 }
 
 // Keeps track of an element's width so the chart draws in real pixels.
@@ -375,7 +399,7 @@ function normalFor(months, values, index) {
   return same.reduce((sum, item) => sum + item.value, 0) / same.length;
 }
 
-function HistoryChart({ months, series, field, measure, showFarm, fixedWidth, interactive = true }) {
+function HistoryChart({ months, series, field, measure, showFarm, conflict = null, fixedWidth, interactive = true }) {
   const [wrapRef, measured] = useWidth();
   const width = fixedWidth || measured;
   const [hover, setHover] = useState(null);
@@ -389,9 +413,14 @@ function HistoryChart({ months, series, field, measure, showFarm, fixedWidth, in
   const shown = hover ?? lastIndex;
 
   const narrow = width < 520;
-  const height = narrow ? 230 : 280;
-  const pad = { top: 26, right: narrow ? 10 : 16, bottom: 30, left: narrow ? 34 : 42 };
-  const plotW = Math.max(1, width - pad.left - pad.right);
+  const warAt = warPosition(months, conflict);
+  const side = { right: narrow ? 10 : 16, left: narrow ? 34 : 42 };
+  const plotW = Math.max(1, width - side.left - side.right);
+  const warText = warAt != null ? warLines(conflict, plotW) : [];
+  // A war marker's label gets its own rows above the "Normal years" label.
+  const warRow = warText.length * 14;
+  const height = (narrow ? 230 : 280) + warRow;
+  const pad = { top: 26 + warRow, bottom: 30, ...side };
   const plotH = height - pad.top - pad.bottom;
   const domain = yDomain([...series.field, ...(showFarm ? series.farm : [])]);
   const last = Math.max(1, months.length - 1);
@@ -415,8 +444,18 @@ function HistoryChart({ months, series, field, measure, showFarm, fixedWidth, in
   months.forEach((month, i) => {
     if (Number(month.slice(0, 4)) <= BASELINE.to) baseEnd = i;
   });
-  const warIndex = months.indexOf(WAR_MONTH);
-  const warX = warIndex >= 0 ? x(warIndex + WAR_DAY_SHARE - 0.5) : null;
+  // The war marker: each label line starts just right of the line, moved
+  // left as far as needed to stay inside the plot.
+  let war = null;
+  if (warAt != null) {
+    const warX = x(warAt);
+    const lines = warText.map((text, k) => ({
+      text,
+      x: Math.max(pad.left, Math.min(warX + 5, width - pad.right - labelWidth(text))),
+      y: 12 + k * 14,
+    }));
+    war = { x: warX, lines, top: 12 + (lines.length - 1) * 14 + 4 };
+  }
 
   const pickAt = (clientX) => {
     const box = wrapRef.current?.querySelector("svg")?.getBoundingClientRect();
@@ -519,12 +558,14 @@ function HistoryChart({ months, series, field, measure, showFarm, fixedWidth, in
                 )}
               </g>
             ))}
-            {warX != null && (
+            {war && (
               <g className="fdata-war">
-                <line x1={warX} x2={warX} y1={pad.top - 10} y2={pad.top + plotH} />
-                <text x={warX + 5} y={pad.top - 12}>
-                  War
-                </text>
+                <line x1={war.x} x2={war.x} y1={war.top} y2={pad.top + plotH} />
+                {war.lines.map((item) => (
+                  <text key={item.text} x={item.x} y={item.y}>
+                    {item.text}
+                  </text>
+                ))}
               </g>
             )}
             {showFarm && <path d={linePath(series.farm, x, y)} className="fdata-line-farm" />}
@@ -690,7 +731,7 @@ function DownloadsCard({ field, gee, passDate }) {
 // The printable season report (only shown on paper)
 // ---------------------------------------------------------------------------
 
-function PrintReport({ farm, analyses, provider, field, chart, measure }) {
+function PrintReport({ farm, analyses, provider, field, chart, measure, conflict }) {
   const today = new Date();
   const todayText = `${SHORT_MONTHS[today.getMonth()]} ${today.getDate()}, ${today.getFullYear()}`;
   const series = chart?.[measure.value];
@@ -744,7 +785,7 @@ function PrintReport({ farm, analyses, provider, field, chart, measure }) {
           <h2>
             {field.name} · {measure.label} since 2019
           </h2>
-          <HistoryChart months={chart.months} series={series} field={field} measure={measure} showFarm={farm.fields.length > 1} fixedWidth={680} interactive={false} />
+          <HistoryChart months={chart.months} series={series} field={field} measure={measure} showFarm={farm.fields.length > 1} fixedWidth={680} interactive={false} conflict={conflict} />
         </section>
       )}
       <p className="fdata-print-foot">Normal = the same time of year in {BASELINE.label}.</p>

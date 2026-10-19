@@ -27,6 +27,10 @@ const reading = (id, heavyShare) => ({
   population: 1000,
 });
 
+function makeArgs(month) {
+  return { area, month, provider: "sample", readings: [reading("r0c0", 0), reading("r0c1", 0)], cellSizeDeg: 0.5, cells };
+}
+
 function makeRun(month, heavy) {
   return buildRun({
     area,
@@ -57,7 +61,8 @@ test("buildRun converts readings into hectares and indicators", () => {
   assert.equal(run.checks.passed, run.checks.total);
   assert.deepEqual(run.checks.warnings, ["sample"]);
   assert.equal(run.alertsCount, 1);
-  assert.deepEqual(run.imagery, { from: "2026-04", to: "2026-09" });
+  // September compares the last COMPLETE season (2026's ends with September).
+  assert.deepEqual(run.imagery, { from: "2025-04", to: "2025-09" });
 });
 
 test("missing readings fail a check", () => {
@@ -103,8 +108,32 @@ test("months", () => {
   assert.equal(latestCompleteMonth(new Date(2026, 9, 18)), "2026-09");
   assert.equal(latestCompleteMonth(new Date(2026, 0, 5)), "2025-12");
   assert.deepEqual(monthsBack("2026-02", 3), ["2026-02", "2026-01", "2025-12"]);
-  assert.deepEqual(imageryWindow("2026-01"), { from: "2025-04", to: "2025-10" });
-  assert.deepEqual(imageryWindow("2026-11"), { from: "2026-04", to: "2026-10" });
+  // North (the default): the last COMPLETE April-September season, so
+  // every month of one season compares the same one.
+  assert.deepEqual(imageryWindow("2026-01"), { from: "2025-04", to: "2025-09" });
+  assert.deepEqual(imageryWindow("2026-11", 49), { from: "2026-04", to: "2026-09" });
+  assert.deepEqual(imageryWindow("2026-06", 49), { from: "2025-04", to: "2025-09" });
+  // South: October to March, across the new year.
+  assert.deepEqual(imageryWindow("2026-01", -34.9), { from: "2024-10", to: "2025-03" });
+  assert.deepEqual(imageryWindow("2026-08", -34.9), { from: "2025-10", to: "2026-03" });
+  // A place's own peak month (Australian winter wheat, August).
+  assert.deepEqual(imageryWindow("2026-12", -31.5, 8), { from: "2026-05", to: "2026-10" });
+});
+
+test("the imagery window follows the area's latitude, and the war is stored", () => {
+  const pampas = { id: "area-pampas", name: "Pampas", bbox: [-61.2, -35.1, -60.7, -34.7] };
+  const cell = { id: "r0c0", lat: -34.9, lon: -60.95, areaHa: 1000 };
+  const run = buildRun({ area: pampas, month: "2026-01", provider: "gee", readings: [reading("r0c0", 0)], cellSizeDeg: 0.5, cells: [cell] });
+  assert.deepEqual(run.imagery, { from: "2024-10", to: "2025-03" });
+  assert.equal(run.conflict, null, "no war unless one is given");
+  // The season the data source says it used wins.
+  const told = buildRun({ area: pampas, month: "2026-01", provider: "gee", readings: [reading("r0c0", 0)], cellSizeDeg: 0.5, cells: [cell], imagery: { from: "2024-11", to: "2025-04", label: "November 2024 to April 2025" }, accessSource: "none" });
+  assert.deepEqual(told.imagery, { from: "2024-11", to: "2025-04", label: "November 2024 to April 2025" });
+  assert.equal(told.accessSource, "none");
+  assert.equal(run.accessSource, null);
+  const war = buildRun({ ...makeArgs("2026-09"), conflict: { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24", countries: ["804"] } });
+  assert.deepEqual(war.conflict, { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" });
+  assert.equal(buildRun({ ...makeArgs("2026-09"), conflict: { id: "x" } }).conflict, null, "a war needs its start date");
 });
 
 test("the baseline comes from the data source, else 2019 to 2021", () => {

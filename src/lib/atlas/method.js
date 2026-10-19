@@ -18,11 +18,16 @@
 
 // Which indicators make up each score (the mean of the listed ones).
 //   soil:   chernozem probability and cropland share (agricultural value)
-//   damage: fire detections and the Chernozem Health Index decline
+//   damage: fire detections above the normal years' rate, and radar
+//           (Sentinel-1 VV) change of the last complete growing season from
+//           the same season in 2019-2021 -- the owner's paper (2026). The
+//           Chernozem Health Index decline ("chi") is kept on every cell as a
+//           diagnostic, but it is NOT part of the score: crop rotation and an
+//           early or late season move it as much as damage does.
 //   access: distance to recorded fighting (higher = farther = safer)
 export const COMPONENTS = {
   soil: ["wrb", "agOutput"],
-  damage: ["firms", "chi"],
+  damage: ["firms", "radar"],
   access: ["distance"],
 };
 
@@ -35,14 +40,22 @@ export const DEFAULT_SETTINGS = {
 };
 
 // How each raw reading becomes an indicator from 0 to 1. "full" is the
-// reading that counts as 1; anything above is capped at 1.
+// reading that counts as 1; anything above is capped at 1. "zero" (when
+// given) is the reading that counts as 0; the scale runs from it to "full".
 export const SCALES = {
   // Already a probability or share from 0 to 1.
   wrb: { unit: "probability", full: 1 },
   agOutput: { unit: "cropland share", full: 1 },
-  // Fire detections per 100 km² since the start of the war.
+  // Fire detections per 100 km² in the damage window (from the start of a
+  // known war, else the last two years) above the normal years' rate.
   firms: { unit: "detections per 100 km²", full: 25 },
-  // Drop in the Chernozem Health Index from the baseline years.
+  // Mean radar change over the cell's cropland: |VV| of the last complete
+  // growing season's median minus the same season's median in 2019-2021.
+  // Ordinary year-to-year change (crop rotation, soil moisture) stays under
+  // about 0.5 dB on average; 3 dB is the change of shelled or cratered land.
+  radar: { unit: "dB", zero: 0.5, full: 3 },
+  // Drop in the Chernozem Health Index from the baseline years (diagnostic,
+  // not in the score).
   chi: { unit: "index drop", full: 0.2 },
   // Distance to the nearest recorded fighting. 100 km or more counts as safe.
   distance: { unit: "km", full: 100 },
@@ -55,12 +68,28 @@ export const SCALES = {
 export function scaleIndicator(name, raw) {
   const scale = SCALES[name];
   if (!scale || !Number.isFinite(raw)) return null;
-  const value = scale.log ? Math.log1p(Math.max(raw, 0)) / Math.log1p(scale.full) : raw / scale.full;
+  const zero = scale.zero || 0;
+  const value = scale.log ? Math.log1p(Math.max(raw, 0)) / Math.log1p(scale.full) : (raw - zero) / (scale.full - zero);
   return Math.min(1, Math.max(0, value));
 }
 
-// A cell counts as heavily damaged where the health index fell by at least
-// this much. The server uses it to work out heavily damaged hectares.
+// Heavily damaged land (the paper's rule, no health index): a black-soil
+// cropland pixel whose radar changed by at least `radarDb` between the
+// last complete growing season and the same season in 2019-2021, or by at
+// least `radarWithFireDb` with an unusual fire (above the normal years'
+// rate) within `fireNearM`. The server uses it to work out heavily damaged
+// hectares. Where no known war covers the area (src/config/conflicts.js)
+// a pixel needs BOTH: a change of at least `radarDb` AND an unusual fire
+// within `fireNearM`. Either alone has an everyday cause there (real data,
+// 2026-10-19, at peace, with the war rule: 0.75% of Iowa's and 1.2% of the
+// Pampas' black-soil cropland, 6.4% around Nakuru, Kenya, with towns,
+// greenhouses and new fields; the fire arm alone: 2.1% of the Beauce,
+// France, after a summer of harvest fires). The same rule as a field's
+// damage (src/lib/field/method.js damageDetected).
+export const HEAVY_DAMAGE = { radarDb: 3, radarWithFireDb: 2, fireNearM: 1000 };
+
+// The old health-index rule, kept only for the sample data's made-up
+// damage field (server/providers/sample.js).
 export const HEAVY_DAMAGE_CHI_DROP = 0.1;
 
 // Recovery costs in US dollars per hectare, before demining.

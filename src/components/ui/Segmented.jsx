@@ -1,6 +1,6 @@
 // WHAT THIS FILE DOES
 // A switch between two or more options where exactly one is selected, like
-// "Near term | Postwar" or "Zones | Satellite". The selected one is black.
+// "Near term | Postwar" or "Priority | Damage | Access". The selected one is black.
 //
 // WHAT IT RECEIVES
 // options  - a list of { value, label, icon? }

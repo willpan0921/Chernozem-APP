@@ -57,6 +57,31 @@ test("damage evidence makes the field Needs recovery, with its damaged area", ()
   assert.equal(a.status.label, "Needs recovery");
 });
 
+test("only fires above the normal rate count; the war comes from the data source or the field's place", () => {
+  const iowa = { ...field, geometry: { type: "Polygon", coordinates: [[[-93.62, 42.03], [-93.61, 42.03], [-93.61, 42.035], [-93.62, 42.035], [-93.62, 42.03]]] } };
+  // Yearly stubble burning backed by a soil-index drop: 8 fires, 8 usual.
+  const raw = { ...base, damage: { radarChangedShare: 0.01, fires: 8, firesNormal: 8, excessFires: 0, since: "2024-10-18", chiDrop: 0.2 }, conflict: null };
+  const a = finishAnalysis({ field: iowa, raw, today: "2026-10-18" });
+  assert.equal(a.damage.detected, false);
+  assert.deepEqual([a.damage.fires, a.damage.firesNormal, a.damage.excessFires, a.damage.since], [8, 8, 0, "2024-10-18"]);
+  assert.equal(a.conflict, null);
+  // The same fires above the usual rate are damage when the radar backs
+  // them up (a field that burnt); away from a war the soil index does not.
+  const b = finishAnalysis({ field: iowa, raw: { ...raw, damage: { ...raw.damage, excessFires: 6 } }, today: "2026-10-18" });
+  assert.equal(b.damage.detected, false);
+  const c = finishAnalysis({ field: iowa, raw: { ...raw, damage: { ...raw.damage, excessFires: 6, radarChangedShare: 0.08 } }, today: "2026-10-18" });
+  assert.equal(c.damage.detected, true);
+  // Radar change alone on a peaceful field (ploughing, a new crop) is not damage.
+  const d = finishAnalysis({ field: iowa, raw: { ...raw, damage: { ...raw.damage, radarChangedShare: 0.38 } }, today: "2026-10-18" });
+  assert.equal(d.damage.detected, false);
+  assert.notEqual(d.status.id, "recovery");
+  // An analysis saved before the war was stored: looked up from the field's centre.
+  const old = finishAnalysis({ field, raw: base, today: "2026-10-18" });
+  assert.equal(old.conflict.id, "ukraine-2022");
+  assert.equal(old.conflict.since, "2022-02-24");
+  assert.equal(finishAnalysis({ field: iowa, raw: base, today: "2026-10-18" }).conflict, null);
+});
+
 test("below-normal plant health and stress make it Watch", () => {
   const raw = { ...base, plantHealth: { ndvi: 0.5, normal: { low: 0.65, high: 0.8, median: 0.72 } }, stress: { share: 0.08 } };
   const a = finishAnalysis({ field, raw, today: "2026-06-10" });

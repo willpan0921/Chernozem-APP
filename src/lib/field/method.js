@@ -11,9 +11,9 @@
 // THE READINGS (all from Sentinel-2, 10 m pixels, cloudy pixels removed)
 //   NDVI  plant health   (B8 - B4) / (B8 + B4)     -1..1, crops ~0.2 to 0.9
 //   NDWI  water in plants (B8 - B11) / (B8 + B11)  -1..1, crops ~-0.2 to 0.5
-// Each is compared with the NORMAL for the same weeks of 2019 to 2021, the
-// years before the full-scale war. "Normal" is a range: the lowest and
-// highest of those three years.
+// Each is compared with the NORMAL for the same weeks of the normal years
+// 2019 to 2021. "Normal" is a range: the lowest and highest of those three
+// years.
 //
 // WHO EDITS IT
 // Whoever changes the Field method. A change here changes every analysis
@@ -132,7 +132,7 @@ export const HARVEST_SOON_DAYS = 14;
 // A harvest shows as a fall of more than HARVEST_DROP within
 // HARVEST_DROP_DAYS to below HARVESTED_NDVI. The crop has usually dried
 // down before the combine comes, so in a field's average the fall is often
-// only 0.15 to 0.2 (real example: barley near Kupiansk, 0.44 to 0.28 in five
+// only 0.15 to 0.2 (real example: a barley field, 0.44 to 0.28 in five
 // days, August 2026).
 export const HARVEST_DROP = 0.15;
 export const HARVEST_DROP_DAYS = 20;
@@ -143,6 +143,19 @@ export const HARVEST_WINDOW_DAYS = 10;
 // this green and has had at least this many days since the harvest.
 export const NEW_SEASON_PEAK = NOT_SOWN_PEAK + 0.2;
 export const NEW_SEASON_DAYS = 60;
+// A crop dries down from its peak to harvest in a few weeks. A decline so
+// slow that it would take longer than this to reach the ready level is not
+// a dry-down (a cut forage crop greening up and fading again, a perennial
+// in a dry spell): the field stays "growing". Real data, Nakuru, Kenya,
+// 2026-10-19: fields cut in June and grown back read "ready in 70-90 days".
+export const RIPENING_MAX_DAYS = 45;
+// A crop stays at the ready level for a few weeks at most before it is cut
+// or lodges. A field that has sat at or below that level for longer than
+// this was harvested (or abandoned) when it first got there: the flat low
+// curve is stubble, weeds or a cover crop. Real data, 2026-10-19: Pampas
+// and Kenya fields that peaked 4-9 months earlier and sat flat at NDVI
+// 0.30-0.45 read "Ready to harvest".
+export const READY_MAX_DAYS = 30;
 
 const DAY_MS = 86400000;
 const dayNumber = (iso) => Math.round(Date.parse(`${iso.slice(0, 10)}T00:00:00Z`) / DAY_MS);
@@ -211,21 +224,32 @@ export function harvestStage(points, today) {
   // NEW cycle: it is read as a season of its own only once it has really
   // grown (NEW_SEASON_PEAK and NEW_SEASON_DAYS); until then the field stays
   // "harvested", so a crop sown after harvest is never "ready to harvest".
+  const afterHarvest = (i) => {
+    const harvestedOn = series[i].date;
+    const harvested = { ...base, stage: "harvested", harvestedOn };
+    const regrowth = series.slice(i);
+    const regrowthPeak = Math.max(...regrowth.map((p) => p.ndvi));
+    const regrowthDays = dayNumber(last.date) - dayNumber(harvestedOn);
+    if (regrowthPeak < NEW_SEASON_PEAK || regrowthDays < NEW_SEASON_DAYS) return harvested;
+    const next = harvestStage(regrowth, today);
+    return next.stage === "unknown" || next.stage === "notSown" ? harvested : next;
+  };
   for (let i = 1; i < series.length; i++) {
     const before = series[i - 1];
     const after = series[i];
     const afterPeak = after.date > series[peakIndex].date;
     const quick = dayNumber(after.date) - dayNumber(before.date) <= HARVEST_DROP_DAYS;
-    if (afterPeak && quick && after.ndvi < HARVESTED_NDVI && before.ndvi - after.ndvi > HARVEST_DROP) {
-      const harvestedOn = after.date;
-      const harvested = { ...base, stage: "harvested", harvestedOn };
-      const regrowth = series.slice(i);
-      const regrowthPeak = Math.max(...regrowth.map((p) => p.ndvi));
-      const regrowthDays = dayNumber(last.date) - dayNumber(harvestedOn);
-      if (regrowthPeak < NEW_SEASON_PEAK || regrowthDays < NEW_SEASON_DAYS) return harvested;
-      const next = harvestStage(regrowth, today);
-      return next.stage === "unknown" || next.stage === "notSown" ? harvested : next;
-    }
+    if (afterPeak && quick && after.ndvi < HARVESTED_NDVI && before.ndvi - after.ndvi > HARVEST_DROP) return afterHarvest(i);
+  }
+  // A slower fall that still ends at bare soil (two passes in a row below
+  // HARVESTED_NDVI after the peak) is a harvest too: a cereal dries down
+  // over weeks and the combine leaves little change. What grows after that
+  // is the next cycle. Without this, a winter wheat field harvested in July
+  // read "ready to harvest" in October once the next crop came up (real
+  // data, Beauce, France, 2026-10-19: 0.9 in May, 0.15 from July to
+  // September, 0.25 to 0.41 in October).
+  for (let i = peakIndex + 1; i < series.length - 1; i++) {
+    if (series[i].ndvi < HARVESTED_NDVI && series[i + 1].ndvi < HARVESTED_NDVI) return afterHarvest(i);
   }
 
   const recent = series.filter((p) => dayNumber(last.date) - dayNumber(p.date) <= 30).slice(-4);
@@ -235,10 +259,13 @@ export function harvestStage(points, today) {
 
   if (peakIndex === series.length - 1 || current > 0.85 * peak) return { ...withSlope, stage: "growing" };
   if (current <= readyLevel) {
-    return current < HARVESTED_NDVI ? { ...withSlope, stage: "harvested" } : { ...withSlope, stage: "ready", daysToReady: 0 };
+    const firstAtReady = series.findIndex((p, i) => i > peakIndex && p.ndvi <= readyLevel);
+    if (firstAtReady > 0 && dayNumber(last.date) - dayNumber(series[firstAtReady].date) > READY_MAX_DAYS) return afterHarvest(firstAtReady);
+    return current < HARVESTED_NDVI ? { ...withSlope, stage: "harvested", harvestedOn: last.date } : { ...withSlope, stage: "ready", daysToReady: 0 };
   }
   if (slope < -0.001) {
     const fromLastPass = Math.ceil((current - readyLevel) / -slope);
+    if (fromLastPass > RIPENING_MAX_DAYS) return { ...withSlope, stage: "growing" };
     const sinceLastPass = today ? Math.max(0, dayNumber(today) - dayNumber(last.date)) : 0;
     const days = Math.max(0, Math.min(90, fromLastPass - sinceLastPass));
     return days === 0 ? { ...withSlope, stage: "ready", daysToReady: 0 } : { ...withSlope, stage: "ripening", daysToReady: days };
@@ -247,11 +274,16 @@ export function harvestStage(points, today) {
 }
 
 // ---------------------------------------------------------------------------
-// War damage and the field's status
+// Damage and the field's status
 // ---------------------------------------------------------------------------
+// Damage is looked for anywhere on Earth. Where a known war covers the farm
+// (src/config/conflicts.js) it is counted from the day the war started;
+// elsewhere over the last two years. Either way it is compared with the
+// normal years 2019 to 2021, so a farm that burns its stubble every year
+// is not "damaged" (only fires ABOVE the usual rate count).
 
-// Radar roughness change (Sentinel-1 VV, summer before the war vs last
-// summer) that marks cratering or compaction, in decibels.
+// Radar roughness change (Sentinel-1 VV, the growing season in the normal
+// years vs the last one) that marks cratering or compaction, in decibels.
 export const RADAR_CHANGE_DB = 3;
 
 // The evidence levels.
@@ -259,24 +291,39 @@ export const DAMAGE_RULES = {
   radarShare: 0.1, // radar change over this share of the field is damage on its own
   supportRadarShare: 0.05, // a smaller radar change that supports other evidence
   supportChiDrop: 0.1, // a drop in the Chernozem Health Index that supports other evidence
-  fires: 3, // fire detections since the invasion
+  fires: 3, // fire detections above the usual rate, in the damage window
 };
 
 const atLeast = (value, level) => Number.isFinite(value) && value >= level;
 
-// When a field counts as war-damaged. Same evidence as the research: excess
+// When a field counts as damaged. Same evidence as the research: excess
 // fire and radar change, with the health index as support.
 //   radarChangedShare - share of the field with a radar change of RADAR_CHANGE_DB or more
-//   firesSinceWar     - fire detections inside the field since 24 Feb 2022
+//   excessFires       - fire detections inside the field in the damage window,
+//                       minus what the normal years' rate would give for a
+//                       window that long (never below 0). "firesSinceWar" is
+//                       the old name and is still read.
 //   chiDrop           - drop in the Chernozem Health Index from the baseline
+//   atWar             - false when no known war covers the field
+//                       (src/config/conflicts.js); left out = at war (older
+//                       analyses were all inside Ukraine)
 // Fires never count on their own: a fire pixel is about 1 km across, so one
 // fire is "in" every field within about 1 km, and stubble burning is
 // common. They count when the radar or the health index backs them up.
-export function damageDetected({ radarChangedShare, firesSinceWar, chiDrop } = {}) {
+// The health index is never enough on its own either.
+// Away from any war, radar change alone is not damage: ploughing, a new
+// crop, a meadow turned into a field or a flooded corner all change the
+// radar by 3 dB over part of a field (real data, Beauce, France,
+// 2026-10-19: 38% of a peaceful wheat field "changed"). There a field is
+// damaged only when unusual fire AND radar change are both found (a field
+// that really burnt).
+export function damageDetected({ radarChangedShare, excessFires, firesSinceWar, chiDrop, atWar } = {}) {
   const r = DAMAGE_RULES;
+  const fires = Number.isFinite(excessFires) ? excessFires : firesSinceWar;
+  if (atWar === false) return atLeast(fires, r.fires) && atLeast(radarChangedShare, r.supportRadarShare);
   if (atLeast(radarChangedShare, r.radarShare)) return true;
   const support = atLeast(radarChangedShare, r.supportRadarShare) || atLeast(chiDrop, r.supportChiDrop);
-  if (atLeast(firesSinceWar, r.fires) && support) return true;
+  if (atLeast(fires, r.fires) && support) return true;
   if (atLeast(chiDrop, r.supportChiDrop) && atLeast(radarChangedShare, r.supportRadarShare)) return true;
   return false;
 }
@@ -285,13 +332,14 @@ export function damageDetected({ radarChangedShare, firesSinceWar, chiDrop } = {
 // the damage is shown only by fires and the health index (the radar change
 // is too small to measure an extent) the area is unknown: null, never a
 // misleading near-zero number.
-export function damagedArea({ radarChangedShare, firesSinceWar, chiDrop } = {}, areaHa) {
-  if (!damageDetected({ radarChangedShare, firesSinceWar, chiDrop })) return null;
+export function damagedArea(evidence = {}, areaHa) {
+  const { radarChangedShare } = evidence;
+  if (!damageDetected(evidence)) return null;
   if (!atLeast(radarChangedShare, DAMAGE_RULES.supportRadarShare) || !Number.isFinite(areaHa)) return null;
   return Math.round(radarChangedShare * areaHa * 100) / 100;
 }
 
-// A war-damaged field is never shown better than "Fair". The crop readings
+// A damaged field is never shown better than "Fair". The crop readings
 // cannot see craters, mines or compacted soil: in autumn a cratered patch
 // reads about the same as stubble, which is normal for the season, so the
 // readings alone could call a damaged field "Very good".

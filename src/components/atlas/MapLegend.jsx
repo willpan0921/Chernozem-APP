@@ -6,6 +6,9 @@
 // WHAT IT RECEIVES
 //   colorBy          "priority" | "damage" | "access"
 //   timeframe        "nearTerm" | "postwar"
+//   run              the run shown (optional): at peace the access key says
+//                    distance to fighting is not measured, and nothing is
+//                    set aside
 //   onColorByChange  give it to show the switch (optional)
 //   className        extra class names (optional)
 //
@@ -14,7 +17,7 @@
 // src/lib/atlas/mapColors.js; the colours are in src/styles/tokens.css.
 
 import { Segmented } from "../ui/index.js";
-import { LEGENDS } from "../../lib/atlas/mapColors.js";
+import { LEGENDS, legendFor } from "../../lib/atlas/mapColors.js";
 import "./atlas.css";
 
 const MODES = [
@@ -23,10 +26,11 @@ const MODES = [
   { value: "access", label: "Access" },
 ];
 
-export default function MapLegend({ colorBy = "priority", timeframe = "nearTerm", onColorByChange, className = "" }) {
+export default function MapLegend({ colorBy = "priority", timeframe = "nearTerm", run = null, onColorByChange, className = "" }) {
   const mode = LEGENDS[colorBy] ? colorBy : "priority";
-  const legend = LEGENDS[mode];
-  const showAside = mode === "priority" && timeframe === "nearTerm";
+  const legend = legendFor(mode, run);
+  const peace = Boolean(run) && run.conflict === null && run.accessSource !== "acled";
+  const showAside = mode === "priority" && timeframe === "nearTerm" && !peace;
   return (
     <div className={["map-legend", className].filter(Boolean).join(" ")}>
       {onColorByChange && <Segmented light options={MODES} value={mode} onChange={onColorByChange} ariaLabel="Colour the map by" />}

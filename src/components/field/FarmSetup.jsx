@@ -13,7 +13,8 @@
 //   Step 2  the fields found, on the satellite map: inside your land all are
 //           chosen, around a point none are; click a field to add or remove
 //           it; "Select all"; "Save N fields" -> the farm is saved and analysed.
-//   A quiet "Try the demo farm" link loads 7 real fields near Kupiansk.
+//   A quiet "Try the demo farm" link loads 7 real fields near Kupiansk,
+//   Ukraine (the case study). Any other place on Earth works the same way.
 //
 // WHAT IT RECEIVES
 //   onDone()    called once the farm is saved (or the demo loaded), e.g. to close Settings' panel
@@ -48,7 +49,8 @@ const RADII = [
 ];
 
 const MIN_LAND_HA = 1;
-const COORDS_EXAMPLE = "49.7280, 37.5150\n49.7280, 37.5450\n49.7120, 37.5450\n49.7120, 37.5150";
+// Any place on Earth works; this is just the shape of the input.
+const COORDS_EXAMPLE = "42.0350, -93.6400\n42.0350, -93.6100\n42.0200, -93.6100\n42.0200, -93.6400";
 
 const pinBounds = (lat, lon, radiusM) => {
   const dLat = (radiusM * 1.35) / 111320;
@@ -122,7 +124,7 @@ function SearchTab({ picked, onPick }) {
           ref={inputRef}
           className="fs-search-input"
           type="search"
-          placeholder="Village, town or 49.72, 37.53"
+          placeholder="Village, town or lat, lon"
           aria-label="Search a place or coordinates"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -244,7 +246,10 @@ export default function FarmSetup({ onDone, onCancel, title = "Set up your farm"
         onProgress: (job) => setProgress(Math.min(1, (job.done || 0) / (job.total || 100))),
       });
       const candidates = result.candidates || [];
-      setFound({ ...result, source: body.source, center: body.source === "point" ? [body.lat, body.lon] : null, radiusM: body.radiusM });
+      // The server may move the search to the nearest farmland (it says so in
+      // a warning); draw the circle where it actually searched.
+      const searched = body.source === "point" ? (Number.isFinite(result.center?.lat) && Number.isFinite(result.center?.lon) ? [result.center.lat, result.center.lon] : [body.lat, body.lon]) : null;
+      setFound({ ...result, source: body.source, center: searched, radiusM: result.radiusM ?? body.radiusM });
       setChosen(body.source === "boundary" ? candidates.map((c) => c.id) : []);
       setStep("choose");
     } catch (err) {
@@ -264,7 +269,10 @@ export default function FarmSetup({ onDone, onCancel, title = "Set up your farm"
     try {
       const request = { fields: list.map((c) => ({ geometry: c.geometry, source: "detected" })), boundary: found.boundary || null };
       if (found.source === "point" && picked && pin && picked.lat === pin[0] && picked.lon === pin[1]) {
-        request.location = { label: picked.label, lat: picked.lat, lon: picked.lon };
+        // Keep the place name, but put the farm where its fields were found
+        // (the search may have moved to the nearest farmland).
+        const at = found.center || pin;
+        request.location = { label: picked.label, lat: at[0], lon: at[1] };
       }
       await actions.saveFarm(request);
       onDone?.();
@@ -465,7 +473,7 @@ export default function FarmSetup({ onDone, onCancel, title = "Set up your farm"
       </div>
 
       <div className="fs-map">
-        <FieldMap view="satellite" height="100%" showLabels={false} ariaLabel={tab === "draw" && step === "find" ? "Draw your land: click to add corners" : "Satellite map"} {...mapProps}>
+        <FieldMap height="100%" showLabels={false} ariaLabel={tab === "draw" && step === "find" ? "Draw your land: click to add corners" : "Satellite map"} {...mapProps}>
           {sample && <span className="fm-chip fm-chip-light fs-sample">Sample data</span>}
         </FieldMap>
       </div>

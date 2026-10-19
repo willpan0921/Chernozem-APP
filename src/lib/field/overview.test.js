@@ -102,6 +102,14 @@ test("several damaged fields make one recovery item", () => {
   assert.equal(recovery.action.to, "/field/ai?about=f6");
 });
 
+test("explosives are mentioned only inside a known war", () => {
+  const { farm, analyses } = demoFarm();
+  const line = () => needsDoing({ farm, analyses }).find((item) => item.id === "recovery").line;
+  assert.equal(line(), "Check it on the ground first");
+  analyses.f7.conflict = { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" };
+  assert.equal(line(), "Have it checked for explosives first");
+});
+
 test("unknown damaged area falls back to the field area, 'to check'", () => {
   const { farm, analyses } = demoFarm();
   analyses.f7 = analysis("recovery", { damage: { detected: true, damagedHa: null } });

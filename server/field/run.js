@@ -4,7 +4,9 @@
 //
 //   startFieldDetection({ boundary, center, radiusM, key })  find the fields in /
 //                         around a place; the job's result is
-//                         { candidates, boundary, provider, warnings }
+//                         { candidates, boundary, center, radiusM, provider, warnings }
+//                         (center, radiusM: the circle searched around a point;
+//                         the nearest farmland when the place is mostly town)
 //   startFieldAnalysis({ fieldIds, trigger })   analyse the farm's fields
 //                         (all, or some), save each analysis, and refresh
 //                         a field's monthly history when it is missing,
@@ -33,6 +35,10 @@ const DAY_MS = 86400000;
 const HISTORY_MAX_AGE_MS = 30 * DAY_MS;
 export const ANALYSIS_MAX_AGE_MS = DAY_MS;
 const WEATHER_WAIT_MS = 9000; // the weather request itself gives up after 8 s
+// Fields whose monthly history is read at the same time. One at a time,
+// a farm of 60 detected fields took 25 minutes on real Earth Engine
+// (Iowa, 2026-10-19), most of it waiting.
+export const HISTORY_PARALLEL = 2;
 
 export function farmCentre(farm) {
   const boxes = (farm?.fields || []).map((field) => bboxOf(field.geometry)).filter(Boolean);
@@ -125,7 +131,13 @@ export async function startFieldDetection({ boundary = null, center = null, radi
         warnings.push("No fields found here — try a larger area or draw your fields.");
       }
       job.message = candidates.length === 1 ? "Found 1 field" : `Found ${candidates.length} fields`;
-      return { candidates, boundary, provider: { id: provider.id, label: provider.id === "gee" ? provider.label || "Earth Engine" : "Sample data" }, warnings };
+      // center / radiusM: the circle searched in the end. When the place is
+      // mostly town, forest or water the data source searches the nearest
+      // farmland instead, so the centre can differ from the one asked for.
+      const at = result?.center;
+      const searchedCenter = center ? (Number.isFinite(at?.lat) && Number.isFinite(at?.lon) ? { lat: at.lat, lon: at.lon } : { lat: center.lat, lon: center.lon }) : null;
+      const searchedRadius = center ? (Number.isFinite(result?.radiusM) ? result.radiusM : radiusM) : null;
+      return { candidates, boundary, center: searchedCenter, radiusM: searchedRadius, provider: { id: provider.id, label: provider.id === "gee" ? provider.label || "Earth Engine" : "Sample data" }, warnings };
     },
   });
 }
@@ -243,18 +255,22 @@ async function runAnalysis(job, farm, fields) {
   }
   job.total = fields.length + needHistory.length;
   job.done = fields.length;
-  for (const field of needHistory) {
-    job.message = `Reading the history of ${field.name} since 2019…`;
-    try {
-      const months = await provider.fieldHistory({ field, from: "2019-01", to: thisMonth() });
-      const history = { fieldId: field.id, provider: provider.id, updatedAt: new Date().toISOString(), months: Array.isArray(months) ? months : [] };
-      await saveWhileOnFarm(field.id, () => saveFieldHistory(history));
-    } catch (error) {
-      warnings.push(`${field.name}: the history could not be read (${error.message}).`);
-      console.warn(`[chernozem] Field history of ${field.name} failed: ${error.message}`);
+  const queue = [...needHistory];
+  const readHistories = async () => {
+    for (let field = queue.shift(); field; field = queue.shift()) {
+      job.message = `Reading the history of ${field.name} since 2019…`;
+      try {
+        const months = await provider.fieldHistory({ field, from: "2019-01", to: thisMonth() });
+        const history = { fieldId: field.id, provider: provider.id, updatedAt: new Date().toISOString(), months: Array.isArray(months) ? months : [] };
+        await saveWhileOnFarm(field.id, () => saveFieldHistory(history));
+      } catch (error) {
+        warnings.push(`${field.name}: the history could not be read (${error.message}).`);
+        console.warn(`[chernozem] Field history of ${field.name} failed: ${error.message}`);
+      }
+      job.done += 1;
     }
-    job.done += 1;
-  }
+  };
+  await Promise.all(Array.from({ length: Math.min(HISTORY_PARALLEL, queue.length) }, readHistories));
   job.message = saved.length === 1 ? "1 field analysed" : `${saved.length} fields analysed`;
   return { fieldIds: saved, provider: provider.id, warnings };
 }

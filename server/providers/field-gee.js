@@ -2,12 +2,16 @@
 // The real data source for the Field product: Google Earth Engine. It finds
 // the fields inside a farmer's land (or around a place), and measures every
 // field from real satellite images: plant health (NDVI), water in the
-// plants (NDWI), stress, the season curve for harvest readiness, war damage
-// and soil.
+// plants (NDWI), stress, the season curve for harvest readiness, damage
+// and soil. It works for any field on Earth: every date window comes from
+// src/lib/season.js by the farm's latitude (north: April to September;
+// south: October to March; tropics: the last 12 months), and damage is
+// counted from the start of a known war (src/config/conflicts.js) where
+// one covers the field, otherwise over the last two years.
 //
 //   status()                                  is Earth Engine set up and signed in?
 //   detectFields({ boundary|null, center|null, radiusM, onProgress })
-//                                             -> { candidates, warnings }
+//                                             -> { candidates, warnings, center?, radiusM? }
 //   analyzeFields({ fields, today, onProgress })
 //                                             -> { analyses: { [fieldId]: analysis }, warnings }
 //   fieldHistory({ field, from: "2019-01", to }) -> [{ month, ndvi, ndwi, clearPct }]
@@ -24,8 +28,9 @@
 //
 // HOW FIELDS ARE FOUND (detectFields)
 //   1. Cropland = ESA/WorldCover/v200 band Map == 40.
-//   2. NDVI and NDWI median composites (clear pixels only) for Apr-May,
-//      Jun-Jul and Aug-Sep of the last complete season and the season before.
+//   2. NDVI and NDWI median composites (clear pixels only) for the early,
+//      middle and late thirds of the last complete growing season and the
+//      season before (season.js detectionWindows, by latitude).
 //   3. Field edges = Canny edges (ee.Algorithms.CannyEdgeDetector, see
 //      DETECT for the threshold tuned on real images) of any band of any
 //      composite. Roads, tree lines and the line between two crops all show
@@ -37,10 +42,19 @@
 //   5. The same trace with weaker edges (DETECT.fineCannyThreshold) splits a
 //      parcel only into big pieces that cover most of it (two crops whose
 //      line is soft), in the same request.
+//   6. Touching parcels of the same crop (mean NDVI and NDWI within
+//      DETECT.mergeMaxDiff in every window) are joined into one field: wet
+//      hollows and soil patches draw edges inside one big field too.
+//   7. Around a point, when the fields found cover less than
+//      DETECT.widenBelowCover of the circle (the point is in a town, a
+//      forest or on water), the nearest circle of the same size that is
+//      mostly cropland (WorldCover, up to 8 km away) is searched instead,
+//      and the result says so (its `center` is where it searched).
 //
 // HOW A FIELD IS MEASURED (analyzeFields, all fields of a farm in a few
 // batched requests, never one request per field)
-//   passes     every Sentinel-2 pass this season (COPERNICUS/S2_SR_HARMONIZED
+//   passes     every Sentinel-2 pass this season (from season.js
+//              seasonCurveStart; COPERNICUS/S2_SR_HARMONIZED
 //              linked to GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED band cs,
 //              Danny's approach in scripts/fetch-ndvi.js; snow, which Cloud
 //              Score+ calls clear, is removed too): field mean NDVI, NDWI and
@@ -48,7 +62,8 @@
 //              MIN_CLEAR_SHARE of the field was clear
 //   latest     median of clear pixels over the last 30 days, or over the 30
 //              days up to the latest clear pass when that is 30-90 days old
-//   normal     the same calendar window (+-15 days) of 2019, 2020 and 2021:
+//   normal     the same calendar window in 2019, 2020 and 2021 (season.js
+//              baselineWindows):
 //              per pixel the median of the three yearly composites; per field
 //              the lowest / highest / middle of the three yearly field means
 //   pixels     health, water, stress and condition per method.js, written as
@@ -57,11 +72,17 @@
 //              the field (sampleRectangle; outside the field = null)
 //   patches    stressed pixels in blobs of 0.3 ha or more, top 3 per field
 //   curve      half-month NDVI of 2019-2021 for the "season vs normal" chart
-//   damage     radar change (COPERNICUS/S1_GRD VV, IW: the last Jun-Aug vs
-//              Jun-Aug 2019-2021, compared with the field's own overall
-//              change, see radarChangeImage), fire days (FIRMS T21) since
-//              24 Feb 2022, and the drop of the Chernozem Health Index (same
-//              formula as the Atlas, 2019-2021 seasons vs last season)
+//   damage     radar change (COPERNICUS/S1_GRD VV, IW, one orbit direction
+//              (gee.js pickPass): the last complete
+//              growing season vs the same months of 2019-2021, compared with
+//              the field's own overall change, see radarChangeImage); excess
+//              fire days (FIRMS T21): fire days in the damage window (from
+//              the war start where a known war covers the field, else the
+//              last 2 years) minus what the 2019-2021 rate gives for a
+//              window that long, never below 0 (fireWindows), so yearly
+//              stubble burning is not damage; and the drop of the Chernozem
+//              Health Index (same formula as the Atlas, the 2019-2021
+//              seasons vs the last one)
 //   soil       mean chernozem probability: the Atlas soil map (gee.js
 //              chernozemImage: the chernozem asset when set, else the
 //              OpenLandMap black-soil share, else soil organic carbon)
@@ -87,6 +108,9 @@
 import { config } from "../env.js";
 import { areaHa as geoAreaHa, bboxAreaKm2, bboxOf, FIELD_SEARCH_MAX_KM2, pointInGeometry, polygonsOf } from "../geo.js";
 import { addMonths } from "../runs.js";
+import { conflictAt } from "../conflicts.js";
+import { damageWindow } from "../../src/config/conflicts.js";
+import { baselineWindows, detectionWindows as seasonDetectionWindows, lastCompleteSeason, sameWindowIn, seasonCurveStart } from "../../src/lib/season.js";
 import {
   BASELINE,
   CLEAR_PIXEL_SCORE,
@@ -112,11 +136,11 @@ import {
   BANDS,
   CROPLAND_CLASS,
   NONE,
-  WAR_START,
   CHUNK_TIMEOUT_MS,
   GeeError,
   createGeeProvider,
   evaluate,
+  peakMonthAt,
   contextOf,
   chiHealthImage,
   chernozemImage,
@@ -124,11 +148,15 @@ import {
   sentinel1,
   sentinel2,
   firms,
+  pickPass,
+  ORBIT_PASSES,
   withTimeout,
   chunk,
   mapLimit,
   explainGeeError,
   isTooMuchWorkError,
+  retryTransient,
+  TRANSIENT_RETRY_MS,
   isoDay,
   shiftDays,
   clampWindow,
@@ -183,6 +211,40 @@ export const DETECT = {
   // Around a point, fields are traced over a circle this much larger and
   // kept when they touch the real circle, so fields on its edge stay whole.
   pointPad: 1.5,
+  // A place name or a pin often lands in a town (real data, 2026-10-19: the
+  // given points for Ames, Iowa; Sorriso, Mato Grosso; Daqing, Heilongjiang
+  // and Nakuru, Kenya are 0-4% cropland within 1.2 km, so 0 or 1 field was
+  // found). When the fields found cover less than widenBelowCover of the
+  // circle, the nearest circle of the same size that is at least
+  // farmlandFull (else farmlandMin) cropland (ESA WorldCover), up to
+  // farmlandMaxKm away, is
+  // searched instead (and the result says where and why). Tracing one
+  // circle 6 km across instead took 1.5 to 10 minutes.
+  widenBelowCover: 0.15,
+  farmlandFull: 0.9,
+  farmlandMin: 0.7,
+  farmlandMaxKm: 8,
+  // Holes smaller than this inside a traced field are edge noise (a few
+  // pixels of a soft line), not a farmstead or a pond: they are filled.
+  minHoleHa: 0.5,
+  // No traced field is larger than this (the farm's own limit,
+  // server/field/routes.js). Real data, Kenya (-0.354, 35.996): one traced
+  // shape came back from Earth Engine as the whole globe (5.1e10 ha).
+  maxHa: 5000,
+  // Parcels traced before neighbours of the same crop are joined
+  // (sameCropGroups); the maxFields largest are offered.
+  maxParcels: 150,
+  // Two touching parcels are one field when their mean NDVI and NDWI differ
+  // by at most mergeMaxDiff in every one of the six windows (the same crop,
+  // sown and harvested on the same days, two seasons running), and the
+  // windows compared are at least mergeMinWindows values. Wet hollows and
+  // soil patches inside one big field draw Canny lines too (real data,
+  // Buenos Aires province, -34.90 -60.95, 2026-10-19: one 80 ha field cut
+  // into a dozen 2-20 ha blobs, median 7.6 ha); neighbouring fields of
+  // different crops differ by 0.15 or more in some window (the demo farm's
+  // Field 7 and its neighbour: 0.15-0.19 NDVI).
+  mergeMaxDiff: 0.05,
+  mergeMinWindows: 8,
 };
 
 export const LATEST_DAYS = 30;
@@ -215,8 +277,9 @@ export function createFieldGeeProvider(options = {}) {
   const opts = options && typeof options === "object" ? options : {};
   const getConfig = typeof opts.getConfig === "function" ? opts.getConfig : config;
   const now = typeof opts.now === "function" ? opts.now : () => new Date();
-  const base = createGeeProvider({ ee: opts.ee, getConfig, now });
-  const deps = { getConfig, now, connect: base.connect };
+  const retryDelayMs = Number.isFinite(opts.retryDelayMs) ? opts.retryDelayMs : TRANSIENT_RETRY_MS;
+  const base = createGeeProvider({ ee: opts.ee, getConfig, now, retryDelayMs });
+  const deps = { getConfig, now, retryDelayMs, connect: base.connect };
   return {
     id: "gee",
     label: "Earth Engine",
@@ -323,11 +386,13 @@ function conditionImages(ee, { latest, normal, fc, crs, plan }) {
 }
 
 // Runs one request, once more with coarser pixels if Earth Engine runs out
-// of memory or time. `build(plan)` makes the Earth Engine object.
+// of memory or time, and once more as it is after a pause if the connection
+// dropped (retryTransient; the pause is context.retryDelayMs).
+// `build(plan)` makes the Earth Engine object.
 async function runWithRetry(build, { what, context, timeoutMs = CHUNK_TIMEOUT_MS }) {
   for (let i = 0; ; i += 1) {
     try {
-      return await evaluate(build(PLANS[i]), { what, context, timeoutMs });
+      return await retryTransient(() => evaluate(build(PLANS[i]), { what, context, timeoutMs }), context?.retryDelayMs);
     } catch (error) {
       if (i + 1 < PLANS.length && isTooMuchWorkError(error)) continue;
       throw error;
@@ -342,25 +407,142 @@ async function detectFields(deps, input = {}) {
   const onProgress = typeof input.onProgress === "function" ? input.onProgress : null;
   const cfg = deps.getConfig();
   const ee = await deps.connect(cfg);
-  const context = contextOf(cfg);
+  const context = { ...contextOf(cfg), retryDelayMs: deps.retryDelayMs };
   const today = isoDay(deps.now());
   const warnings = [];
   onProgress?.(0.05, "Reading satellite images");
 
   const anchor = boundary ? bboxCenter(bboxOf(boundary)) : center;
   const crs = utmCrs(anchor.lon, anchor.lat);
-  let region;
-  let keepWithin = null;
   if (boundary) {
-    region = ee.Geometry(boundary);
-  } else {
-    const point = ee.Geometry.Point([center.lon, center.lat]);
-    keepWithin = point.buffer(radiusM);
-    region = point.buffer(radiusM * DETECT.pointPad);
+    onProgress?.(0.2, "Tracing field edges");
+    const candidates = await traceFields(ee, { region: ee.Geometry(boundary), keepWithin: null, boundary, crs, anchor, today, context });
+    if (!candidates.length) warnings.push("No fields found here — try a larger area or draw your fields");
+    onProgress?.(1, `Found ${candidates.length} field${candidates.length === 1 ? "" : "s"}`);
+    return { candidates, warnings };
   }
 
+  // Around a point: the circle asked for; when the fields found cover too
+  // little of it (the point is in a town, a forest or on water), the
+  // nearest circle of the same size that is mostly farmland.
+  const traceAround = (at) => {
+    const point = ee.Geometry.Point([at.lon, at.lat]);
+    const keepWithin = point.buffer(radiusM);
+    return traceFields(ee, { region: point.buffer(radiusM * DETECT.pointPad), keepWithin, boundary: null, crs, anchor, today, context });
+  };
+  onProgress?.(0.2, "Tracing field edges");
+  let candidates = await traceAround(center);
+  let searched = center;
+  if (coverWithin(candidates, center, radiusM) < DETECT.widenBelowCover) {
+    onProgress?.(0.55, "Few fields here, looking for the nearest farmland");
+    const farmland = await nearestFarmland(ee, center, radiusM, { context });
+    if (farmland) {
+      const found = await traceAround(farmland);
+      if (found.length > candidates.length) {
+        candidates = found;
+        searched = farmland;
+        const away = distanceKm(center, farmland);
+        warnings.push(
+          `Few fields within ${formatKm(radiusM)} of this place (it is mostly town, forest or water), so the fields shown are around the nearest farmland, ${away < 10 ? away.toFixed(1) : Math.round(away)} km ${compassFrom(center, farmland)}.`,
+        );
+      }
+    }
+  }
+  if (!candidates.length) warnings.push("No fields found here — try a larger area or draw your fields");
+  onProgress?.(1, `Found ${candidates.length} field${candidates.length === 1 ? "" : "s"}`);
+  return { candidates, warnings, center: { lat: round(searched.lat, 6), lon: round(searched.lon, 6) }, radiusM };
+}
+
+// The centre { lat, lon } of the nearest circle (radius radiusM) that is at
+// least DETECT.farmlandMin cropland (ESA WorldCover), on a grid of centres
+// radiusM apart up to DETECT.farmlandMaxKm away; else the one with the most
+// cropland when that is at least DETECT.widenBelowCover; else null.
+async function nearestFarmland(ee, center, radiusM, { context }) {
+  const spots = farmlandSpots(center, radiusM);
+  const cropland = ee.ImageCollection(FIELD_DATASETS.worldCover).first().select(BANDS.worldCover).eq(CROPLAND_CLASS).rename("cropland");
+  const result = await evaluate(
+    cropland
+      .reduceRegions({
+        collection: ee.FeatureCollection(spots.map((spot, i) => ee.Feature(ee.Geometry.Point([spot.lon, spot.lat]).buffer(radiusM), { i }))),
+        reducer: ee.Reducer.mean(),
+        scale: 30,
+        tileScale: 4,
+      })
+      .select(["i", "mean"], null, false),
+    { what: "Looking for the nearest farmland", context },
+  );
+  const shares = new Map(featuresOf(result).map((f) => [f.properties?.i, numberOr(f.properties?.mean, 0)]));
+  return pickFarmland(spots.map((spot, i) => ({ ...spot, cropland: shares.get(i) ?? 0 })), center);
+}
+
+// The circle centres searched for farmland around a point: a square grid,
+// radiusM (at least 1.2 km) apart, out to DETECT.farmlandMaxKm (the point
+// itself left out).
+export function farmlandSpots(center, radiusM) {
+  // At least 1.2 km apart, so a small circle does not mean thousands of spots.
+  const step = Math.max(radiusM, DETECT.defaultRadiusM);
+  const steps = Math.floor((DETECT.farmlandMaxKm * 1000) / step);
+  const cos = Math.cos((center.lat * Math.PI) / 180);
+  const spots = [];
+  for (let dy = -steps; dy <= steps; dy += 1) {
+    for (let dx = -steps; dx <= steps; dx += 1) {
+      if ((!dx && !dy) || Math.hypot(dx, dy) * step > DETECT.farmlandMaxKm * 1000) continue;
+      spots.push({ lat: center.lat + (dy * step) / 110574, lon: center.lon + (dx * step) / (111320 * cos) });
+    }
+  }
+  return spots;
+}
+
+// The nearest spot that is (almost) all cropland (DETECT.farmlandFull),
+// else the nearest with at least DETECT.farmlandMin, else the one with the
+// most when that is at least DETECT.widenBelowCover, else null. Spots that
+// are only partly cropland are often a town's edge, with garden plots
+// (real data, Sorriso, Mato Grosso: 70% cropland 4 km out, median "field"
+// 2.5 ha; the soy fields 1 to 2 km further out are hundreds of hectares).
+export function pickFarmland(spots, center) {
+  const byDistance = [...spots].sort((a, b) => distanceKm(center, a) - distanceKm(center, b));
+  const near = byDistance.find((spot) => spot.cropland >= DETECT.farmlandFull) || byDistance.find((spot) => spot.cropland >= DETECT.farmlandMin);
+  if (near) return { lat: near.lat, lon: near.lon };
+  const best = byDistance.reduce((top, spot) => (!top || spot.cropland > top.cropland ? spot : top), null);
+  return best && best.cropland >= DETECT.widenBelowCover ? { lat: best.lat, lon: best.lon } : null;
+}
+
+function distanceKm(a, b) {
+  const cos = Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180);
+  return Math.hypot((b.lat - a.lat) * 110.574, (b.lon - a.lon) * 111.32 * cos);
+}
+
+// "north-east" etc. from a to b.
+export function compassFrom(a, b) {
+  const cos = Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180);
+  const angle = (Math.atan2((b.lon - a.lon) * cos, b.lat - a.lat) * 180) / Math.PI;
+  const names = ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"];
+  return names[((Math.round(angle / 45) % 8) + 8) % 8];
+}
+
+// "1.2 km", "6 km".
+function formatKm(m) {
+  const km = m / 1000;
+  return `${Number.isInteger(km) ? km : km.toFixed(1)} km`;
+}
+
+// The share of a circle (centre { lat, lon }, radius in m) covered by the
+// candidates whose centre is inside it.
+export function coverWithin(candidates, center, radiusM) {
+  const cos = Math.cos((center.lat * Math.PI) / 180);
+  const inside = (candidates || []).filter(({ centroid: [lat, lon] }) => Math.hypot((lat - center.lat) * 110574, (lon - center.lon) * 111320 * cos) <= radiusM);
+  const ha = inside.reduce((sum, c) => sum + (Number(c.areaHa) || 0), 0);
+  return ha / ((Math.PI * radiusM * radiusM) / 1e4);
+}
+
+// One trace of the fields in `region` (a boundary, or a circle around a
+// point; then only the fields touching `keepWithin` are kept) -> candidates.
+async function traceFields(ee, { region, keepWithin, boundary, crs, anchor, today, context }) {
+  // The place's own growing season (its greenest month in 2019-2021), else
+  // its latitude's (src/lib/season.js).
+  const peakMonth = await peakMonthAt(ee, region, { context });
   const build = (plan) => {
-    const pictures = detectionWindows(today).map((window) => composite(ee, clearCollection(ee, region, window), DETECT.edgeBands));
+    const pictures = detectionWindows(today, anchor.lat, peakMonth).map((window) => composite(ee, clearCollection(ee, region, window), DETECT.edgeBands));
     const cropland = ee.ImageCollection(FIELD_DATASETS.worldCover).first().select(BANDS.worldCover).eq(CROPLAND_CLASS);
     const withArea = (feature) => feature.set("areaHa", feature.geometry().area(1).divide(1e4));
     // The parcels traced with Canny edges at `threshold`, of at least `minHa`.
@@ -386,33 +568,150 @@ async function detectFields(deps, input = {}) {
         .map((feature) => withArea((DETECT.growBackM > 0 ? feature.buffer(DETECT.growBackM, 1) : feature).simplify(DETECT.simplifyM)))
         .filter(ee.Filter.gte("areaHa", minHa));
       if (boundary) {
-        parcels = parcels.map((feature) => withArea(feature.setGeometry(feature.geometry().intersection(region, 1)))).filter(ee.Filter.gte("areaHa", minHa));
+        // Measured in longitude/latitude BEFORE the cut to the boundary: a
+        // broken shape (the whole globe) cut down to the boundary would
+        // otherwise pass as one field covering everything (real data,
+        // Beauce, France, 2026-10-19: a 265 ha field equal to the drawn box).
+        parcels = parcels
+          .map((feature) => withArea(feature.transform("EPSG:4326", 1)))
+          .filter(ee.Filter.lte("areaHa", DETECT.maxHa))
+          .map((feature) => withArea(feature.setGeometry(feature.geometry().intersection(region, 1))))
+          .filter(ee.Filter.gte("areaHa", minHa));
       }
       return parcels;
     };
-    const finish = (parcels, max) =>
-      parcels
+    // Each parcel's mean NDVI and NDWI in each window (its "profile"), to
+    // tell whether two touching parcels are one crop (sameCropGroups).
+    const profileImage = ee.Image.cat(pictures.map((picture, i) => picture.select(DETECT.edgeBands, profileKeysOf(i))));
+    const keys = pictures.flatMap((_, i) => profileKeysOf(i));
+    // The area is measured again after the move to longitude/latitude: a
+    // broken shape (it came back as the whole globe once, in Kenya) is
+    // dropped before anything is measured over it.
+    const finish = (parcels, minHa, max) => {
+      const shapes = parcels
         .sort("areaHa", false)
         .limit(max)
-        .map((feature) => feature.transform("EPSG:4326", 1))
-        .select(["areaHa"])
+        .map((feature) => withArea(feature.transform("EPSG:4326", 1)))
+        .filter(ee.Filter.and(ee.Filter.gte("areaHa", minHa), ee.Filter.lte("areaHa", DETECT.maxHa)));
+      return profileImage
+        .reduceRegions({ collection: shapes, reducer: ee.Reducer.mean(), scale: Math.max(20, plan.scale), crs, tileScale: plan.tileScale })
+        .select(["areaHa", ...keys])
         .toList(max);
+    };
     const coarse = trace(DETECT.cannyThreshold, DETECT.minHa);
     // The finer pieces are only used inside a kept parcel, so around a point
     // they are not cut down to the circle.
     const fine = trace(DETECT.fineCannyThreshold, DETECT.splitMinHa);
     return ee.Dictionary({
-      coarse: finish(boundary ? coarse : coarse.filterBounds(keepWithin), DETECT.maxFields),
-      fine: finish(fine, DETECT.maxFields * 3),
+      coarse: finish(boundary ? coarse : coarse.filterBounds(keepWithin), DETECT.minHa, DETECT.maxParcels),
+      fine: finish(fine, DETECT.splitMinHa, DETECT.maxParcels * 2),
     });
   };
 
-  onProgress?.(0.2, "Tracing field edges");
   const result = await runWithRetry(build, { what: "Finding fields", context });
-  const candidates = toCandidates(featuresOf(result?.coarse), featuresOf(result?.fine));
-  if (!candidates.length) warnings.push("No fields found here — try a larger area or draw your fields");
-  onProgress?.(1, `Found ${candidates.length} field${candidates.length === 1 ? "" : "s"}`);
-  return { candidates, warnings };
+  // Touching parcels of the same crop are one field: their outlines are
+  // joined in one more request.
+  const parcels = parcelShapes(featuresOf(result?.coarse));
+  const groups = sameCropGroups(parcels);
+  let coarse = parcels;
+  const joined = groups.filter((group) => group.length > 1);
+  if (joined.length) {
+    const outlines = await evaluate(
+      ee.List(joined.map((group) => ee.FeatureCollection(group.map((i) => ee.Feature(ee.Geometry(parcels[i].geometry)))).union(1).first().geometry())),
+      { what: "Joining the parts of each field", context },
+    );
+    coarse = joinGroups(parcels, groups, Array.isArray(outlines) ? outlines : []);
+  }
+  return toCandidates(coarse, featuresOf(result?.fine));
+}
+
+// The profile keys of detection window i: n<i> (mean NDVI), w<i> (mean NDWI).
+const profileKeysOf = (i) => [`n${i}`, `w${i}`];
+
+// Earth Engine features (or shapes already read) -> [{ geometry, areaHa,
+// centroid, profile }]: the largest polygon of each, small holes filled,
+// kept from DETECT.minHa to DETECT.maxHa. profile: { n0: .., w0: .., ... }.
+export function parcelShapes(features) {
+  const out = [];
+  for (const feature of features || []) {
+    const geometry = fillSmallHoles(largestPolygon(toPolygonal(feature?.geometry)));
+    if (!geometry) continue;
+    const areaHa = round(geoAreaHa(geometry), 2);
+    // Too small, or a broken shape (larger than any farm field).
+    if (!(areaHa >= DETECT.minHa) || !(areaHa <= DETECT.maxHa)) continue;
+    const props = feature.profile || feature.properties || {};
+    const profile = Object.fromEntries(Object.entries(props).filter(([key, value]) => /^[nw]\d+$/.test(key) && Number.isFinite(value)));
+    out.push({ geometry, areaHa, centroid: ringCentroid(geometry.coordinates[0]), profile });
+  }
+  return out;
+}
+
+// The largest difference between two profiles over the values both have,
+// or null when they share fewer than DETECT.mergeMinWindows values.
+export function profileDifference(a = {}, b = {}) {
+  const shared = Object.keys(a).filter((key) => Number.isFinite(a[key]) && Number.isFinite(b[key]));
+  if (shared.length < DETECT.mergeMinWindows) return null;
+  return Math.max(...shared.map((key) => Math.abs(a[key] - b[key])));
+}
+
+// True when two traced parcels touch: they were each grown back by
+// DETECT.growBackM over the 1-pixel edge between them, so at least two
+// corners of one lie inside the other.
+export function parcelsTouch(a, b) {
+  const [aw, as, ae, an] = bboxOf(a.geometry);
+  const [bw, bs, be, bn] = bboxOf(b.geometry);
+  if (aw > be || bw > ae || as > bn || bs > an) return false;
+  const inside = (from, to) => from.geometry.coordinates[0].filter(([lon, lat]) => pointInGeometry(lon, lat, to.geometry)).length;
+  return inside(a, b) + inside(b, a) >= 2;
+}
+
+// Groups of parcel indexes that are one field: touching, and of the same
+// crop (profileDifference <= DETECT.mergeMaxDiff). Every parcel is in
+// exactly one group.
+export function sameCropGroups(parcels, { maxDiff = DETECT.mergeMaxDiff } = {}) {
+  const parent = parcels.map((_, i) => i);
+  const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  for (let i = 0; i < parcels.length; i += 1) {
+    for (let j = i + 1; j < parcels.length; j += 1) {
+      const diff = profileDifference(parcels[i].profile, parcels[j].profile);
+      if (diff === null || diff > maxDiff || find(i) === find(j)) continue;
+      if (parcelsTouch(parcels[i], parcels[j])) parent[find(j)] = find(i);
+    }
+  }
+  const groups = new Map();
+  parcels.forEach((_, i) => {
+    const root = find(i);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(i);
+  });
+  return [...groups.values()];
+}
+
+// The parcels with each joined group replaced by its joined outline
+// (`outlines`, one GeoJSON geometry per group of 2 or more, in order). A
+// group whose outline did not come back whole stays as its parts.
+export function joinGroups(parcels, groups, outlines) {
+  const out = [];
+  let k = 0;
+  for (const group of groups) {
+    if (group.length === 1) {
+      out.push(parcels[group[0]]);
+      continue;
+    }
+    const outline = outlines[k++];
+    const geometry = fillSmallHoles(largestPolygon(toPolygonal(outline)));
+    const total = group.reduce((sum, i) => sum + parcels[i].areaHa, 0);
+    const areaHa = geometry ? round(geoAreaHa(geometry), 2) : 0;
+    // The parts overlap by the grown-back edge, so the whole is a little
+    // smaller than their sum; much smaller means the join failed.
+    if (!geometry || areaHa < 0.8 * total || areaHa > DETECT.maxHa) {
+      out.push(...group.map((i) => parcels[i]));
+      continue;
+    }
+    const profile = parcels[group.reduce((best, i) => (parcels[i].areaHa > parcels[best].areaHa ? i : best), group[0])].profile;
+    out.push({ geometry, areaHa, centroid: ringCentroid(geometry.coordinates[0]), profile });
+  }
+  return out;
 }
 
 // ---------- Measuring fields ----------
@@ -422,15 +721,21 @@ async function analyzeFields(deps, input = {}) {
   const onProgress = typeof input.onProgress === "function" ? input.onProgress : null;
   const cfg = deps.getConfig();
   const ee = await deps.connect(cfg);
-  const context = contextOf(cfg);
+  const context = { ...contextOf(cfg), retryDelayMs: deps.retryDelayMs };
   const nowDay = isoDay(deps.now());
   const today = isDay(input.today) && input.today < nowDay ? input.today : nowDay;
   const warnings = [];
-  const windows = analysisWindows(today);
   const farmBox = padBbox(unionBbox(fields.map((f) => f.bbox)), 0.002);
   const region = rect(ee, farmBox);
   const center = bboxCenter(farmBox);
   const crs = utmCrs(center.lon, center.lat);
+  // Seasons by the farm's own greenest month in 2019-2021 (else its
+  // latitude); the damage window by each field's own place (a farm on a
+  // border could have fields in two countries).
+  const peakMonth = await peakMonthAt(ee, region, { context });
+  const windows = analysisWindows(today, center.lat, peakMonth);
+  const fireById = new Map(fields.map((field) => [field.id, fireWindows(conflictAt(bboxCenter(field.bbox).lat, bboxCenter(field.bbox).lon), today)]));
+  const fireSets = new Map([...fireById.values()].map((fire) => [fire.key, fire]));
 
   const passChunks = chunk(fields, FIELDS_PER_REQUEST);
   const total = 1 + passChunks.length + 2 * passChunks.length + 1;
@@ -442,9 +747,20 @@ async function analyzeFields(deps, input = {}) {
   const counts = ee.Dictionary({
     chiBaseline: windows.chiBaseline.map((w) => sentinel2(ee, region, w)).reduce((all, next) => all.merge(next)).size(),
     chiSeason: sentinel2(ee, region, windows.chiSeason).size(),
-    ...Object.fromEntries(windows.radarBaselines.map((window, i) => [`radarBaseline${i}`, sentinel1(ee, region, window).size()])),
-    radarSeason: sentinel1(ee, region, windows.radarSeason).size(),
-    firesWar: firms(ee, region, windows.firesWar).size(),
+    // Radar per orbit direction: one direction is compared (pickPass), as
+    // the same ground looks different from the east and from the west.
+    ...Object.fromEntries(
+      ORBIT_PASSES.flatMap((pass) => [
+        ...windows.radarBaselines.map((window, i) => [`radarBaseline${i}_${pass}`, sentinel1(ee, region, window, pass).size()]),
+        [`radarSeason_${pass}`, sentinel1(ee, region, windows.radarSeason, pass).size()],
+      ]),
+    ),
+    ...Object.fromEntries(
+      [...fireSets.values()].flatMap((fire) => [
+        [`fires_${fire.key}`, firms(ee, region, fire.window).size()],
+        [`firesBase_${fire.key}`, fire.baselines.map((w) => firms(ee, region, w)).reduce((all, next) => all.merge(next)).size()],
+      ]),
+    ),
   });
   const [rawCounts, asset] = await Promise.all([
     evaluate(counts, { timeoutMs: 2 * 60 * 1000, what: "Checking satellite images", context }),
@@ -452,8 +768,11 @@ async function analyzeFields(deps, input = {}) {
   ]);
   const have = Object.fromEntries(Object.entries(rawCounts || {}).map(([key, value]) => [key, Math.max(0, numberOr(value, 0))]));
   if (asset.warning) warnings.push(asset.warning);
-  have.radarBaselines = windows.radarBaselines.filter((_, i) => have[`radarBaseline${i}`] > 0);
-  if (!(have.radarBaselines.length > 0 && have.radarSeason > 0)) warnings.push("No Sentinel-1 radar images for the summers compared; radar damage was not measured.");
+  const radarCount = (prefix) => Object.fromEntries(ORBIT_PASSES.map((pass) => [pass, Object.entries(have).filter(([key]) => key.startsWith(prefix) && key.endsWith(`_${pass}`)).reduce((sum, [, n]) => sum + n, 0)]));
+  have.radarPass = pickPass(radarCount("radarSeason"), radarCount("radarBaseline"));
+  have.radarSeason = have.radarPass ? have[`radarSeason_${have.radarPass}`] : 0;
+  have.radarBaselines = have.radarPass ? windows.radarBaselines.filter((_, i) => have[`radarBaseline${i}_${have.radarPass}`] > 0) : [];
+  if (!(have.radarBaselines.length > 0 && have.radarSeason > 0)) warnings.push("No Sentinel-1 radar images for the growing seasons compared; radar damage was not measured.");
   if (!(have.chiBaseline > 0 && have.chiSeason > 0)) warnings.push(`Too few clear Sentinel-2 images for ${BASELINE.label} or the last season; the soil health index was not measured.`);
 
   // 2. Every satellite pass this season, per field.
@@ -481,12 +800,12 @@ async function analyzeFields(deps, input = {}) {
   });
 
   // Per field: one reading per day, its clear passes and its latest window.
-  const plans = fields.map((field) => fieldPlan(field, passesById.get(field.id), { today, windows }));
+  const plans = fields.map((field) => ({ ...fieldPlan(field, passesById.get(field.id), { today, windows }), fire: fireById.get(field.id) }));
 
-  // 3. Measure, per group of fields that share a latest window.
+  // 3. Measure, per group of fields that share a latest window and a damage window.
   const groups = new Map();
   for (const plan of plans) {
-    const key = `${plan.latestWindow.start}|${plan.latestWindow.end}`;
+    const key = `${plan.latestWindow.start}|${plan.latestWindow.end}|${plan.fire.key}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(plan);
   }
@@ -528,18 +847,29 @@ function statsRequest({ ee, region, crs, windows, have, assetId }, part, plan) {
   const fc = fieldCollection(ee, part);
   const latestWindow = part[0].latestWindow;
   const latest = composite(ee, clearCollection(ee, region, latestWindow));
-  const yearlyCollections = BASELINE_YEARS.map((year) => clearCollection(ee, region, normalWindow(latestWindow, year)));
+  const yearlyCollections = normalWindows(latestWindow).map((window) => clearCollection(ee, region, window));
   const yearly = yearlyCollections.map((collection) => composite(ee, collection));
   const normal = normalOfYears(ee, yearly);
   const images = conditionImages(ee, { latest, normal, fc, crs, plan });
 
   const radarChanged =
-    have.radarBaselines.length > 0 && have.radarSeason > 0 ? radarChangeImage(ee, { region, windows, baselines: have.radarBaselines, fc, crs, plan }) : emptyBand(ee, "radarChanged");
+    have.radarBaselines.length > 0 && have.radarSeason > 0 ? radarChangeImage(ee, { region, windows, baselines: have.radarBaselines, pass: have.radarPass, fc, crs, plan }) : emptyBand(ee, "radarChanged");
   const chiDrop =
     have.chiBaseline > 0 && have.chiSeason > 0
       ? chiHealthImage(ee, region, windows.chiBaseline).subtract(chiHealthImage(ee, region, windows.chiSeason)).rename("chiDrop")
       : emptyBand(ee, "chiDrop");
-  const fireDays = have.firesWar > 0 ? firms(ee, region, windows.firesWar).count().unmask(0).rename("fires") : ee.Image.constant(0).rename("fires");
+  // Fire days per ~1 km pixel in the damage window, and in the normal years
+  // (fireWindows): the field's excess is worked out from the two.
+  const fire = part[0].fire;
+  const fireDays = (list, name) =>
+    list
+      .map((window) => firms(ee, region, window))
+      .reduce((all, next) => all.merge(next))
+      .count()
+      .unmask(0)
+      .rename(name);
+  const firesNow = have[`fires_${fire.key}`] > 0 ? fireDays([fire.window], "fires") : ee.Image.constant(0).rename("fires");
+  const firesBase = have[`firesBase_${fire.key}`] > 0 ? fireDays(fire.baselines, "firesBase") : ee.Image.constant(0).rename("firesBase");
 
   const meanBands = [
     ...yearly.flatMap((image, i) => [image.select("ndvi").rename(`n${BASELINE_YEARS[i]}_ndvi`), image.select("ndwi").rename(`n${BASELINE_YEARS[i]}_ndwi`)]),
@@ -551,14 +881,15 @@ function statsRequest({ ee, region, crs, windows, have, assetId }, part, plan) {
   const reduce = (image, reducer, scale = plan.scale) =>
     image.reduceRegions({ collection: fc, reducer, scale, crs, tileScale: plan.tileScale }).select([".*"], null, false);
 
-  // Half-month NDVI of each baseline year (24 bands per year).
-  const curveBands = BASELINE_YEARS.flatMap((year) => {
-    const yearCollection = clearCollection(ee, region, { start: `${year - 1}-12-20`, end: `${year + 1}-01-12` });
-    return CURVE_DAYS.map((day, i) => {
-      const w = curveWindow(year, day);
-      return composite(ee, yearCollection.filterDate(w.start, w.end), ["ndvi"]).rename(curveBand(year, i));
-    });
-  });
+  // Half-month NDVI of each baseline year (24 bands per year). Each
+  // composite reads only its own 15 days (filtered BEFORE Cloud Score+ is
+  // linked): one cloud-masked collection per year, filtered afterwards, ran
+  // out of memory on real Earth Engine where Sentinel-2 tiles overlap (Iowa,
+  // 41.99 N 93.70 W, 2026-10-18: "User memory limit exceeded" even for 4
+  // fields; per-window collections: 8 fields in 9 s).
+  const curveBands = BASELINE_YEARS.flatMap((year) =>
+    CURVE_DAYS.map((day, i) => composite(ee, clearCollection(ee, region, curveWindow(year, day)), ["ndvi"]).rename(curveBand(year, i))),
+  );
 
   // Stressed blobs of PATCH_MIN_HA or more, outlined.
   const minPixels = Math.max(2, Math.ceil((PATCH_MIN_HA * 1e4) / (plan.scale * plan.scale)));
@@ -595,22 +926,27 @@ function statsRequest({ ee, region, crs, windows, have, assetId }, part, plan) {
     // pixels the zone map shows), not scores of the field-median NDVI.
     medians: asList(reduce(ee.Image.cat([latest, images.health, images.water, images.condition]), ee.Reducer.median())),
     means: asList(reduce(ee.Image.cat(meanBands), ee.Reducer.mean())),
-    fires: asList(reduce(fireDays, ee.Reducer.max().setOutputs(["fires"]), Math.max(100, plan.scale))),
+    // At the field's own pixel size, not FIRMS's 1 km: a narrow strip field
+    // (real data, Daqing, Heilongjiang: 1.7 ha, about 20 m wide) holds no
+    // 100 m pixel centre and came back with no fire count at all.
+    fires: asList(reduce(ee.Image.cat([firesNow, firesBase]), ee.Reducer.max())),
     curve: asList(reduce(ee.Image.cat(curveBands), ee.Reducer.mean(), Math.max(20, plan.scale))),
     patches: asList(patches, MAX_PATCHES * part.length * 3),
   });
 }
 
-// Radar change that marks cratering or compaction: last summer's VV median
-// against the per-pixel median of the 2019-2021 summers, MINUS the field's
-// own median change. Crop rotation and soil moisture shift a whole field by
-// 3-6 dB from one summer to the next (real data, demo farm: 61-97% of each
-// field "changed" by 3 dB between 2021 and 2019-2020, before the war); craters,
+// Radar change that marks cratering or compaction: the last growing season's
+// VV median against the per-pixel median of the same months of 2019-2021,
+// MINUS the field's own median change. Crop rotation and soil moisture shift
+// a whole field by 3-6 dB from one summer to the next (real data, demo farm:
+// 61-97% of each field "changed" by 3 dB between 2021 and 2019-2020, before
+// the war); craters,
 // trenches and burnt patches change parts of a field. A pixel counts when
 // its change differs from the field's by RADAR_CHANGE_DB or more.
-function radarChangeImage(ee, { region, windows, baselines, fc, crs, plan }) {
-  const before = ee.ImageCollection(baselines.map((window) => sentinel1(ee, region, window).median().rename("VV"))).median();
-  const change = sentinel1(ee, region, windows.radarSeason).median().subtract(before).rename("change");
+// Only one orbit direction (`pass`, gee.js pickPass) is used, in both.
+function radarChangeImage(ee, { region, windows, baselines, pass = null, fc, crs, plan }) {
+  const before = ee.ImageCollection(baselines.map((window) => sentinel1(ee, region, window, pass).median().rename("VV"))).median();
+  const change = sentinel1(ee, region, windows.radarSeason, pass).median().subtract(before).rename("change");
   const fieldShift = change
     .reduceRegions({ collection: fc, reducer: ee.Reducer.median().setOutputs(["shift"]), scale: plan.scale, crs, tileScale: plan.tileScale })
     .filter(ee.Filter.notNull(["shift"]))
@@ -623,7 +959,7 @@ function zonesRequest({ ee, region, crs }, part, plan) {
   const fc = fieldCollection(ee, part);
   const latestWindow = part[0].latestWindow;
   const latest = composite(ee, clearCollection(ee, region, latestWindow));
-  const normal = normalOfYears(ee, BASELINE_YEARS.map((year) => composite(ee, clearCollection(ee, region, normalWindow(latestWindow, year)))));
+  const normal = normalOfYears(ee, normalWindows(latestWindow).map((w) => composite(ee, clearCollection(ee, region, w))));
   const { condition } = conditionImages(ee, { latest, normal, fc, crs, plan });
   const grids = {};
   for (const field of part) {
@@ -645,7 +981,7 @@ async function fieldHistory(deps, { field, from = HISTORY_FROM, to } = {}) {
   const [one] = fieldsInput([field]);
   const cfg = deps.getConfig();
   const ee = await deps.connect(cfg);
-  const context = contextOf(cfg);
+  const context = { ...contextOf(cfg), retryDelayMs: deps.retryDelayMs };
   const today = isoDay(deps.now());
   const thisMonth = today.slice(0, 7);
   const first = isMonth(from) ? (from < HISTORY_FROM ? HISTORY_FROM : from) : HISTORY_FROM;
@@ -668,7 +1004,7 @@ async function fieldHistory(deps, { field, from = HISTORY_FROM, to } = {}) {
             const values = ee.Image.cat([composite(ee, passes), seen]).reduceRegion({
               reducer: ee.Reducer.mean(),
               geometry: shape,
-              scale: plan.scale,
+              scale: Math.max(plan.scale, historyScale(one.areaHa)),
               crs,
               maxPixels: 1e9,
               bestEffort: true,
@@ -692,13 +1028,23 @@ async function fieldHistory(deps, { field, from = HISTORY_FROM, to } = {}) {
   });
 }
 
+// The pixel size (m) a field's monthly history is read at: about
+// HISTORY_PIXELS pixels over the field, 10 to 100 m. A field mean needs no
+// more, and 10 m pixels over a 600 ha field for 30 months ran past Earth
+// Engine's time limit (real data, Mato Grosso, 2026-10-19).
+export const HISTORY_PIXELS = 2500;
+export function historyScale(areaHa) {
+  const side = Math.sqrt((Math.max(0, Number(areaHa) || 0) * 1e4) / HISTORY_PIXELS);
+  return Math.min(100, Math.max(10, Math.ceil(side / 10) * 10));
+}
+
 // ---------- GeoTIFF download ----------
 
 async function geotiffUrl(deps, { field, latestPassDate = null, analysis = null } = {}) {
   const [one] = fieldsInput([field]);
   const cfg = deps.getConfig();
   const ee = await deps.connect(cfg);
-  const context = contextOf(cfg);
+  const context = { ...contextOf(cfg), retryDelayMs: deps.retryDelayMs };
   const today = isoDay(deps.now());
   const passDate = isDay(latestPassDate) ? latestPassDate : isDay(analysis?.latestPass?.date) ? analysis.latestPass.date : null;
   const window = latestWindowFor(passDate, today);
@@ -708,7 +1054,7 @@ async function geotiffUrl(deps, { field, latestPassDate = null, analysis = null 
   const shape = ee.Geometry(one.geometry);
   const fc = fieldCollection(ee, [one]);
   const latest = composite(ee, clearCollection(ee, region, window));
-  const normal = normalOfYears(ee, BASELINE_YEARS.map((year) => composite(ee, clearCollection(ee, region, normalWindow(window, year)))));
+  const normal = normalOfYears(ee, normalWindows(window).map((w) => composite(ee, clearCollection(ee, region, w))));
   const { condition } = conditionImages(ee, { latest, normal, fc, crs, plan: PLANS[0] });
   const image = ee.Image.cat([latest.select("ndvi"), latest.select("ndwi"), condition]).toFloat().clip(shape);
   const date = shiftDays(window.end, -1);
@@ -922,42 +1268,87 @@ export function fieldsInput(fields) {
   });
 }
 
-// The six NDVI windows used to trace edges: Apr-May, Jun-Jul, Aug-Sep of
-// the last complete season (it ends on 1 October) and of the season before.
-export function detectionWindows(today) {
-  const year = Number(today.slice(0, 4));
-  const last = today >= `${year}-10-01` ? year : year - 1;
-  return [last, last - 1].flatMap((y) => [
-    { start: `${y}-04-01`, end: `${y}-06-01` },
-    { start: `${y}-06-01`, end: `${y}-08-01` },
-    { start: `${y}-08-01`, end: `${y}-10-01` },
-  ]);
+// The six NDVI windows used to trace edges: the early, middle and late
+// thirds of the last complete growing season at this latitude and of the
+// season before (src/lib/season.js). Never past `today`.
+//   peakMonth  the place's greenest month (1-12), when known
+export function detectionWindows(today, lat, peakMonth = null) {
+  return seasonDetectionWindows(lat, today, peakMonth).map((window) => clampWindow(window, today));
 }
 
 // Every date window an analysis uses ({ start, end }, end not included,
-// never past `today`).
-//   seasonStart   1 March of this year (from April on), else 8 months back
-//   passes        from the earlier of seasonStart and 90 days back, to today
-//   chiBaseline   Apr-Sep of 2019, 2020 and 2021 (one composite, as in the
-//                 Atlas); chiSeason: Apr-Sep of the last complete season
-//   radarBaselines Jun-Aug of 2019, 2020 and 2021; radarSeason: the last complete Jun-Aug
-//   firesWar      24 Feb 2022 to today
-export function analysisWindows(today) {
-  const year = Number(today.slice(0, 4));
-  const seasonStart = today >= `${year}-04-01` ? `${year}-03-01` : shiftDays(today, -243);
+// never past `today`), by the farm's latitude (src/lib/season.js):
+//   seasonStart    where this season's curve starts (seasonCurveStart: a
+//                  month before the season, or 8 months back)
+//   passes         from the earlier of seasonStart and 90 days back, to today
+//   chiSeason      the last complete growing season; chiBaseline: the same
+//                  months of 2019, 2020 and 2021 (one composite, as in the Atlas)
+//   radarSeason    the last complete growing season; radarBaselines: the same
+//                  months of 2019, 2020 and 2021
+// In the north that is April to September, in the south October to March
+// (across the new year), in the tropics the last 12 whole months.
+//   peakMonth  the farm's greenest month (1-12) in 2019-2021, when known
+//              (gee.js peakMonthAt): the season is then the 3 months before
+//              it, it and the 2 after (Australia's winter wheat: May to
+//              October), else the latitude's
+export function analysisWindows(today, lat, peakMonth = null) {
+  const seasonStart = seasonCurveStart(lat, today, peakMonth);
   const lookback = shiftDays(today, -LOOKBACK_DAYS);
   const stop = (window) => clampWindow(window, today);
-  const chiYear = today >= `${year}-10-01` ? year : year - 1;
-  const radarYear = today >= `${year}-09-01` ? year : year - 1;
+  const last = lastCompleteSeason(lat, today, peakMonth);
+  const season = stop({ start: last.start, end: last.end });
   return {
+    band: last.band,
+    peakMonth: last.peakMonth,
+    seasonLabel: last.label,
     seasonStart,
     passes: stop({ start: lookback < seasonStart ? lookback : seasonStart, end: today }),
-    chiBaseline: BASELINE_YEARS.map((y) => ({ start: `${y}-04-01`, end: `${y}-10-01` })),
-    chiSeason: stop({ start: `${chiYear}-04-01`, end: `${chiYear}-10-01` }),
-    radarBaselines: BASELINE_YEARS.map((y) => ({ start: `${y}-06-01`, end: `${y}-09-01` })),
-    radarSeason: stop({ start: `${radarYear}-06-01`, end: `${radarYear}-09-01` }),
-    firesWar: stop({ start: WAR_START, end: today }),
+    chiBaseline: baselineWindows(season),
+    chiSeason: season,
+    radarBaselines: baselineWindows(season),
+    radarSeason: season,
   };
+}
+
+// The fire windows for one field:
+//   conflict   the known war covering it (server/conflicts.js conflictAt), or null
+// Gives back
+//   window        the damage window (damageWindow: from the war start, else
+//                 the last 2 years), cut off at today
+//   days          its length in days
+//   baselines     the normal years to take the usual fire rate from: the same
+//                 calendar span of 2019, 2020 and 2021 for a window shorter
+//                 than a year; for a longer one (it covers every season)
+//                 the whole of 2019 to 2021
+//   baselineDays  their total length in days
+//   conflict      { id, name, since } or null
+//   key           a short name for this set (for grouping fields)
+export function fireWindows(conflict, today) {
+  const damage = damageWindow(conflict || null, today);
+  const window = clampWindow({ start: damage.start, end: damage.end }, today);
+  const days = daysBetween(window.start, window.end);
+  const baselines =
+    days >= 365 ? [{ start: `${BASELINE.from}-01-01`, end: `${BASELINE.to + 1}-01-01` }] : baselineWindows(window);
+  const baselineDays = baselines.reduce((sum, w) => sum + daysBetween(w.start, w.end), 0);
+  const summary = conflict ? { id: conflict.id, name: conflict.name, since: conflict.since } : null;
+  return { window, days, baselines, baselineDays, conflict: summary, key: (summary?.id || "none").replace(/[^\w]/g, "_") };
+}
+
+// Fires above the usual rate: detections in the damage window minus the
+// normal years' rate times the window's length, never below 0.
+//   fires      fire days in the window
+//   baseFires  fire days in the baseline windows
+//   fire       fireWindows() result
+// Gives back { fires, firesNormal, excessFires } (null where unknown).
+export function excessFiresOf(fires, baseFires, fire) {
+  if (!Number.isFinite(fires)) return { fires: null, firesNormal: null, excessFires: null };
+  const count = Math.max(0, Math.round(fires));
+  const firesNormal = Number.isFinite(baseFires) && fire?.baselineDays > 0 ? round((Math.max(0, baseFires) / fire.baselineDays) * fire.days, 1) : null;
+  return { fires: count, firesNormal, excessFires: round(Math.max(0, count - (firesNormal ?? 0)), 1) };
+}
+
+function daysBetween(start, end) {
+  return Math.max(0, Math.round((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86400000));
 }
 
 // The window the latest condition is measured over: the last 30 days, or
@@ -968,16 +1359,14 @@ export function latestWindowFor(latestClearDate, today) {
   return clampWindow({ start: shiftDays(latestClearDate, 1 - LATEST_DAYS), end: shiftDays(latestClearDate, 1) }, today);
 }
 
-// The same weeks in a baseline year: +-15 days around the window's middle.
-export function normalWindow(window, year) {
-  const startMs = Date.parse(`${window.start}T00:00:00Z`);
-  const endMs = Date.parse(`${window.end}T00:00:00Z`);
-  const middle = new Date((startMs + endMs) / 2).toISOString().slice(0, 10);
-  let day = `${year}${middle.slice(4)}`;
-  if (day.endsWith("02-29") && !isLeap(year)) day = `${year}-02-28`;
-  return { start: shiftDays(day, -NORMAL_HALF_WINDOW_DAYS), end: shiftDays(day, NORMAL_HALF_WINDOW_DAYS + 1) };
+// The same weeks in each baseline year (2019, 2020, 2021): the window moved
+// to that year (src/lib/season.js baselineWindows).
+export function normalWindows(window) {
+  return baselineWindows(window, BASELINE_YEARS);
 }
-const isLeap = (y) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+export function normalWindow(window, year) {
+  return sameWindowIn(window, year);
+}
 
 // The normal curve's days: the 1st and 16th of each month.
 export const CURVE_DAYS = Array.from({ length: 24 }, (_, i) => `${pad2(Math.floor(i / 2) + 1)}-${i % 2 ? "16" : "01"}`);
@@ -1048,7 +1437,7 @@ export function oneReadingPerDay(passes) {
 }
 
 // A field's passes -> its clear passes, season, latest pass and latest window.
-export function fieldPlan(field, passes, { today, windows = analysisWindows(today) }) {
+export function fieldPlan(field, passes, { today, windows = analysisWindows(today, field?.bbox ? (field.bbox[1] + field.bbox[3]) / 2 : undefined) }) {
   const daily = oneReadingPerDay((passes || []).filter((p) => p.date < today));
   const clear = daily.filter((p) => numberOr(p.clear, 0) >= MIN_CLEAR_SHARE && Number.isFinite(numberOr(p.ndvi, null)));
   const latest = clear[clear.length - 1] || null;
@@ -1145,8 +1534,7 @@ export function buildAnalysis(plan, measured, zones, { today, updatedAt }) {
 
   const stage = harvestStage(plan.season, today);
   const radarChangedShare = round(numberOr(means.radarChanged, null), 3);
-  const firesRaw = numberOr(measured.fires?.fires, null);
-  const firesSinceWar = firesRaw === null ? null : Math.max(0, Math.round(firesRaw));
+  const { fires, firesNormal, excessFires } = excessFiresOf(numberOr(measured.fires?.fires, null), numberOr(measured.fires?.firesBase, null), plan.fire);
   const chiDrop = round(numberOr(means.chiDrop, null), 3);
   const chernozem = round(numberOr(means.chernozem, null), 3);
 
@@ -1171,15 +1559,20 @@ export function buildAnalysis(plan, measured, zones, { today, updatedAt }) {
       peak: round(stage.peak, 3),
       peakDate: stage.peakDate ?? null,
       lastDate: stage.lastDate ?? null,
+      harvestedOn: stage.harvestedOn ?? null,
     },
     condition: { score: conditionValue, class: conditionClass(conditionValue)?.id ?? null },
     damage: {
-      detected: damageDetected({ radarChangedShare, firesSinceWar, chiDrop }),
+      detected: damageDetected({ radarChangedShare, excessFires, chiDrop, atWar: Boolean(plan.fire?.conflict) }),
       radarChangedShare,
-      firesSinceWar,
+      fires,
+      firesNormal,
+      excessFires,
+      since: plan.fire?.window?.start ?? null,
       chiDrop,
-      damagedHa: damagedArea({ radarChangedShare, firesSinceWar, chiDrop }, plan.areaHa),
+      damagedHa: damagedArea({ radarChangedShare, excessFires, chiDrop, atWar: Boolean(plan.fire?.conflict) }, plan.areaHa),
     },
+    conflict: plan.fire?.conflict ?? null,
     soil: { chernozemProbability: chernozem, soilTypeId: soilTypeFor(chernozem) },
     season: plan.season,
     normalCurve: normalCurve(measured.curve || {}),
@@ -1199,40 +1592,36 @@ export function normalCurve(curve) {
   return points;
 }
 
-// Detected parcels from Earth Engine -> candidates
-// [{ id: "cand-N", geometry: Polygon, areaHa, centroid: [lat, lon] }],
-// numbered from north-west to south-east. `fineFeatures` (the finer trace,
-// optional) split a parcel per splitByFinerEdges.
+// Detected parcels from Earth Engine (features, or shapes from
+// parcelShapes) -> candidates
+// [{ id: "cand-N", geometry: Polygon, areaHa, centroid: [lat, lon] }]: the
+// DETECT.maxFields largest, numbered from north-west to south-east.
+// `fineFeatures` (the finer trace, optional) split a parcel per
+// splitByFinerEdges.
 export function toCandidates(features, fineFeatures = []) {
-  const shapes = (list) => {
-    const out = [];
-    for (const feature of list || []) {
-      const geometry = largestPolygon(toPolygonal(feature?.geometry));
-      if (!geometry) continue;
-      const areaHa = round(geoAreaHa(geometry), 2);
-      if (!(areaHa >= DETECT.minHa)) continue;
-      out.push({ geometry, areaHa, centroid: ringCentroid(geometry.coordinates[0]) });
-    }
-    return out;
-  };
-  const list = splitByFinerEdges(shapes(features), shapes(fineFeatures));
+  const list = withoutOverlaps(splitByFinerEdges(parcelShapes(features), parcelShapes(fineFeatures))).slice(0, DETECT.maxFields);
   list.sort((a, b) => order(a.centroid) - order(b.centroid));
-  return list.slice(0, DETECT.maxFields).map((item, i) => ({ id: `cand-${i + 1}`, ...item }));
+  return list.map(({ profile, ...item }, i) => ({ id: `cand-${i + 1}`, ...item }));
 }
 const order = ([lat, lon]) => lon * Math.cos((lat * Math.PI) / 180) - lat;
 
 // Replaces a parcel by the finer-trace pieces inside it (centre inside the
 // parcel) when at least two of them are DETECT.splitMinHa or more and those
-// cover at least DETECT.splitMinCover of the parcel. Otherwise the parcel
-// stays whole: small or scattered pieces are noise, not a field boundary.
+// cover at least DETECT.splitMinCover of the parcel, and (when the pieces'
+// profiles are known) they are not all the same crop. Otherwise the parcel
+// stays whole: small or scattered pieces, or pieces of one crop, are noise,
+// not a field boundary.
 export function splitByFinerEdges(parcels, pieces, { minHa = DETECT.splitMinHa, minCover = DETECT.splitMinCover } = {}) {
   if (!pieces?.length) return [...parcels];
   const out = [];
   const used = new Set();
   for (const parcel of parcels) {
-    const inside = pieces.filter((piece) => !used.has(piece) && piece.areaHa >= minHa && pointInGeometry(piece.centroid[1], piece.centroid[0], parcel.geometry));
+    // A piece larger than the parcel is not a part of it (a broken shape).
+    const inside = pieces.filter(
+      (piece) => !used.has(piece) && piece.areaHa >= minHa && piece.areaHa <= parcel.areaHa * 1.05 && pointInGeometry(piece.centroid[1], piece.centroid[0], parcel.geometry),
+    );
     const cover = inside.reduce((sum, piece) => sum + piece.areaHa, 0) / parcel.areaHa;
-    if (inside.length >= 2 && cover >= minCover) {
+    if (inside.length >= 2 && cover >= minCover && !oneCrop(inside)) {
       for (const piece of inside) used.add(piece);
       out.push(...inside);
     } else {
@@ -1240,6 +1629,57 @@ export function splitByFinerEdges(parcels, pieces, { minHa = DETECT.splitMinHa, 
     }
   }
   return out;
+}
+
+// The fields, largest first, with no two offered for the same ground:
+// - a "container" (more than half of it covered by other fields that each
+//   lie mostly inside it, like one shape around the whole boundary) goes;
+// - then a field more than half inside the larger fields kept goes (a
+//   duplicate piece of a field already offered).
+// Neighbours overlap only by the grown-back edge (DETECT.growBackM), far
+// below half. Shares are measured on a grid of OVERLAP_GRID x OVERLAP_GRID
+// points over each field's box.
+export const OVERLAP_GRID = 14;
+export function withoutOverlaps(fields, { maxShare = 0.5 } = {}) {
+  const list = [...fields].sort((a, b) => b.areaHa - a.areaHa);
+  const boxes = list.map((f) => bboxOf(f.geometry));
+  const samples = list.map((f, i) => gridPoints(boxes[i]).filter(([lon, lat]) => pointInGeometry(lon, lat, f.geometry)));
+  const touch = (i, j) => !(boxes[i][0] > boxes[j][2] || boxes[j][0] > boxes[i][2] || boxes[i][1] > boxes[j][3] || boxes[j][1] > boxes[i][3]);
+  // Share of field i's points inside any of the fields `others`.
+  const coveredBy = (i, others) => {
+    const near = others.filter((j) => j !== i && touch(i, j));
+    if (!near.length || !samples[i].length) return 0;
+    return samples[i].filter(([lon, lat]) => near.some((j) => pointInGeometry(lon, lat, list[j].geometry))).length / samples[i].length;
+  };
+  const all = list.map((_, i) => i);
+  const containers = new Set(
+    all.filter((i) => {
+      const inner = all.filter((j) => j !== i && list[j].areaHa < list[i].areaHa && touch(i, j) && coveredBy(j, [i]) > maxShare);
+      return inner.length >= 2 && coveredBy(i, inner) > maxShare;
+    }),
+  );
+  const kept = [];
+  for (const i of all) {
+    if (containers.has(i) || coveredBy(i, kept) > maxShare) continue;
+    kept.push(i);
+  }
+  return kept.map((i) => list[i]);
+}
+
+// OVERLAP_GRID x OVERLAP_GRID points [lon, lat] spread over a box.
+function gridPoints([w, s, e, n]) {
+  const out = [];
+  for (let r = 0; r < OVERLAP_GRID; r += 1) {
+    for (let c = 0; c < OVERLAP_GRID; c += 1) out.push([w + ((c + 0.5) * (e - w)) / OVERLAP_GRID, s + ((r + 0.5) * (n - s)) / OVERLAP_GRID]);
+  }
+  return out;
+}
+
+// True when the pieces' profiles are known and all alike (one crop).
+function oneCrop(pieces) {
+  const diffs = [];
+  for (let i = 0; i < pieces.length; i += 1) for (let j = i + 1; j < pieces.length; j += 1) diffs.push(profileDifference(pieces[i].profile, pieces[j].profile));
+  return diffs.length > 0 && diffs.every((diff) => diff !== null && diff <= DETECT.mergeMaxDiff);
 }
 
 // The biggest polygon of a (multi)polygon, holes kept, coordinates rounded
@@ -1260,6 +1700,14 @@ export function largestPolygon(geometry) {
     .map((ring) => ring.map(([lon, lat]) => [Number(lon.toFixed(6)), Number(lat.toFixed(6))]))
     .filter((ring) => ring.length >= 4);
   return coordinates.length ? { type: "Polygon", coordinates } : null;
+}
+
+// A polygon without its holes smaller than DETECT.minHoleHa.
+export function fillSmallHoles(polygon, minHoleHa = DETECT.minHoleHa) {
+  if (!polygon) return null;
+  const [outer, ...holes] = polygon.coordinates;
+  const kept = holes.filter((ring) => geoAreaHa({ type: "Polygon", coordinates: [ring] }) >= minHoleHa);
+  return { type: "Polygon", coordinates: [outer, ...kept] };
 }
 
 // Centre of a ring (area-weighted), as [lat, lon].

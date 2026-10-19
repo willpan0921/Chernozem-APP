@@ -123,15 +123,20 @@ export function rampFactor(access, gate, rampWidth) {
 //                  when every set-aside place ties with the least safe kept
 //                  one (then there is no line below them, so nothing fades)
 //   setAsideShare  the share of hectares actually set aside, 0..1
+// Fully safe places (access 1: 100 km or more from any recorded fighting)
+// are never set aside, so an area at peace keeps all of its places; the
+// share is still counted against the whole area.
+export const FULLY_SAFE_ACCESS = 1;
+
 export function setAsideLeastSafe(places, percent) {
   const weightOf = (place) => (place.blackSoilHa > 0 ? place.blackSoilHa : 1);
-  const order = [...places].sort(
+  const total = places.reduce((sum, place) => sum + weightOf(place), 0);
+  const order = places.filter((place) => !(place.access >= FULLY_SAFE_ACCESS)).sort(
     (a, b) =>
       a.access - b.access ||
       (a.raw?.conflictKm ?? Infinity) - (b.raw?.conflictKm ?? Infinity) ||
       String(a.id).localeCompare(String(b.id))
   );
-  const total = order.reduce((sum, place) => sum + weightOf(place), 0);
   const target = (Math.max(0, percent) / 100) * total;
   const aside = new Set();
   let running = 0;

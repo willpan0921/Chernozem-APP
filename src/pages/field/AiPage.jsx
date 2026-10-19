@@ -126,9 +126,12 @@ function FieldAi() {
   ];
 
   const suggestions = useMemo(() => fieldSuggestions(starterFields(farm, analyses)), [farm, analyses]);
+  // Every analysed field says no known war covers it: no talk of deminers.
+  const analysed = Object.values(analyses || {}).filter((a) => a && a.conflict !== undefined);
+  const peace = analysed.length > 0 && analysed.every((a) => a.conflict === null);
   const text = {
     placeholder: composer.field.placeholder,
-    disclaimer: composer.field.disclaimer,
+    disclaimer: peace ? composer.field.disclaimerPeace : composer.field.disclaimer,
     welcome: composer.field.welcome.replace("{farm}", farm.name),
   };
 

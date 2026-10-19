@@ -122,7 +122,8 @@ test("the demo farm loads, is analysed, and shows 7 statuses", async () => {
     assert.equal(a.zones, undefined);
   }
   const full = await call("GET", "/api/farm?full=1");
-  assert.ok(Object.values(full.json.analyses).every((a) => Array.isArray(a.season) && a.zones));
+  // The pages draw the satellite map only: no zones grid in the farm list.
+  assert.ok(Object.values(full.json.analyses).every((a) => Array.isArray(a.season) && a.zones === undefined));
   const one = await call("GET", `/api/farm/fields/${json.farm.fields[0].id}/analysis`);
   assert.equal(one.status, 200);
   assert.ok(one.json.analysis.zones.values.length > 0);

@@ -23,10 +23,10 @@ import { ArrowLeft, Download, Printer } from "lucide-react";
 import { Button, Badge } from "../../components/ui/index.js";
 import { AtlasGate, useAtlasData, useTimeframe } from "../../state/AtlasData.jsx";
 import { placeLabel } from "../../lib/atlas/hotspots.js";
-import { describeAlert, imageryText, kpis, summarize } from "../../lib/atlas/overview.js";
+import { atPeace, describeAlert, imageryText, kpis, summarize, timeframeLabel } from "../../lib/atlas/overview.js";
 import { formatHaShort, listNames } from "../../lib/format.js";
 import { toCsv } from "../../lib/csv.js";
-import { atlasLink, haFixed, nameAreas, priorityIndex, useMonthInUrl, weightItems } from "./overviewHelpers.js";
+import { atlasLink, haFixed, nameAreas, priorityIndex, useMonthInUrl, warNote, weightItems } from "./overviewHelpers.js";
 import "./ReportPage.css";
 
 export default function ReportPage() {
@@ -55,7 +55,8 @@ function slug(text) {
 const INDICATOR_NAMES = {
   wrb: "chernozem probability",
   agOutput: "cropland share",
-  firms: "fire detections",
+  firms: "unusual fire detections",
+  radar: "radar change",
   chi: "soil-health decline",
   distance: "distance to fighting",
   population: "population",
@@ -96,6 +97,7 @@ export function cellsCsv(places, cellSizeDeg) {
     wrb: place.wrb,
     ag_output: place.agOutput,
     firms: place.firms,
+    radar: place.radar,
     chi: place.chi,
     distance: place.distance,
     population: place.population,
@@ -127,6 +129,7 @@ function Report() {
   const alerts = run.alerts || [];
   const fromEarthEngine = run.provider === "gee";
   const prepared = fullDate();
+  const war = warNote(run);
   const title = `${area.name} · ${run.label}`;
   const fileBase = `chernozem-${slug(area.name)}-${run.month}`;
 
@@ -165,10 +168,11 @@ function Report() {
             <span>{imageryText(run)}</span>
             <span>Prepared {prepared}</span>
           </p>
+          {war && <p className="rp-meta">{war.line}</p>}
         </header>
 
         <section className="rp-kpis">
-          {kpis(summary).map((kpi) => (
+          {kpis(summary, run).map((kpi) => (
             <div key={kpi.id} className="rp-kpi">
               <span className={kpi.tone === "red" && kpi.value !== "0 ha" ? "rp-kpi-value rp-red" : "rp-kpi-value"}>{kpi.value}</span>
               <span className="rp-kpi-label">{kpi.label}</span>
@@ -187,7 +191,7 @@ function Report() {
         </section>
 
         <section className="rp-section">
-          <h2>Top 10 · Postwar</h2>
+          <h2>Top 10 · {timeframeLabel("postwar", run)}</h2>
           <TopTable list={postwar} />
         </section>
 
@@ -204,7 +208,7 @@ function Report() {
               </dd>
             </div>
             <div>
-              <dt>Postwar</dt>
+              <dt>{timeframeLabel("postwar", run)}</dt>
               <dd>{weightItems(settings, "postwar").map((item) => item.text).join(" · ")}</dd>
             </div>
             <div>
@@ -240,8 +244,11 @@ function Report() {
           <h2>Method</h2>
           <p>
             {madeOf("Soil value", comp.soil)}; {madeOf("damage", comp.damage)}; {madeOf("safe access", comp.access)}. Each indicator is
-            scaled 0–1 on fixed scales. Near term sets aside the least safe {settings.gatePercentile}% of black soil (the squares nearest
-            the fighting) and ranks the rest by soil value and damage; Postwar blends all three (weighted power mean, r = {settings.r}). In the
+            scaled 0–1 on fixed scales.{" "}
+            {atPeace(run) && run.accessSource !== "acled"
+              ? "No war in the app's list covers this area, so distance to fighting is not measured and nothing is set aside for it (this does not mean the land is safe); Near term ranks by soil value and damage"
+              : `Near term sets aside the least safe ${settings.gatePercentile}% of black soil (the squares nearest the fighting; squares 100 km or more from any recorded fighting are never set aside) and ranks the rest by soil value and damage`}
+            ; {timeframeLabel("postwar", run)} blends all three (weighted power mean, r = {settings.r}). The soil-health index (chi) is a diagnostic in the CSV, not part of the damage score. In the
             tables, soil value, damage and safe access are shown 0–100, and priority is each area's score as a share of the best square
             in that time frame (100 = the best). The exact scores are in the CSV.
           </p>

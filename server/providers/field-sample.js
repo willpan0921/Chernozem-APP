@@ -8,17 +8,24 @@
 // always gives the same numbers):
 //   - each crop has a growing season (sowing, green-up, peak, drying down,
 //     harvest; winter wheat is sown again in autumn), shifted a little per
-//     field and per year
+//     field and per year. Seasons follow the hemisphere (src/lib/season.js):
+//     south of the tropics (and in the southern tropics) the crop calendar
+//     is half a year later, so a Pampas wheat field is green in October and
+//     harvested around January, while an Iowa corn field is drying down
 //   - a Sentinel-2 pass every 5 days with clouds by season; only passes
 //     with at least half the field clear count (method.js MIN_CLEAR_SHARE)
 //   - "normal" = the same weeks of 2019, 2020 and 2021
 //   - inside the field, smooth patches of stronger and weaker plants and
 //     0-2 stress patches; every 10 m-ish cell is scored with method.js
-//   - war damage: shell-impact clusters scattered near the real eastern
-//     front in Ukraine (the same line as the Atlas sample, providers/sample.js),
-//     thicker the closer to the front. Fields hit are cratered (radar
-//     change), burned (fire detections) and left unsown. Outside Ukraine
-//     there is no front and no damage.
+//   - fires: some fields burn their stubble every year (a few fire
+//     detections a year, in the normal years too); only fires ABOVE that
+//     usual rate count as damage (method.js excessFires)
+//   - war damage, only inside a known war (src/config/conflicts.js): for
+//     Ukraine, shell-impact clusters scattered near the real eastern front
+//     (the same line as the Atlas sample, providers/sample.js), thicker the
+//     closer to the front. Fields hit are cratered (radar change), burned
+//     (fire detections) and left unsown. Everywhere else there is no front
+//     and no war damage.
 //
 //   fieldSampleProvider.detectFields({ boundary, center, radiusM })
 //   fieldSampleProvider.analyzeFields({ fields, today })
@@ -37,11 +44,17 @@ import {
   waterScore,
 } from "../../src/lib/field/method.js";
 import { areaHa as sphericalAreaHa, bboxOf, pointInGeometry, polygonsOf } from "../geo.js";
+import { conflictAt } from "../conflicts.js";
+import { damageWindow } from "../../src/config/conflicts.js";
+import { climateBand, seasonCurveStart } from "../../src/lib/season.js";
 import { hashText, parcelsAround, seeded, splitBoundary } from "../field/detect-sample.js";
 import { fbm, insideUkraineBox, UKRAINE_FRONT } from "./sample.js";
 
 const DAY_MS = 86400000;
-const WAR_START = "2022-02-24";
+// The war the sample's front line belongs to (src/config/conflicts.js).
+const SAMPLE_FRONT_WAR = "ukraine-2022";
+// Days the crop calendar is moved in the southern seasons (half a year).
+const SOUTH_SHIFT_DAYS = 182;
 
 // ---------- Dates ----------
 
@@ -69,8 +82,9 @@ const unit = (text) => hashText(text) / 4294967296;
 // ---------- Crops ----------
 // Days are days of the year. base = NDVI before green-up, peak = full
 // canopy, ripe = NDVI of the dried crop just before harvest, k = how quickly
-// it greens up / dries down (days). Winter crops are already green on Mar 1
-// and are sown again in autumn (sowAgain).
+// it greens up / dries down (days), on the crop calendar (cropDay). Winter
+// crops are already green when the season starts and are sown again in
+// autumn (sowAgain).
 const CROPS = {
   "winter wheat": { base: 0.32, peak: 0.84, ripe: 0.28, greenUp: 98, k1: 9, senesce: 168, k2: 8, harvest: 198, sowAgain: 262 },
   rapeseed: { base: 0.34, peak: 0.8, ripe: 0.3, greenUp: 88, k1: 9, senesce: 152, k2: 8, harvest: 186, sowAgain: 238 },
@@ -97,16 +111,26 @@ export function cropKey(name, seedText) {
   return MAIN_CROPS[hashText(`crop:${seedText}`) % MAIN_CROPS.length];
 }
 
+// The crop calendar moved to the field's hemisphere: the "crop day" of a
+// real date. North (and the northern tropics): the date itself; south: the
+// date half a year earlier, so October in Argentina is April for the crop.
+function cropDay(iso, frame) {
+  const moved = frame.shiftDays ? isoOf(dayNum(iso) - frame.shiftDays) : iso;
+  return { year: yearOf(moved), doy: doyOf(moved), month: Number(moved.slice(5, 7)) };
+}
+
 // The crop's curve in one year for one field: dates shifted by a few days
 // (later sowing near the front is common), peak a little higher or lower.
-// Since the war, fields near the front get less fertiliser and care, so
-// their crops are often thinner than before.
-function seasonParams(crop, fieldSeed, year, frontKm = Infinity) {
+// Inside a known war (conflict: { since }), from the year it began, fields
+// get less fertiliser and care, so crops vary more and are thinner near the
+// front. Everywhere else every year is like the normal years.
+function seasonParams(crop, fieldSeed, year, frontKm = Infinity, conflict = null) {
   const c = CROPS[crop];
   const shift = Math.round((unit(`shift:${SALT.shift}:${fieldSeed}:${year}`) - 0.4) * 24); // about -10..+14 days
   const u = unit(`amp:${SALT.shift}:${fieldSeed}:${year}`);
-  const war = year >= 2022 ? 0.06 * Math.exp(-frontKm / 40) : 0;
-  const amp = year >= 2022 ? 1 + (u - 0.55) * 0.26 - war : 1 + (u - 0.5) * 0.1;
+  const atWar = Boolean(conflict?.since) && year >= Number(String(conflict.since).slice(0, 4));
+  const war = atWar ? 0.06 * Math.exp(-frontKm / 40) : 0;
+  const amp = atWar ? 1 + (u - 0.55) * 0.26 - war : 1 + (u - 0.5) * 0.1;
   const move = (day) => (day == null ? null : day + shift);
   return { ...c, peak: clamp(c.peak * amp, c.base + 0.1, 0.92), greenUp: move(c.greenUp), senesce: move(c.senesce), harvest: move(c.harvest), sowAgain: move(c.sowAgain) };
 }
@@ -145,9 +169,10 @@ function passDays(fromDay, toDay, lon) {
 
 // The clear share of a pass (0..1): cloudier in winter, shared by fields
 // within about 50 km (the same cloud covers the whole farm).
-function clearShare(day, lat, lon, fieldSeed) {
+function clearShare(day, lat, lon, fieldSeed, frame) {
   const iso = isoOf(day);
-  const month = Number(iso.slice(5, 7));
+  // Cloudier in the local winter.
+  const month = frame ? cropDay(iso, frame).month : Number(iso.slice(5, 7));
   const cloudy = [0.75, 0.7, 0.62, 0.5, 0.42, 0.38, 0.3, 0.28, 0.35, 0.5, 0.68, 0.78][month - 1];
   const cell = `${Math.floor(lat * 2)}:${Math.floor(lon * 2)}`;
   const u = unit(`cloud:${SALT.cloud}:${iso}:${cell}`);
@@ -161,9 +186,10 @@ function clearShare(day, lat, lon, fieldSeed) {
 // The eastern front: the Atlas sample's line (UKRAINE_FRONT in providers/sample.js).
 const FRONT = UKRAINE_FRONT;
 
-// Distance (km) from a point to the front line.
+// Distance (km) from a point to the front line; Infinity outside the war
+// it belongs to (Moldova and Poland are inside Ukraine's box, but at peace).
 export function frontDistanceKm(lat, lon) {
-  if (!insideUkraineBox(lat, lon)) return Infinity;
+  if (!insideUkraineBox(lat, lon) || conflictAt(lat, lon)?.id !== SAMPLE_FRONT_WAR) return Infinity;
   const kx = 111.32 * Math.cos((lat * Math.PI) / 180);
   const ky = 110.57;
   let best = Infinity;
@@ -228,14 +254,16 @@ function monthPlus(month, count) {
 // ---------- Soil ----------
 // Chance the soil is chernozem (black soil), 0..1, from broad belts:
 // Ukraine's forest-steppe and steppe, the Russian/Kazakh steppe, the North
-// American prairies and the Pampas.
+// American prairies and Corn Belt (Iowa included), north-east China
+// (Heilongjiang, Jilin) and the Pampas.
 export function chernozemChance(lat, lon) {
   const wobble = (fbm(lon * 3, lat * 3, 4242, 2) - 0.5) * 0.16;
   let p = 0.08;
   if (insideUkraineBox(lat, lon)) {
     p = lat > 50.9 ? 0.15 : lon < 25.2 ? 0.35 : lat < 46.2 ? 0.45 : 0.86;
   } else if (lat >= 45 && lat <= 56 && lon >= 30 && lon <= 85) p = 0.7;
-  else if (lat >= 38 && lat <= 52 && lon >= -105 && lon <= -94) p = 0.55;
+  else if (lat >= 38 && lat <= 52 && lon >= -100 && lon <= -88) p = 0.55;
+  else if (lat >= 43 && lat <= 50 && lon >= 122 && lon <= 132) p = 0.55;
   else if (lat >= -38 && lat <= -30 && lon >= -64 && lon <= -57) p = 0.55;
   return round(clamp(p + wobble, 0, 1), 2);
 }
@@ -250,7 +278,18 @@ function fieldFrame(field) {
   // Seeded by the outline itself, so the same land gives the same numbers
   // whatever its id.
   const seed = `${lat.toFixed(5)}:${lon.toFixed(5)}:${polygonsOf(field.geometry)[0]?.[0]?.length || 0}`;
-  return { bbox, lat, lon, seed, frontKm: frontDistanceKm(lat, lon), areaHa: Number.isFinite(field.areaHa) ? field.areaHa : sphericalAreaHa(field.geometry) };
+  const band = climateBand(lat);
+  const conflict = conflictAt(lat, lon);
+  return {
+    bbox,
+    lat,
+    lon,
+    seed,
+    conflict: conflict ? { id: conflict.id, name: conflict.name, since: conflict.since } : null,
+    shiftDays: band === "south" || (band === "tropics" && lat < 0) ? SOUTH_SHIFT_DAYS : 0,
+    frontKm: conflict?.id === SAMPLE_FRONT_WAR ? frontDistanceKm(lat, lon) : Infinity,
+    areaHa: Number.isFinite(field.areaHa) ? field.areaHa : sphericalAreaHa(field.geometry),
+  };
 }
 
 // The zones grid: at most 64 x 64 cells, each at least 10 m.
@@ -296,7 +335,7 @@ function damageOf(field, frame, grid, inside) {
   const hits = [...hitBy].map((k) => clusters[k]);
   const fires = hits.reduce((sum, cluster) => sum + cluster.fires, 0);
   const firstHit = hits.map((cluster) => cluster.hitMonth).sort()[0] || null;
-  const km = frontDistanceKm(frame.lat, frame.lon);
+  const km = frame.frontKm;
   return {
     hitCells,
     share,
@@ -311,16 +350,15 @@ function damageOf(field, frame, grid, inside) {
 // The crop curve for a field in one year, taking war damage into account.
 function paramsFor(crop, frame, damage, year) {
   const abandonedFrom = damage.abandoned && damage.firstHit ? yearOf(damage.firstHit) + 1 : Infinity;
-  return seasonParams(year >= abandonedFrom ? "fallow" : crop, frame.seed, year, frame.frontKm);
+  return seasonParams(year >= abandonedFrom ? "fallow" : crop, frame.seed, year, frame.frontKm, frame.conflict);
 }
 
 // One pass's field-average reading, or null when it was too cloudy.
 function passReading(day, crop, frame, damage) {
   const iso = isoOf(day);
-  const year = yearOf(iso);
-  const clear = clearShare(day, frame.lat, frame.lon, frame.seed);
+  const { year, doy } = cropDay(iso, frame);
+  const clear = clearShare(day, frame.lat, frame.lon, frame.seed, frame);
   const p = paramsFor(crop, frame, damage, year);
-  const doy = doyOf(iso);
   let ndvi = cropNdvi(p, doy) + (unit(`noise:${frame.seed}:${iso}`) - 0.5) * 0.03;
   // Cratered ground reads as bare soil once it was hit.
   if (damage.share > 0 && damage.firstHit && iso.slice(0, 7) >= damage.firstHit) ndvi = (1 - damage.share) * ndvi + damage.share * 0.18;
@@ -356,7 +394,8 @@ function normalCurveFor(crop, frame, damage) {
       const mmdd = `${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
       const values = [];
       for (let year = BASELINE.from; year <= BASELINE.to; year += 1) {
-        values.push(cropNdvi(paramsFor(crop, frame, damage, year), doyOf(`${year}-${mmdd}`)));
+        const day = cropDay(`${year}-${mmdd}`, frame);
+        values.push(cropNdvi(paramsFor(crop, frame, damage, day.year), day.doy));
       }
       out.push({ day: mmdd, low: round(Math.min(...values)), high: round(Math.max(...values)), median: round(median(values)) });
     }
@@ -364,11 +403,26 @@ function normalCurveFor(crop, frame, damage) {
   return out;
 }
 
-// This season: from Mar 1 (when that is at least 45 days ago), else the last 8 months.
-export function seasonStart(today) {
-  const march = `${today.slice(0, 4)}-03-01`;
-  if (dayNum(today) - dayNum(march) >= 45) return march;
-  return isoOf(dayNum(today) - 243);
+// Where this season's curve starts at a latitude (src/lib/season.js): a
+// month before the growing season, or the last 8 months.
+export function seasonStart(today, lat) {
+  return seasonCurveStart(lat, today);
+}
+
+// Fire detections in the damage window (from the war start inside a known
+// war, else the last 2 years: damageWindow), for one field:
+//   normal  what the field's usual burning gives for a window that long
+//           (some fields burn their stubble every year, also in 2019-2021)
+//   war     the shell-impact fires (only inside the war)
+// Gives back { fires, firesNormal, excessFires, since }.
+function firesOf(frame, damage, today) {
+  const window = damageWindow(frame.conflict, today);
+  const days = dayNum(today) - dayNum(window.start);
+  const burns = unit(`stubble:${frame.seed}`) < 0.3;
+  const perYear = burns ? 2 + 4 * unit(`stubblerate:${frame.seed}`) : 0.3 * unit(`stubblerate:${frame.seed}`);
+  const firesNormal = Math.round((perYear * days) / 365);
+  const war = frame.conflict ? damage.fires : 0;
+  return { fires: firesNormal + war, firesNormal, excessFires: war, since: window.start };
 }
 
 function analyzeOne(field, today) {
@@ -463,7 +517,7 @@ function analyzeOne(field, today) {
     .sort((a, b) => b.ha - a.ha)
     .slice(0, 3);
 
-  const seasonFrom = dayNum(seasonStart(today));
+  const seasonFrom = dayNum(seasonStart(today, frame.lat));
   const season = clearPasses(seasonFrom, todayDay, crop, frame, damage).map((pass) => ({
     date: pass.date,
     ndvi: pass.ndvi,
@@ -471,6 +525,7 @@ function analyzeOne(field, today) {
     clearPct: Math.round(pass.clear * 100),
   }));
   const radarChangedShare = round(damage.share, 3);
+  const fires = firesOf(frame, damage, today);
   return {
     fieldId: field.id,
     provider: "sample",
@@ -482,10 +537,11 @@ function analyzeOne(field, today) {
     condition: { score: round(median(scored.map((cell) => cell.condition))) },
     damage: {
       radarChangedShare,
-      firesSinceWar: damage.fires,
+      ...fires,
       chiDrop: damage.chiDrop,
-      damagedHa: damagedArea({ radarChangedShare, firesSinceWar: damage.fires, chiDrop: damage.chiDrop }, frame.areaHa),
+      damagedHa: damagedArea({ radarChangedShare, excessFires: fires.excessFires, chiDrop: damage.chiDrop, atWar: Boolean(frame.conflict) }, frame.areaHa),
     },
+    conflict: frame.conflict,
     soil: { chernozemProbability: chernozemChance(frame.lat, frame.lon) },
     season,
     normalCurve: normalCurveFor(crop, frame, damage),
@@ -563,4 +619,4 @@ export const fieldSampleProvider = createFieldSampleProvider();
 export default fieldSampleProvider;
 
 // For tests.
-export { analyzeOne as sampleFieldAnalysis, WAR_START };
+export { analyzeOne as sampleFieldAnalysis };

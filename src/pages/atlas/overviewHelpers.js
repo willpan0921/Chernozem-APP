@@ -16,6 +16,9 @@
 //                            · Access 30"; Near term "Soil 43 · Damage 57 ·
 //                            Cutoff 30%" (safe access is a cutoff there, so
 //                            soil and damage are shown as shares of 100)
+//   warNote(run)             the war the run counted damage from, or the
+//                            "no war in the app's list" note; null for
+//                            older runs that do not say
 //   haFixed(ha)              hectares for tables: "4.0 ha", "4.7 ha", "52 ha"
 //   priorityIndex(hotspot)   the score as 0–100, where 100 is the best square
 //
@@ -26,7 +29,7 @@
 import { useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useAtlasData } from "../../state/AtlasData.jsx";
-import { nextSteps } from "../../lib/atlas/overview.js";
+import { atPeace, nextSteps } from "../../lib/atlas/overview.js";
 import { labelParts } from "../../lib/atlas/hotspots.js";
 import { nearTermShares } from "../../lib/atlas/scoring.js";
 import { addDays, formatHaShort, formatKm2, toDay } from "../../lib/format.js";
@@ -114,6 +117,7 @@ export function planSteps({ run, hotspots = [], alerts = [], isLatest = false })
   const steps = nextSteps({ run, hotspots: named, alerts });
   const analyzed = run?.createdAt ? toDay(new Date(run.createdAt)) : toDay(new Date());
   const earliest = isLatest ? addDays(analyzed, DAYS_TO_ACT) : null;
+  const peace = atPeace(run);
 
   return steps.map((step) => {
     const next = { ...step };
@@ -121,12 +125,22 @@ export function planSteps({ run, hotspots = [], alerts = [], isLatest = false })
     if (step.id === `${run.id}-soil-test` && named[2]) next.id = `${step.id}-${named[2].id}`;
     const alert = alerts.find((item) => step.id === `${run.id}-${item.id}-review`);
     if (alert) {
+      // Away from any known war a radar change is not "damage" (overview.js
+      // words it the same way).
       const area = areaOfAlert(alert, named);
-      next.title = area
-        ? `Review new damage in ${area.name}`
-        : Number.isFinite(alert.magnitude)
-          ? `Review ${formatKm2(alert.magnitude)} of new damage`
-          : "Review new damage";
+      if (peace) {
+        next.title = area
+          ? `Check the radar change in ${area.name}`
+          : Number.isFinite(alert.magnitude)
+            ? `Check ${formatKm2(alert.magnitude)} of radar change`
+            : "Check the radar change";
+      } else {
+        next.title = area
+          ? `Review new damage in ${area.name}`
+          : Number.isFinite(alert.magnitude)
+            ? `Review ${formatKm2(alert.magnitude)} of new damage`
+            : "Review new damage";
+      }
     }
     if (earliest && next.due < earliest) next.due = earliest;
     return next;
@@ -166,4 +180,32 @@ export function haFixed(hectares) {
 // 0–100: the area's score as a share of the best square's in that time frame.
 export function priorityIndex(hotspot) {
   return Number.isFinite(hotspot?.share) ? Math.round(hotspot.share * 100) : null;
+}
+
+// The war a run counted damage from (run.conflict, set by the server from
+// src/config/conflicts.js), in words for the pages:
+//   { war: true, badge: "War since 24 Feb 2022", line: "Full-scale invasion
+//     of Ukraine, since 24 February 2022: damage is counted from that day." }
+//   { war: false, badge: null, line: "No war recorded here: ..." }
+// Runs saved before the field existed give null (nothing is shown).
+export function warNote(run) {
+  const conflict = run?.conflict;
+  if (conflict === undefined) return null;
+  if (!conflict?.since) {
+    const damage = "Damage is unusual fire and radar change against the normal years 2019–2021, from any cause.";
+    // With an ACLED file, distance to fighting is measured from its battles
+    // even at peace, so places can still be set aside.
+    if (run.accessSource === "acled") {
+      return { war: false, badge: null, line: `No war in the app's list covers this area; safe access is the distance to battles in the ACLED file. ${damage}` };
+    }
+    return {
+      war: false,
+      badge: null,
+      line: `No war in the app's list covers this area, so distance to fighting is not measured and nothing is set aside for it. ${damage} This does not mean the land is safe.`,
+    };
+  }
+  const day = new Date(`${conflict.since}T00:00:00Z`);
+  const short = day.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+  const long = day.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+  return { war: true, name: conflict.name, badge: `War since ${short}`, line: `${conflict.name}, since ${long}: damage is counted from that day.` };
 }

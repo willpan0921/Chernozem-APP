@@ -78,8 +78,9 @@ const enc = (value) => encodeURIComponent(value);
 // ---------- The farm ----------
 
 // -> { farm | null, analyses: { [fieldId]: analysis }, provider: { id, label, ... }, job | null }
-// full: true adds each analysis's season curve, normal curve and zones grid
-// (the zones map and the season chart need them).
+// full: true adds each analysis's season curve and normal curve (the zones
+// grid stays on the server, for downloads and the AI)
+// (the season charts need the curves; the grid is kept for downloads and the AI).
 export const getFarm = ({ full = true, signal } = {}) => request("GET", `/farm${full ? "?full=1" : ""}`, undefined, { signal });
 
 // -> { farm, job }

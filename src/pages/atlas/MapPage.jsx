@@ -507,7 +507,7 @@ function MapView({ held }) {
           ariaLabel={`Map of ${area.name}`}
         >
           <div className={["atlas-map-float", "mp-legend", keyOpen ? "" : "is-folded"].filter(Boolean).join(" ")}>
-            <MapLegend colorBy={colorBy} timeframe={timeframe} onColorByChange={setColorBy} />
+            <MapLegend colorBy={colorBy} timeframe={timeframe} run={run} onColorByChange={setColorBy} />
             <button
               type="button"
               className="mp-legend-toggle"

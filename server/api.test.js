@@ -71,15 +71,15 @@ test("status reports sample data and AI state", async () => {
 });
 
 test("country search, create, analyze, runs and compare", async () => {
-  const search = await call("GET", "/api/areas/search?q=pol");
-  const poland = search.json.results.find((r) => r.name === "Poland");
-  assert.ok(poland);
-  const created = await call("POST", "/api/areas", { source: "country", id: poland.id });
+  const search = await call("GET", "/api/areas/search?q=ukr");
+  const ukraine = search.json.results.find((r) => r.name === "Ukraine");
+  assert.ok(ukraine);
+  const created = await call("POST", "/api/areas", { source: "country", id: ukraine.id });
   assert.equal(created.status, 201);
   const area = created.json.area;
   assert.equal(area.kind, "country");
   assert.ok(area.geometry);
-  const again = await call("POST", "/api/areas", { source: "country", id: poland.id });
+  const again = await call("POST", "/api/areas", { source: "country", id: ukraine.id });
   assert.equal(again.json.area.id, area.id, "the same country is not saved twice");
 
   const started = await call("POST", "/api/analyze", { areaId: area.id, months: 3 });
@@ -99,6 +99,8 @@ test("country search, create, analyze, runs and compare", async () => {
   const run = (await call("GET", `/api/runs/${runs[0].id}`)).json.run;
   assert.ok(run.cells.length >= 150 && run.cells.length <= 1500);
   assert.ok(run.totals.croplandHa > 1e6);
+  // The war is stored on the run (the Data page marks it).
+  assert.deepEqual(run.conflict, { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" });
 
   const cmp = (await call("GET", `/api/runs/compare?a=${runs[2].id}&b=${runs[0].id}`)).json;
   assert.ok(cmp.changedCells.length > 0);
@@ -107,6 +109,19 @@ test("country search, create, analyze, runs and compare", async () => {
   const reanalyze = await call("POST", "/api/analyze", { areaId: area.id, months: 3 });
   const skipped = await waitForJob(reanalyze.json.job.id);
   assert.deepEqual([...skipped.runIds].sort(), runs.map((r) => r.id).sort(), "existing months are kept");
+});
+
+test("a country at peace: no war on the run, fully safe everywhere", async () => {
+  const poland = (await call("GET", "/api/areas/search?q=pol")).json.results.find((r) => r.name === "Poland");
+  const area = (await call("POST", "/api/areas", { source: "country", id: poland.id })).json.area;
+  const started = await call("POST", "/api/analyze", { areaId: area.id, months: 1 });
+  const job = await waitForJob(started.json.job.id);
+  assert.equal(job.status, "done", job.error);
+  const run = (await call("GET", `/api/runs/${job.runIds[0]}`)).json.run;
+  assert.equal(run.conflict, null);
+  assert.ok(run.cells.every((cell) => cell.distance === 1));
+  assert.equal(run.totals.heavyDamageHa, 0);
+  assert.ok(run.checks.warnings.some((w) => /No war in the app's list covers this area/.test(w) && /does not mean the land is safe/.test(w)));
 });
 
 test("coordinates and bbox areas, with validation", async () => {

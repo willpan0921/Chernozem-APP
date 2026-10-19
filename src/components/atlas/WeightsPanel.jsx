@@ -31,6 +31,7 @@ import { useAtlasData, useTimeframe } from "../../state/AtlasData.jsx";
 import { isDefaultSettings } from "../../lib/atlas/method.js";
 import { WEIGHT_KEYS, rebalanceWeights } from "../../lib/atlas/weights.js";
 import { nearTermShares } from "../../lib/atlas/scoring.js";
+import { timeframeOptions } from "../../lib/atlas/overview.js";
 import "./atlas.css";
 
 const LABELS = {
@@ -39,10 +40,7 @@ const LABELS = {
   access: { label: "Safe access", tone: "blue" },
 };
 
-const TIMEFRAMES = [
-  { value: "nearTerm", label: "Near term" },
-  { value: "postwar", label: "Postwar" },
-];
+// The Near term | Postwar switch ("Long term" where no war is listed): timeframeOptions(run).
 
 const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
 
@@ -108,7 +106,7 @@ function WeightRow({ id, label, tone, value, onChange, max = 100, onBegin, onEnd
 }
 
 export default function WeightsPanel({ showTimeframe = true, className = "" }) {
-  const { settings, scored, actions } = useAtlasData();
+  const { settings, scored, actions, run } = useAtlasData();
   const [timeframe, setTimeframe] = useTimeframe();
   const weights = settings.weights;
   const nearTerm = timeframe === "nearTerm";
@@ -165,7 +163,7 @@ export default function WeightsPanel({ showTimeframe = true, className = "" }) {
       </div>
 
       {showTimeframe && (
-        <Segmented options={TIMEFRAMES} value={timeframe} onChange={setTimeframe} ariaLabel="Time frame" />
+        <Segmented options={timeframeOptions(run)} value={timeframe} onChange={setTimeframe} ariaLabel="Time frame" />
       )}
 
       {/* The weights side by side as one bar. */}

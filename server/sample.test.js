@@ -1,9 +1,10 @@
 // WHAT THIS FILE DOES
 // Tests for the sample data source (server/providers/sample.js): the same
-// area and month always give the same numbers, values stay in range,
-// damage builds up near the front (and "new damage" is exactly how much it
-// grew), and a small farm near the real front in Ukraine shows damage and
-// people. Run with "npm test".
+// area and month always give the same numbers, values stay in range, a
+// place at peace (Kenya, Moldova) has no front and no war damage, inside a
+// known war (Sudan, Ukraine) damage builds up near the front (and "new
+// damage" is exactly how much it grew), and a small farm near the real
+// front in Ukraine shows damage and people. Run with "npm test".
 //
 // WHO EDITS IT
 // Whoever changes sample.js.
@@ -13,12 +14,20 @@ import assert from "node:assert/strict";
 import { sampleProvider, sampleReadings } from "./providers/sample.js";
 import { planGrid } from "./geo.js";
 import { getCountry } from "./countries.js";
-import { buildRun, linkNewDamage, monthsBack } from "./runs.js";
+import { NO_WAR_WARNING, buildRun, linkNewDamage, monthsBack } from "./runs.js";
+import { scorePlaces } from "../src/lib/atlas/scoring.js";
 
+// Kenya: at peace.
 const kenya = getCountry("404");
 const grid = planGrid(kenya.geometry);
 const area = { id: "country-404", name: "Kenya", bbox: grid.bbox };
 const read = (month, which = area) => sampleReadings({ area: which, cells: grid.cells, month, cellSizeDeg: grid.cellSizeDeg });
+
+// Sudan: inside a known war (since April 2023), with a made-up front.
+const sudan = getCountry("729");
+const sudanGrid = planGrid(sudan.geometry);
+const sudanArea = { id: "country-729", name: "Sudan", countryId: "729", bbox: sudanGrid.bbox };
+const readSudan = (month) => sampleReadings({ area: sudanArea, cells: sudanGrid.cells, month, cellSizeDeg: sudanGrid.cellSizeDeg });
 
 test("same area and month give the same numbers", () => {
   assert.deepEqual(read("2026-09"), read("2026-09"));
@@ -33,7 +42,8 @@ test("a different area or month gives different numbers", () => {
 });
 
 test("values stay in range", () => {
-  const { readings, alerts, warnings } = read("2026-09");
+  const { readings, warnings } = read("2026-09");
+  const { alerts } = readSudan("2026-09");
   assert.equal(readings.length, grid.cells.length);
   for (const r of readings) {
     assert.ok(r.chernozem >= 0 && r.chernozem <= 1);
@@ -60,13 +70,36 @@ test("values vary across the area (not flat)", () => {
   const spread = (key) => Math.max(...readings.map((r) => r[key])) - Math.min(...readings.map((r) => r[key]));
   assert.ok(spread("chernozem") > 0.5);
   assert.ok(spread("croplandShare") > 0.4);
-  assert.ok(spread("conflictKm") > 100);
+  const war = readSudan("2026-09").readings;
+  assert.ok(Math.max(...war.map((r) => r.conflictKm)) - Math.min(...war.map((r) => r.conflictKm)) > 100);
 });
 
-test("damage grows over a year and sits near the front", () => {
-  const total = (month) => buildRun({ area, month, provider: "sample", ...read(month), cellSizeDeg: grid.cellSizeDeg, cells: grid.cells }).totals.heavyDamageHa;
+test("at peace (Kenya; Moldova, inside Ukraine's box): no front, fully safe, no war damage", () => {
+  const moldova = getCountry("498");
+  const moldovaGrid = planGrid(moldova.geometry);
+  const places = [
+    [area, grid],
+    [{ id: "country-498", name: "Moldova", countryId: "498", bbox: moldovaGrid.bbox }, moldovaGrid],
+  ];
+  for (const [which, whichGrid] of places) {
+    const result = sampleReadings({ area: which, cells: whichGrid.cells, month: "2026-09", cellSizeDeg: whichGrid.cellSizeDeg });
+    assert.equal(result.conflict, null, which.name);
+    assert.ok(result.warnings.includes(NO_WAR_WARNING), which.name);
+    assert.ok(result.readings.every((r) => r.conflictKm === 300 && r.heavyShare === 0 && r.chiDrop < 0.05), which.name);
+    assert.ok(result.readings.every((r) => r.firesPer100Km2 < 1), which.name);
+    const run = buildRun({ area: which, month: "2026-09", provider: "sample", ...result, cellSizeDeg: whichGrid.cellSizeDeg, cells: whichGrid.cells });
+    assert.equal(run.totals.heavyDamageHa, 0, which.name);
+    assert.equal(run.conflict, null);
+    assert.equal(scorePlaces(run.cells, {}).places.filter((p) => p.nearTerm.tier === "setAside").length, 0, `${which.name}: nothing set aside`);
+  }
+});
+
+test("inside a known war: damage grows over a year and sits near the front", () => {
+  const total = (month) => buildRun({ area: sudanArea, month, provider: "sample", ...readSudan(month), cellSizeDeg: sudanGrid.cellSizeDeg, cells: sudanGrid.cells }).totals.heavyDamageHa;
   assert.ok(total("2026-09") > total("2025-09"));
-  const { readings } = read("2026-09");
+  const { readings, conflict, warnings } = readSudan("2026-09");
+  assert.equal(conflict.id, "sudan-2023");
+  assert.ok(!warnings.includes(NO_WAR_WARNING));
   const near = readings.filter((r) => r.conflictKm < 30);
   const far = readings.filter((r) => r.conflictKm > 150);
   const mean = (list) => list.reduce((s, r) => s + r.chiDrop, 0) / list.length;

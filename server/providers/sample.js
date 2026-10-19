@@ -9,15 +9,25 @@
 //     sized to the area, so a farm has as much variety as a country
 //   - a black-soil belt running across the area
 //   - a few towns (or, on a farm, farmsteads) with many people
-//   - a "front line": inside Ukraine it follows the real eastern front
-//     (Kharkiv region, Kupiansk, Bakhmut, Pokrovsk, south of Zaporizhzhia,
-//     the Dnipro to Kherson); anywhere else it is a made-up curved line about
-//     three quarters of the way east. It creeps a little each month.
-//   - damage BUILDS UP: land near anywhere the front has been stays damaged,
-//     a few new damage spots appear along the front each month, and only a
-//     very small share is repaired. So the damaged total almost never falls,
-//     and "new damage" is simply how much it grew.
-//   - fires count every detection since February 2022, so they only grow
+//   - a "front line" ONLY where a known war covers the area
+//     (src/config/conflicts.js, found by server/conflicts.js): in Ukraine it
+//     follows the real eastern front (Kharkiv region, Kupiansk, Bakhmut,
+//     Pokrovsk, south of Zaporizhzhia, the Dnipro to Kherson); in another
+//     war it is a made-up curved line about three quarters of the way east.
+//     It creeps a little each month.
+//   - inside a war, damage BUILDS UP: land near anywhere the front has been
+//     stays damaged, a few new damage spots appear along the front each
+//     month, and only a very small share is repaired. So the damaged total
+//     almost never falls, and "new damage" is simply how much it grew.
+//     Fires count the detections since the war began above the normal rate,
+//     so they only grow.
+//   - radar change (radarDb, the damage score's second indicator) follows
+//     the same made-up damage; at peace it stays at the small year-to-year
+//     change of ordinary farmland (under 0.6 dB)
+//   - at peace (most of the world): no front, distance to fighting not
+//     measured (every place reads 300 km, nothing set aside), no war
+//     damage, only the small month-to-month wobble of the health index and
+//     radar and a few stray fires
 //   - alerts: the cells where damage or fires grew most since last month
 //
 // It returns the same shape as the Earth Engine source (gee.js), so the
@@ -28,6 +38,11 @@
 
 import { HEAVY_DAMAGE_CHI_DROP } from "../../src/lib/atlas/method.js";
 import { formatCoord } from "../geo.js";
+import { conflictForArea } from "../conflicts.js";
+import { NO_WAR_WARNING, cleanConflict } from "../runs.js";
+
+// The distance to fighting at peace: the most that is measured (as gee.js).
+const PEACE_KM = 300;
 
 // ---------- Repeatable "random" numbers ----------
 
@@ -100,10 +115,12 @@ const stretch = (value) => clamp((value - 0.28) / 0.44, 0, 1);
 
 // ---------- The area's frame ----------
 
-// Months since the full-scale invasion (February 2022 = 0).
-export function warMonth(month) {
+// Months since a war began (its month = 0); by default the full-scale
+// invasion of Ukraine (February 2022 = 0).
+export function warMonth(month, since = "2022-02-24") {
   const [year, mon] = month.split("-").map(Number);
-  return Math.max(0, (year - 2022) * 12 + (mon - 2));
+  const [startYear, startMon] = since.split("-").map(Number);
+  return Math.max(0, (year - startYear) * 12 + (mon - startMon));
 }
 
 function quantile(sorted, q) {
@@ -164,7 +181,7 @@ export function insideUkraineBox(lat, lon) {
 // line and towns are placed in. The box is the area itself (at least 1 km
 // across), so a farm gets farm-sized patterns, not a country's. Built from
 // where the cells actually are, so far-off islands do not pull it away.
-function makeFrame(area, cells) {
+function makeFrame(area, cells, conflict) {
   const lats = cells.map((cell) => cell.lat).sort((a, b) => a - b);
   const lons = cells.map((cell) => cell.lon).sort((a, b) => a - b);
   const south = quantile(lats, 0.03);
@@ -180,11 +197,15 @@ function makeFrame(area, cells) {
   const boxW = Math.max(widthKm, 1);
   const boxH = Math.max(heightKm, 1);
   const diagKm = Math.hypot(boxW, boxH);
-  const ukraine = insideUkraineBox(lat0, lon0);
+  // The real front only for an area in the war in Ukraine; Moldova, inside
+  // Ukraine's box, is at peace.
+  const ukraine = conflict?.id === "ukraine-2022";
   const toKm = (lat, lon) => [(lon - lon0) * kx, (lat - lat0) * ky];
   return {
     lat0,
     lon0,
+    // The war covering the area, or null (then there is no front at all).
+    conflict,
     kx,
     ky,
     boxW,
@@ -357,7 +378,8 @@ function heavyShareFrom(chiDrop) {
 // cellKm widens the damage bands for very big cells (a 1° cell is ~100 km
 // wide), so big countries do not flicker from month to month.
 function monthFields(statics, frame, month, seed, cellKm) {
-  const t = warMonth(month);
+  if (!frame.conflict) return peaceFields(statics, frame, month, seed);
+  const t = warMonth(month, frame.conflict.since);
   const lineSeed = frame.ukraine ? 804 : seed;
   const line = frontLine(frame, t, lineSeed);
   // Everywhere the front has ever been: damage stays behind.
@@ -410,9 +432,31 @@ function monthFields(statics, frame, month, seed, cellKm) {
     // The reading itself wobbles a little month to month (weather, cloud).
     const chiDrop = clamp(damage + 0.012 * (fbm(x / (f * 0.5), y / (f * 0.5), monthSeed + 52) - 0.5), -0.05, 0.6);
     const heavyShare = heavyShareFrom(damage) * (1 - repaired(t));
+    // Radar change of the season: about 0.3 dB on ordinary land, several dB
+    // where the land was hit.
+    const radarDb = clamp(0.3 + 22 * damage + 0.1 * (fbm(x / f, y / f, seed + 77) - 0.5), 0, 8);
     const flicker = 0.9 + 0.2 * hash3(Math.round(x * 10), Math.round(y * 10), monthSeed);
     const lights = clamp((0.3 + cell.popPerKm2 / 25) * (0.35 + 0.65 * Math.min(1, conflictKm / 60)) * flicker, 0, 80);
-    out.set(id, { conflictKm, fires, chiDrop, heavyShare, lights });
+    out.set(id, { conflictKm, fires, chiDrop, radarDb, heavyShare, lights });
+  }
+  return out;
+}
+
+// At peace: no front and no war damage. The health index only wobbles a
+// little month to month (weather, cloud), well under the heavy-damage
+// line, and a few stray fires (above the normal rate) show here and there.
+function peaceFields(statics, frame, month, seed) {
+  const monthSeed = seed ^ hashString(month);
+  const f = frame.featureKm;
+  const out = new Map();
+  for (const [id, cell] of statics) {
+    const { x, y } = cell;
+    const chiDrop = clamp(0.012 * (fbm(x / (f * 0.5), y / (f * 0.5), monthSeed + 52) - 0.5), -0.05, 0.6);
+    const fires = 0.4 * cell.fireBackground;
+    const radarDb = clamp(0.3 + 0.4 * (fbm(x / f, y / f, seed + 77) - 0.5), 0, 0.6);
+    const flicker = 0.9 + 0.2 * hash3(Math.round(x * 10), Math.round(y * 10), monthSeed);
+    const lights = clamp((0.3 + cell.popPerKm2 / 25) * flicker, 0, 80);
+    out.set(id, { conflictKm: PEACE_KM, fires, chiDrop, radarDb, heavyShare: 0, lights });
   }
   return out;
 }
@@ -460,11 +504,22 @@ function previousMonth(month) {
   return mon === 1 ? `${year - 1}-12` : `${year}-${String(mon - 1).padStart(2, "0")}`;
 }
 
+// The box around some cells, [west, south, east, north].
+function cellsBox(cells) {
+  const lats = cells.map((cell) => cell.lat);
+  const lons = cells.map((cell) => cell.lon);
+  return [Math.min(...lons), Math.min(...lats), Math.max(...lons), Math.max(...lats)];
+}
+
 // Readings for every cell of an area in one month (also used by tests).
-export function sampleReadings({ area, cells, month, cellSizeDeg }) {
-  if (!cells.length) return { readings: [], alerts: [], warnings: [] };
+//   conflict  the known war covering the area ({ id, name, since }) or null;
+//             looked up from the area when not given
+export function sampleReadings({ area, cells, month, cellSizeDeg, conflict: givenConflict }) {
+  const conflict = cleanConflict(givenConflict !== undefined ? givenConflict : cells.length ? conflictForArea({ countryId: area.countryId, bbox: area.bbox || cellsBox(cells), cells }) : null);
+  const sampleWarning = "Sample data: made-up values for trying the app, not satellite measurements.";
+  if (!cells.length) return { readings: [], alerts: [], warnings: [sampleWarning], conflict };
   const seed = hashString(String(area.id));
-  const frame = makeFrame(area, cells);
+  const frame = makeFrame(area, cells, conflict);
   const statics = staticFields(area, cells, frame, seed);
   const cellKm = (cellSizeDeg || 0) * frame.kx;
   const now = monthFields(statics, frame, month, seed, cellKm);
@@ -485,6 +540,7 @@ export function sampleReadings({ area, cells, month, cellSizeDeg }) {
       croplandShare: base.croplandShare,
       firesPer100Km2: m.fires,
       chiDrop: m.chiDrop,
+      radarDb: Math.round(m.radarDb * 100) / 100,
       conflictKm: m.conflictKm,
       popPerKm2: base.popPerKm2,
       lights: m.lights,
@@ -512,7 +568,9 @@ export function sampleReadings({ area, cells, month, cellSizeDeg }) {
   return {
     readings,
     alerts,
-    warnings: ["Sample data: made-up values for trying the app, not satellite measurements."],
+    warnings: conflict ? [sampleWarning] : [sampleWarning, NO_WAR_WARNING],
+    conflict,
+    accessSource: conflict ? "fires" : "none",
   };
 }
 
@@ -523,8 +581,8 @@ export function createSampleProvider() {
     async status() {
       return { ok: true, detail: "Sample data: made-up values for trying the app." };
     },
-    async analyze({ area, cells, month, cellSizeDeg, onProgress }) {
-      const result = sampleReadings({ area, cells, month, cellSizeDeg });
+    async analyze({ area, cells, month, cellSizeDeg, onProgress, conflict }) {
+      const result = sampleReadings({ area, cells, month, cellSizeDeg, conflict });
       onProgress?.(1);
       return result;
     },
