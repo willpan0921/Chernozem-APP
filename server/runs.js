@@ -17,7 +17,7 @@
 // WHO EDITS IT
 // Whoever changes what a run contains. Saved runs keep their numbers.
 
-import { COMPONENTS, SCALES, runsComparable, scaleIndicator } from "../src/lib/atlas/method.js";
+import { COMPONENTS, METHOD_VERSION, SCALES, runsComparable, scaleIndicator } from "../src/lib/atlas/method.js";
 import { cellSizeKm } from "./geo.js";
 import { imageryMonths } from "../src/lib/season.js";
 import { newId } from "./store.js";
@@ -76,6 +76,8 @@ function cleanImagery(value) {
   if (!value || typeof value !== "object" || !isMonth(value.from) || !isMonth(value.to)) return null;
   const out = { from: value.from, to: value.to };
   if (typeof value.label === "string" && value.label.trim()) out.label = value.label.trim().slice(0, 240);
+  // How many growing seasons the damage radar's composite holds (gee.js).
+  if (Number.isInteger(value.seasons) && value.seasons > 0) out.seasons = value.seasons;
   return out;
 }
 
@@ -230,7 +232,9 @@ export function buildRun({ area, month, provider, readings = [], alerts = [], wa
     newHeavyDamageHa: null,
     alertsCount: strongest.length,
     checks: { passed: checks.length - failed.length, total: checks.length, warnings: [...warnings, ...failed] },
-    method: { components: COMPONENTS, scales: SCALES },
+    // The method version, components and scales: runs made with another
+    // method are "not comparable" (method.js runsComparable).
+    method: { version: METHOD_VERSION, components: COMPONENTS, scales: SCALES },
     cells: outCells,
     alerts: strongest,
   };

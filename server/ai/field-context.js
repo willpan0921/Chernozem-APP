@@ -359,8 +359,15 @@ function damageText(d, units, conflict) {
   const evidence = [];
   if (Number.isFinite(d.radarChangedShare)) evidence.push(`radar change on ${pct(d.radarChangedShare)} of the field`);
   if (Number.isFinite(d.excessFires)) {
-    const all = Number.isFinite(d.fires) ? ` (${d.fires} in all, ${Number.isFinite(d.firesNormal) ? d.firesNormal : "?"} usual)` : "";
-    evidence.push(`${d.excessFires} fire detection(s) above the ${BASELINE.label} rate${d.since ? ` since ${d.since}` : ""}${all}`);
+    const usual = Number.isFinite(d.firesNormal) ? d.firesNormal : "?";
+    if (d.fireYear?.start && d.fireYear?.end) {
+      // The worst war year (method.js worstFireYear).
+      const all = Number.isFinite(d.fires) ? `: ${d.fires} fire day(s), ${usual} usual` : "";
+      evidence.push(`${d.excessFires} fire detection(s) above the ${BASELINE.label} rate in the worst year since ${d.since || d.fireYear.start} (${d.fireYear.start} to ${d.fireYear.end}${all})`);
+    } else {
+      const all = Number.isFinite(d.fires) ? ` (${d.fires} in all, ${usual} usual)` : "";
+      evidence.push(`${d.excessFires} fire detection(s) above the ${BASELINE.label} rate${d.since ? ` since ${d.since}` : ""}${all}`);
+    }
   } else if (Number.isFinite(d.firesSinceWar)) {
     evidence.push(`${d.firesSinceWar} fire detection(s) since ${conflict?.since || "the war began"}`);
   }

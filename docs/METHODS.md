@@ -43,7 +43,7 @@ Crops grow at different times in different places, so no date window is fixed in
 
 The app knows three wars (`src/config/conflicts.js`): the full-scale invasion of Ukraine (from 24 February 2022), the war in Sudan (from 15 April 2023) and the Gaza war (from 7 October 2023, the Gaza Strip only, not the West Bank). A war is matched by country, and where needed by a box inside the country.
 
-- **Inside a known war**, damage is counted from the day the war started, the Data charts mark that day, and the AI and reports talk about demining.
+- **Inside a known war**, damage is counted from the day the war started, the Data charts mark that day, and the AI and reports talk about demining. Damage found once stays counted: fire is read from the war's worst year and radar from the change that lasts over the complete war seasons (see [Damage over time](#damage-over-time)).
 - **Everywhere else**, damage means unusual fire or ground change **from any cause** over the last two years, compared with the normal years. The app does not mention war or demining there, and stricter evidence is needed (see the damage rules below).
 
 Fighting that spills over a border, or a war not on the list, counts as peace. That never means the land is safe.
@@ -67,7 +67,7 @@ A farmer types a place, pastes coordinates or draws on the map. The app finds th
 | Harvest readiness | Sentinel-2 curve, Open-Meteo temperatures, Sentinel-1 VH radar | Dry-down, heat units, radar harvest | Daily check |
 | Crop type | Sentinel-2 curve (18 months) and red edge, Sentinel-1 VH | Timing of green-up, peak and dry-down; red-edge gap; radar | Each analysis |
 | Field condition | All of the above | 0.5 plant health + 0.3 water + 0.2 no stress | Daily check |
-| Damage | Sentinel-1 VV, 10 m; FIRMS fire, 1 km | Radar change and unusual fire | Daily check |
+| Damage | Sentinel-1 VV, 10 m; FIRMS fire, 1 km | Radar change lasting over two complete war seasons, unusual fire in the worst war year | Daily check |
 | Black soil | OpenLandMap USDA soil classes, 250 m | Share of the field on Mollisols | Each analysis |
 | Weather | Open-Meteo | Forecast and the last days | Hourly cache |
 | History | Sentinel-2, 10 m | Monthly field means since January 2019 | Every 30 days |
@@ -246,13 +246,14 @@ The overview's stat row shows these four groups, the farm area and the weather, 
 
 | Evidence | Source | Rule |
 | --- | --- | --- |
-| Radar change | Sentinel-1 VV, 10 m, one orbit direction | Per pixel: the last complete growing season's median minus the same months of 2019 to 2021, minus the field's own overall change. A pixel counts at 3 dB or more. Crop rotation and soil moisture shift a whole field; craters, trenches and burnt patches change parts of it. |
-| Unusual fire | NASA FIRMS (band T21), 1 km | Fire detections in the damage window minus what the 2019 to 2021 rate gives for a window that long, never below 0. Stubble burning that happens every year cancels out. |
+| Radar change | Sentinel-1 VV, 10 m, one orbit direction | Per pixel and **per complete war growing season** (one per year): the season's median minus the same months of 2019 to 2021 (all their passes together, as in the Atlas), minus the field's own overall change that season. A pixel counts when it changed by 3 dB or more in **at least two** war seasons (with one season so far, that one). Crop rotation and soil moisture shift a whole field; craters, trenches and burnt patches change parts of it, and they last. |
+| Unusual fire | NASA FIRMS (band T21), 1 km | The **worst war year**: per war year (from the war's start, 12 months each; the year not over yet up to today), fire days minus a normal year's (the 2019 to 2021 count ÷ 3), never below 0; the largest. Stubble burning that happens every year cancels out. |
 | Health index | Sentinel-2 (see the Atlas) | Support only, never enough on its own. |
 
 - **Inside a known war:** damaged when radar changed over 10 % of the field; or 3 or more unusual fires backed by radar change over 5 % (or a health-index drop of 0.1); or a health-index drop backed by radar change over 5 %.
 - **At peace:** damaged only when 3 or more unusual fires AND radar change over 5 % are both found. Ploughing or a new crop alone can change radar over part of a field.
 - **Damaged area** = the radar-changed share × the field's area. When only fire shows it, the area is left blank rather than guessed.
+- The years, seasons and the two-season rule are the Atlas's (see [Damage over time](#damage-over-time)), so a field's damage does not fade as the war goes on. Two differences remain: a field's radar change is taken against the field's own overall change (the Atlas uses the whole square, without that), and every field of a farm uses the farm centre's season. The AI names the worst year ("8 fire detections above the 2019 to 2021 rate in the worst year since 2022-02-24").
 - **Recovery cost** ranges are planning assumptions, not measurements (see [Recovery cost](#recovery-cost)).
 
 **Cannot see:** mines or unexploded ordnance. A field with no damage found is **not** a safe field.
@@ -291,15 +292,15 @@ An area (a drawn shape, a region, a country) is cut into a grid of squares: as s
 | Number | Source and resolution | How it is worked out | Updates |
 | --- | --- | --- | --- |
 | Soil value | OpenLandMap USDA soil classes, 250 m; ESA WorldCover, 10 m | Mean of black-soil share and cropland share | Monthly |
-| Damage | FIRMS fire, 1 km; Sentinel-1 VV radar, 10 m | In a war: mean of unusual fire and radar change. At peace: heavily damaged share of the black soil, full at 20 % | Monthly |
-| Heavily damaged hectares | Same | Black-soil cropland pixels with strong radar change (with fire) | Monthly |
+| Damage | FIRMS fire, 1 km; Sentinel-1 VV radar, 10 m | In a war: mean of unusual fire (worst war year) and lasting radar change (two war seasons). At peace: heavily damaged share of the black soil, full at 20 % | Monthly |
+| Heavily damaged hectares | Same | Black-soil cropland pixels with strong lasting radar change (or clear change with fire) | Monthly |
 | Soil health index (CHI) | Sentinel-2, 10 to 20 m | Five-index blend, this season vs normal | Monthly, diagnostic only |
 | Safe access | ACLED battles, or FIRMS unusual fire | Distance to fighting, full at 100 km. At peace without ACLED: full everywhere | Monthly |
 | Priority, rank, tier | The three scores | Near term and Postwar formulas | Instantly when weights change |
 | People, night lights | WorldPop 100 m (2020); VIIRS 500 m | Sum and median | Monthly, context only |
 | Alerts | Sentinel-1 VV; FIRMS | This month vs the same month of 2019 to 2021 (radar alerts only in ranked squares) | Monthly |
 
-**Monthly**: with "Analyze automatically each month" on, the server analyses each month once it is over (it checks every 6 hours). The damage evidence uses the last **complete** growing season, so it changes once per season; month-to-month change comes from that month's new fires and radar change.
+**Monthly**: with "Analyze automatically each month" on, the server analyses each month once it is over (it checks every 6 hours). The damage radar uses the **complete** war growing seasons, and a new year's season joins for the whole area in one month (when the last part of the area has finished that season: in Ukraine October), so it changes once a year; fire evidence can only grow at war (the year not over yet gains fires, or a new worst year). See [Damage over time](#damage-over-time). The monthly run adds the new month only: months made with an older method stay as they are (marked "not comparable") until someone runs the area again.
 
 ### Soil value
 
@@ -313,16 +314,55 @@ Our black-soil map is broader than the paper's WRB Chernozem ≥ 0.5 map, so nat
 ### Damage (the paper's definition)
 
 Damage = mean of two indicators:
-- **Unusual fire**: FIRMS fire detections (band T21, 1 km) in the damage window **minus** the square's normal rate from 2019 to 2021 for a window that long, never below 0, per 100 km². Scale: 0 to 1 at 25 per 100 km². The damage window starts the day a known war began, else two years back. Farm burning that comes every year cancels out.
-- **Radar change**: Sentinel-1 VV backscatter (10 m, IW mode, one orbit direction), mean |change| over the square's cropland between the last complete growing season's median and the same season's median in 2019 to 2021. Scale: 0 at 0.5 dB, 1 at 3 dB. Ordinary year-to-year change stays under about 0.5 dB on average; 3 dB is the change of shelled or cratered land.
+- **Unusual fire**: FIRMS fire detections (band T21, 1 km) in the square's **worst war year** above a normal 2019 to 2021 year, per 100 km² (see [Damage over time](#damage-over-time)). Scale: 0 to 1 at 25 per 100 km². The damage window starts the day a known war began, else two years back. Farm burning that comes every year cancels out.
+- **Radar change**: Sentinel-1 VV backscatter (10 m, IW mode, one orbit direction), mean over the square's cropland of each pixel's **lasting** change: |each complete war season's median − the same season's median in 2019 to 2021|, the change reached in at least two seasons (with one season so far, that one). Scale: 0 at 0.5 dB, 1 at 3 dB. Ordinary year-to-year change stays under about 0.5 dB on average; 3 dB is the change of shelled or cratered land.
 
 **At peace** (no known war covers the area) the damage **score** is not the mean of the two indicators but the share of the square's black-soil cropland that is heavily damaged (below), full at 20 % (`PEACE_DAMAGE` in `src/lib/atlas/method.js`). Savanna burning and seasonal radar change in dry land have everyday causes: on a real Kenya run (2026-10-19) the indicator mean gave damage 100 to arid squares with 0 ha damaged and put them at the top of the ranking.
 
-**Heavily damaged hectares**: black-soil cropland pixels whose radar changed by **3 dB or more**, or by **2 dB or more with an unusual fire within 1 km**. At peace a pixel needs both: 3 dB **and** an unusual fire within 1 km. On real data at peace, with the war rule, 0.75 % of Iowa's and 1.2 % of the Pampas' black-soil cropland came out "damaged" (rotation, tillage, new fields), which is why the stricter rule applies there.
+**Heavily damaged hectares**: black-soil cropland pixels whose **lasting** radar change (in at least two war seasons) is **3 dB or more**, or **2 dB or more with an unusual fire within 1 km** (a pixel above a normal year in some war year). At peace a pixel needs both: 3 dB **and** an unusual fire within 1 km. On real data at peace, with the war rule, 0.75 % of Iowa's and 1.2 % of the Pampas' black-soil cropland came out "damaged" (rotation, tillage, new fields), which is why the stricter rule applies there.
 
 **Soil health index (CHI), diagnostic only.** From a cloud-masked Sentinel-2 median: CHI = 0.30 NDVI + 0.25 NDMI + 0.20 NBR + 0.15 (1 − BSI) + 0.10 RVI, each first stretched to 0 to 1 over a fixed range. Its drop from 2019 to 2021 is stored for every square and shown in the CSV, but it is **not** part of the damage score: crop rotation and an early or late season move it as much as war does. This follows the paper.
 
 **Cannot see:** mines, unexploded ordnance or contamination. Fire and radar find disturbed land, not its cause: at peace "damage" can be a burnt field, a new building or a flood.
+
+### Damage over time
+
+Soil damage persists (the owner's paper): land abandoned near the front is not burned again, and a crater does not heal in a year. So the evidence must not fade just because the window it is counted over grows.
+
+*Why this changed (2026-10-19).* On the real 12-month Ukraine run, heavily damaged black soil fell from 2.96 million ha (October 2025) to 2.88 (July 2026), 1.93 (August) and 1.32 (September), with "new damage" 0 nearly every month. Fires were counted over the whole window since 24 February 2022 minus the 2019 to 2021 rate × the window's length: as the window grew and the front stopped burning, each pixel's excess shrank, so damage seemed to heal although nothing recovered. Then the radar switched from one season to the next and the total dropped again.
+
+**Fire: the worst war year.** The damage window is cut into **war years** of 12 months that do not overlap: inside a war from the day it began (24 February 2022 to 24 February 2023, and so on), at peace two whole years back from the end of the analysed month. The last year is usually not over yet: it runs to the end of the analysed month and counts once it is at least **3 months** long. Per year:
+
+excess = fire detections in the year − a normal year (the 2019 to 2021 count ÷ 3), never below 0
+
+and the evidence is the **largest excess over the years**. The year not over yet is compared with a **whole** normal year, not a share of it: fire is seasonal (real FIRMS fire days 2019 to 2021 over central and eastern Ukraine: 24 February to 1 September holds 68 % of a year's, where a share by days gives 52 %), so a share by days counted ordinary spring burning as excess, and a share by calendar span would let the excess fall in a month that burns less than usual. Against a whole year the running year's excess only grows, and it is the full year's once the year is over. For a map square this is worked out for the square: each FIRMS pixel's (1 km) excess is smoothed over 5 km and averaged over the square, so a field burnt this year and one nearby burnt in 2019 to 2021 cancel out, and the square's worst year gives its *Unusual fire* indicator (per 100 km², scale as before). For heavy damage an *unusual fire* is a pixel that burned in a year its 5 km neighbourhood was above its normal. For a field it is the field's own pixels. At war every year of one month is also a year of every later month, or grows into it, so once a place has had an unusual fire year it stays counted. At peace fire years older than two years drop out.
+
+*Checked on real data* (Ukraine, September 2026, share of the 1,176 squares with an unusual-fire indicator above 0): 22 % with the whole-window rule, 70 % with ~60 overlapping 12-month years and a share by days, **47 %** now (median 0). Lviv oblast, far from the front: 0.001 with the whole-window rule, 0.43 with overlapping years, **0.18** now. What remains is ordinary year-to-year swings of farm and grass burning: the worst of four or five years is above an average year. Comparing with the highest of the three normal years instead of their average would take more of it out; that is a choice for the method's owner.
+
+**Radar: every complete war season, each on its own, and the change that lasts.** Each complete growing season inside the damage window (one per year, the place's own season) is compared with the same season in 2019 to 2021. A pixel's radar evidence is the change reached in **at least two** of these seasons (the second largest; while only one season exists, that one). So one season of rotation or weather is not damage, and later seasons that look ordinary never outvote a cratered one: from two seasons on the evidence only grows. A new year's season joins for the **whole area in one month**, when the last part of the area has finished that season (Ukraine: the squares greenest in May finish in July, those greenest in July in September, so 2026 joins in October 2026 for all of them). In the tropics without a clear season a "season" is a calendar year, so it too joins once a year.
+
+*Why not one composite.* The first version of this change took the median VV over all war seasons. The median of N seasons is outvoted by later normal-looking seasons, so damage still healed, now once a year (real data: from August to September 2026, 371 squares lost 215,613 ha when the 2026 season joined), and the July total changed in August because one season group finished earlier. Counting a 2 dB change in **any one** season next to an unusual fire went the other way: 5.8 million ha, 22 % of Ukraine's black soil, because the largest of four or five noisy seasons reaches 2 dB almost everywhere fire was once unusual (on a sample of 147 squares: 22 % of cropland with the any-season rule, 9 % with the two-season rule, 2.7 % with the median).
+
+**What that guarantees** (tested with the fake Earth Engine, whose image graph is evaluated pixel by pixel against `src/lib/atlas/method.js`, and in `src/lib/atlas/method.test.js`):
+
+- Two months that share the same war seasons give the same heavy damage unless the fire evidence grows (the war year not over yet gains fires, or a new year begins).
+- Heavy damage never falls from one month to the next once two war seasons exist (a war's first year has one; the step to two may lower it once). A pixel damaged in 2022 and ordinary in 2023 to 2026 stays heavy.
+- **New damage** = the increase over the previous comparable month; it is never negative.
+- A field's damage uses the same years, seasons and two-season rule.
+
+Runs made before this change have an older method version (this one is `2026-10-19.3`) and are marked **"Not comparable: different method version"** next to new ones. An analysis someone starts again (without "redo") redoes those months, as it does sample months once Earth Engine is connected. The **monthly** run does not: it adds the new month only, so a method change never sets off a year of Earth Engine work by itself; the older months stay "not comparable" until someone runs the area again.
+
+*Checked on real data* (Ukraine, the whole country, 1,176 squares, 2026-10-19, a separate server; heavily damaged black soil, million ha):
+
+| Month | Before (whole-window fire, last season's radar) | Now | Time |
+| --- | --- | --- | --- |
+| May 2026 | 3.847 (an earlier run; the 12-month job's own May had failed: "memory capacity exceeded") | 1.671 (the chunk was asked again twice after "memory capacity exceeded" and passed) | 3 min 38 s |
+| June 2026 | 2.860 | 1.672 | 2 min 37 s |
+| July 2026 | 2.880 | 1.683 | 2 min 48 s |
+| August 2026 | 1.931 | 1.757 | 3 min 28 s |
+| September 2026 | 1.319 | 1.780 | 3 min 8 s |
+
+All five months use the war seasons 2022 to 2025 (2026 joins in October). From month to month no square lost any hectare and every square's radar indicator stayed exactly the same; the growth (+1,662, +10,960, +73,814, +23,256 ha) is fire near clear radar change in the 2026 war year, mostly August harvest-season fires. Where it sits (September): Donetsk 18 %, Kharkiv 13 %, Zaporizhzhia 13 %, Dnipropetrovsk 12 %, Kherson 11 %, Luhansk 10 %, Mykolaiv 4 %: **80 %** in these seven eastern and southern oblasts, against the paper's 83.7 % in the east; 1.78 million ha against the paper's 2.23 million ha (our black-soil map is broader, see above). Lviv oblast: 1,960 ha. At peace (a 1° box around Ames, Iowa, September 2026, one season): 267 ha of 628,879 ha of black-soil cropland (0.04 %).
 
 ### Safe access
 
@@ -359,7 +399,7 @@ Weighted power mean = (Σ wᵢ · xᵢʳ)^(1/r) with the weights made to add up 
 
 ### Comparing months
 
-Two months are compared (the change since the month before, new damage, the Compare card, the AI) only when they come from the **same data source** (Earth Engine or sample), the **same method version** (its indicators and scales are saved with every month) and the **same squares**. Otherwise the app says **"Not comparable: different data source"** (or method, or squares) instead of a difference: a real month against sample months once read "Cropland −27,371,469 ha". The Data page's badge names the latest month's source and how many earlier months came from the other one ("Earth Engine · 11 earlier months are sample data").
+Two months are compared (the change since the month before, new damage, the Compare card, the AI) only when they come from the **same data source** (Earth Engine or sample), the **same method version** (its version, indicators and scales are saved with every month; the version changed on 2026-10-19 with [damage over time](#damage-over-time)) and the **same squares**. Otherwise the app says **"Not comparable: different data source"** (or method, or squares) instead of a difference: a real month against sample months once read "Cropland −27,371,469 ha". The Data page's badge names the latest month's source and how many earlier months came from the other one ("Earth Engine · 11 earlier months are sample data").
 
 ### Same code, same answer?
 
@@ -367,9 +407,10 @@ Two real runs of Ukraine, September 2026, with the same code gave 1,318,634 ha a
 
 - A group that runs out of memory or time is **split in two and measured again with the same pixels**, down to 4 cells; a cell's reading does not depend on which cells share its request, so the totals stay the same. Only a piece of 4 cells or fewer that still fails is measured with coarser pixels, and the run says how many cells.
 - No reduction uses Earth Engine's "best effort" rescaling: every pixel size is fixed by the app (for a big area, worked out from its size).
-- Date windows are fixed by the month and the place's season (the last complete season for damage), and the fire sample used for distance to fighting has a fixed seed.
+- Date windows are fixed by the month and the place's season (the complete war seasons for damage), and the fire sample used for distance to fighting has a fixed seed.
+- When Earth Engine's servers are full ("memory capacity exceeded") while checking which images exist or while measuring a group of cells, the same request is tried again after 5 s, then a lighter one after 20 s. When the request itself is too big ("User memory limit exceeded", "Computation timed out", or the app's own 5-minute limit) the same request is not sent again: the lighter one goes at once (each image count on its own, four at a time; the group split in two with the same pixels). A month that still fails is reported as missing and can be run again. The run's warnings and the server log say which step was asked again. (Real data, Ukraine May 2026: "Earth Engine memory capacity exceeded" in the season's image check had failed the whole month.)
 
-Re-checked on real Earth Engine after the change (2026-10-19, two runs one after the other, 161 s and 172 s): Ukraine, September 2026, both **1,318,634 ha** heavily damaged, 34,778,156 ha cropland, 25,964,070 ha black soil, 958,961 people on damaged soil, the same as the earlier run that needed no retry. Neither run ran short of memory, so the split itself is tested only with the fake Earth Engine. What can still move a total: images Google adds or reprocesses later (for example fire detections that arrive late), and a run that had to use coarser pixels (it says so).
+Re-checked on real Earth Engine after the split change, **with the method before 2026-10-19.3** (2026-10-19, two runs one after the other, 161 s and 172 s): Ukraine, September 2026, both **1,318,634 ha** heavily damaged, 34,778,156 ha cropland, 25,964,070 ha black soil, 958,961 people on damaged soil, the same as the earlier run that needed no retry. Neither run ran short of memory, so the split itself is tested only with the fake Earth Engine. What can still move a total: images Google adds or reprocesses later (for example fire detections that arrive late), and a run that had to use coarser pixels (it says so).
 
 ### Recovery cost
 
@@ -388,7 +429,7 @@ On Ukraine, 2022 to 2024, against records the method never saw:
 | Near-term top five unchanged across 27 settings | 63 % |
 | Reliability checks passed | 126 of 126 |
 
-The paper finds 2.23 million ha of heavily damaged chernozem, 83.7 % of it in the east. Still open: the rankings are not yet tested against real recovery results, and Postwar has no outside check so far.
+The paper finds 2.23 million ha of heavily damaged chernozem, 83.7 % of it in the east. The app's real Ukraine runs (method 2026-10-19.3) find 1.68 million ha in July and 1.78 million ha in September 2026, 80 % of it in the seven eastern and southern oblasts (see [Damage over time](#damage-over-time)). Still open: the rankings are not yet tested against real recovery results, and Postwar has no outside check so far.
 
 ---
 
@@ -420,9 +461,9 @@ The paper finds 2.23 million ha of heavily damaged chernozem, 83.7 % of it in th
 | --- | --- |
 | Field thresholds and formulas (condition, stress, cause, pest risk, harvest, damage, status) | `src/lib/field/method.js` |
 | Crop profiles, heat units, crop classifier | `src/lib/field/crops.js` |
-| Atlas indicators, scales, heavy damage, costs | `src/lib/atlas/method.js` |
+| Atlas indicators, scales, heavy damage, damage over time (war years, worst year, lasting radar change), method version, costs | `src/lib/atlas/method.js` |
 | Atlas scores, set-aside, power mean, tiers | `src/lib/atlas/scoring.js` |
-| Seasons by place | `src/lib/season.js` |
+| Seasons by place, the war seasons of the damage radar (per place and for a whole area) | `src/lib/season.js` |
 | Wars and their areas | `src/config/conflicts.js` |
 | Research results | `src/config/research.js` |
 | The same rules as Earth Engine image arithmetic | `server/providers/gee.js` (Atlas), `server/providers/field-gee.js` (Field) |

@@ -204,22 +204,43 @@ test("fire windows: from the war start inside a known war, else the last 2 years
   const war = fireWindows({ id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" }, TODAY);
   assert.deepEqual(war.window, { start: "2022-02-24", end: TODAY });
   assert.deepEqual(war.conflict, { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" });
-  assert.deepEqual(war.baselines, [{ start: "2019-01-01", end: "2022-01-01" }], "a window over a year long is compared with the whole of 2019-2021");
+  assert.deepEqual(war.baselines, [{ start: "2019-01-01", end: "2022-01-01" }], "the usual rate comes from the whole of 2019-2021");
   assert.equal(war.baselineDays, 1096);
+  // The damage window's war years (the same as the Atlas's): from the war's
+  // start, the one not over yet up to today.
+  assert.deepEqual(war.years.map((y) => `${y.start}..${y.end}${y.part ? " part" : ""}`), [
+    "2022-02-24..2023-02-24",
+    "2023-02-24..2024-02-24",
+    "2024-02-24..2025-02-24",
+    "2025-02-24..2026-02-24",
+    `2026-02-24..${TODAY} part`,
+  ]);
+  // No latitude: no radar seasons; with one, every complete war season.
+  assert.deepEqual(war.radarSeasons, []);
+  assert.deepEqual(fireWindows({ id: "ukraine-2022", name: "U", since: "2022-02-24" }, TODAY, { lat: 49.7 }).radarSeasons.map((w) => w.start), ["2022-04-01", "2023-04-01", "2024-04-01", "2025-04-01", "2026-04-01"]);
   const peace = fireWindows(null, TODAY);
   assert.deepEqual(peace.window, { start: "2024-10-18", end: TODAY });
   assert.equal(peace.days, 730);
   assert.equal(peace.conflict, null);
   assert.equal(peace.key, "none");
-  // A war that began less than a year ago: the same calendar span of each normal year.
+  // At peace: two whole years back from today.
+  assert.deepEqual(peace.years.map((y) => `${y.start}..${y.end}`), ["2024-10-18..2025-10-18", `2025-10-18..${TODAY}`]);
+  // A war that began less than a year ago: its year not over yet, compared
+  // with a whole normal year.
   const recent = fireWindows({ id: "x", name: "X", since: "2026-03-01" }, TODAY);
-  assert.deepEqual(recent.baselines.map((w) => w.start), ["2019-03-01", "2020-03-01", "2021-03-01"]);
-  assert.equal(recent.baselineDays, 3 * recent.days);
-  // Excess: detections minus the normal rate x window length, never below 0.
-  assert.deepEqual(excessFiresOf(8, 12, peace), { fires: 8, firesNormal: 8, excessFires: 0 });
-  assert.deepEqual(excessFiresOf(2, 12, peace), { fires: 2, firesNormal: 8, excessFires: 0 });
-  assert.deepEqual(excessFiresOf(20, 3, war), { fires: 20, firesNormal: 4.6, excessFires: 15.4 });
-  assert.deepEqual(excessFiresOf(null, 3, war), { fires: null, firesNormal: null, excessFires: null });
+  assert.deepEqual(recent.baselines, [{ start: "2019-01-01", end: "2022-01-01" }]);
+  assert.deepEqual(recent.years.map((y) => `${y.start}..${y.end}${y.part ? " part" : ""}`), [`2026-03-01..${TODAY} part`]);
+  // Excess: the worst year's fire days minus the 2019-2021 count / 3 (a
+  // year's worth), never below 0.
+  const bands = (list) => Object.fromEntries(list.map((n, i) => [`fy${i}`, n]));
+  const quiet = excessFiresOf(8, 12, peace, bands([4, 4]));
+  assert.equal(quiet.excessFires, 0);
+  const oneYear = war.years.map((_, i) => (i === 2 ? 9 : 1));
+  const worst = excessFiresOf(30, 3, war, bands(oneYear));
+  assert.deepEqual(worst, { fires: 9, firesNormal: 1, excessFires: 8, fireYear: { start: war.years[2].start, end: war.years[2].end } });
+  assert.deepEqual(excessFiresOf(null, 3, war), { fires: null, firesNormal: null, excessFires: null, fireYear: null });
+  // An older answer without year bands: the whole window against the rate x its length.
+  assert.deepEqual(excessFiresOf(20, 3, war), { fires: 20, firesNormal: 4.6, excessFires: 15.4, fireYear: { start: "2022-02-24", end: TODAY } });
 });
 
 test("the latest window is the last 30 days, or the 30 days up to an older clear pass", () => {
@@ -795,7 +816,7 @@ function assertAnalysis(a, field, seasonFrom = "2026-03-01") {
   assert.ok(a.cropDetected && typeof a.cropDetected.id === "string" && typeof a.cropDetected.label === "string");
   inRange(a.condition.score, 0, 1, "condition.score");
   assert.ok(a.condition.class === null || CONDITION_CLASSES.some((c) => c.id === a.condition.class));
-  assert.deepEqual(Object.keys(a.damage).sort(), ["chiDrop", "damagedHa", "detected", "excessFires", "fires", "firesNormal", "radarChangedShare", "since"]);
+  assert.deepEqual(Object.keys(a.damage).sort(), ["chiDrop", "damagedHa", "detected", "excessFires", "fireYear", "fires", "firesNormal", "radarChangedShare", "since"]);
   assert.equal(typeof a.damage.detected, "boolean");
   inRange(a.damage.radarChangedShare, 0, 1, "radarChangedShare");
   inRange(a.damage.fires, 0, 1e5, "fires");
@@ -1195,22 +1216,52 @@ test("a tropical farm: the last 12 months, no war", async () => {
 test("a peaceful farm that burns its stubble every year is NOT damaged; the same fires above the war-time normal are", async () => {
   // 8 fire days in the last 2 years, 12 in 2019-2021 (4 a year): just the usual burning.
   // A soil-index drop that would back up fires is there too.
-  const values = { fires: 8, firesBase: 12, chiDrop: 0.15, radarChanged: 0.01 };
+  // Per war year (fy0, fy1, ...: fireWindows years): 4 fire days a year,
+  // the usual 4.
+  const peaceYears = fireWindows(null, TODAY).years;
+  const usualBands = Object.fromEntries(peaceYears.map((y, i) => [`fy${i}`, 4]));
+  const yearBands = (n, worst = {}) => Object.fromEntries(Array.from({ length: 6 }, (_, i) => [`fy${i}`, worst[i] ?? n]));
+  const values = { fires: 8, firesBase: 12, chiDrop: 0.15, radarChanged: 0.01, ...usualBands };
   const { provider } = fakeProvider({ values });
   const { analyses } = await provider.analyzeFields({ fields: [IOWA], today: TODAY });
   const a = analyses[IOWA.id];
   assert.equal(a.conflict, null);
-  assert.deepEqual([a.damage.fires, a.damage.firesNormal, a.damage.excessFires], [8, 8, 0]);
+  assert.equal(a.damage.excessFires, 0);
+  assert.ok(a.damage.fires <= 4 && a.damage.firesNormal <= 4);
   assert.equal(a.damage.detected, false);
   assert.equal(a.damage.damagedHa, null);
-  // Near Kupiansk: 20 fire days since the invasion against about 1 a year before it.
-  const war = fakeProvider({ values: { ...values, fires: 20, firesBase: 3 } });
+  // Near Kupiansk: one war year with 9 fire days against about 1 a year
+  // before it; the other years quiet. The worst year counts.
+  const war = fakeProvider({ values: { ...values, fires: 20, firesBase: 3, ...yearBands(1, { 2: 9 }) } });
   const result = await war.provider.analyzeFields({ fields: DEMO.slice(0, 1), today: TODAY });
   const b = result.analyses[DEMO[0].id];
   assert.equal(b.conflict.id, "ukraine-2022");
   assert.equal(b.damage.since, "2022-02-24");
-  assert.equal(b.damage.excessFires, 15.4);
+  assert.equal(b.damage.excessFires, 8);
+  assert.deepEqual([b.damage.fires, b.damage.firesNormal], [9, 1]);
+  assert.ok(b.damage.fireYear.start >= "2022-02-24" && b.damage.fireYear.end <= TODAY);
   assert.equal(b.damage.detected, true);
+});
+
+test("a field's damage uses the Atlas's evidence: every complete war season's radar and every war year's fires", async () => {
+  const { ee, provider } = fakeProvider();
+  const { analyses } = await provider.analyzeFields({ fields: DEMO.slice(0, 2), today: TODAY });
+  assert.equal(Object.keys(analyses).length, 2);
+  const s1 = new Set(ee.requests.flatMap((r) => r.find("filterDate").filter((n) => n.dataset === "COPERNICUS/S1_GRD").map((n) => n.args.join(".."))));
+  // Near Kupiansk (the fake's NDVI peaks in July): April to September of 2022 to 2026.
+  for (const year of [2022, 2023, 2024, 2025, 2026]) assert.ok(s1.has(`${year}-04-01..${year}-10-01`), `${year}: ${[...s1].join(" ")}`);
+  for (const year of [2019, 2020, 2021]) assert.ok(s1.has(`${year}-04-01..${year}-10-01`), `normal ${year}`);
+  // One fire-day band per war year, reduced with the field's maximum.
+  const fire = fireWindows({ id: "ukraine-2022", name: "U", since: "2022-02-24" }, TODAY);
+  const bands = new Set(ee.calls.filter((c) => c.name === "Image.rename").map((c) => c.args[0]));
+  assert.ok(bands.has("fy0") && bands.has(`fy${fire.years.length - 1}`) && !bands.has(`fy${fire.years.length}`));
+  const firms = new Set(ee.requests.flatMap((r) => r.find("filterDate").filter((n) => n.dataset === "FIRMS").map((n) => n.args.join(".."))));
+  for (const year of fire.years) assert.ok(firms.has(`${year.start}..${year.end}`), `${year.start}..${year.end}`);
+  // Radar: each war season on its own against 2019-2021 (one collection),
+  // the change that lasts over two of them (the second largest).
+  const s1Medians = ee.calls.filter((c) => c.name === "ImageCollection.median").length;
+  assert.ok(s1Medians >= 6, String(s1Medians));
+  assert.ok(ee.calls.some((c) => c.name === "Image.min") && ee.calls.some((c) => c.name === "Image.where"), "the second largest change");
 });
 
 test("fieldHistory reads monthly values since 2019 in chunks of 30 months", async () => {

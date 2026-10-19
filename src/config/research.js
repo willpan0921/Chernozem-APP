@@ -110,9 +110,9 @@ export const atlasMethods = {
     {
       id: "damage",
       name: "Damage",
-      what: "Fire beyond the place's normal rate, and radar change of the last complete growing season against the same season in 2019–2021.",
-      whatPeace: "The share of the square's black-soil cropland heavily damaged: radar change of 3 dB or more together with fire beyond the normal rate. Squares with almost no black-soil cropland are not ranked.",
-      formula: "Mean of excess fire and radar (VV) change",
+      what: "Fire beyond the place's normal year in its worst war year, and radar change that lasts: each complete growing season since the war began against the same season in 2019–2021, counted where it shows in at least two seasons. Damage once found stays counted: abandoned land is not burned again, and soil damage persists.",
+      whatPeace: "The share of the square's black-soil cropland heavily damaged over the last two years: radar change of 3 dB or more in a growing season together with fire beyond the normal year (the worst year). Squares with almost no black-soil cropland are not ranked.",
+      formula: "Mean of excess fire (worst war year) and lasting radar (VV) change (war seasons)",
       formulaPeace: "Heavily damaged ha ÷ black-soil ha, full at 20 %",
       source: "NASA FIRMS fire detections, 1 km · Sentinel-1 radar, 10 m",
     },

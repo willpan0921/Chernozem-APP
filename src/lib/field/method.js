@@ -1009,18 +1009,30 @@ export const DAMAGE_RULES = {
   radarShare: 0.1, // radar change over this share of the field is damage on its own
   supportRadarShare: 0.05, // a smaller radar change that supports other evidence
   supportChiDrop: 0.1, // a drop in the Chernozem Health Index that supports other evidence
-  fires: 3, // fire detections above the usual rate, in the damage window
+  fires: 3, // fire detections above the usual rate, in the worst war year
 };
+
+// The evidence over time is the Atlas's (src/lib/atlas/method.js
+// FIRE_YEARS): fire = the worst war year's excess (worstFireYear over
+// fireYears of the damage window), radar = each complete growing season in
+// the damage window (src/lib/season.js damageSeasons) against the same
+// season in 2019-2021, a pixel counting when its change lasts over two
+// seasons (radarPersistence). So a field's damage does not fade as the war
+// goes on and the front stops burning.
+export { FIRE_YEARS, fireYears, fireNormal, radarPersistence, worstFireYear } from "../atlas/method.js";
 
 const atLeast = (value, level) => Number.isFinite(value) && value >= level;
 
 // When a field counts as damaged. Same evidence as the research: excess
 // fire and radar change, with the health index as support.
-//   radarChangedShare - share of the field with a radar change of RADAR_CHANGE_DB or more
-//   excessFires       - fire detections inside the field in the damage window,
-//                       minus what the normal years' rate would give for a
-//                       window that long (never below 0). "firesSinceWar" is
-//                       the old name and is still read.
+//   radarChangedShare - share of the field whose radar change of
+//                       RADAR_CHANGE_DB or more lasts over at least two war
+//                       seasons (with one season measured, that one; older
+//                       analyses: the last season's)
+//   excessFires       - fire detections inside the field in its worst war
+//                       year, minus a normal year's count (never below 0;
+//                       worstFireYear). "firesSinceWar" is the old name and
+//                       is still read.
 //   chiDrop           - drop in the Chernozem Health Index from the baseline
 //   atWar             - false when no known war covers the field
 //                       (src/config/conflicts.js); left out = at war (older

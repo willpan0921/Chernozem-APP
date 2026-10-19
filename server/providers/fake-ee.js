@@ -563,6 +563,10 @@ export function createFakeEe(options = {}) {
     requests,
     stats,
     callsNamed: (name) => calls.filter((c) => c.name === name),
+    // The recorded node behind a built object ({ kind, op, args, parent,
+    // dataset, bands }), so a test can walk the image graph; null for
+    // anything else.
+    nodeOf: (value) => unwrap(value),
     get initialized() {
       return initialized;
     },

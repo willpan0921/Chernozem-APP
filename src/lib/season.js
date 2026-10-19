@@ -150,6 +150,62 @@ export function lastCompleteSeason(lat, today, peakMonth) {
   return { ...seasonStartingIn(spec, year - 2), ...about };
 }
 
+// Every growing season that is complete by `today` and lies wholly inside
+// a damage window starting on `since` ("YYYY-MM-DD"), oldest first: one
+// per year, the place's own season. In the tropics without a peak month a
+// "season" is a calendar year (January to December), so it joins once a
+// year like everywhere else (lastCompleteSeason's "last 12 months" would
+// move every month). Damage radar compares each of them with the same
+// season of 2019-2021 (src/lib/atlas/method.js FIRE_YEARS), so it changes
+// only when a new season is complete. Empty when no season since `since`
+// is over yet. Gives back [{ start, end }] (end not included).
+//   lastYear  optional: leave out seasons that end after this year (the
+//             year of their last day; areaDamageSeasons)
+export function damageSeasons(lat, today, since, peakMonth, { lastYear = null } = {}) {
+  if (!since) return [];
+  const spec = damageSeasonSpec(lat, peakMonth);
+  const out = [];
+  let season = latestSeasonBy(spec, today);
+  for (let guard = 0; season && season.start >= since && guard < 100; guard += 1) {
+    if (!(Number.isFinite(lastYear) && seasonYear(season) > lastYear)) out.unshift(season);
+    season = seasonStartingIn(spec, Number(season.start.slice(0, 4)) - 1);
+  }
+  return out;
+}
+
+// The season months damageSeasons uses: the place's own, or a calendar
+// year in the tropics without a peak month.
+function damageSeasonSpec(lat, peakMonth) {
+  const spec = seasonSpec(lat, peakMonth);
+  return spec.startMonth === null ? { ...spec, startMonth: 1, endMonth: 1 } : spec;
+}
+// The latest season (of `spec`) that has fully ended by `today`.
+function latestSeasonBy(spec, today) {
+  const year = Number(today.slice(0, 4));
+  for (const startYear of [year, year - 1, year - 2]) {
+    const season = seasonStartingIn(spec, startYear);
+    if (season.end <= today) return season;
+  }
+  return null;
+}
+// The year a season belongs to: the year of its last day.
+const seasonYear = (season) => Number(addDays(season.end, -1).slice(0, 4));
+
+// The war seasons of every place in one area, so that a new season joins
+// for the WHOLE area in one month: the month in which the last place's
+// season of that year is complete. (Per place, real data, Ukraine 2026:
+// the squares greenest in May have a February-July season and gained 2026
+// in August, those greenest in June in September, so the area's total
+// changed in two months, July to August included.)
+//   places  [{ lat, peakMonth }]; today, since as damageSeasons
+// Gives back one list per place (damageSeasons, the same order).
+export function areaDamageSeasons(places, today, since) {
+  const list = Array.isArray(places) ? places : [];
+  const latest = list.map((p) => latestSeasonBy(damageSeasonSpec(p.lat, p.peakMonth), today)).filter(Boolean).map(seasonYear);
+  const lastYear = latest.length ? Math.min(...latest) : null;
+  return list.map((p) => damageSeasons(p.lat, today, since, p.peakMonth, { lastYear }));
+}
+
 // The season that is running now, cut off at today; or, outside the
 // season, the one that just ended. Use it for "this season's images".
 // In the tropics (no peak month): the 12 months up to today, this month

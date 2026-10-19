@@ -14,8 +14,14 @@
 //
 // A job analyzes the latest complete month first, then goes back one month
 // at a time. Months that already have a run are skipped (unless rerun),
-// except runs made from sample data once Earth Engine is connected: those
-// are redone with the real data.
+// except runs made from sample data once Earth Engine is connected, and,
+// in a job someone started (not the monthly one: scheduler.js), runs made
+// with an older method version (src/lib/atlas/method.js METHOD_VERSION):
+// those are redone, so the months of a series can be compared again. The
+// monthly job adds the new month only and leaves older months as they are
+// (they then read "Not comparable: different method version" until someone
+// runs the area again), so a method change never sets off ~11 months of
+// Earth Engine work, and replaces the totals people saw, by itself.
 //
 // A month that fails (Earth Engine busy or timed out after its retries) is
 // skipped and the job goes on with the other months; at the end the job
@@ -31,6 +37,13 @@ import { planGrid } from "./geo.js";
 import { buildRun, latestCompleteMonth, linkNewDamage, monthLabel, monthsBack } from "./runs.js";
 import { getProvider, unavailableError } from "./providers/index.js";
 import { conflictForArea } from "./conflicts.js";
+import { METHOD_VERSION } from "../src/lib/atlas/method.js";
+
+// A saved run made with an older method (before versions were saved, or
+// another version): its numbers cannot be compared with a new month's.
+export function staleMethod(run) {
+  return Boolean(run) && (run.method?.version || null) !== METHOD_VERSION;
+}
 
 // Kept on globalThis so the dev server, which reloads files after edits,
 // still finds jobs that were started before.
@@ -72,12 +85,20 @@ export function stopsJob(error) {
 }
 
 // The error a job ends with when some months failed:
-//   "2 of 12 months could not be analyzed (July 2026, May 2026): <first error>
+//   "2 of 12 months could not be analyzed (July 2026, May 2026): <the error>.
 //    Run the analysis again to fill them in."
+// or, when the months failed for different reasons,
+//   "2 of 12 months could not be analyzed: July 2026 (<its error>); May 2026
+//    (<its error>). Run the analysis again to fill them in."
 export function missingMonthsError(failed, total) {
   const first = failed[0].error;
-  const reason = String(first?.message || first || "unknown error").replace(/[.\s]+$/, "");
-  const error = new Error(`${failed.length} of ${total} months could not be analyzed (${failed.map((f) => monthLabel(f.month)).join(", ")}): ${reason}. Run the analysis again to fill them in.`);
+  const reasonOf = (f) => String(f.error?.message || f.error || "unknown error").replace(/[.\s]+$/, "");
+  const reasons = failed.map(reasonOf);
+  // One reason for all: said once. Different reasons: each month with its own.
+  const detail = reasons.every((r) => r === reasons[0])
+    ? ` (${failed.map((f) => monthLabel(f.month)).join(", ")}): ${reasons[0]}`
+    : `: ${failed.map((f, i) => `${monthLabel(f.month)} (${reasons[i]})`).join("; ")}`;
+  const error = new Error(`${failed.length} of ${total} months could not be analyzed${detail}. Run the analysis again to fill them in.`);
   error.code = first?.code || "months_missing";
   error.months = failed.map((f) => f.month);
   return error;
@@ -147,9 +168,10 @@ async function runJob(job, area, count, rerun) {
   try {
     for (const month of months) {
       const old = existing.get(month);
-      // Keep an existing run unless asked to redo it, or it is sample data and
-      // the real source is now connected.
-      if (old && !rerun && !(old.provider === "sample" && provider.id !== "sample")) {
+      // Keep an existing run unless asked to redo it, it is sample data and
+      // the real source is now connected, or it was made with an older
+      // method and someone started this job.
+      if (old && !rerun && !(old.provider === "sample" && provider.id !== "sample") && !(staleMethod(old) && job.trigger !== "monthly")) {
         job.done += 1;
         job.runIds.push(old.id);
         continue;

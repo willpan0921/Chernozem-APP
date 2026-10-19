@@ -106,14 +106,18 @@
 // fields.
 //   curve      half-month NDVI of 2019-2021 for the "season vs normal" chart
 //   damage     radar change (COPERNICUS/S1_GRD VV, IW, one orbit direction
-//              (gee.js pickPass): the last complete
-//              growing season vs the same months of 2019-2021, compared with
-//              the field's own overall change, see radarChangeImage); excess
-//              fire days (FIRMS T21): fire days in the damage window (from
-//              the war start where a known war covers the field, else the
-//              last 2 years) minus what the 2019-2021 rate gives for a
-//              window that long, never below 0 (fireWindows), so yearly
-//              stubble burning is not damage; and the drop of the Chernozem
+//              (gee.js pickPass): each complete growing season of the
+//              damage window vs the same months of 2019-2021, compared with
+//              the field's own overall change that season; a pixel's change
+//              counts when it lasts over two seasons, see
+//              radarChangeImage); excess fire days (FIRMS T21)
+//              in the WORST war year of the damage window (from the war
+//              start where a known war covers the field, else the last 2
+//              years): per year the fire days minus a normal year's (the
+//              2019-2021 count / 3), never below 0, the largest
+//              (fireWindows, excessFiresOf; src/lib/atlas/method.js
+//              FIRE_YEARS), so yearly stubble burning is not damage and
+//              damage does not fade as the war goes on; and the drop of the Chernozem
 //              Health Index (same formula as the Atlas, the 2019-2021
 //              seasons vs the last one)
 //   soil       mean chernozem probability: the Atlas soil map (gee.js
@@ -143,7 +147,8 @@ import { areaHa as geoAreaHa, bboxAreaKm2, bboxOf, FIELD_SEARCH_MAX_KM2, pointIn
 import { addMonths } from "../runs.js";
 import { conflictAt } from "../conflicts.js";
 import { damageWindow } from "../../src/config/conflicts.js";
-import { addDays, baselineWindows, detectionWindows as seasonDetectionWindows, lastCompleteSeason, sameWindowIn, seasonCurveStart } from "../../src/lib/season.js";
+import { addDays, baselineWindows, damageSeasons, detectionWindows as seasonDetectionWindows, lastCompleteSeason, sameWindowIn, seasonCurveStart } from "../../src/lib/season.js";
+import { fireYears, worstFireYear } from "../../src/lib/atlas/method.js";
 import {
   BASELINE,
   CLEAR_PIXEL_SCORE,
@@ -199,6 +204,7 @@ import {
   mapLimit,
   explainGeeError,
   isTooMuchWorkError,
+  isInternalError,
   retryTransient,
   TRANSIENT_RETRY_MS,
   isoDay,
@@ -545,10 +551,7 @@ async function runWithRetry(build, { what, context, timeoutMs = CHUNK_TIMEOUT_MS
   }
 }
 
-export function isInternalError(error) {
-  const text = [error?.message, error?.cause?.message].filter(Boolean).join(" ");
-  return /an internal error has occurred/i.test(text);
-}
+export { isInternalError };
 
 // ---------- Finding fields ----------
 
@@ -1079,7 +1082,7 @@ async function analyzeFields(deps, input = {}) {
   // border could have fields in two countries).
   const peakMonth = await peakMonthAt(ee, region, { context });
   const windows = analysisWindows(today, center.lat, peakMonth);
-  const fireById = new Map(fields.map((field) => [field.id, fireWindows(conflictAt(bboxCenter(field.bbox).lat, bboxCenter(field.bbox).lon), today)]));
+  const fireById = new Map(fields.map((field) => [field.id, fireWindows(conflictAt(bboxCenter(field.bbox).lat, bboxCenter(field.bbox).lon), today, { lat: center.lat, peakMonth })]));
   const fireSets = new Map([...fireById.values()].map((fire) => [fire.key, fire]));
 
   // 1. Which images exist for the damage measures, how many pictures this
@@ -1095,7 +1098,8 @@ async function analyzeFields(deps, input = {}) {
     ...Object.fromEntries(
       ORBIT_PASSES.flatMap((pass) => [
         ...windows.radarBaselines.map((window, i) => [`radarBaseline${i}_${pass}`, sentinel1(ee, region, window, pass).size()]),
-        [`radarSeason_${pass}`, sentinel1(ee, region, windows.radarSeason, pass).size()],
+        // Each complete war season of each damage window (method.js FIRE_YEARS).
+        ...[...fireSets.values()].flatMap((fire) => fire.radarSeasons.map((season, j) => [`radarSeason_${fire.key}_${j}_${pass}`, sentinel1(ee, region, season, pass).size()])),
       ]),
     ),
     ...Object.fromEntries(
@@ -1113,9 +1117,13 @@ async function analyzeFields(deps, input = {}) {
   if (asset.warning) warnings.push(asset.warning);
   const radarCount = (prefix) => Object.fromEntries(ORBIT_PASSES.map((pass) => [pass, Object.entries(have).filter(([key]) => key.startsWith(prefix) && key.endsWith(`_${pass}`)).reduce((sum, [, n]) => sum + n, 0)]));
   have.radarPass = pickPass(radarCount("radarSeason"), radarCount("radarBaseline"));
-  have.radarSeason = have.radarPass ? have[`radarSeason_${have.radarPass}`] : 0;
+  // The war seasons with radar passes from that direction, per damage
+  // window (by fire.key); a season without any has nothing to compare.
+  have.radarSeasonsBy = Object.fromEntries([...fireSets.values()].map((fire) => [fire.key, have.radarPass ? fire.radarSeasons.filter((_, j) => have[`radarSeason_${fire.key}_${j}_${have.radarPass}`] > 0) : []]));
+  have.radarSeasonBy = Object.fromEntries(Object.entries(have.radarSeasonsBy).map(([key, list]) => [key, list.length]));
   have.radarBaselines = have.radarPass ? windows.radarBaselines.filter((_, i) => have[`radarBaseline${i}_${have.radarPass}`] > 0) : [];
-  if (!(have.radarBaselines.length > 0 && have.radarSeason > 0)) warnings.push("No Sentinel-1 radar images for the growing seasons compared; radar damage was not measured.");
+  if ([...fireSets.values()].some((fire) => !fire.radarSeasons.length)) warnings.push("No growing season since the damage window began is complete yet; radar damage was not measured.");
+  else if (!(have.radarBaselines.length > 0 && Object.values(have.radarSeasonBy).some((n) => n > 0))) warnings.push("No Sentinel-1 radar images for the growing seasons compared; radar damage was not measured.");
   if (!(have.chiBaseline > 0 && have.chiSeason > 0)) warnings.push(`Too few clear Sentinel-2 images for ${BASELINE.label} or the last season; the soil health index was not measured.`);
 
   // 2. Every request, at most PARALLEL_REQUESTS at a time: the passes
@@ -1445,15 +1453,20 @@ function statsRequest({ ee, region, crs, windows, have, assetId }, part, plan) {
   const normal = normalOfYears(ee, yearly);
   const images = conditionImages(ee, { latest, normal, fc, crs, plan });
 
+  const fire = part[0].fire;
+  const radarSeasons = have.radarSeasonsBy?.[fire.key] || [];
   const radarChanged =
-    have.radarBaselines.length > 0 && have.radarSeason > 0 ? radarChangeImage(ee, { region, windows, baselines: have.radarBaselines, pass: have.radarPass, fc, crs, plan }) : emptyBand(ee, "radarChanged");
+    have.radarBaselines.length > 0 && radarSeasons.length
+      ? radarChangeImage(ee, { region, seasons: radarSeasons, baselines: have.radarBaselines, pass: have.radarPass, fc, crs, plan })
+      : emptyBand(ee, "radarChanged");
   const chiDrop =
     have.chiBaseline > 0 && have.chiSeason > 0
       ? chiHealthImage(ee, region, windows.chiBaseline).subtract(chiHealthImage(ee, region, windows.chiSeason)).rename("chiDrop")
       : emptyBand(ee, "chiDrop");
-  // Fire days per ~1 km pixel in the damage window, and in the normal years
-  // (fireWindows): the field's excess is worked out from the two.
-  const fire = part[0].fire;
+  // Fire days per ~1 km pixel in each war year of the damage window (fy0,
+  // fy1, ...: fireWindows years), in the whole window and in 2019-2021: the
+  // field's worst war year is worked out from them (method.js
+  // worstFireYear).
   const fireDays = (list, name) =>
     list
       .map((window) => firms(ee, region, window))
@@ -1461,8 +1474,10 @@ function statsRequest({ ee, region, crs, windows, have, assetId }, part, plan) {
       .count()
       .unmask(0)
       .rename(name);
-  const firesNow = have[`fires_${fire.key}`] > 0 ? fireDays([fire.window], "fires") : ee.Image.constant(0).rename("fires");
+  const anyFires = have[`fires_${fire.key}`] > 0;
+  const firesNow = anyFires ? fireDays([fire.window], "fires") : ee.Image.constant(0).rename("fires");
   const firesBase = have[`firesBase_${fire.key}`] > 0 ? fireDays(fire.baselines, "firesBase") : ee.Image.constant(0).rename("firesBase");
+  const yearBands = fireYearImages(ee, { region, fire, anyFires });
 
   const meanBands = [
     ...yearly.flatMap((image, i) => FIELD_BANDS.map((band) => image.select(band).rename(`n${BASELINE_YEARS[i]}_${band}`))),
@@ -1528,29 +1543,58 @@ function statsRequest({ ee, region, crs, windows, have, assetId }, part, plan) {
     // At the field's own pixel size, not FIRMS's 1 km: a narrow strip field
     // (real data, Daqing, Heilongjiang: 1.7 ha, about 20 m wide) holds no
     // 100 m pixel centre and came back with no fire count at all.
-    fires: asList(reduce(ee.Image.cat([firesNow, firesBase]), ee.Reducer.max())),
+    fires: asList(reduce(ee.Image.cat([firesNow, firesBase, ...yearBands]), ee.Reducer.max())),
     curve: asList(reduce(ee.Image.cat(curveBands), ee.Reducer.mean(), Math.max(20, plan.scale))),
     patches: asList(patchesMeasured, MAX_PATCHES * part.length * 3),
   });
 }
 
-// Radar change that marks cratering or compaction: the last growing season's
-// VV median against the per-pixel median of the same months of 2019-2021,
-// MINUS the field's own median change. Crop rotation and soil moisture shift
-// a whole field by 3-6 dB from one summer to the next (real data, demo farm:
-// 61-97% of each field "changed" by 3 dB between 2021 and 2019-2020, before
-// the war); craters,
-// trenches and burnt patches change parts of a field. A pixel counts when
-// its change differs from the field's by RADAR_CHANGE_DB or more.
+// Sentinel-1 VV over several windows, one collection.
+function mergedS1(ee, region, windows, pass) {
+  return windows.map((window) => sentinel1(ee, region, window, pass)).reduce((all, next) => all.merge(next));
+}
+
+// The fire days of each war year of a damage window (fire.years), per
+// pixel, as bands fy0, fy1, ... (the same years as the Atlas: method.js
+// fireYears).
+function fireYearImages(ee, { region, fire, anyFires }) {
+  const years = fire.years || [];
+  if (!anyFires) return years.map((_, i) => ee.Image.constant(0).rename(`fy${i}`));
+  return years.map((year, i) => firms(ee, region, year).count().unmask(0).rename(`fy${i}`));
+}
+
+// Radar change that marks cratering or compaction, per war season: the
+// season's median VV against the median of the same months of 2019-2021
+// (all their passes in one collection, as in the Atlas: gee.js), MINUS the
+// field's own median change that season. Crop rotation and soil moisture
+// shift a whole field by 3-6 dB from one summer to the next (real data,
+// demo farm: 61-97% of each field "changed" by 3 dB between 2021 and
+// 2019-2020, before the war); craters, trenches and burnt patches change
+// parts of a field. A pixel counts (radarChanged, 0/1) when its change is
+// RADAR_CHANGE_DB or more in at least two war seasons (with one season
+// measured, that one): the Atlas's lasting change (src/lib/atlas/method.js
+// radarPersistence), so one season's rotation is not damage and a later
+// ordinary season never hides a cratered one.
 // Only one orbit direction (`pass`, gee.js pickPass) is used, in both.
-function radarChangeImage(ee, { region, windows, baselines, pass = null, fc, crs, plan }) {
-  const before = ee.ImageCollection(baselines.map((window) => sentinel1(ee, region, window, pass).median().rename("VV"))).median();
-  const change = sentinel1(ee, region, windows.radarSeason, pass).median().subtract(before).rename("change");
-  const fieldShift = change
-    .reduceRegions({ collection: fc, reducer: ee.Reducer.median().setOutputs(["shift"]), scale: plan.scale, crs, tileScale: plan.tileScale })
-    .filter(ee.Filter.notNull(["shift"]))
-    .reduceToImage({ properties: ["shift"], reducer: ee.Reducer.first() });
-  return change.subtract(fieldShift).abs().gte(RADAR_CHANGE_DB).rename("radarChanged");
+function radarChangeImage(ee, { region, seasons, baselines, pass = null, fc, crs, plan }) {
+  const before = mergedS1(ee, region, baselines, pass).median();
+  const NONE = -1;
+  const changes = seasons.map((season) => {
+    const change = sentinel1(ee, region, season, pass).median().subtract(before).rename("change");
+    const fieldShift = change
+      .reduceRegions({ collection: fc, reducer: ee.Reducer.median().setOutputs(["shift"]), scale: plan.scale, crs, tileScale: plan.tileScale })
+      .filter(ee.Filter.notNull(["shift"]))
+      .reduceToImage({ properties: ["shift"], reducer: ee.Reducer.first() });
+    return change.subtract(fieldShift).abs().unmask(NONE);
+  });
+  let peak = changes[0];
+  for (const change of changes.slice(1)) peak = peak.max(change);
+  let second = ee.Image.constant(NONE);
+  for (let i = 0; i < changes.length; i += 1) {
+    for (let j = i + 1; j < changes.length; j += 1) second = second.max(changes[i].min(changes[j]));
+  }
+  const level = second.where(second.lt(0), peak);
+  return level.gte(RADAR_CHANGE_DB).updateMask(peak.gte(0)).rename("radarChanged");
 }
 
 // ---------- History ----------
@@ -1900,7 +1944,8 @@ export function detectionWindows(today, lat, peakMonth = null) {
 //   chiSeason      the last complete growing season; chiBaseline: the same
 //                  months of 2019, 2020 and 2021 (one composite, as in the Atlas)
 //   radarSeason    the last complete growing season; radarBaselines: the same
-//                  months of 2019, 2020 and 2021
+//                  months of 2019, 2020 and 2021 (damage radar compares every
+//                  complete war season, fireWindows radarSeasons, with them)
 // In the north that is April to September, in the south October to March
 // (across the new year), in the tropics the last 12 whole months.
 //   peakMonth  the farm's greenest month (1-12) in 2019-2021, when known
@@ -1928,39 +1973,59 @@ export function analysisWindows(today, lat, peakMonth = null) {
 
 // The fire windows for one field:
 //   conflict   the known war covering it (server/conflicts.js conflictAt), or null
+//   lat, peakMonth  the farm's latitude and greenest month (for radarSeasons)
 // Gives back
 //   window        the damage window (damageWindow: from the war start, else
 //                 the last 2 years), cut off at today
 //   days          its length in days
-//   baselines     the normal years to take the usual fire rate from: the same
-//                 calendar span of 2019, 2020 and 2021 for a window shorter
-//                 than a year; for a longer one (it covers every season)
-//                 the whole of 2019 to 2021
+//   years         its war years (src/lib/atlas/method.js fireYears: from
+//                 the war's start, at peace back from today): the fire
+//                 evidence is the worst year's excess
+//   baselines     the normal years to take the usual fire count from: the
+//                 whole of 2019 to 2021 (a normal year is a third of it)
 //   baselineDays  their total length in days
+//   radarSeasons  every complete growing season inside the window
+//                 (src/lib/season.js damageSeasons; empty without lat)
 //   conflict      { id, name, since } or null
 //   key           a short name for this set (for grouping fields)
-export function fireWindows(conflict, today) {
+export function fireWindows(conflict, today, { lat = null, peakMonth = null } = {}) {
   const damage = damageWindow(conflict || null, today);
   const window = clampWindow({ start: damage.start, end: damage.end }, today);
   const days = daysBetween(window.start, window.end);
-  const baselines =
-    days >= 365 ? [{ start: `${BASELINE.from}-01-01`, end: `${BASELINE.to + 1}-01-01` }] : baselineWindows(window);
+  const baselines = [{ start: `${BASELINE.from}-01-01`, end: `${BASELINE.to + 1}-01-01` }];
   const baselineDays = baselines.reduce((sum, w) => sum + daysBetween(w.start, w.end), 0);
+  const years = fireYears(window, { anchor: conflict ? "start" : "end" });
+  const radarSeasons = Number.isFinite(lat) ? damageSeasons(lat, today, window.start, peakMonth) : [];
   const summary = conflict ? { id: conflict.id, name: conflict.name, since: conflict.since } : null;
-  return { window, days, baselines, baselineDays, conflict: summary, key: (summary?.id || "none").replace(/[^\w]/g, "_") };
+  return { window, days, years, baselines, baselineDays, radarSeasons, conflict: summary, key: (summary?.id || "none").replace(/[^\w]/g, "_") };
 }
 
-// Fires above the usual rate: detections in the damage window minus the
-// normal years' rate times the window's length, never below 0.
-//   fires      fire days in the window
-//   baseFires  fire days in the baseline windows
+// Fires above the usual count in the field's WORST war year (method.js
+// worstFireYear): per year, the fire days minus a normal year's (the
+// 2019-2021 count / 3), never below 0; the largest.
+//   fires      fire days in the whole window (kept for the record)
+//   baseFires  fire days in 2019-2021
 //   fire       fireWindows() result
-// Gives back { fires, firesNormal, excessFires } (null where unknown).
-export function excessFiresOf(fires, baseFires, fire) {
-  if (!Number.isFinite(fires)) return { fires: null, firesNormal: null, excessFires: null };
-  const count = Math.max(0, Math.round(fires));
-  const firesNormal = Number.isFinite(baseFires) && fire?.baselineDays > 0 ? round((Math.max(0, baseFires) / fire.baselineDays) * fire.days, 1) : null;
-  return { fires: count, firesNormal, excessFires: round(Math.max(0, count - (firesNormal ?? 0)), 1) };
+//   bands      the measured fire bands ({ fy0, fy1, ... }, one per year)
+// Gives back { fires, firesNormal, excessFires, fireYear } for the worst
+// year (fires: that year's fire days, firesNormal: its usual count,
+// fireYear: { start, end }), all null where nothing was measured. Without
+// year bands (an older answer) the whole window counts as one year.
+export function excessFiresOf(fires, baseFires, fire, bands = null) {
+  const none = { fires: null, firesNormal: null, excessFires: null, fireYear: null };
+  if (!Number.isFinite(fires)) return none;
+  const years = fire?.years || [];
+  const perYear = years.map((_, i) => numberOr(bands?.[`fy${i}`], null));
+  const known = years.length && perYear.some(Number.isFinite);
+  // Without year bands: the whole window against the normal rate x its length.
+  const whole = () => {
+    const normal = Number.isFinite(baseFires) && fire?.baselineDays > 0 ? (Math.max(0, baseFires) / fire.baselineDays) * fire.days : 0;
+    return { excess: Math.max(0, fires - normal), fires, normal, year: fire?.window ? { start: fire.window.start, end: fire.window.end } : null };
+  };
+  const worst = known ? worstFireYear(perYear, baseFires, years) : whole();
+  if (!Number.isFinite(worst.excess)) return none;
+  const firesNormal = Number.isFinite(baseFires) ? round(worst.normal, 1) : null;
+  return { fires: Math.round(worst.fires ?? 0), firesNormal, excessFires: round(worst.excess, 1), fireYear: worst.year };
 }
 
 function daysBetween(start, end) {
@@ -2188,7 +2253,7 @@ export function buildAnalysis(plan, measured, zones, { today, updatedAt, vh = { 
   const redEdgeOnlyShare = hasLatest ? round(clamp01(numberOr(means.redEdgeOnly, NaN)), 3) : null;
 
   const radarChangedShare = round(numberOr(means.radarChanged, null), 3);
-  const { fires, firesNormal, excessFires } = excessFiresOf(numberOr(measured.fires?.fires, null), numberOr(measured.fires?.firesBase, null), plan.fire);
+  const { fires, firesNormal, excessFires, fireYear } = excessFiresOf(numberOr(measured.fires?.fires, null), numberOr(measured.fires?.firesBase, null), plan.fire, measured.fires);
   const chiDrop = round(numberOr(means.chiDrop, null), 3);
   const chernozem = round(numberOr(means.chernozem, null), 3);
 
@@ -2254,6 +2319,7 @@ export function buildAnalysis(plan, measured, zones, { today, updatedAt, vh = { 
       fires,
       firesNormal,
       excessFires,
+      fireYear,
       since: plan.fire?.window?.start ?? null,
       chiDrop,
       damagedHa: damagedArea({ radarChangedShare, excessFires, chiDrop, atWar: Boolean(plan.fire?.conflict) }, plan.areaHa),

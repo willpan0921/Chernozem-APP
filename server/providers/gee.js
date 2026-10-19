@@ -28,20 +28,25 @@
 //                  composite) to the last complete growing season. A
 //                  DIAGNOSTIC only: crop rotation moves it, so it is not
 //                  part of the damage score or of heavy damage
-//   radarDb        mean |change| of Sentinel-1 VV (COPERNICUS/S1_GRD, one
-//                  orbit direction) over the cell's cropland: the last
-//                  complete season's median against the same season's
-//                  median in 2019-2021 (the owner's paper)
+//   radarDb        mean radar change of Sentinel-1 VV (COPERNICUS/S1_GRD,
+//                  one orbit direction) over the cell's cropland: per pixel
+//                  |each complete war season's median - the same season's
+//                  median in 2019-2021|, and of those the change that
+//                  persists (reached in at least two seasons; with one
+//                  season, that one: seasonRadarImages, src/lib/atlas/
+//                  method.js radarPersistence and FIRE_YEARS)
 //   heavyShare     share of cropland pixels heavily damaged (method.js
-//                  HEAVY_DAMAGE): radar change of 3 dB or more, or of 2 dB
-//                  or more within 1 km of an unusual fire; away from any
-//                  known war 3 dB or more AND within 1 km of an unusual fire
-//   firesPer100Km2 FIRMS (band T21) detections in the damage window MINUS
-//                  the cell's normal rate (2019-2021) for that long, for the
-//                  whole cell, never below 0, per 100 km². The damage window
-//                  starts the day a known war began (src/config/conflicts.js),
-//                  else two years back, so farm burning that comes every year
-//                  does not count
+//                  HEAVY_DAMAGE): radar change of 3 dB or more in at least
+//                  two war seasons, or of 2 dB or more in any one within 1
+//                  km of an unusual fire; away from any known war 3 dB or
+//                  more in any season AND within 1 km of an unusual fire
+//   firesPer100Km2 FIRMS (band T21) detections above the normal (2019-2021
+//                  count / 3) in the WORST war year of the damage window
+//                  (years from the war's start, not overlapping), the
+//                  cell's mean, never below 0, per 100 km² (fireImages). The
+//                  damage window starts the day a known war began
+//                  (src/config/conflicts.js), else two years back, so farm
+//                  burning that comes every year does not count
 //   conflictKm     distance to recent battles (ACLED file, acled.js); without
 //                  a file, inside a known war, to unusual fire detections of
 //                  the last 12 months (FIGHTING_FIRES); outside any known war
@@ -61,10 +66,14 @@
 //     "nothing found" is sent as -1 and turned back into null here
 //   - cells are measured in chunks; big cells mean fewer cells per chunk
 //     (see chunkSizeFor), at most 2 chunks at once, each with a time limit
-//   - a chunk that runs out of memory or time is
-//     split in halves with the same pixels (SPLIT_MIN_CELLS), and only a
-//     small piece that still fails with coarser pixels (coarserScale),
-//     before giving up
+//   - a chunk that finds Earth Engine's servers full ("memory capacity
+//     exceeded") is tried again as it is after 5 s, then lighter after 20
+//     s; one that is too big ("User memory limit exceeded", "Computation
+//     timed out", our own time limit) goes lighter at once: split in
+//     halves with the same pixels (SPLIT_MIN_CELLS), and only a small piece
+//     that still fails with coarser pixels (coarserScale), before giving
+//     up; the image checks likewise, the lighter try one count per request
+//     (retryTooMuchWork, MEMORY_RETRY_MS)
 //   - population is never re-projected over a whole country (see
 //     populationPlan)
 //   - date windows stop at today, so nothing asks for future images
@@ -89,9 +98,9 @@
 import { config, missingGeeSettings } from "../env.js";
 import { cellAreaKm2, formatCoord } from "../geo.js";
 import { NO_WAR_WARNING, addMonths, cleanConflict } from "../runs.js";
-import { HEAVY_DAMAGE } from "../../src/lib/atlas/method.js";
+import { FIRE_YEARS, HEAVY_DAMAGE, fireYears } from "../../src/lib/atlas/method.js";
 import { blackSoilFloor } from "../../src/lib/atlas/scoring.js";
-import { baselineWindows, climateBand, lastCompleteSeason, peakMonthFrom, sameWindowIn, windowLabel } from "../../src/lib/season.js";
+import { areaDamageSeasons, baselineWindows, climateBand, damageSeasons, lastCompleteSeason, peakMonthFrom, sameWindowIn, windowLabel } from "../../src/lib/season.js";
 import { damageWindow } from "../../src/config/conflicts.js";
 import { conflictForArea } from "../conflicts.js";
 import { acledBattlesFor, expandBbox } from "./acled.js";
@@ -285,6 +294,9 @@ export function socToChernozem(rawValue) {
 // The pause before the one retry of a request whose connection dropped
 // (isTransientError).
 export const TRANSIENT_RETRY_MS = 8000;
+// The pauses before the two retries after Earth Engine ran short of memory
+// or time (retryTooMuchWork): 5 s, then 20 s.
+export const MEMORY_RETRY_MS = [5000, 20000];
 
 // Makes a provider. The app uses the ready-made one below; tests pass
 //   ee         a stand-in Earth Engine library (fake-ee.js)
@@ -292,6 +304,9 @@ export const TRANSIENT_RETRY_MS = 8000;
 //   now        the clock, () => Date (so "today" can be fixed in tests)
 //   retryDelayMs  the pause before retrying a dropped request (default
 //              TRANSIENT_RETRY_MS; tests use 0)
+//   memoryRetryMs the pauses before the two retries after Earth Engine ran
+//              short of memory or time (default MEMORY_RETRY_MS; with
+//              retryDelayMs set and this not, that pause)
 // Anything else in `options` is ignored (providers/index.js passes the
 // .env settings here).
 export function createGeeProvider(options = {}) {
@@ -302,7 +317,10 @@ export function createGeeProvider(options = {}) {
   // The real library signs in once for the whole server; a stand-in gets its own state.
   const state = injectedEe ? newState(injectedEe) : sharedState();
   const retryDelayMs = Number.isFinite(opts.retryDelayMs) ? opts.retryDelayMs : TRANSIENT_RETRY_MS;
-  const deps = { getConfig, now, state, retryDelayMs, connect: (cfg = getConfig()) => connectWith(state, cfg) };
+  // The pauses before the retries after "out of memory" or "timed out"
+  // (retryTooMuchWork); a test that sets retryDelayMs gets that pause.
+  const memoryRetryMs = Array.isArray(opts.memoryRetryMs) ? opts.memoryRetryMs : Number.isFinite(opts.retryDelayMs) ? MEMORY_RETRY_MS.map(() => opts.retryDelayMs) : [...MEMORY_RETRY_MS];
+  const deps = { getConfig, now, state, retryDelayMs, memoryRetryMs, connect: (cfg = getConfig()) => connectWith(state, cfg) };
   return {
     id: "gee",
     label: "Earth Engine",
@@ -418,6 +436,7 @@ async function connectWith(state, cfg) {
       "Signing in to Earth Engine",
     );
     if (ee.data && typeof ee.data.setDeadline === "function") ee.data.setDeadline(CHUNK_TIMEOUT_MS);
+    keepTokenFresh(ee);
     return ee;
   })().catch((error) => {
     const friendly = explainGeeError(error, context);
@@ -427,6 +446,28 @@ async function connectWith(state, cfg) {
     throw friendly;
   });
   return state.promise;
+}
+
+// The sign-in token lasts an hour. When it has run out, @google/earthengine
+// refreshes it and then sends the request again WITHOUT its body, and Earth
+// Engine answers "Unknown reference to value named ''" (real data, Kenya 12
+// months, 2026-10-19: three months failed this way). So the token is
+// refreshed BEFORE a request is sent, and the library never takes that path.
+export function keepTokenFresh(ee) {
+  const data = ee?.data;
+  if (!data || data.__freshToken || typeof data.getAuthToken !== "function" || typeof data.refreshAuthToken !== "function") return;
+  data.__freshToken = true;
+  for (const name of ["computeValue", "getDownloadId"]) {
+    const original = data[name];
+    if (typeof original !== "function") continue;
+    data[name] = function (...args) {
+      const callback = args[1];
+      // No callback: a synchronous request, which never takes the refresh path.
+      if (typeof callback !== "function" || data.getAuthToken() !== null) return original.apply(this, args);
+      data.refreshAuthToken(() => original.apply(this, args), (error) => callback(undefined, error instanceof Error ? error.message : String(error)));
+      return undefined;
+    };
+  }
 }
 
 export function contextOf(cfg) {
@@ -609,7 +650,7 @@ async function preflight(ee, { region, bufferRegion, windows, context }) {
   const latest = (collection) => ee.Algorithms.If(collection.size().gt(0), collection.aggregate_max("system:time_start"), ee.Number(NONE));
   const viirsSearch = viirs(ee, region, windows.viirsSearch);
   const s1 = (list, pass) => list.map((w) => sentinel1(ee, region, w, pass)).reduce((all, next) => all.merge(next)).size();
-  const counts = ee.Dictionary({
+  const counts = {
     ...Object.fromEntries(ORBIT_PASSES.flatMap((pass) => [
       [`s1Month_${pass}`, s1([windows.month], pass)],
       [`s1MonthBase_${pass}`, s1(windows.radarBefore, pass)],
@@ -623,10 +664,34 @@ async function preflight(ee, { region, bufferRegion, windows, context }) {
     // Within 300 km, like the distance; only needed inside a known war.
     firmsYear: windows.conflict ? firms(ee, bufferRegion, windows.lastYear).size() : ee.Number(0),
     worldPop: worldPop(ee, region).size(),
-  });
-  const raw = await retryTransient(() => evaluate(counts, { timeoutMs: 2 * 60 * 1000, what: "Checking which satellite images exist", context }), context.retryDelayMs);
+  };
+  const raw = await countImages(ee, counts, { what: "Checking which satellite images exist", context });
   return cleanCounts(raw);
 }
+
+// Evaluates a set of image counts ({ key: ee.Number }) in one request.
+// When Earth Engine runs short of memory or time (retryTooMuchWork), it
+// is asked again: the same request once more when its servers were full,
+// and lighter, one count per request (a few at once), when that fails too
+// or the request was too big. (Real data, Ukraine May 2026: "Earth Engine memory capacity
+// exceeded" in the season's image check failed the whole month.)
+async function countImages(ee, counts, { what, context }) {
+  const timeoutMs = 2 * 60 * 1000;
+  const once = (object, label = what) => retryTransient(() => evaluate(object, { timeoutMs, what: label, context }), context.retryDelayMs);
+  return retryTooMuchWork(() => once(ee.Dictionary(counts)), {
+    delays: context.memoryRetryMs,
+    onRetry: (error, tries, how) => context.retried?.(what, how),
+    // A few counts at a time, each its own request.
+    lighter: async () => {
+      const entries = Object.entries(counts);
+      const values = await mapLimit(entries, COUNT_PARALLEL, ([key, value]) => once(value, `${what} (${key})`));
+      return Object.fromEntries(entries.map(([key], i) => [key, values[i]]));
+    },
+  });
+}
+
+// How many single image counts the lighter image check sends at once.
+const COUNT_PARALLEL = 4;
 
 // Can the service account read the chernozem asset, and does it have b1?
 // Also reads the black-soil map's class list (once). Gives back
@@ -661,7 +726,19 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conf
   const ee = await deps.connect(cfg);
   // retryDelayMs: every request below is tried again after a dropped
   // connection or a busy Earth Engine (retryTransient).
-  const context = { ...contextOf(cfg), retryDelayMs: deps.retryDelayMs };
+  // Retries after "out of memory or time" are counted per step, and the run
+  // says so (they never change a reading: the same request, or lighter
+  // with the same pixels; coarser pixels have their own warning).
+  const retriedSteps = new Map();
+  const context = {
+    ...contextOf(cfg),
+    retryDelayMs: deps.retryDelayMs,
+    memoryRetryMs: deps.memoryRetryMs,
+    retried: (what, how = "same") => {
+      retriedSteps.set(what, (retriedSteps.get(what) || 0) + 1);
+      console.warn(`[chernozem] ${area.name || area.id} ${month}: Earth Engine asked again (${how}): ${what}`);
+    },
+  };
   const warnings = [];
   const bbox = area.bbox;
   // The Earth Engine region is built from the cells themselves (one box per
@@ -690,9 +767,15 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conf
     warnings.push(`The growing season could not be read from the satellite record (${error.message}); it was taken from the latitude.`);
     return new Map();
   });
-  const groups = seasonGroups(cells, peaks).map((group) => {
+  // The damage radar's war seasons are chosen for the whole area at once
+  // (season.js areaDamageSeasons): a new season joins in the month the
+  // last group's season of that year is complete, so the area's total
+  // changes once a year, not once per group.
+  const grouped = seasonGroups(cells, peaks);
+  const warSeasons = shared.damage ? areaDamageSeasons(grouped.map((group) => ({ lat: group.seasonLat, peakMonth: group.peakMonth })), shared.asOf, shared.damage.start) : grouped.map(() => []);
+  const groups = grouped.map((group, i) => {
     const groupBoxes = cellBoxes(group.cells, cellSizeDeg);
-    return { ...group, region: boxesGeometry(ee, groupBoxes), windows: monthWindows(month, today, { lat: group.seasonLat, conflict, peakMonth: group.peakMonth }) };
+    return { ...group, region: boxesGeometry(ee, groupBoxes), windows: monthWindows(month, today, { lat: group.seasonLat, conflict, peakMonth: group.peakMonth, radarSeasons: warSeasons[i] }) };
   });
   total = groups.reduce((sum, group) => sum + Math.ceil(group.cells.length / chunkSize), 0) + Math.ceil(cells.length / chunkSize) + 3;
 
@@ -794,7 +877,8 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conf
   for (const [i, group] of groups.entries()) {
     const g = groupHave[i];
     const label = windowLabel(group.windows.season);
-    seasonUsed.push({ label, from: group.windows.season.from, to: group.windows.season.to, cells: group.cells.length });
+    const radarLabel = seasonsLabel(group.windows.radarSeasons, group.windows.season);
+    seasonUsed.push({ ...seasonsSpan(group.windows.radarSeasons, group.windows.season), label: radarLabel, seasons: group.windows.radarSeasons.length, cells: group.cells.length });
     let chiDrop;
     if (g.s2Current > 0 && g.s2Baseline > 0) {
       chiDrop = chiHealthImage(ee, group.region, group.windows.baselines).subtract(chiHealthImage(ee, group.region, group.windows.season)).rename("chiDrop");
@@ -802,33 +886,41 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conf
       chiDrop = emptyBand(ee, "chiDrop");
       warnings.push(`No usable Sentinel-2 images for ${g.s2Current > 0 ? `the same season of ${GEE_BASELINE.from}-${GEE_BASELINE.to}` : label}; the soil health index could not be measured there.`);
     }
-    const seasonPass = pickPass(g.s1Season, g.s1SeasonBase);
+    // The damage radar: each complete war season on its own against the
+    // same season of 2019-2021, and per pixel the change that persists over
+    // them (seasonRadarImages; method.js FIRE_YEARS), so it changes only
+    // when a new season is complete and only ever grows.
+    const radarSeasons = group.windows.radarSeasons;
+    const seasonPass = radarSeasons.length ? pickPass(g.s1Season, g.s1SeasonBase) : null;
+    // Only the seasons with passes from that direction (a season without
+    // any has nothing to compare).
+    const measuredSeasons = seasonPass ? radarSeasons.filter((_, j) => (g.s1SeasonEach?.[j]?.[seasonPass] ?? 1) > 0) : [];
     let radarDb;
     let heavy;
-    if (seasonPass) {
-      const now = sentinel1(ee, group.region, group.windows.season, seasonPass).median();
-      const before = mergedSentinel1(ee, group.region, group.windows.baselines, seasonPass).median();
-      // Open water in either season (a flooded field, a lake that rose) is
-      // left out: water is radar-dark, so it reads as a huge change that is
-      // not damage to the soil (real data: Lake Nakuru's shore, Kenya, 16 dB).
-      const land = now.gt(WATER_VV_DB).and(before.gt(WATER_VV_DB));
-      const change = now.subtract(before).abs().updateMask(land);
-      radarDb = change.updateMask(cropland).rename("radarDb");
-      // The paper's rule (method.js HEAVY_DAMAGE): strong radar change, or
-      // clear radar change next to an unusual fire. No health index.
+    if (seasonPass && measuredSeasons.length) {
+      const before = mergedSentinel1(ee, group.region, group.windows.radarSeasonBaselines, seasonPass).median();
+      const radar = seasonRadarImages(ee, { region: group.region, seasons: measuredSeasons, before, pass: seasonPass });
+      radarDb = radar.level.updateMask(cropland).rename("radarDb");
+      // The paper's rule (method.js HEAVY_DAMAGE, heavyDamagePixel) on the
+      // LASTING change (in at least two war seasons): strong change, or
+      // clear change next to an unusual fire. No health index.
       // Where no known war covers the area, each piece of evidence alone
       // has an everyday cause: strong radar change is land-use change (a
       // new crop, ploughing, a meadow turned into a field, greenhouses),
       // and a 2 dB change next to a harvest fire is ordinary rotation. There
       // a pixel counts only with BOTH strong radar change and an unusual
-      // fire within 1 km, the same rule as a field's damage
-      // (src/lib/field/method.js damageDetected).
-      const strong = change.gte(HEAVY_DAMAGE.radarDb);
-      heavy = (conflict ? strong.or(change.gte(HEAVY_DAMAGE.radarWithFireDb).and(fire.near)) : strong.and(fire.near)).updateMask(cropland).rename("heavy");
+      // fire within 1 km, like a field's damage (src/lib/field/method.js
+      // damageDetected).
+      const strong = radar.level.gte(HEAVY_DAMAGE.radarDb);
+      heavy = (conflict ? strong.or(radar.level.gte(HEAVY_DAMAGE.radarWithFireDb).and(fire.near)) : strong.and(fire.near)).updateMask(cropland).rename("heavy");
     } else {
       radarDb = emptyBand(ee, "radarDb");
       heavy = emptyBand(ee, "heavy");
-      warnings.push(`No Sentinel-1 radar images from one orbit direction for both ${label} and the same season of ${BASELINE_FROM}-${BASELINE_YEAR}; heavy damage could not be measured there.`);
+      warnings.push(
+        radarSeasons.length
+          ? `No Sentinel-1 radar images from one orbit direction for both ${radarLabel} and the same season of ${BASELINE_FROM}-${BASELINE_YEAR}; heavy damage could not be measured there.`
+          : `No growing season since ${shared.damage ? shared.damage.start : month} is complete yet; heavy damage could not be measured there.`,
+      );
     }
     group.meanImage = ee.Image.cat([
       chernozem.updateMask(cropland).rename("chernozemCrop"),
@@ -837,7 +929,7 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conf
       chiDrop,
       radarDb,
       heavy,
-      fire.excess,
+      fire.years,
       // Left out at peace: a missing distance reads as 300 km (toReading).
       ...(conflictM ? [conflictM] : []),
       lights,
@@ -885,9 +977,11 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conf
     for (const feature of featuresOf(result?.sums)) if (feature?.properties) sums.set(feature.properties.id, feature.properties);
   };
   // One request for `part` with `plan`; a dropped connection is tried once
-  // more as it is (retryTransient).
+  // more as it is (retryTransient), and so is an Earth Engine "internal
+  // error" (isInternalError), after the same pause.
   const attempt = async (part, meanImage, plan) => {
     const label = `Measuring ${part.length} cells (${part[0].id} to ${part[part.length - 1].id}) of ${cells.length}`;
+    let internalRetried = false;
     for (;;) {
       try {
         return await retryTransient(() => evaluate(measure(part, meanImage, plan), { what: label, context }), deps.retryDelayMs);
@@ -897,33 +991,49 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conf
           deps.state.noMaxPixelsArg = true;
           continue;
         }
+        if (!internalRetried && isInternalError(error)) {
+          internalRetried = true;
+          context.retried?.("Measuring cells (internal error)");
+          if (deps.retryDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, deps.retryDelayMs));
+          continue;
+        }
         throw error;
       }
     }
+  };
+  // Lighter work for a piece that ran short: two halves with the same
+  // pixels, or, for a piece of SPLIT_MIN_CELLS cells or fewer, coarser
+  // pixels (a failure then stops the analysis).
+  const lighter = async (part, meanImage, plan) => {
+    if (part.length > SPLIT_MIN_CELLS) {
+      const half = Math.ceil(part.length / 2);
+      const split = { scale: plan.scale, tileScale: 16 };
+      await measureSplitting(part.slice(0, half), meanImage, split);
+      await measureSplitting(part.slice(half), meanImage, split);
+      return;
+    }
+    keep(await attempt(part, meanImage, { scale: coarserScale(plan.scale), tileScale: 16 }));
+    coarserCells += part.length;
   };
   const measureSplitting = async (part, meanImage, plan) => {
     try {
       keep(await attempt(part, meanImage, plan));
     } catch (error) {
       if (!isTooMuchWorkError(error)) throw error;
-      if (part.length > SPLIT_MIN_CELLS) {
-        const half = Math.ceil(part.length / 2);
-        const split = { scale: plan.scale, tileScale: 16 };
-        await measureSplitting(part.slice(0, half), meanImage, split);
-        await measureSplitting(part.slice(half), meanImage, split);
-        return;
-      }
-      // The smallest piece still fails: coarser pixels (a second failure
-      // stops the analysis).
-      keep(await attempt(part, meanImage, { scale: coarserScale(plan.scale), tileScale: 16 }));
-      coarserCells += part.length;
+      await lighter(part, meanImage, plan);
     }
   };
+  // A whole chunk that finds Earth Engine's servers full ("memory capacity
+  // exceeded") is tried again as it is after a pause, then lighter; one
+  // that is too big ("User memory limit exceeded", "Computation timed
+  // out", our own 5-minute limit) goes lighter at once (retryTooMuchWork).
+  const measureChunk = (part, meanImage, plan) =>
+    retryTooMuchWork(async () => keep(await attempt(part, meanImage, plan)), { delays: deps.memoryRetryMs, lighter: () => lighter(part, meanImage, plan), onRetry: (error, tries, how) => context.retried?.("Measuring cells", how) });
   const work = groups.flatMap((group) => chunk(group.cells, chunkSize).map((part) => ({ part, meanImage: group.meanImage })));
   chunkCount = work.length;
   let measured = 0;
   await mapLimit(work, MAX_PARALLEL_CHUNKS, async ({ part, meanImage }) => {
-    await measureSplitting(part, meanImage, { scale, tileScale });
+    await measureChunk(part, meanImage, { scale, tileScale });
     measured += part.length;
     step(`Measured ${measured} of ${cells.length} cells`);
   });
@@ -991,6 +1101,10 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conf
   // A month that is not over yet: no alert dated after the last day with images.
   const lastImageDay = shared.month.end > shared.month.start ? shiftDays(shared.month.end, -1) : shared.month.start;
   alerts = alerts.map((alert) => (alert.date > lastImageDay ? { ...alert, date: lastImageDay } : alert));
+  if (retriedSteps.size) {
+    const list = [...retriedSteps].map(([what, n]) => `${what.replace(/^Checking/, "checking")} (${n} ${n === 1 ? "retry" : "retries"})`).join("; ");
+    warnings.push(`Earth Engine ran short of memory or time and was asked again: ${list}. The readings are the same as without it.`);
+  }
   onProgress?.(1, "Done");
   // Damage is measured against the same season of 2019-2021 (see monthWindows).
   return { readings, alerts, warnings, baseline: GEE_BASELINE, conflict, imagery: imageryOf(seasonUsed, cells.length), accessSource };
@@ -1004,37 +1118,74 @@ export function imageryOf(seasons, cellCount) {
   const main = sorted[0];
   const share = (s) => `${Math.round((100 * s.cells) / Math.max(1, cellCount))}%`;
   const label = sorted.length === 1 ? main.label : sorted.map((s) => `${s.label} (${share(s)} of the area)`).join("; ");
-  return { from: main.from, to: main.to, label };
+  const out = { from: main.from, to: main.to, label };
+  if (Number.isFinite(main.seasons)) out.seasons = main.seasons;
+  return out;
 }
 
-// The fire images of a month (FIRMS, 1 km), shared by every season group:
-//   excess  detections in the damage window minus the normal years' rate
-//           for that long, smoothed over FIRE_SMOOTH_M (the paper's 5 km)
-//           and NOT clamped pixel by pixel, so the cell's mean is the
-//           excess of the cell and its surroundings (clamped at 0 in
-//           toReading): a pixel that burns now but not in 2019-2021 and one
-//           nearby that burned then but not now cancel out, like rotating
-//           stubble burning does, and one stray fire in a small cell does
-//           not max out the indicator
-//   near    1 within HEAVY_DAMAGE.fireNearM of an unusual fire: a pixel with
-//           a detection in the damage window where the fire density
-//           (smoothed over FIRE_SMOOTH_M) is above the normal years'
+// The months the damage radar covers: from the first war season's start
+// to the last one's end ({ from, to }, "YYYY-MM"); without war seasons,
+// the last complete season.
+export function seasonsSpan(seasons, fallback) {
+  if (!seasons?.length) return { from: fallback.from, to: fallback.to };
+  return { from: seasons[0].start.slice(0, 7), to: shiftDays(seasons[seasons.length - 1].end, -1).slice(0, 7) };
+}
+
+// "April to September 2025" for one season, "April to September of 2022
+// to 2025" for several (the damage radar's composite).
+export function seasonsLabel(seasons, fallback) {
+  if (!seasons?.length) return windowLabel(fallback);
+  const spans = seasons.map((s) => ({ from: s.start.slice(0, 7), to: shiftDays(s.end, -1).slice(0, 7) }));
+  if (spans.length === 1) return windowLabel(spans[0]);
+  const months = windowLabel(spans[0]).replace(/ \d{4}$/, "").replace(/ \d{4} to /, " to ");
+  return `${months} of ${spans[0].to.slice(0, 4)} to ${spans[spans.length - 1].to.slice(0, 4)}`;
+}
+
+// The fire images of a month (FIRMS, 1 km), shared by every season group,
+// for the WORST war year (src/lib/atlas/method.js FIRE_YEARS):
+//   years   one band per war year of the damage window (windows.fireYears),
+//           fx0, fx1, ...: the year's detections minus the pixel's normal
+//           (its 2019-2021 count / 3, a whole average year, also for the
+//           year not over yet), smoothed over FIRE_SMOOTH_M (the paper's 5
+//           km) and NOT floored per pixel. A cell's mean of a band is that
+//           year's excess for the cell, and its worst year (the largest,
+//           never below 0; toReading) x 100 is the firms indicator: a pixel
+//           that burns now but not in 2019-2021 and one nearby that burned
+//           then but not now cancel out, like rotating stubble burning
+//           does. (Real data, Ukraine September 2026: floored pixel by
+//           pixel before the cell's mean, Lviv oblast's fire indicator was
+//           0.58, against 0.001 over the whole window.)
+//   near    1 within HEAVY_DAMAGE.fireNearM of an unusual fire, per pixel
+//           (heavy damage): a pixel with a detection in some war year whose
+//           (smoothed) excess that year is above 0
+// At war the years are fixed from the war's start and the one not over yet
+// only gains fires, so neither falls from one month to the next.
 //   month   detections in the month minus the same month's mean in
 //           2019-2021 (not clamped; alerts use the cell's total)
 function fireImages(ee, { region, windows, have }) {
   const grid = (image) => image.setDefaultProjection("EPSG:4326", null, 1000);
   const count = (window) => grid(firms(ee, region, window).count().unmask(0));
   const zero = (name) => ee.Image.constant(0).rename(name);
-  let excess = zero("firesExcess");
+  let years = zero("fx0");
   let near = zero("fireNear");
-  if (windows.damage && have.firmsDamage > 0) {
-    const inWindow = count(windows.damage);
-    const normal = have.firmsNormal > 0 ? count(windows.fireNormal).multiply(windows.fireNormalShare) : ee.Image.constant(0);
+  const yearList = Array.isArray(windows.fireYears) ? windows.fireYears : [];
+  if (windows.damage && have.firmsDamage > 0 && yearList.length) {
     const smooth = (image) => image.focal_mean(FIRE_SMOOTH_M, "circle", "meters");
-    const smoothExcess = smooth(inWindow.subtract(normal));
-    excess = smoothExcess.rename("firesExcess");
-    const unusual = smoothExcess.gt(0);
-    near = inWindow.gt(0).and(unusual).focal_max(HEAVY_DAMAGE.fireNearM, "circle", "meters").unmask(0).rename("fireNear");
+    // An average normal year (smoothing is linear, so the smoothed normal
+    // is the smoothed count / 3).
+    const normal = have.firmsNormal > 0 ? smooth(count(windows.fireNormal)).multiply(1 / FIRE_YEARS.baselineYears) : ee.Image.constant(0);
+    const bands = [];
+    let unusualAny = null;
+    for (const [i, year] of yearList.entries()) {
+      const inYear = count(year);
+      const yearExcess = smooth(inYear).subtract(normal);
+      // A pixel that burned that year, in a neighbourhood above its normal.
+      const unusual = inYear.gt(0).and(yearExcess.gt(0));
+      bands.push(yearExcess.rename(`fx${i}`));
+      unusualAny = unusualAny ? unusualAny.or(unusual) : unusual;
+    }
+    years = ee.Image.cat(bands);
+    near = unusualAny.focal_max(HEAVY_DAMAGE.fireNearM, "circle", "meters").unmask(0).rename("fireNear");
   }
   let month = zero("firesMonth");
   if (have.firmsMonth > 0) {
@@ -1045,12 +1196,48 @@ function fireImages(ee, { region, windows, have }) {
         : ee.Image.constant(0);
     month = now.subtract(before).rename("firesMonth");
   }
-  return { excess, near, month };
+  return { years, near, month };
 }
 
 // Sentinel-1 over several windows, one collection.
 function mergedSentinel1(ee, region, windows, pass) {
   return windows.map((window) => sentinel1(ee, region, window, pass)).reduce((all, next) => all.merge(next));
+}
+
+// "Not measured" in seasonRadarImages (a change is never below 0).
+const NO_RADAR = -1;
+
+// The damage radar of one season group, per pixel (method.js
+// radarPersistence, heavyDamagePixel):
+//   seasons  the complete war seasons with radar passes, oldest first
+//   before   the median VV of the same season in 2019-2021
+// Each season's change = |its median VV - before| (open water in either,
+// a flooded field or a lake that rose, is left out: water is radar-dark,
+// so it reads as a huge change that is not damage to the soil; real data:
+// Lake Nakuru's shore, Kenya, 16 dB). Gives back
+//   level       the change reached in at least HEAVY_DAMAGE.persistSeasons
+//               seasons (the second largest, worked out as the largest of
+//               the smaller of each pair); with one season measured, that
+//               one. Heavy damage and the radar indicator use it
+//   persistent  the same, -1 with one season measured
+//   peak        the largest change of any season
+// all masked where no season was measured. With two seasons or more a
+// later season that looks ordinary never lowers them: they only grow.
+export function seasonRadarImages(ee, { region, seasons, before, pass }) {
+  const changes = seasons.map((season) => {
+    const now = sentinel1(ee, region, season, pass).median();
+    const land = now.gt(WATER_VV_DB).and(before.gt(WATER_VV_DB));
+    return now.subtract(before).abs().updateMask(land).unmask(NO_RADAR);
+  });
+  let peak = changes[0];
+  for (const change of changes.slice(1)) peak = peak.max(change);
+  let persistent = ee.Image.constant(NO_RADAR);
+  for (let i = 0; i < changes.length; i += 1) {
+    for (let j = i + 1; j < changes.length; j += 1) persistent = persistent.max(changes[i].min(changes[j]));
+  }
+  const measured = peak.gte(0);
+  const level = persistent.where(persistent.lt(0), peak);
+  return { persistent: persistent.updateMask(measured), peak: peak.updateMask(measured), level: level.updateMask(measured) };
 }
 
 // The orbit direction to compare radar with: the one with the most passes
@@ -1069,23 +1256,30 @@ export function pickPass(now = {}, before = {}) {
 }
 
 // The images of one season group: Sentinel-2 and Sentinel-1 (each orbit
-// direction) in the season and the same season of 2019-2021.
+// direction) in the season and the same season of 2019-2021, and Sentinel-1
+// in each of the damage radar's war seasons (s1SeasonEach, same order as
+// windows.radarSeasons; s1Season is their total per direction).
 async function seasonPreflight(ee, { region, windows, context }) {
   const s1 = (list, pass) => list.map((w) => sentinel1(ee, region, w, pass)).reduce((all, next) => all.merge(next)).size();
-  const counts = ee.Dictionary({
+  const seasons = windows.radarSeasons || [];
+  const counts = {
     s2Current: sentinel2(ee, region, windows.season).size(),
     s2Baseline: windows.baselines.map((w) => sentinel2(ee, region, w)).reduce((all, next) => all.merge(next)).size(),
     ...Object.fromEntries(ORBIT_PASSES.flatMap((pass) => [
-      [`s1Season_${pass}`, s1([windows.season], pass)],
-      [`s1SeasonBase_${pass}`, s1(windows.baselines, pass)],
+      // The damage radar's seasons (every complete war season), or the last
+      // season when there is none yet (nothing is compared then).
+      ...(seasons.length ? seasons.map((season, j) => [`s1Season${j}_${pass}`, s1([season], pass)]) : [[`s1Season0_${pass}`, s1([windows.season], pass)]]),
+      [`s1SeasonBase_${pass}`, s1(windows.radarSeasonBaselines.length ? windows.radarSeasonBaselines : windows.baselines, pass)],
     ])),
-  });
-  const raw = (await retryTransient(() => evaluate(counts, { timeoutMs: 2 * 60 * 1000, what: "Checking which satellite images exist for the season", context }), context.retryDelayMs)) || {};
+  };
+  const raw = (await countImages(ee, counts, { what: "Checking which satellite images exist for the season", context })) || {};
   const count = (key) => Math.max(0, numberOr(raw[key], 0));
+  const each = (seasons.length ? seasons : [windows.season]).map((_, j) => Object.fromEntries(ORBIT_PASSES.map((pass) => [pass, count(`s1Season${j}_${pass}`)])));
   return {
     s2Current: count("s2Current"),
     s2Baseline: count("s2Baseline"),
-    s1Season: Object.fromEntries(ORBIT_PASSES.map((pass) => [pass, count(`s1Season_${pass}`)])),
+    s1Season: Object.fromEntries(ORBIT_PASSES.map((pass) => [pass, each.reduce((sum, e) => sum + e[pass], 0)])),
+    s1SeasonEach: seasons.length ? each : [],
     s1SeasonBase: Object.fromEntries(ORBIT_PASSES.map((pass) => [pass, count(`s1SeasonBase_${pass}`)])),
   };
 }
@@ -1301,9 +1495,18 @@ export function monthBounds(month) {
 //   damage     where damage is counted: from the day the known war began
 //              (null for a month before it), else the two years up to the
 //              end of the month (src/config/conflicts.js damageWindow)
-//   fireNormal 2019-2021 (whole years), and fireNormalShare = the damage
-//              window's length / fireNormal's length: the normal number of
-//              fires in the damage window is fireNormal's count times it
+//   asOf       the day seasons must be complete by (the month's last day,
+//              or yesterday for a month not over yet)
+//   radarSeasons  every complete growing season inside the damage window
+//              (src/lib/season.js damageSeasons; for an area the analysis
+//              passes areaDamageSeasons' instead), oldest first; heavy
+//              damage compares each one's median VV with
+//              radarSeasonBaselines, the same season of 2019-2021 (empty:
+//              no war season is over yet)
+//   fireNormal 2019-2021 (whole years), and fireYears the damage window's
+//              war years (src/lib/atlas/method.js fireYears: from the war's
+//              start, at peace back from the end): fire evidence is the
+//              worst year's excess over fireNormal's count / 3
 //   lastYear   the 12 months up to the end of the month, and fireBaselines
 //              the same 12 months of each baseline year (distance to
 //              fighting, inside a known war only)
@@ -1314,7 +1517,8 @@ export function monthBounds(month) {
 // that is not over yet only asks for images that exist.
 //   lat        the place's latitude (no latitude: the north's season)
 //   peakMonth  the place's greenest month (1-12), when known
-export function monthWindows(month, today = isoDay(new Date()), { lat, conflict = null, peakMonth = null } = {}) {
+//   radarSeasons  the war seasons to use (areaDamageSeasons), when given
+export function monthWindows(month, today = isoDay(new Date()), { lat, conflict = null, peakMonth = null, radarSeasons: givenSeasons = null } = {}) {
   const stop = (window) => clampWindow(window, today);
   const own = stop(monthBounds(month));
   // The season must be over by the end of the month AND by today.
@@ -1326,6 +1530,9 @@ export function monthWindows(month, today = isoDay(new Date()), { lat, conflict 
   const war = cleanConflict(conflict);
   const counted = damageWindow(war, lastDay(month));
   const damage = counted.start < own.end ? stop({ start: counted.start, end: own.end }) : null;
+  // The damage radar: every complete growing season inside the damage
+  // window, against the same season of 2019-2021 (method.js FIRE_YEARS).
+  const radarSeasons = !damage ? [] : Array.isArray(givenSeasons) ? givenSeasons.map((w) => ({ start: w.start, end: w.end })) : damageSeasons(Number.isFinite(lat) ? lat : 50, asOf, damage.start, peakMonth);
   return {
     month: own,
     monthBaselines: BASELINE_YEARS.map((year) => sameWindowIn(own, year)),
@@ -1334,8 +1541,11 @@ export function monthWindows(month, today = isoDay(new Date()), { lat, conflict 
     baseline: baselines[baselines.length - 1],
     baselines,
     damage,
+    asOf,
+    radarSeasons,
+    radarSeasonBaselines: radarSeasons.length ? baselineWindows(radarSeasons[radarSeasons.length - 1], BASELINE_YEARS) : [],
     fireNormal: { ...FIRE_NORMAL },
-    fireNormalShare: damage ? daysBetween(damage.start, damage.end) / daysBetween(FIRE_NORMAL.start, FIRE_NORMAL.end) : 0,
+    fireYears: fireYears(damage, { anchor: war ? "start" : "end" }),
     conflict: war,
     lastYear: stop({ start: yearBefore(own.end), end: own.end }),
     fireBaselines: BASELINE_YEARS.map((year) => {
@@ -1567,10 +1777,13 @@ export function isTooMuchWorkError(error) {
 // after a pause. Real data, 2026-10-19: a Brazil box run failed after
 // 321 s on "Server returned HTTP code: -1 for POST .../value:compute"
 // while other runs were going; the same request passed on a retry.
-// Earth Engine busy (isBusyError) counts too.
+// Earth Engine busy (isBusyError) counts too. So does "Unknown reference
+// to value named ''": real data, Kenya 12 months, 2026-10-19, the request
+// that went out as the 1-hour sign-in token ran out was sent again by the
+// library without its body (see keepTokenFresh); the next one worked.
 export function isTransientError(error) {
   const texts = [error?.message, error?.cause?.message, typeof error === "string" ? error : ""].filter(Boolean).join(" ");
-  return /HTTP code: -1\b|HTTP code: (429|5\d\d)\b|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|socket hang up|network error|fetch failed/i.test(texts) || isBusyError(error);
+  return /HTTP code: -1\b|HTTP code: (429|5\d\d)\b|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|socket hang up|network error|fetch failed|unknown reference to value named ''/i.test(texts) || isBusyError(error);
 }
 
 // Was Earth Engine as a whole too busy for the request ("Earth Engine
@@ -1605,6 +1818,64 @@ export async function retryTransient(request, delayMs = TRANSIENT_RETRY_MS) {
       await new Promise((resolve) => setTimeout(resolve, busy ? pause * BUSY_RETRY_FACTOR * (tries + 1) : pause));
     }
   }
+}
+
+// Earth Engine ran short of memory or time (isTooMuchWorkError). Two
+// kinds, two answers:
+//   "full"     Earth Engine's own servers were full ("Earth Engine memory
+//              capacity exceeded"; real data, Ukraine May 2026, the season's
+//              image check): the same request may pass a little later
+//   "too big"  the request itself is too much ("User memory limit
+//              exceeded", "Computation timed out", our own time limit): the
+//              same request would fail again, after as long
+export function tooMuchWorkKind(error) {
+  if (!isTooMuchWorkError(error)) return null;
+  const texts = [error?.message, error?.cause?.message, typeof error === "string" ? error : ""].filter(Boolean).join(" ");
+  return /memory capacity exceeded/i.test(texts) ? "full" : "too big";
+}
+
+// Up to MEMORY_RETRY_MS.length more tries after Earth Engine ran short of
+// memory or time (tooMuchWorkKind):
+//   full     the same request after the first pause (5 s), then the
+//            `lighter` one after the second (20 s)
+//   too big  the `lighter` one at once (never the same request again)
+// A lighter request that finds the servers full is tried again after the
+// next pause; one that is too big too fails. Anything else fails at once.
+//   request  () => promise; lighter  () => promise (optional: without it
+//            "full" tries the same request again, "too big" fails)
+//   delays   the pauses (ms), default MEMORY_RETRY_MS
+//   onRetry  (error, tries, how) => void before each retry (how: "same" or
+//            "lighter"; optional)
+export async function retryTooMuchWork(request, { delays = MEMORY_RETRY_MS, lighter = null, onRetry = null } = {}) {
+  const pauses = Array.isArray(delays) ? delays : MEMORY_RETRY_MS;
+  let light = false;
+  for (let tries = 0; ; tries += 1) {
+    try {
+      return await (light ? lighter() : request());
+    } catch (error) {
+      const kind = tooMuchWorkKind(error);
+      if (!kind || tries >= pauses.length) throw error;
+      let pause = Math.max(0, Number(pauses[tries]) || 0);
+      if (kind === "full") {
+        if (tries > 0 && lighter) light = true;
+      } else {
+        if (!lighter || light) throw error;
+        light = true;
+        pause = 0;
+      }
+      onRetry?.(error, tries + 1, light ? "lighter" : "same");
+      if (pause) await new Promise((resolve) => setTimeout(resolve, pause));
+    }
+  }
+}
+
+// Did Earth Engine fail with "An internal error has occurred"? Nothing is
+// wrong with the request: the same request passed when sent again (real
+// data, Iowa, 2026-10-19, a field; Ukraine August 2026, a group of 97
+// cells, which failed the whole month).
+export function isInternalError(error) {
+  const text = [error?.message, error?.cause?.message].filter(Boolean).join(" ");
+  return /an internal error has occurred/i.test(text);
 }
 
 // Did Earth Engine refuse an argument it does not know (older API)?
@@ -1695,9 +1966,11 @@ function cleanName(value) {
 
 // One cell's Earth Engine results -> the raw reading the runs expect.
 //   means  { chernozemCrop, chernozemAll, cropland, chiDrop, radarDb, heavy,
-//            firesExcess, conflictM, lights, ... } (means over the cell;
-//            missing = no data; firesWar is the older name of firesExcess;
-//            firesExcess is the cell's own excess, clamped at 0 here)
+//            fx0, fx1, ..., conflictM, lights, ... } (means over the cell;
+//            missing = no data; fx<i> is the cell's fire excess in year i of
+//            the damage window, and the largest, never below 0, is the
+//            cell's worst war year; firesExcess / firesWar are older names
+//            of one whole-window excess)
 //   sums   { people } (people in the cell)
 export function toReading(cell, means = {}, sums = {}, { cellSizeDeg, names } = {}) {
   const m = means || {};
@@ -1712,10 +1985,10 @@ export function toReading(cell, means = {}, sums = {}, { cellSizeDeg, names } = 
     chernozem: round(clamp01(chernozem), 4),
     croplandShare: round(clamp01(numberOr(m.cropland, 0)), 4),
     // FIRMS pixels are ~1 km², so the mean count per pixel is detections per km².
-    firesPer100Km2: round(Math.max(0, numberOr(m.firesExcess, numberOr(m.firesWar, 0))) * 100, 2),
+    firesPer100Km2: round(worstYearExcess(m) * 100, 2),
     chiDrop: chiDrop === null ? null : round(chiDrop, 4),
-    // Mean radar change (dB) over the cell's cropland, last complete season
-    // against the same season of 2019-2021 (null: no radar there).
+    // Mean radar change (dB) over the cell's cropland, every complete war
+    // season against the same season of 2019-2021 (null: no radar there).
     radarDb: radarDb === null ? null : round(Math.max(0, radarDb), 2),
     conflictKm: round(Math.max(0, numberOr(m.conflictM, MAX_CONFLICT_M)) / 1000, 2),
     popPerKm2: round(areaKm2 > 0 ? population / areaKm2 : 0, 2),
@@ -1726,6 +1999,14 @@ export function toReading(cell, means = {}, sums = {}, { cellSizeDeg, names } = 
   if (names?.admin1) reading.admin1 = names.admin1;
   if (names?.admin2) reading.admin2 = names.admin2;
   return reading;
+}
+
+// The cell's fire excess in its worst war year (the largest fx<i> mean,
+// never below 0); older answers: firesExcess or firesWar.
+export function worstYearExcess(means = {}) {
+  const years = Object.entries(means || {}).filter(([key, value]) => /^fx\d+$/.test(key) && Number.isFinite(numberOr(value, NaN))).map(([, value]) => numberOr(value, 0));
+  if (years.length) return Math.max(0, ...years);
+  return Math.max(0, numberOr(means?.firesExcess, numberOr(means?.firesWar, 0)));
 }
 
 // "Kharkivs'ka" + "Chuhuivs'kyi" -> "Chuhuivs'kyi, Kharkivs'ka"; no names -> coordinates.

@@ -119,7 +119,9 @@ export function todayFor() {
   return toDay(new Date());
 }
 
-// "Imagery from April to September 2026, compared with 2019 to 2021".
+// "Imagery from April to September 2026, compared with 2019 to 2021"; for
+// a composite of several war seasons "Imagery from April to September of
+// 2022 to 2025, compared with ...".
 // Where parts of the area have different growing seasons (Earth Engine
 // says so in run.imagery.label): "Imagery from April to September 2025 (80%
 // of the area); May to October 2025 (20% of the area), compared with ...".
@@ -127,7 +129,9 @@ export function imageryText(run) {
   const { from, to, label } = run?.imagery || {};
   if (!from || !to) return "";
   const baseline = run.baseline?.label ? `, compared with ${run.baseline.label}` : "";
-  if (label && label.includes(";")) return `Imagery from ${label}${baseline}`;
+  // Several areas' seasons, or the damage radar's war seasons ("April to
+  // September of 2022 to 2025").
+  if (label && (label.includes(";") || run.imagery.seasons > 1)) return `Imagery from ${label}${baseline}`;
   const sameYear = from.slice(0, 4) === to.slice(0, 4);
   const start = sameYear ? monthName(`${from}-01`) : formatMonthYear(from);
   return `Imagery from ${start} to ${formatMonthYear(to)}${baseline}`;

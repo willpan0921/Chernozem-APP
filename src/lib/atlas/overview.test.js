@@ -140,6 +140,9 @@ test("run description lines", () => {
   assert.equal(imageryText(run), "Imagery from April to September 2026, compared with 2019 to 2021");
   const mixed = { ...run, imagery: { from: "2025-04", to: "2025-09", label: "April to September 2025 (80% of the area); May to October 2025 (20% of the area)" } };
   assert.equal(imageryText(mixed), "Imagery from April to September 2025 (80% of the area); May to October 2025 (20% of the area), compared with 2019 to 2021");
+  // The damage radar's composite of every complete war season.
+  const war = { ...run, imagery: { from: "2022-04", to: "2025-09", label: "April to September of 2022 to 2025", seasons: 4 } };
+  assert.equal(imageryText(war), "Imagery from April to September of 2022 to 2025, compared with 2019 to 2021");
   assert.equal(weightsText(settings), "Soil 30 · Damage 40 · Access 30");
 });
 

@@ -436,8 +436,11 @@ export function finishAnalysis({ field, raw, weather = null, today, provider, hi
   const damage = {
     detected,
     ...evidence,
+    // In the worst war year (fireYear: { start, end }; method.js
+    // worstFireYear): its fire days and their usual count.
     fires: num(r.damage?.fires),
     firesNormal: num(r.damage?.firesNormal),
+    fireYear: r.damage?.fireYear && typeof r.damage.fireYear.start === "string" && typeof r.damage.fireYear.end === "string" ? { start: r.damage.fireYear.start.slice(0, 10), end: r.damage.fireYear.end.slice(0, 10) } : null,
     since: typeof r.damage?.since === "string" ? r.damage.since.slice(0, 10) : null,
     damagedHa: damagedArea({ ...evidence, atWar: Boolean(conflict) }, areaHa),
   };

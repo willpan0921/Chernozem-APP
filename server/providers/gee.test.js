@@ -59,7 +59,12 @@ import {
   isTooMuchWorkError,
   isTransientError,
   isBusyError,
+  keepTokenFresh,
   retryTransient,
+  retryTooMuchWork,
+  tooMuchWorkKind,
+  seasonRadarImages,
+  MEMORY_RETRY_MS,
   BUSY_RETRIES,
   isUnknownArgumentError,
   fromSentinel,
@@ -68,9 +73,10 @@ import {
   NO_WAR_WARNING,
 } from "./gee.js";
 import { createFakeEe } from "./fake-ee.js";
-import { buildRun } from "../runs.js";
+import { addMonths, buildRun } from "../runs.js";
 import { scorePlaces } from "../../src/lib/atlas/scoring.js";
-import { HEAVY_DAMAGE } from "../../src/lib/atlas/method.js";
+import { HEAVY_DAMAGE, METHOD_VERSION, heavyDamagePixel, radarPersistence, worstFireYear } from "../../src/lib/atlas/method.js";
+import { areaDamageSeasons } from "../../src/lib/season.js";
 import { parseCsvRecords, parseCsv, parseAcledDate, toEvent, battlePoints, acledWindow, acledBattlesFor, acledStatus } from "./acled.js";
 
 // ---------- Date windows ----------
@@ -195,10 +201,23 @@ test("damage window: from the war's start inside a known war, else the last two 
   assert.deepEqual(peace.damage, { start: "2024-01-31", end: "2026-02-01" });
   assert.equal(peace.conflict, null);
   assert.deepEqual(peace.radarBefore.map((w) => w.start), ["2019-01-01", "2020-01-01", "2021-01-01"]);
-  // Fires count above the place's normal 2019-2021 rate for that long.
+  // Fires count above the place's normal 2019-2021 count, war year by war
+  // year (method.js fireYears): at war from the day the war began, the year
+  // not over yet up to the end of the month; at peace two whole years back
+  // from the end of the month.
   assert.deepEqual(peace.fireNormal, { start: "2019-01-01", end: "2022-01-01" });
-  assert.ok(Math.abs(peace.fireNormalShare - 732 / 1096) < 1e-9, String(peace.fireNormalShare));
-  assert.ok(Math.abs(war.fireNormalShare - 1438 / 1096) < 1e-9, String(war.fireNormalShare));
+  assert.deepEqual(war.fireYears.map((y) => `${y.start}..${y.end}${y.part ? " part" : ""}`), [
+    "2022-02-24..2023-02-24",
+    "2023-02-24..2024-02-24",
+    "2024-02-24..2025-02-24",
+    "2025-02-24..2026-02-01 part",
+  ]);
+  assert.deepEqual(peace.fireYears.map((y) => `${y.start}..${y.end}`), ["2024-02-01..2025-02-01", "2025-02-01..2026-02-01"]);
+  // The damage radar: every complete war season (April to September 2022
+  // to 2025 in January 2026), against the same season of 2019-2021.
+  assert.deepEqual(war.radarSeasons.map((w) => w.start), ["2022-04-01", "2023-04-01", "2024-04-01", "2025-04-01"]);
+  assert.deepEqual(war.radarSeasonBaselines.map((w) => w.start), ["2019-04-01", "2020-04-01", "2021-04-01"]);
+  assert.deepEqual(peace.radarSeasons, [{ start: "2024-04-01", end: "2024-10-01" }, { start: "2025-04-01", end: "2025-10-01" }]);
   // Before the war began there is nothing to count.
   assert.equal(monthWindows("2021-06", "2026-10-18", { conflict: ukraine }).damage, null);
   assert.deepEqual(monthWindows("2022-02", "2026-10-18", { conflict: ukraine }).damage, { start: "2022-02-24", end: "2022-03-01" });
@@ -663,7 +682,8 @@ const TODAY = "2026-10-18";
 
 function fakeProvider(fakeOptions = {}, cfg = TEST_CFG) {
   const ee = createFakeEe(fakeOptions);
-  const provider = createGeeProvider({ ee, getConfig: () => cfg, now: () => new Date(`${TODAY}T12:00:00Z`) });
+  // No pauses before the retries after "out of memory" (MEMORY_RETRY_MS in the app).
+  const provider = createGeeProvider({ ee, getConfig: () => cfg, now: () => new Date(`${TODAY}T12:00:00Z`), memoryRetryMs: [0, 0] });
   return { ee, provider };
 }
 
@@ -711,9 +731,9 @@ test("analyze() on a 9-cell area gives every reading for every cell", async () =
   const result = await provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.01, onProgress: (share, message) => progress.push([share, message]) });
 
   assert.deepEqual(Object.keys(result).sort(), ["accessSource", "alerts", "baseline", "conflict", "imagery", "readings", "warnings"]);
-  // August 2026 compares the last complete season, April to September 2025
-  // (the fake's NDVI peaks in July: the north's season).
-  assert.deepEqual(result.imagery, { from: "2025-04", to: "2025-09", label: "April to September 2025" });
+  // August 2026 compares every complete war season, April to September
+  // 2022 to 2025 (the fake's NDVI peaks in July: the north's season).
+  assert.deepEqual(result.imagery, { from: "2022-04", to: "2025-09", label: "April to September of 2022 to 2025", seasons: 4 });
   assert.equal(result.accessSource, "fires");
   // Kharkiv oblast: inside the war in Ukraine, found from the area's box.
   assert.deepEqual(result.conflict, { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" });
@@ -877,6 +897,61 @@ test("a chunk whose connection drops is tried once more as it is", async () => {
   await assert.rejects(down.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.05 }), /HTTP code: -1/);
 });
 
+// Real data, Kenya 12 months, 2026-10-19: the request that went out as the
+// 1-hour sign-in token ran out was sent again by @google/earthengine with no
+// body, and Earth Engine answered with this. The next request worked.
+const EMPTY_REQUEST = "Unknown reference to value named ''. Currently known value names are: [].";
+
+test("a request Earth Engine got with no expression (token refreshed mid-send) is tried once more", async () => {
+  let failed = 0;
+  const ee = createFakeEe({
+    fail: (request) => {
+      const isChunk = request.find("reduceRegions").length > 0 && request.has("Dictionary");
+      if (isChunk && failed === 0) {
+        failed += 1;
+        return EMPTY_REQUEST;
+      }
+      return null;
+    },
+  });
+  const provider = createGeeProvider({ ee, getConfig: () => TEST_CFG, now: () => new Date(`${TODAY}T12:00:00Z`), retryDelayMs: 0 });
+  const { area, cells } = gridArea(3, 3, 0.05);
+  const result = await provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.05 });
+  assert.equal(failed, 1);
+  assert.equal(result.readings.length, 9);
+  assert.equal(isTransientError(explainGeeError(new Error(EMPTY_REQUEST))), true);
+  // A value that is really missing is still an error, not tried again.
+  assert.equal(isTransientError(new Error("Unknown reference to value named '7'. Currently known value names are: [0, 1].")), false);
+});
+
+test("an expired token is refreshed BEFORE a request is sent, so its body is never dropped", async () => {
+  const sent = [];
+  let token = null;
+  const ee = {
+    data: {
+      getAuthToken: () => token,
+      refreshAuthToken: (ok) => {
+        token = "Bearer fresh";
+        setTimeout(ok, 0);
+      },
+      // Like @google/earthengine: with no token it refreshes, then sends again with NO body.
+      computeValue: (obj, cb) => {
+        sent.push(token ? obj : "");
+        setTimeout(() => (token ? cb(2) : ((token = "Bearer fresh"), cb(undefined, EMPTY_REQUEST))), 0);
+      },
+    },
+  };
+  keepTokenFresh(ee);
+  keepTokenFresh(ee); // wrapping twice changes nothing
+  const value = await new Promise((resolve, reject) => ee.data.computeValue({ expr: 1 }, (v, e) => (e ? reject(new Error(e)) : resolve(v))));
+  assert.equal(value, 2);
+  assert.deepEqual(sent, [{ expr: 1 }]);
+  // With a token that is still good, the request goes straight out.
+  const again = await new Promise((resolve, reject) => ee.data.computeValue({ expr: 2 }, (v, e) => (e ? reject(new Error(e)) : resolve(v))));
+  assert.equal(again, 2);
+  assert.deepEqual(sent, [{ expr: 1 }, { expr: 2 }]);
+});
+
 test("a busy Earth Engine ('capacity exceeded') is tried again after longer pauses, not with coarser pixels", async () => {
   const busy = "Earth Engine capacity exceeded.";
   // What counts as busy: not "memory capacity exceeded" (too much work).
@@ -918,6 +993,215 @@ test("a busy Earth Engine ('capacity exceeded') is tried again after longer paus
   assert.equal(failedCheck, 1);
   assert.equal(result.readings.length, 9);
   assert.ok(!result.warnings.some((w) => /coarser pixels/.test(w)), "same pixels on the retry");
+});
+
+test("out of memory or time: servers full -> the same after 5 s, then lighter after 20 s; too big -> lighter at once", async () => {
+  assert.deepEqual(MEMORY_RETRY_MS, [5000, 20000]);
+  const full = "Earth Engine memory capacity exceeded.";
+  assert.equal(tooMuchWorkKind(new Error(full)), "full");
+  assert.equal(tooMuchWorkKind(new Error("User memory limit exceeded.")), "too big");
+  assert.equal(tooMuchWorkKind(new Error("Computation timed out.")), "too big");
+  assert.equal(tooMuchWorkKind(new GeeError("timeout", "Measuring 9 cells took longer than 300 seconds.")), "too big", "our own time limit");
+  assert.equal(tooMuchWorkKind(new Error("Permission denied")), null);
+  // Servers full: the same request again after the first pause, then the
+  // lighter one after the second; the pauses are waited, in order.
+  const tries = [];
+  let last = Date.now();
+  const log = (how) => {
+    tries.push([how, Date.now() - last]);
+    last = Date.now();
+  };
+  const result = await retryTooMuchWork(
+    async () => {
+      log("same");
+      throw new Error(full);
+    },
+    {
+      delays: [40, 120],
+      lighter: async () => {
+        log("lighter");
+        return "lighter";
+      },
+    },
+  );
+  assert.equal(result, "lighter");
+  assert.deepEqual(tries.map(([how]) => how), ["same", "same", "lighter"]);
+  assert.ok(tries[1][1] >= 35 && tries[2][1] >= 110, JSON.stringify(tries));
+  // Too big (Earth Engine's limit, or ours: a 5-minute request would take
+  // 5 minutes again): never the same request again, the lighter one at once.
+  for (const error of [new Error("Computation timed out."), new Error("User memory limit exceeded."), new GeeError("timeout", "took longer than 300 seconds")]) {
+    tries.length = 0;
+    last = Date.now();
+    const out = await retryTooMuchWork(
+      async () => {
+        log("same");
+        throw error;
+      },
+      {
+        delays: [400, 400],
+        lighter: async () => {
+          log("lighter");
+          return "lighter";
+        },
+      },
+    );
+    assert.equal(out, "lighter");
+    assert.deepEqual(tries.map(([how]) => how), ["same", "lighter"], error.message);
+    assert.ok(tries[1][1] < 200, `no pause before the lighter try: ${tries[1][1]} ms`);
+  }
+  // A lighter request that is too big too: the error, after two tries in all.
+  let n = 0;
+  await assert.rejects(
+    retryTooMuchWork(async () => { n += 1; throw new Error("Computation timed out."); }, { delays: [0, 0], lighter: async () => { n += 1; throw new Error("Computation timed out."); } }),
+    /timed out/,
+  );
+  assert.equal(n, 2);
+  // Not too much work: no retry.
+  let other = 0;
+  await assert.rejects(retryTooMuchWork(async () => { other += 1; throw new Error("Permission denied"); }, { delays: [0, 0] }), /Permission denied/);
+  assert.equal(other, 1);
+  // Without a lighter request: servers full, three tries of the same;
+  // too big, one.
+  let same = 0;
+  await assert.rejects(retryTooMuchWork(async () => { same += 1; throw new Error(full); }, { delays: [0, 0] }), /capacity/);
+  assert.equal(same, 3);
+  let big = 0;
+  await assert.rejects(retryTooMuchWork(async () => { big += 1; throw new Error("Computation timed out."); }, { delays: [0, 0] }), /timed out/);
+  assert.equal(big, 1);
+});
+
+test("a chunk that times out every time: no second 5-minute try, split at once, then a clear error", async () => {
+  const sizesSeen = [];
+  const { provider } = fakeProvider({
+    fail: (request) => {
+      const isChunk = request.find("reduceRegions").length > 0 && request.has("Dictionary");
+      if (!isChunk) return null;
+      sizesSeen.push(Math.max(...request.find("toList").map((n) => Number(n.args?.[0]) || 0)));
+      // "Deadline exceeded" reads as our own time limit (GeeError "timeout").
+      return "Deadline exceeded";
+    },
+  });
+  const { area, cells } = gridArea(3, 3, 0.05);
+  await assert.rejects(provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.05 }), (error) => error.code === "timeout");
+  // The whole chunk once, then its first half at once (never the same
+  // 9 cells again), down to the smallest piece, which fails once with
+  // coarser pixels and stops the month.
+  assert.equal(sizesSeen[0], 9);
+  assert.equal(sizesSeen.filter((n) => n === 9).length, 1, JSON.stringify(sizesSeen));
+  assert.equal(sizesSeen[1], 5);
+  assert.ok(sizesSeen.length <= 4, JSON.stringify(sizesSeen));
+});
+
+test("the season's image check that runs out of memory is tried again, then one count per request (real data: Ukraine, May 2026)", async () => {
+  const isSeasonCheck = (request) => !request.find("reduceRegions").length && request.has("Dictionary") && request.find("filterDate").some((n) => n.dataset === DATASETS.sentinel2);
+  const singles = {};
+  for (const failures of [0, 1, 2]) {
+    let failed = 0;
+    const single = [];
+    const { ee, provider } = fakeProvider({
+      fail: (request) => {
+        if (isSeasonCheck(request) && failed < failures) return (failed += 1), "Earth Engine memory capacity exceeded.";
+        if (!request.has("Dictionary") && request.find("size").length === 1) single.push(request);
+        return null;
+      },
+    });
+    const { area, cells } = gridArea(3, 3, 0.05);
+    const result = await provider.analyze({ area, cells, month: "2026-05", cellSizeDeg: 0.05 });
+    assert.equal(failed, failures);
+    assert.equal(result.readings.length, 9);
+    // The second retry is lighter: each count its own request.
+    singles[failures] = single.length;
+    assert.ok(ee.requests.length > 0);
+  }
+  assert.equal(singles[1], singles[0], "the first retry is the same request");
+  assert.ok(singles[2] >= singles[0] + 6, JSON.stringify(singles));
+  // Too big ("User memory limit exceeded"): the whole check is not sent
+  // again, the counts go one by one at once; still failing, the month fails
+  // with the clear error.
+  let whole = 0;
+  const { provider } = fakeProvider({
+    fail: (request) => {
+      if (!(!request.find("reduceRegions").length && request.find("filterDate").some((n) => n.dataset === DATASETS.sentinel2))) return null;
+      if (isSeasonCheck(request)) whole += 1;
+      return "User memory limit exceeded.";
+    },
+  });
+  const { area, cells } = gridArea(2, 2, 0.05);
+  await assert.rejects(provider.analyze({ area, cells, month: "2026-05", cellSizeDeg: 0.05 }), (error) => error.code === "too_big");
+  assert.ok(whole >= 1 && whole <= 2, `the season check and the area check, each once: ${whole}`);
+});
+
+test("a chunk that runs out of memory is first tried again as it is, then split", async () => {
+  const sizesSeen = [];
+  let failed = 0;
+  const { provider } = fakeProvider({
+    fail: (request) => {
+      const isChunk = request.find("reduceRegions").length > 0 && request.has("Dictionary");
+      if (!isChunk) return null;
+      sizesSeen.push(Math.max(...request.find("toList").map((n) => Number(n.args?.[0]) || 0)));
+      if (failed < 1) return (failed += 1), "Earth Engine memory capacity exceeded.";
+      return null;
+    },
+  });
+  const { area, cells } = gridArea(3, 3, 0.05);
+  const result = await provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.05 });
+  assert.equal(result.readings.length, 9);
+  // Once failed, once again with the same 9 cells: no split was needed.
+  assert.deepEqual(sizesSeen, [9, 9]);
+  assert.ok(result.warnings.some((w) => /ran short of memory or time and was asked again: Measuring cells \(1 retry\)/.test(w)), JSON.stringify(result.warnings));
+  // Full twice: the third try is lighter (two halves, same pixels).
+  const byId = (list) => Object.fromEntries(list.map((r) => [r.id, r]));
+  sizesSeen.length = 0;
+  let twice = 0;
+  const again = fakeProvider({
+    fail: (request) => {
+      const isChunk = request.find("reduceRegions").length > 0 && request.has("Dictionary");
+      if (!isChunk) return null;
+      sizesSeen.push(Math.max(...request.find("toList").map((n) => Number(n.args?.[0]) || 0)));
+      if (twice < 2) return (twice += 1), "Earth Engine memory capacity exceeded.";
+      return null;
+    },
+  });
+  const split = await again.provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.05 });
+  assert.deepEqual(sizesSeen, [9, 9, 5, 4]);
+  assert.ok(!split.warnings.some((w) => /coarser pixels/.test(w)));
+  assert.deepEqual(byId(split.readings), byId(result.readings));
+  // Too big ("Computation timed out"): split at once, never the same again.
+  sizesSeen.length = 0;
+  let once = 0;
+  const big = fakeProvider({
+    fail: (request) => {
+      const isChunk = request.find("reduceRegions").length > 0 && request.has("Dictionary");
+      if (!isChunk) return null;
+      sizesSeen.push(Math.max(...request.find("toList").map((n) => Number(n.args?.[0]) || 0)));
+      if (once < 1) return (once += 1), "Computation timed out.";
+      return null;
+    },
+  });
+  const halves = await big.provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.05 });
+  assert.deepEqual(sizesSeen, [9, 5, 4]);
+  assert.deepEqual(byId(halves.readings), byId(result.readings));
+});
+
+test("a chunk that fails with an Earth Engine internal error is tried once more as it is (real data: Ukraine, August 2026)", async () => {
+  const internal = "An internal error has occurred (request: a703f526-9f21-4176-8d2d-408e40eb6168).";
+  let failed = 0;
+  const ee = createFakeEe({
+    fail: (request) => {
+      const isChunk = request.find("reduceRegions").length > 0 && request.has("Dictionary");
+      if (isChunk && failed === 0) return (failed += 1), internal;
+      return null;
+    },
+  });
+  const provider = createGeeProvider({ ee, getConfig: () => TEST_CFG, now: () => new Date(`${TODAY}T12:00:00Z`), retryDelayMs: 0 });
+  const { area, cells } = gridArea(3, 3, 0.05);
+  const result = await provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.05 });
+  assert.equal(failed, 1);
+  assert.equal(result.readings.length, 9);
+  assert.ok(result.warnings.some((w) => /internal error/.test(w)), JSON.stringify(result.warnings));
+  // Twice in a row: the month fails.
+  const twice = createGeeProvider({ ee: createFakeEe({ fail: (request) => (request.find("reduceRegions").length > 0 && request.has("Dictionary") ? internal : null) }), getConfig: () => TEST_CFG, now: () => new Date(`${TODAY}T12:00:00Z`), retryDelayMs: 0 });
+  await assert.rejects(twice.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.05 }), /internal error/);
 });
 
 test("GAUL's \"Administrative unit not available\" is dropped from place names", async () => {
@@ -975,30 +1259,251 @@ test("the current month never asks for future images", async () => {
 
 const hasWindow = (ee, start, end) => filterDates(ee).some(([a, b]) => a === start && b === end);
 
+// The date windows of one dataset in the measuring request ("start..end").
+const measuredWindows = (ee, dataset) => {
+  const [request] = meanRequests(ee);
+  return new Set(request.find("filterDate").filter((n) => n.dataset === dataset).map((n) => n.args.join("..")));
+};
+
 test("two months of one season give the same heavy damage, and no made-up new damage", async () => {
   const { area, cells } = gridArea(3, 3, 0.01);
   const grid = cells.map((cell) => ({ ...cell, areaHa: 100 }));
   const runFor = async (month) => {
     const { ee, provider } = fakeProvider();
     const result = await provider.analyze({ area, cells, month, cellSizeDeg: 0.01 });
-    const seasonWindows = filterDates(ee).filter(([start, end]) => daysBetween(start, end) > 120).map((w) => w.join(".."));
-    return { run: buildRun({ area, month, provider: "gee", ...result, cellSizeDeg: 0.01, cells: grid }), seasonWindows: new Set(seasonWindows) };
+    return {
+      run: buildRun({ area, month, provider: "gee", ...result, cellSizeDeg: 0.01, cells: grid }),
+      radar: measuredWindows(ee, DATASETS.sentinel1),
+      fires: measuredWindows(ee, DATASETS.firms),
+    };
   };
-  const jun = await runFor("2026-06");
+  const jul = await runFor("2026-07");
+  const aug = await runFor("2026-08");
   const sep = await runFor("2026-09");
-  // Both compare April to September 2025 with the same months of 2019-2021.
-  assert.deepEqual(jun.run.imagery, sep.run.imagery);
-  for (const window of ["2025-04-01..2025-10-01", "2019-04-01..2019-10-01", "2021-04-01..2021-10-01"]) {
-    assert.ok(jun.seasonWindows.has(window) && sep.seasonWindows.has(window), window);
-  }
-  assert.ok(![...jun.seasonWindows].some((w) => w.startsWith("2026-04-01")), "no season-to-date window");
-  assert.equal(jun.run.totals.heavyDamageHa, sep.run.totals.heavyDamageHa);
-  assert.ok(jun.run.totals.heavyDamageHa > 0);
+  const oct = await runFor("2026-10");
+  // The damage radar is the same in July, August and September 2026: each
+  // complete war season, April to September 2022 to 2025 (the fake's NDVI
+  // peaks in July), against the same season of 2019-2021.
+  const war = ["2022-04-01..2022-10-01", "2023-04-01..2023-10-01", "2024-04-01..2024-10-01", "2025-04-01..2025-10-01"];
+  const normal = ["2019-04-01..2019-10-01", "2020-04-01..2020-10-01", "2021-04-01..2021-10-01"];
+  const seasonal = (set) => [...set].filter((w) => daysBetween(...w.split("..")) > 120 && daysBetween(...w.split("..")) < 200).sort();
+  for (const run of [jul, aug, sep]) assert.deepEqual(seasonal(run.radar), [...normal, ...war].sort());
+  assert.deepEqual(jul.run.imagery, { from: "2022-04", to: "2025-09", label: "April to September of 2022 to 2025", seasons: 4 });
+  assert.deepEqual(jul.run.imagery, sep.run.imagery);
+  // October: the 2026 season is complete and joins (the only way the radar
+  // evidence changes).
+  assert.deepEqual(seasonal(oct.radar), [...normal, ...war, "2026-04-01..2026-10-01"].sort());
+  assert.equal(oct.run.imagery.seasons, 5);
+  // Fire: the war years from 24 February 2022; the whole years are the
+  // same in July and August, the year not over yet runs a month longer.
+  const years = ["2022-02-24..2023-02-24", "2023-02-24..2024-02-24", "2024-02-24..2025-02-24", "2025-02-24..2026-02-24"];
+  for (const w of years) assert.ok(jul.fires.has(w) && aug.fires.has(w), w);
+  assert.ok(jul.fires.has("2026-02-24..2026-08-01") && aug.fires.has("2026-02-24..2026-09-01"));
+  assert.ok(aug.fires.has("2019-01-01..2022-01-01"), "the normal years' count");
+  assert.equal(jul.run.totals.heavyDamageHa, aug.run.totals.heavyDamageHa);
+  assert.ok(jul.run.totals.heavyDamageHa > 0);
   // Heavy damage is the paper's rule (radar, fire), never the health index.
   assert.ok(sep.run.cells.every((cell) => Number.isFinite(cell.radar)));
   assert.deepEqual(sep.run.method.components.damage, ["firms", "radar"]);
-  // Inside the war, strong radar change counts on its own (3 dB).
+  assert.equal(sep.run.method.version, METHOD_VERSION);
   assert.ok(sep.run.conflict?.id === "ukraine-2022");
+});
+
+// A one-pixel evaluator of the fake's image graph: the pixel's
+// neighbourhood looks like the pixel (so 5 km smoothing and "within 1 km"
+// leave it as it is), FIRMS counts come from the days it burned, Sentinel-1
+// medians from its VV in each window, every other step is the arithmetic
+// the graph holds (masked = null). So the Earth Engine arithmetic is
+// checked against method.js, not just which windows were asked for.
+//   firesOn  the days ("YYYY-MM-DD") the pixel burned
+//   vv       (window) => its median VV (dB) in that window, or null
+//   leaves   { dataset: value } for single images (WorldCover: 40, cropland)
+function pixelEvaluator(ee, { firesOn = [], vv = () => null, leaves = {} } = {}) {
+  const nodeOf = (x) => ee.nodeOf(x) || x;
+  const windowsOf = (node) => {
+    if (node.op === "merge") return [...windowsOf(node.parent), ...windowsOf(nodeOf(node.args[0]))];
+    for (let n = node; n; n = n.parent) if (n.op === "filterDate") return [{ start: n.args[0], end: n.args[1] }];
+    return [];
+  };
+  const datasetOf = (node) => {
+    for (let n = node; n; n = n.parent) if (n.dataset) return n.dataset;
+    return null;
+  };
+  const value = (x) => {
+    if (typeof x === "number" || x === null || x === undefined) return x;
+    const node = nodeOf(x);
+    const p = () => value(node.parent);
+    const a = (i = 0) => value(node.args[i]);
+    const both = (f) => {
+      const l = p();
+      const r = a();
+      return l === null || r === null ? null : f(l, r);
+    };
+    switch (node.op) {
+      case "Image.constant":
+        return node.args[0];
+      case "count":
+        assert.equal(datasetOf(node.parent), DATASETS.firms);
+        return windowsOf(node.parent).reduce((sum, w) => sum + firesOn.filter((d) => d >= w.start && d < w.end).length, 0);
+      case "median": {
+        const list = windowsOf(node.parent).map(vv).filter((v) => v !== null).sort((x1, x2) => x1 - x2);
+        if (!list.length) return null;
+        const mid = Math.floor(list.length / 2);
+        return list.length % 2 ? list[mid] : (list[mid - 1] + list[mid]) / 2;
+      }
+      case "first":
+        return leaves[datasetOf(node.parent)] ?? null;
+      case "select":
+      case "rename":
+      case "setDefaultProjection":
+      case "focal_mean":
+      case "focal_max":
+        return p();
+      case "abs": {
+        const v = p();
+        return v === null ? null : Math.abs(v);
+      }
+      case "unmask": {
+        const v = p();
+        return v === null ? (node.args[0] ?? 0) : v;
+      }
+      case "updateMask": {
+        const v = p();
+        const m = a();
+        return m === null || !m ? null : v;
+      }
+      case "where": {
+        const v = p();
+        return a(0) ? a(1) : v;
+      }
+      case "add":
+        return both((l, r) => l + r);
+      case "subtract":
+        return both((l, r) => l - r);
+      case "multiply":
+        return both((l, r) => l * r);
+      case "max":
+        return both((l, r) => Math.max(l, r));
+      case "min":
+        return both((l, r) => Math.min(l, r));
+      case "gt":
+        return both((l, r) => (l > r ? 1 : 0));
+      case "gte":
+        return both((l, r) => (l >= r ? 1 : 0));
+      case "lt":
+        return both((l, r) => (l < r ? 1 : 0));
+      case "eq":
+        return both((l, r) => (l === r ? 1 : 0));
+      case "and":
+        return both((l, r) => (l && r ? 1 : 0));
+      case "or":
+        return both((l, r) => (l || r ? 1 : 0));
+      default:
+        throw new Error(`pixelEvaluator: no rule for ${node.op}`);
+    }
+  };
+  return value;
+}
+
+test("the Earth Engine graph works out the same evidence as method.js: worst fire year, fire nearby, radar persistence, heavy damage", async () => {
+  const ukraine = { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" };
+  const { area, cells } = gridArea(3, 3, 0.01);
+  const days = (month, n, from = 1) => Array.from({ length: n }, (_, i) => `${month}-${String(from + i).padStart(2, "0")}`);
+  const normalYears = (perYear) => ["2019", "2020", "2021"].flatMap((y) => perYear(y));
+  // Pixel histories (VV change per war season by the year it ends; 0.3 dB
+  // is an ordinary year).
+  const pixels = {
+    // Burned and cratered in 2022, still marked in 2023, ordinary since
+    // (the reviewer's case): once heavy, it stays heavy as the ordinary
+    // seasons 2024-2026 join.
+    hitIn2022: { fires: [...days("2022-07", 10), ...normalYears((y) => [`${y}-08-10`])], change: { 2022: 4.5, 2023: 2.6 } },
+    // Cratered in 2022 and 2023, never a fire: heavy, and it stays heavy.
+    craters: { fires: [], change: { 2022: 4, 2023: 3.5 } },
+    // One season of 4 dB, no fire: rotation, never heavy.
+    rotation: { fires: [], change: { 2024: 4 } },
+    // One season of 4 dB next to the war's fires: still one season only.
+    burntOnce: { fires: days("2024-08", 12), change: { 2024: 4 } },
+    // Spring burning just as in 2019-2021 (10 fire days each March), war
+    // or not: never an unusual fire, whatever the month.
+    springBurning: { fires: ["2019", "2020", "2021", "2022", "2023", "2024", "2025", "2026"].flatMap((y) => days(`${y}-03`, 10)), change: { 2023: 2.5, 2025: 2.5 } },
+    // The front: burned hard in 2022-2023, abandoned since.
+    front: { fires: [...days("2022-08", 20), ...days("2023-06", 15), "2025-05-02"], change: { 2022: 2.4, 2023: 2.2, 2024: 1.0 } },
+  };
+  const before = -12;
+  const vvOf = (pixel) => (w) => (w.start < "2022-01-01" ? before : before + (pixel.change[Number(w.end.slice(0, 4))] ?? 0.3));
+  const last = {};
+  const months = [];
+  for (let m = "2022-10"; m <= "2026-10"; m = addMonths(m, 1)) months.push(m);
+  for (const month of months) {
+    const { ee, provider } = fakeProvider();
+    await provider.analyze({ area, cells, month, cellSizeDeg: 0.01, conflict: ukraine });
+    const [request] = meanRequests(ee);
+    const named = (name) => request.nodes.find((n) => n.op === "rename" && n.args[0] === name);
+    const w = monthWindows(month, TODAY, { lat: 49.8, conflict: ukraine, peakMonth: 7 });
+    for (const [name, pixel] of Object.entries(pixels)) {
+      const value = pixelEvaluator(ee, { firesOn: pixel.fires, vv: vvOf(pixel), leaves: { [DATASETS.worldCover]: 40 } });
+      // Fire: one band per war year = fires that year - a normal year.
+      const count = (start, end) => pixel.fires.filter((d) => d >= start && d < end).length;
+      const base = count("2019-01-01", "2022-01-01");
+      const perYear = w.fireYears.map((y) => count(y.start, y.end));
+      const fx = w.fireYears.map((_, i) => value(named(`fx${i}`)));
+      fx.forEach((v, i) => assert.ok(Math.abs(v - (perYear[i] - base / 3)) < 1e-9, `${name} ${month} fx${i}: ${v}`));
+      const worst = worstFireYear(perYear, base, w.fireYears).excess;
+      assert.ok(Math.abs(Math.max(0, ...fx) - worst) < 1e-9, `${name} ${month}`);
+      const fireNear = w.fireYears.some((y, i) => perYear[i] > 0 && perYear[i] - base / 3 > 0);
+      assert.equal(value(named("fireNear")), fireNear ? 1 : 0, `${name} ${month} fireNear`);
+      // Radar: each war season against 2019-2021; heavy = method.js's rule.
+      const changes = w.radarSeasons.map((season) => Math.abs(vvOf(pixel)(season) - before));
+      const heavy = value(named("heavy"));
+      assert.equal(heavy, heavyDamagePixel({ radarDb: changes, fireNear, atWar: true }) ? 1 : 0, `${name} ${month} heavy`);
+      assert.ok(Math.abs(value(named("radarDb")) - radarPersistence(changes).level) < 1e-9, `${name} ${month} radarDb`);
+      // Never falls from one month to the next (from two war seasons on).
+      if (last[name]) {
+        if (changes.length > 2) assert.ok(heavy >= last[name].heavy, `${name} healed in ${month}`);
+        assert.ok(worst >= last[name].worst - 1e-9, `${name} fire evidence fell in ${month}`);
+      }
+      last[name] = { heavy, worst };
+      if (name === "springBurning") assert.equal(worst, 0, `spring burning as usual is no excess (${month})`);
+    }
+  }
+  assert.deepEqual(Object.fromEntries(Object.entries(last).map(([name, v]) => [name, v.heavy])), { hitIn2022: 1, craters: 1, rotation: 0, burntOnce: 0, springBurning: 0, front: 1 });
+});
+
+test("fire evidence is the worst war year: one excess per year, the cell's largest kept", async () => {
+  const { ee, provider } = fakeProvider();
+  const { area, cells } = gridArea(2, 2, 0.01);
+  await provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.01 });
+  const w = monthWindows("2026-08", TODAY, { lat: 49.7, conflict: { id: "ukraine-2022", name: "U", since: "2022-02-24" }, peakMonth: 7 });
+  // One count per war year, and one for 2019-2021 (a normal year is a third of it).
+  const fires = measuredWindows(ee, DATASETS.firms);
+  for (const year of w.fireYears) assert.ok(fires.has(`${year.start}..${year.end}`), `${year.start}..${year.end}`);
+  const factors = ee.calls.filter((c) => c.name === "Image.multiply" && typeof c.args[0] === "number").map((c) => c.args[0]);
+  assert.ok(factors.includes(1 / 3));
+  // One band per year (fx0, fx1, ...), measured as the cell's mean.
+  const bands = new Set(ee.calls.filter((c) => c.name === "Image.rename").map((c) => c.args[0]));
+  assert.ok(bands.has("fx0") && bands.has(`fx${w.fireYears.length - 1}`) && !bands.has(`fx${w.fireYears.length}`));
+  // The reading is the worst year's excess, never below 0, per 100 km².
+  assert.equal(toReading({ id: "a", lat: 49 }, { fx0: 0.02, fx1: 0.31, fx2: -0.4 }, {}, { cellSizeDeg: 0.01 }).firesPer100Km2, 31);
+  assert.equal(toReading({ id: "a", lat: 49 }, { fx0: -0.02, fx1: -0.3 }, {}, { cellSizeDeg: 0.01 }).firesPer100Km2, 0);
+  assert.equal(toReading({ id: "a", lat: 49 }, { firesExcess: 0.05 }, {}, { cellSizeDeg: 0.01 }).firesPer100Km2, 5, "an older answer");
+});
+
+test("the war seasons join for the whole area at once: a group whose season ends earlier waits for the others", async () => {
+  // Two groups: one greenest in May (February to July), one in July (April
+  // to September). In August 2026 the May group's 2026 season is over, but
+  // it joins only in October, with the July group's.
+  const { area, cells } = gridArea(2, 2, 0.01);
+  const peaks = new Map(cells.map((cell, i) => [cell.id, i < 2 ? 5 : 7]));
+  const groups = seasonGroups(cells, peaks, { minShare: 0.1 });
+  assert.equal(groups.length, 2);
+  for (const month of ["2026-07", "2026-08", "2026-09", "2026-10"]) {
+    const asOf = monthWindows(month, TODAY).asOf;
+    const lists = areaDamageSeasons(groups.map((g) => ({ lat: g.seasonLat, peakMonth: g.peakMonth })), asOf, "2022-02-24");
+    const years = lists.map((list) => list.map((s) => s.end.slice(0, 4)).join(","));
+    // (February to July 2022 began before the war: not a war season.)
+    if (month < "2026-10") assert.deepEqual(years, ["2023,2024,2025", "2022,2023,2024,2025"], month);
+    else assert.deepEqual(years, ["2023,2024,2025,2026", "2022,2023,2024,2025,2026"], month);
+  }
 });
 
 test("heavy damage: strong radar change counts on its own only inside a known war; at peace it needs an unusual fire too", async () => {
@@ -1035,10 +1540,11 @@ test("a peaceful area (Iowa): no war, fully safe everywhere, fires above the nor
   assert.ok(hasWindow(ee, "2024-08-31", "2026-09-01"), JSON.stringify(filterDates(ee)));
   assert.ok(hasWindow(ee, "2019-01-01", "2022-01-01"));
   assert.ok(!filterDates(ee).some(([start]) => start === "2022-02-24"), "no war start outside a war");
-  // Excess fires are worked out for the whole cell (not clamped pixel by
-  // pixel, which turned rotating stubble burning into "excess"); the
-  // reading is never below 0.
+  // Excess fires per year are worked out for the whole cell (not clamped
+  // pixel by pixel, which turned rotating stubble burning and ordinary
+  // year-to-year swings into "excess"); the reading is never below 0.
   assert.ok(!ee.calls.some((c) => c.name === "Image.max" && c.args[0] === 0), "no per-pixel clamp");
+  assert.ok(ee.calls.some((c) => c.name === "Image.focal_mean" && c.args[0] === 5000), "smoothed over 5 km");
   assert.ok(result.readings.every((r) => r.firesPer100Km2 >= 0));
   // The last complete northern season, April to September 2025, against the
   // same months of 2019-2021.
@@ -1064,10 +1570,11 @@ test("a southern-hemisphere area (the Pampas): the season crosses the new year",
   assert.ok(hasWindow(ee, "2024-10-01", "2025-04-01"), JSON.stringify(filterDates(ee)));
   for (const year of [2019, 2020, 2021]) assert.ok(hasWindow(ee, `${year - 1}-10-01`, `${year}-04-01`), `baseline ${year}`);
   assert.ok(!filterDates(ee).some(([start, end]) => end > "2022-01-01" && end <= "2022-12-31"), "no normal year reaches into 2022");
-  assert.ok(!filterDates(ee).some(([start]) => /-04-01$/.test(start)), "no northern April start");
+  assert.ok(!filterDates(ee).some(([start, end]) => /-04-01$/.test(start) && daysBetween(start, end) > 120), "no northern April season");
   assert.ok(result.warnings.includes(NO_WAR_WARNING));
   const run = buildRun({ area, month: "2026-01", provider: "gee", ...result, cellSizeDeg: 0.01, cells });
-  assert.deepEqual(run.imagery, { from: "2024-10", to: "2025-03", label: "October 2024 to March 2025" });
+  // At peace the damage window is the last two years: one complete season in it.
+  assert.deepEqual(run.imagery, { from: "2024-10", to: "2025-03", label: "October 2024 to March 2025", seasons: 1 });
 });
 
 test("a tropical area (Kenya): the season is the last 12 months", async () => {
