@@ -123,12 +123,13 @@ function svgEl(name, attrs) {
   return el;
 }
 
-// One pattern tile: a base colour with diagonal lines, or with dots.
-function addPattern(defs, id, { base, baseOpacity = 1, mark, markOpacity = 1, kind, size, angle = 45 }) {
+// One pattern tile: a base colour with diagonal lines, or with dots. Lines
+// and dots are drawn big enough to read over the satellite picture.
+function addPattern(defs, id, { base, baseOpacity = 1, mark, markOpacity = 1, kind, size, angle = 45, line = 2.2, dot = 1.7 }) {
   const pattern = svgEl("pattern", { id, patternUnits: "userSpaceOnUse", width: size, height: size, patternTransform: `rotate(${angle})` });
   pattern.appendChild(svgEl("rect", { width: size, height: size, fill: base, "fill-opacity": baseOpacity }));
-  if (kind === "lines") pattern.appendChild(svgEl("rect", { width: 1.6, height: size, fill: mark, "fill-opacity": markOpacity }));
-  else pattern.appendChild(svgEl("circle", { cx: size / 2, cy: size / 2, r: 1.1, fill: mark, "fill-opacity": markOpacity }));
+  if (kind === "lines") pattern.appendChild(svgEl("rect", { width: line, height: size, fill: mark, "fill-opacity": markOpacity }));
+  else pattern.appendChild(svgEl("circle", { cx: size / 2, cy: size / 2, r: dot, fill: mark, "fill-opacity": markOpacity }));
   defs.appendChild(pattern);
 }
 
@@ -138,9 +139,11 @@ function makeFills(svg, t) {
   const prefix = `fm${(mapCount += 1)}`;
   const defs = svgEl("defs", {});
   const stubbleBase = { none: t["--fmap-harvested"], poor: t["--fmap-poor"], fair: t["--fmap-fair"], good: t["--fmap-good"], great: t["--fmap-great"] };
-  for (const [cls, base] of Object.entries(stubbleBase)) addPattern(defs, `${prefix}-stubble-${cls}`, { base, mark: t["--fmap-stubble"], markOpacity: 0.8, kind: "lines", size: 6, angle: -45 });
-  addPattern(defs, `${prefix}-fallow`, { base: t["--fmap-fallow"], mark: t["--fmap-fallow-dot"], markOpacity: 0.9, kind: "dots", size: 7, angle: 0 });
-  addPattern(defs, `${prefix}-recovery`, { base: t["--c-red"], baseOpacity: 0.45, mark: t["--c-red"], kind: "lines", size: 7 });
+  // Stubble lines thin enough that the season colour underneath stays the
+  // main thing you see.
+  for (const [cls, base] of Object.entries(stubbleBase)) addPattern(defs, `${prefix}-stubble-${cls}`, { base, mark: t["--fmap-stubble"], markOpacity: 0.55, kind: "lines", size: 8, angle: -45, line: 2 });
+  addPattern(defs, `${prefix}-fallow`, { base: t["--fmap-fallow"], mark: t["--fmap-fallow-dot"], markOpacity: 0.95, kind: "dots", size: 8, angle: 0, dot: 1.8 });
+  addPattern(defs, `${prefix}-recovery`, { base: t["--c-red"], baseOpacity: 0.55, mark: t["--c-red"], kind: "lines", size: 8, line: 3 });
   svg?.insertBefore(defs, svg.firstChild);
   const url = (name) => (svg ? `url(#${prefix}-${name})` : null);
   return {
@@ -835,19 +838,22 @@ export default function FieldMap({
 //   none       grey (a dashed edge while it is being analysed)
 function shapeStyle({ look, waiting = false, selected, t, fills }) {
   const f = fills || { stubble: () => t["--fmap-harvested"], fallow: t["--fmap-fallow"], recovery: t["--c-red"] };
-  const edge = { color: "#ffffff", weight: selected ? 5 : 2, opacity: selected ? 1 : 0.92, dashArray: null };
+  // Bold, solid white edges and strong fills, so every field and its colour
+  // read at a glance over the satellite picture. The selected field gets the
+  // thickest edge (and the halo drawn under it).
+  const edge = { color: "#ffffff", weight: selected ? 6 : 3.5, opacity: 1, dashArray: null };
   const kind = look?.kind || "none";
-  if (kind === "recovery") return { fillColor: f.recovery, fillOpacity: selected ? 0.75 : 0.62, color: selected ? "#ffffff" : t["--c-red"], weight: selected ? 5 : 3, opacity: 1, dashArray: null };
-  if (kind === "harvested") return { ...edge, fillColor: f.stubble(look.cls), fillOpacity: selected ? 0.62 : 0.52 };
-  if (kind === "fallow") return { ...edge, fillColor: f.fallow, fillOpacity: selected ? 0.62 : 0.52 };
-  if (kind === "driedDown") return { ...edge, fillColor: t["--fmap-drieddown"], fillOpacity: selected ? 0.58 : 0.48 };
-  if (kind === "notSown") return { ...edge, fillColor: t["--fmap-bare"], fillOpacity: selected ? 0.5 : 0.4, dashArray: selected ? null : "6 5" };
+  if (kind === "recovery") return { fillColor: f.recovery, fillOpacity: selected ? 0.88 : 0.8, color: selected ? "#ffffff" : t["--c-red"], weight: selected ? 6 : 4, opacity: 1, dashArray: null };
+  if (kind === "harvested") return { ...edge, fillColor: f.stubble(look.cls), fillOpacity: selected ? 0.85 : 0.76 };
+  if (kind === "fallow") return { ...edge, fillColor: f.fallow, fillOpacity: selected ? 0.85 : 0.76 };
+  if (kind === "driedDown") return { ...edge, fillColor: t["--fmap-drieddown"], fillOpacity: selected ? 0.85 : 0.76 };
+  if (kind === "notSown") return { ...edge, fillColor: t["--fmap-bare"], fillOpacity: selected ? 0.8 : 0.68, dashArray: selected ? null : "8 6" };
   // Ready to harvest (or due soon): its class colour, a gold outline.
-  const readyEdge = look?.ready ? { color: t["--fmap-ready"], weight: selected ? 6 : 4, opacity: 1, dashArray: null } : null;
+  const readyEdge = look?.ready ? { color: t["--fmap-ready"], weight: selected ? 7 : 5, opacity: 1, dashArray: null } : null;
   const fill = kind === "crop" && look.cls ? t[CLASS_TOKEN[look.cls]] : t["--fmap-nodata"];
   // Being analysed: no colour yet, a dashed white edge.
-  const dash = waiting && !selected ? "4 6" : null;
-  return { ...edge, fillColor: fill, fillOpacity: selected ? 0.5 : 0.42, dashArray: dash, ...readyEdge };
+  const dash = waiting && !selected ? "6 7" : null;
+  return { ...edge, fillColor: fill, fillOpacity: selected ? 0.82 : 0.72, dashArray: dash, ...readyEdge };
 }
 
 function metresPerPixel(map) {
