@@ -25,6 +25,8 @@ import {
   waterScore,
   READY_MAX_DAYS,
 } from "./method.js";
+import * as method from "./method.js";
+import { IOWA_CORN, KUPIANSK_FALLOW, SD_SUNFLOWER } from "./crops.test-data.js";
 
 // A season curve: green-up to a peak, then a dry-down.
 function season(values, start = "2026-04-01", everyDays = 10) {
@@ -673,4 +675,117 @@ test("fieldStatus: possibly grass with no crop known is unclear, not growing wel
   // A known crop is never "unclear".
   assert.equal(fieldStatus({ harvest: { stage: "growing" }, condition: 0.9, possiblyFallow: true }).id, "healthy");
   assert.equal(statusGroup("unclear"), "watch");
+});
+
+// ---------- How the season went (seasonResult) ----------
+
+
+// A normal curve (half-month points) made from a field's own passes: the
+// median of the passes in each half month.
+function curveFrom(points, shift = 0) {
+  const groups = new Map();
+  for (const p of points) {
+    const day = `${p.date.slice(5, 7)}-${Number(p.date.slice(8, 10)) < 16 ? "01" : "16"}`;
+    groups.set(day, [...(groups.get(day) || []), p.ndvi]);
+  }
+  return [...groups].map(([day, values]) => {
+    const sorted = values.sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)] + shift;
+    return { day, low: median - 0.05, high: median + 0.05, median };
+  });
+}
+
+// Real data, Earth Engine, near Kupiansk (Field 10, drawn by the owner, 2026-10-19): green-up in
+// April, peak 0.77 on 24 June, cut on 15 August; the 2019-2021 normal peaks
+// at 0.85 on 1 June.
+const KUPIANSK_FIELD_10 = {
+  passes: "03-08:0.201 03-10:0.190 03-11:0.224 03-13:0.220 03-16:0.189 03-21:0.226 03-23:0.229 04-02:0.243 04-05:0.352 04-12:0.408 04-25:0.516 05-05:0.495 05-07:0.495 05-09:0.549 05-10:0.587 05-19:0.661 05-20:0.691 05-22:0.668 06-08:0.748 06-09:0.761 06-11:0.744 06-21:0.760 06-24:0.774 07-01:0.736 07-04:0.681 07-06:0.683 07-08:0.677 07-28:0.566 08-03:0.543 08-05:0.497 08-07:0.480 08-08:0.471 08-10:0.471 08-13:0.476 08-15:0.248 08-17:0.216 08-18:0.204 08-23:0.220 08-25:0.213 08-30:0.242 09-02:0.224 09-07:0.279 09-09:0.294 09-12:0.280 09-17:0.340 09-19:0.344 09-26:0.416 09-29:0.481 10-02:0.519 10-07:0.523 10-09:0.549 10-12:0.598"
+    .split(" ")
+    .map((item) => ({ date: `2026-${item.slice(0, 5)}`, ndvi: Number(item.slice(6)) })),
+  normal: "01-01:0.262 02-01:0.248 03-01:0.162 03-16:0.197 04-01:0.222 04-16:0.267 05-01:0.324 05-16:0.805 06-01:0.851 06-16:0.762 07-01:0.401 07-16:0.252 08-01:0.22 08-16:0.225 09-01:0.221 09-16:0.204 10-01:0.204 10-16:0.217 11-01:0.252 11-16:0.241 12-01:0.267 12-16:0.085"
+    .split(" ")
+    .map((item) => ({ day: item.slice(0, 5), median: Number(item.slice(6)), low: null, high: null })),
+};
+
+test("normalMedianOn reads the normal between its half-month points, over New Year too", () => {
+  const curve = [
+    { day: "06-01", median: 0.8 },
+    { day: "06-16", median: 0.6 },
+    { day: "12-16", median: 0.2 },
+    { day: "01-01", median: 0.3 },
+  ];
+  assert.equal(method.normalMedianOn(curve, "2026-06-01"), 0.8);
+  assert.ok(Math.abs(method.normalMedianOn(curve, "2026-06-08") - 0.7067) < 0.001);
+  // 24 December: between 16 December (0.2) and 1 January (0.3).
+  assert.ok(Math.abs(method.normalMedianOn(curve, "2026-12-24") - 0.25) < 0.001);
+  assert.equal(method.normalMedianOn([], "2026-06-01"), null);
+});
+
+test("seasonResult: a real season as good as its normal is Very good", () => {
+  const stage = harvestStage(IOWA_CORN.passes, "2025-10-19");
+  assert.equal(stage.stage, "harvested");
+  const result = method.seasonResult({ points: IOWA_CORN.passes, normalCurve: curveFrom(IOWA_CORN.passes), harvestedOn: stage.harvestedOn });
+  assert.equal(result.class, "great");
+  assert.equal(result.label, "Very good");
+  // The peak is the mean of the three greenest passes; the greenest alone
+  // is 0.914.
+  assert.equal(result.peak, 0.909);
+  assert.equal(result.highest, 0.914);
+  // The stubble after the cut is left out.
+  assert.ok(result.to < stage.harvestedOn);
+  assert.ok(result.from > "2025-06-01" && result.from < "2025-06-20");
+});
+
+test("seasonResult: the same real season 0.15 below its normal is Fair", () => {
+  const stage = harvestStage(IOWA_CORN.passes, "2025-10-19");
+  const result = method.seasonResult({ points: IOWA_CORN.passes, normalCurve: curveFrom(IOWA_CORN.passes, 0.15), harvestedOn: stage.harvestedOn });
+  assert.equal(result.class, "fair");
+  assert.ok(Math.abs(result.score - 0.5) < 0.03);
+});
+
+test("seasonResult: real Kupiansk field, peak under the usual peak, is Good (not Very good)", () => {
+  const { passes, normal } = KUPIANSK_FIELD_10;
+  const result = method.seasonResult({ points: passes, normalCurve: normal, harvestedOn: "2026-08-15" });
+  // Greener than the normal median over the weeks (that median mixes the
+  // three years' crops), but its peak (0.774, 0.761, 0.760: 0.765) is
+  // below the usual 0.85.
+  assert.ok(result.mean > result.normalMean);
+  assert.equal(result.peak, 0.765);
+  assert.equal(result.highest, 0.774);
+  assert.equal(result.normalPeak, 0.851);
+  assert.equal(result.class, "good");
+  assert.ok(Math.abs(result.score - (1 + (0.765 - 0.851) / method.HEALTH_SPAN)) < 0.002);
+  assert.equal(result.to, "2026-08-13");
+});
+
+test("seasonResult: a season that peaked as usual but was green only briefly is graded down by its mean", () => {
+  // The normal: green from mid-May to the start of July. This season: late
+  // and short, three passes at the usual peak in mid-June, low otherwise.
+  const normal = ["05-01:0.4", "05-16:0.7", "06-01:0.8", "06-16:0.8", "07-01:0.7", "07-16:0.45"].map((item) => ({ day: item.slice(0, 5), median: Number(item.slice(6)), low: null, high: null }));
+  const passes = "05-02:0.25 05-10:0.3 05-18:0.35 05-26:0.4 06-03:0.5 06-10:0.8 06-14:0.8 06-18:0.8 06-26:0.45 07-04:0.3 07-12:0.25"
+    .split(" ")
+    .map((item) => ({ date: `2026-${item.slice(0, 5)}`, ndvi: Number(item.slice(6)) }));
+  const result = method.seasonResult({ points: passes, normalCurve: normal, greenUp: "2026-05-02", harvestedOn: "2026-07-20" });
+  // The peak alone would be Very good.
+  assert.equal(result.peak, 0.8);
+  assert.ok(method.healthScore(result.peak, result.normalPeak) >= 0.95);
+  // The mean is well under the normal over the same days, and decides.
+  assert.ok(result.mean < result.normalMean - 0.15);
+  assert.ok(Math.abs(result.score - method.healthScore(result.mean, result.normalMean)) < 0.005);
+  assert.ok(["poor", "fair"].includes(result.class));
+});
+
+test("seasonResult: a crop not cut yet gives the season so far, to the last pass", () => {
+  const result = method.seasonResult({ points: SD_SUNFLOWER.passes, normalCurve: curveFrom(SD_SUNFLOWER.passes) });
+  assert.equal(result.to, "2025-10-03");
+  assert.equal(result.class, "great");
+});
+
+test("seasonResult is null for fallow, a field never cropped, or too few passes", () => {
+  assert.equal(method.seasonResult({ points: KUPIANSK_FALLOW.passes, normalCurve: curveFrom(KUPIANSK_FALLOW.passes), fallow: true }), null);
+  const flat = ["04-01", "05-01", "06-01", "07-01", "08-01"].map((md) => ({ date: `2026-${md}`, ndvi: 0.25 }));
+  assert.equal(method.seasonResult({ points: flat, normalCurve: curveFrom(flat) }), null);
+  const few = IOWA_CORN.passes.slice(20, 23);
+  assert.equal(method.seasonResult({ points: few, normalCurve: curveFrom(IOWA_CORN.passes) }), null);
+  assert.equal(method.seasonResult({ points: IOWA_CORN.passes, normalCurve: [] }), null);
 });

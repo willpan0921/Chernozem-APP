@@ -86,8 +86,8 @@ export const fieldMethods = {
     {
       id: "harvest",
       name: "Harvest readiness",
-      what: "Ready when the crop has dried down from its peak, or has had the heat units its crop needs. Radar sees a harvest through cloud. Soybeans drop their leaves before harvest, which looks like a cut on radar: such fields read \"Leaves down · check if cut\" for up to 30 days. With no crop known, no date is given.",
-      formula: "Season NDVI dry-down · growing degree-days per crop · radar drop of 3 dB or more",
+      what: "Ready when the crop has dried down from its peak, or has had the heat units its crop needs. Radar sees a harvest through cloud. Soybeans drop their leaves before harvest, which looks like a cut on radar: such fields read \"Leaves down · check if cut\" for up to 30 days. With no crop known, no date is given. After harvest, the season is graded: plant health from green-up to harvest, and its peak (the 3 greenest passes), against the same days of 2019–2021. Whichever of the two is lower is used, so the grade rests mainly on the peak.",
+      formula: "Season NDVI dry-down · growing degree-days per crop · radar drop of 3 dB or more · season vs normal",
       source: "Sentinel-2 · Open-Meteo daily temperatures · Sentinel-1 radar, 10 m",
     },
   ],

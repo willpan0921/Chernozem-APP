@@ -1,7 +1,7 @@
 /*
   WHAT THIS FILE DOES
   The styling that only the Field overview page (/field) needs: the status
-  sentence, the five big tiles, "What needs doing", "Tell us what
+  sentence, the big tiles (one per status), "What needs doing", "Tell us what
   happened" and the "Your fields" card (satellite map + list). Every class starts
   with "fo-" (Field Overview). Colours, spacing and corners come from
   src/styles/tokens.css (the softer shades are color-mix() of tokens).
@@ -61,16 +61,27 @@
 
 /* ---------- Big tiles ---------- */
 
-/* In crop, To watch, Needs recovery, No crop, Farm area, Weather. */
+/* One tile per status that has fields (Harvested, Fallow or grass, Growing
+   well...), Needs recovery inside a war, then Farm area and Weather. How
+   many there are depends on the farm, so the row wraps. */
 .fo-stats {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr)) minmax(0, 1.35fr);
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--s-3);
 }
 
-/* A peaceful farm: no "Needs recovery" tile. */
-.fo-stats.is-peace {
-  grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(0, 1.35fr);
+.fo-stats > .fo-stat {
+  flex: 1 1 128px;
+  min-width: 0;
+}
+
+.fo-stats > .fo-stat-area {
+  flex: 1 1 150px;
+}
+
+.fo-stats > .fo-weather {
+  flex: 1.6 1 230px;
+  min-width: 0;
 }
 
 .fo-stat {
@@ -88,13 +99,21 @@
 
 .fo-stat.fo-tone-green .fo-stat-value,
 .fo-stat.fo-tone-red .fo-stat-value,
-.fo-stat.fo-tone-amber .fo-stat-value {
+.fo-stat.fo-tone-amber .fo-stat-value,
+.fo-stat.fo-tone-blue .fo-stat-value {
   color: var(--fo-tone);
 }
 
 .fo-stat-area .fo-stat-value {
   font-size: 28px;
   line-height: 34px;
+}
+
+/* The fields' square beside a status tile's label, as on the map. */
+.fo-stat-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
 }
 
 /* A group tile you can press: picks out its fields in "Your fields". */
@@ -541,28 +560,11 @@
   opacity: 0.35;
 }
 
+/* The field's square: format.js mapLook, drawn by the fk- classes in
+   src/components/field/field.css (the same colours and patterns as the map). */
 .fo-swatch {
   width: 14px;
   height: 14px;
-  border-radius: 4px;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-ink) 12%, transparent);
-}
-
-.fo-swatch-poor { background: var(--fmap-poor); }
-.fo-swatch-fair { background: var(--fmap-fair); }
-.fo-swatch-good { background: var(--fmap-good); }
-.fo-swatch-great { background: var(--fmap-great); }
-.fo-swatch-nodata { background: var(--fmap-nodata); }
-/* Harvested or not sown: the map's straw tint, no condition colour. */
-.fo-swatch-bare {
-  background: color-mix(in srgb, var(--fmap-harvested) 60%, var(--c-surface-2));
-  box-shadow: inset 0 0 0 1.5px var(--c-muted);
-}
-
-/* "Needs recovery": the red tint and outline it has on the map. */
-.fo-swatch.is-recovery {
-  background: color-mix(in srgb, var(--c-red) 40%, transparent);
-  box-shadow: inset 0 0 0 2px var(--c-red);
 }
 
 .fo-field-text {
@@ -582,6 +584,12 @@
   font-size: 12px;
   color: var(--c-muted);
   overflow-wrap: anywhere;
+}
+
+/* A harvested field: how its season went. */
+.fo-field-season {
+  font-size: 12px;
+  color: var(--c-text-2);
 }
 
 /* ---------- Smaller screens ---------- */
@@ -617,47 +625,15 @@
   }
 }
 
-/* The group tiles on top, farm area and weather under them. */
-@media (max-width: 1000px) {
-  .fo-stats,
-  .fo-stats.is-peace {
-    grid-template-columns: repeat(12, minmax(0, 1fr));
-  }
-
-  .fo-stat {
-    grid-column: span 3;
-  }
-
-  .fo-stats.is-peace .fo-stat {
-    grid-column: span 4;
-  }
-
-  .fo-stat-area,
-  .fo-weather,
-  .fo-stats.is-peace .fo-stat-area {
-    grid-column: span 6;
-  }
-}
-
 @media (max-width: 640px) {
   .fo-status {
     font-size: 17px;
   }
 
-  .fo-stats,
-  .fo-stats.is-peace {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .fo-stat,
-  .fo-stats.is-peace .fo-stat,
-  .fo-stats.is-peace .fo-stat-area {
-    grid-column: auto;
-  }
-
-  /* Four group tiles fill two rows: the farm area has a row of its own. */
-  .fo-stat-area {
-    grid-column: 1 / -1;
+  /* Two tiles a row; one left over (often the farm area) takes the row. */
+  .fo-stats > .fo-stat,
+  .fo-stats > .fo-stat-area {
+    flex: 1 1 calc(50% - var(--s-3));
   }
 
   .fo-stat-value {
@@ -669,8 +645,20 @@
     line-height: 28px;
   }
 
+  .fo-stats > .fo-weather {
+    flex: 1 1 100%;
+  }
+
+  /* An even number of status tiles: Farm area shares the weather's row. */
+  .fo-stats.is-area-pair > .fo-stat-area {
+    flex: 1 1 calc(38% - var(--s-3));
+  }
+
+  .fo-stats.is-area-pair > .fo-weather {
+    flex: 1 1 calc(62% - var(--s-3));
+  }
+
   .fo-weather {
-    grid-column: 1 / -1;
     flex-direction: row;
     align-items: center;
     flex-wrap: wrap;

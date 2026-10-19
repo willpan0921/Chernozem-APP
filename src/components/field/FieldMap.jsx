@@ -4,14 +4,17 @@
 // uses this one component (the Fields page, the Overview, the farm setup,
 // Settings).
 //
-// Each field is tinted by its condition class and outlined in white
-// (thick, with a soft halo, for the selected field). A field ready to
-// harvest, or due within two weeks, has a gold outline; a field that needs
-// recovery is red; a harvested or not-sown field is a plain straw tint
-// with a dashed edge (bare ground has no condition class: method.js
-// fieldCondition). Stress patches get a dashed white circle (none in a
-// field with no crop). How each field is drawn is format.js mapLook(), so
-// the legend can list only the marks on the map (mapMarks). Name pills sit in each field's top-left corner
+// Each field is outlined in white (thick, with a soft halo, for the
+// selected field) and filled by its look (format.js mapLook): a crop by
+// its condition class now; a harvested field with stubble lines over the
+// colour of how its season went (bare stubble has no condition now:
+// method.js fieldCondition, seasonResult); fallow or grass in muted olive
+// with light dots; a crop dried down in tan; a field not sown as bare
+// ground with a dashed edge; a field that needs recovery with a red hatch;
+// grey before any reading. A field ready to harvest, or due within two
+// weeks, has a gold outline. Stress patches get a dashed white circle (none
+// in a field with no crop). The patterns are SVG patterns in the field
+// layer (makeFills). Name pills sit in each field's top-left corner
 // when they fit, shrink or hide when they do not, never overlap, and the
 // stress circles are drawn above them.
 //
@@ -63,7 +66,6 @@ import { useEffect, useImperativeHandle, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { Maximize, Minus, Plus } from "lucide-react";
-import { conditionClass } from "../../lib/field/method.js";
 import { ANALYSING_LABEL, formatDay, mapLook } from "../../lib/field/format.js";
 import "./field.css";
 
@@ -89,6 +91,11 @@ const TOKEN_NAMES = [
   "--fmap-great",
   "--fmap-nodata",
   "--fmap-harvested",
+  "--fmap-stubble",
+  "--fmap-fallow",
+  "--fmap-fallow-dot",
+  "--fmap-drieddown",
+  "--fmap-bare",
   "--fmap-ready",
   "--fmap-candidate",
   "--fmap-chosen",
@@ -103,6 +110,45 @@ function readTokens(element) {
 }
 
 const CLASS_TOKEN = { poor: "--fmap-poor", fair: "--fmap-fair", good: "--fmap-good", great: "--fmap-great" };
+
+// ---------- Patterns (stubble lines, fallow dots, recovery hatch) ----------
+
+// Each map gets its own pattern ids, so two maps on a page never mix them.
+let mapCount = 0;
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function svgEl(name, attrs) {
+  const el = document.createElementNS(SVG_NS, name);
+  for (const [key, value] of Object.entries(attrs)) el.setAttribute(key, String(value));
+  return el;
+}
+
+// One pattern tile: a base colour with diagonal lines, or with dots.
+function addPattern(defs, id, { base, baseOpacity = 1, mark, markOpacity = 1, kind, size, angle = 45 }) {
+  const pattern = svgEl("pattern", { id, patternUnits: "userSpaceOnUse", width: size, height: size, patternTransform: `rotate(${angle})` });
+  pattern.appendChild(svgEl("rect", { width: size, height: size, fill: base, "fill-opacity": baseOpacity }));
+  if (kind === "lines") pattern.appendChild(svgEl("rect", { width: 1.6, height: size, fill: mark, "fill-opacity": markOpacity }));
+  else pattern.appendChild(svgEl("circle", { cx: size / 2, cy: size / 2, r: 1.1, fill: mark, "fill-opacity": markOpacity }));
+  defs.appendChild(pattern);
+}
+
+// Puts the patterns in the field layer's SVG and gives back the fills:
+//   { stubble(cls), fallow, recovery }  ("url(#...)" strings for Leaflet)
+function makeFills(svg, t) {
+  const prefix = `fm${(mapCount += 1)}`;
+  const defs = svgEl("defs", {});
+  const stubbleBase = { none: t["--fmap-harvested"], poor: t["--fmap-poor"], fair: t["--fmap-fair"], good: t["--fmap-good"], great: t["--fmap-great"] };
+  for (const [cls, base] of Object.entries(stubbleBase)) addPattern(defs, `${prefix}-stubble-${cls}`, { base, mark: t["--fmap-stubble"], markOpacity: 0.8, kind: "lines", size: 6, angle: -45 });
+  addPattern(defs, `${prefix}-fallow`, { base: t["--fmap-fallow"], mark: t["--fmap-fallow-dot"], markOpacity: 0.9, kind: "dots", size: 7, angle: 0 });
+  addPattern(defs, `${prefix}-recovery`, { base: t["--c-red"], baseOpacity: 0.45, mark: t["--c-red"], kind: "lines", size: 7 });
+  svg?.insertBefore(defs, svg.firstChild);
+  const url = (name) => (svg ? `url(#${prefix}-${name})` : null);
+  return {
+    stubble: (cls) => url(`stubble-${cls && stubbleBase[cls] ? cls : "none"}`) || t[CLASS_TOKEN[cls]] || t["--fmap-harvested"],
+    fallow: url("fallow") || t["--fmap-fallow"],
+    recovery: url("recovery") || t["--c-red"],
+  };
+}
 
 // ---------- Shapes ----------
 
@@ -269,6 +315,7 @@ export default function FieldMap({
   const mapDivRef = useRef(null);
   const mapRef = useRef(null);
   const tokensRef = useRef(null);
+  const fillsRef = useRef(null);
   const renderers = useRef({ shapes: null, stress: null });
   const layers = useRef({ tiles: null, fields: null, fieldIndex: new Map(), candidates: null, extras: null });
   const [zoom, setZoom] = useState(null);
@@ -307,6 +354,9 @@ export default function FieldMap({
     map.addLayer(shapes);
     map.addLayer(stress);
     renderers.current = { shapes, stress };
+    // The stubble lines, fallow dots and recovery hatch live in the field
+    // layer's own SVG (Leaflet's renderer element).
+    fillsRef.current = makeFills(shapes._container, tokensRef.current);
     mapRef.current = map;
 
     const syncZoom = () => setZoom(Math.round(map.getZoom() * 100) / 100);
@@ -373,10 +423,8 @@ export default function FieldMap({
       // or due within two weeks, gets a gold outline and says so on its pill.
       const look = mapLook(analysis);
       const { recovery, ready } = look;
-      const harvested = look.bare;
       const waiting = !analysis && Boolean(analysing?.has?.(field.id));
-      const cls = harvested ? null : conditionClass(analysis?.condition?.score)?.id;
-      const entry = { field, recovery, harvested, ready, waiting, cls, parts: {} };
+      const entry = { field, look, recovery, ready, waiting, parts: {} };
 
       entry.parts.halo = L.polygon(rings, {
         renderer: renderers.current.shapes,
@@ -394,7 +442,7 @@ export default function FieldMap({
         bubblingMouseEvents: false,
         lineJoin: "round",
         className: "fm-shape",
-        ...shapeStyle({ recovery, harvested, ready, waiting, cls, selected: false, t }),
+        ...shapeStyle({ look, waiting, selected: false, t, fills: fillsRef.current }),
       });
       shape.on("click", (event) => {
         const now = latest.current;
@@ -490,7 +538,7 @@ export default function FieldMap({
     const t = tokensRef.current;
     for (const [id, entry] of layers.current.fieldIndex) {
       const selected = id === latest.current.selectedId;
-      entry.parts.shape?.setStyle(shapeStyle({ recovery: entry.recovery, harvested: entry.harvested, ready: entry.ready, waiting: entry.waiting, cls: entry.cls, selected, t }));
+      entry.parts.shape?.setStyle(shapeStyle({ look: entry.look, waiting: entry.waiting, selected, t, fills: fillsRef.current }));
       entry.parts.halo?.setStyle({ opacity: selected ? 0.38 : 0 });
       if (selected) entry.parts.shape?.bringToFront();
       const el = entry.parts.label?.getElement();
@@ -779,16 +827,27 @@ export default function FieldMap({
 }
 
 // How a field's outline and tint are drawn in each state.
-function shapeStyle({ recovery, harvested, ready, waiting = false, cls, selected, t }) {
-  if (recovery) return { fillColor: t["--c-red"], fillOpacity: 0.38, color: selected ? "#ffffff" : t["--c-red"], weight: selected ? 5 : 3, opacity: 1, dashArray: null };
-  // Harvested: a neutral straw tint, not a condition colour.
-  if (harvested) return { fillColor: t["--fmap-harvested"], fillOpacity: selected ? 0.4 : 0.3, color: "#ffffff", weight: selected ? 5 : 2, opacity: selected ? 1 : 0.92, dashArray: selected ? null : "6 5" };
-  // Ready to harvest (or due soon): the same tint, a gold outline.
-  const readyEdge = ready ? { color: t["--fmap-ready"], weight: selected ? 6 : 4, opacity: 1, dashArray: null } : null;
-  const fill = cls ? t[CLASS_TOKEN[cls]] : t["--fmap-nodata"];
+// How one field is drawn, from its look (format.js mapLook):
+//   crop       its condition class now (gold outline when ready or due soon)
+//   harvested  stubble lines over the colour of how its season went
+//   fallow     muted olive with light dots;  driedDown  tan
+//   notSown    bare ground, dashed edge;      recovery   red hatch, red edge
+//   none       grey (a dashed edge while it is being analysed)
+function shapeStyle({ look, waiting = false, selected, t, fills }) {
+  const f = fills || { stubble: () => t["--fmap-harvested"], fallow: t["--fmap-fallow"], recovery: t["--c-red"] };
+  const edge = { color: "#ffffff", weight: selected ? 5 : 2, opacity: selected ? 1 : 0.92, dashArray: null };
+  const kind = look?.kind || "none";
+  if (kind === "recovery") return { fillColor: f.recovery, fillOpacity: selected ? 0.75 : 0.62, color: selected ? "#ffffff" : t["--c-red"], weight: selected ? 5 : 3, opacity: 1, dashArray: null };
+  if (kind === "harvested") return { ...edge, fillColor: f.stubble(look.cls), fillOpacity: selected ? 0.62 : 0.52 };
+  if (kind === "fallow") return { ...edge, fillColor: f.fallow, fillOpacity: selected ? 0.62 : 0.52 };
+  if (kind === "driedDown") return { ...edge, fillColor: t["--fmap-drieddown"], fillOpacity: selected ? 0.58 : 0.48 };
+  if (kind === "notSown") return { ...edge, fillColor: t["--fmap-bare"], fillOpacity: selected ? 0.5 : 0.4, dashArray: selected ? null : "6 5" };
+  // Ready to harvest (or due soon): its class colour, a gold outline.
+  const readyEdge = look?.ready ? { color: t["--fmap-ready"], weight: selected ? 6 : 4, opacity: 1, dashArray: null } : null;
+  const fill = kind === "crop" && look.cls ? t[CLASS_TOKEN[look.cls]] : t["--fmap-nodata"];
   // Being analysed: no colour yet, a dashed white edge.
   const dash = waiting && !selected ? "4 6" : null;
-  return { fillColor: fill, fillOpacity: selected ? 0.5 : 0.42, color: "#ffffff", weight: selected ? 5 : 2, opacity: selected ? 1 : 0.92, dashArray: dash, ...readyEdge };
+  return { ...edge, fillColor: fill, fillOpacity: selected ? 0.5 : 0.42, dashArray: dash, ...readyEdge };
 }
 
 function metresPerPixel(map) {

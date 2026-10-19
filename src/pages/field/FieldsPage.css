@@ -439,8 +439,10 @@
     font-size: 28px;
   }
 
-  .fp-map-legend {
-    bottom: 18px;
+  /* The legend under the map (FieldsPage: narrow), full width. */
+  .fp-legend-below .fl-legend {
+    width: auto;
+    box-shadow: var(--shadow-card);
   }
 
   .fp-tiles {

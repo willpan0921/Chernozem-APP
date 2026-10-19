@@ -7,6 +7,7 @@
 //     four readings (water, plant health, stress with its likely cause or
 //     "No crop", harvest readiness with what it rests on: dry-down, heat
 //     units, radar), the weather-based pest and disease risk, condition,
+//     how the season went for a harvested or dried-down crop (lastSeason),
 //     damage and soil, the weather, the last 5 reports, where the data comes from
 //     (it says clearly when it is SAMPLE DATA), and whether a known war
 //     covers the farm (src/config/conflicts.js; most farms are at peace);
@@ -415,6 +416,19 @@ function riskText(risk) {
   return `Pest and disease risk from the weather (a forecast, not a detection): ${line}${why ? ` (${why} in the 7 days before and after today)` : ""}; disease ${risk.disease || "unknown"}, insects ${risk.insects || "unknown"}.`;
 }
 
+// How the season went (analysis.lastSeason, method.js seasonResult), in
+// words, or null: "This season (harvested): Good, peak 0.78 vs usual
+// 0.85 (...)".
+export function seasonText(lastSeason) {
+  const r = lastSeason;
+  if (!r?.label) return null;
+  const head = r.soFar ? "This season so far" : "This season (harvested)";
+  const peak = Number.isFinite(r.peak) && Number.isFinite(r.normalPeak) ? `, peak ${fixed(r.peak, 2)} vs usual ${fixed(r.normalPeak, 2)}` : "";
+  const mean = Number.isFinite(r.mean) && Number.isFinite(r.normalMean) ? `; mean plant health ${fixed(r.mean, 2)} vs normal ${fixed(r.normalMean, 2)} on the same days` : "";
+  const span = r.soFar ? `to the last pass ${r.to || "?"}` : `to the last pass before harvest ${r.to || "?"}${r.harvestedOn ? `, cut about ${r.harvestedOn}` : ""}`;
+  return `${head}: ${r.label}${peak} (green-up ${r.from || "?"} ${span}${mean}; the peak is the mean of the 3 greenest passes; graded on the lower of the mean and the peak against ${BASELINE.label}, so mostly by the peak; this is how the season went, not the crop now).`;
+}
+
 function fieldLine(field, analysis, units, mixed, farmWar = null) {
   const head = `- ${field.name || field.id} (id ${field.id}): ${cropText(field, analysis)}, ${areaText(field.areaHa, units)}.`;
   if (!analysis) return `${head} Not analysed yet.`;
@@ -427,6 +441,7 @@ function fieldLine(field, analysis, units, mixed, farmWar = null) {
     head,
     `Status: ${statusOf(analysis)?.label || "unknown"}.`,
     noCrop && !Number.isFinite(c.score) ? `Condition: none (${NO_CROP_WORDS[noCrop]}, no crop to score).` : `Condition ${score100(c.score) ?? "unknown"}/100 (${conditionClass(c.score)?.label || "unknown"}).`,
+    seasonText(analysis.lastSeason),
     `Plant health NDVI ${fixed(ph.ndvi, 2)} (normal ${fixed(ph.normal?.low, 2)} to ${fixed(ph.normal?.high, 2)}, ${VERSUS_WORDS[ph.versus] || "no normal"}).`,
     `Water NDWI ${fixed(w.ndwi, 2)} (normal ${fixed(w.normal?.low, 2)} to ${fixed(w.normal?.high, 2)}, ${VERSUS_WORDS[w.versus] || "no normal"}).`,
     stressText(s, units, analysis.harvest),
@@ -566,6 +581,7 @@ export function fieldDetail(field, analysis, units, farmWar = null) {
     latestPass: analysis.latestPass || null,
     status: statusOf(analysis)?.label || null,
     condition: { score: score100(analysis.condition?.score), class: conditionClass(analysis.condition?.score)?.label || null },
+    lastSeason: analysis.lastSeason ? { ...analysis.lastSeason, score: score100(analysis.lastSeason.score), line: seasonText(analysis.lastSeason) } : null,
     plantHealth: analysis.plantHealth || null,
     water: analysis.water || null,
     stress: analysis.stress

@@ -7,7 +7,8 @@
 //          ONE layer only: Field condition (water, plant health, stress
 //          and harvest readiness together, from method.js). On top: the
 //          date of the latest satellite pass, the legend and the zoom
-//          buttons.
+//          buttons (on a phone the legend sits just under the map, so it
+//          never hides a field).
 //   PANEL  the selected field: its name, status and crop · area, a
 //          damage line when damage was found (called war damage only
 //          where a known war covers the farm: analysis.conflict), the four
@@ -20,7 +21,12 @@
 //          The crop is the farmer's own, else the detected one ("Corn ·
 //          detected", format.js cropInfo). A new field shows "Analysing…"
 //          (on the map too) until its first analysis is saved. The legend
-//          lists only the marks on the map (format.js mapMarks).
+//          always shows the full Poor-to-Very-good scale (a crop now, or
+//          how the season went after harvest) and the usual marks; "Needs
+//          recovery" only where a war covers the farm or a field needs it
+//          (format.js mapMarks). A harvested field's Harvest readiness tile
+//          says how its season went ("Season: Good (peak 0.78, usual
+//          0.85)"); its Plant health tile stays the reading now.
 //
 // "?field=<field id>" in the address picks the field (an unknown id is
 // replaced by the first field's); clicking a field on the map (or the
@@ -73,7 +79,7 @@ function useNarrow() {
 // ---------- The page ----------
 
 function FieldsView() {
-  const { farm, analyses, provider, job, weather, analysing, actions } = useFieldData();
+  const { farm, analyses, provider, job, weather, analysing, conflict, actions } = useFieldData();
   const [params, setParams] = useSearchParams();
   const narrow = useNarrow();
   const mapApi = useRef(null);
@@ -144,7 +150,8 @@ function FieldsView() {
   const shown = Object.values(analyses).filter(Boolean);
   const sample = shown.length ? shown.some((item) => item.provider !== "gee") : provider?.id === "sample";
   const fitKey = `${farm.id}:${fields.map((field) => field.id).join(",")}`;
-  // The legend lists only what is on the map.
+  // The legend always shows the full scale and the usual marks; "Needs
+  // recovery" only where a war covers the farm or a field needs it.
   const legend = useMemo(() => mapMarks(fields, analyses), [fields, analyses]);
 
   return (
@@ -173,11 +180,20 @@ function FieldsView() {
               </span>
             )}
           </div>
-          <div className="fp-map-legend">
-            <ConditionLegend compact={narrow} marks={legend.marks} scale={legend.classes} />
-          </div>
+          {/* On a phone the legend sits under the map, so it never hides a
+              field. */}
+          {!narrow && (
+            <div className="fp-map-legend">
+              <ConditionLegend recovery={Boolean(conflict) || legend.recovery} notSown={legend.notSown} />
+            </div>
+          )}
         </FieldMap>
       </section>
+      {narrow && (
+        <div className="fp-legend-below">
+          <ConditionLegend compact recovery={Boolean(conflict) || legend.recovery} notSown={legend.notSown} />
+        </div>
+      )}
 
       <aside ref={panelRef} className="fp-panel" aria-label={selected ? `${selected.name} details` : "Field details"}>
         {selected && (

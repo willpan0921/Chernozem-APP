@@ -15,6 +15,7 @@ import {
   findField,
   imageTypeOf,
   historyWithNormal,
+  seasonText,
   FIELD_TOOLS,
 } from "./field-context.js";
 
@@ -388,4 +389,13 @@ test("fallow, mown, dried down and spread stress in words (no crop is never scor
   assert.match(text, /Field 2 .*Status: Dried down\. Condition: none \(dried down, crop not known, no crop to score\)/);
   assert.match(text, /Stress high, 20% of the field \(4 ha\); spread across the field, with no single patch to point to/);
   assert.doesNotMatch(text, /likely cause: Spread/);
+});
+
+test("the AI is told how a harvested field's season went, not a condition for the stubble", () => {
+  const line = seasonText({ score: 0.743, class: "good", label: "Good", peak: 0.774, normalPeak: 0.851, mean: 0.596, normalMean: 0.463, from: "2026-04-05", to: "2026-08-13", soFar: false, harvestedOn: "2026-08-15" });
+  assert.match(line, /^This season \(harvested\): Good, peak 0\.77 vs usual 0\.85/);
+  assert.match(line, /to the last pass before harvest 2026-08-13, cut about 2026-08-15/);
+  assert.match(line, /not the crop now/);
+  assert.match(seasonText({ label: "Fair", peak: 0.66, normalPeak: 0.8, soFar: true }), /^This season so far: Fair/);
+  assert.equal(seasonText(null), null);
 });

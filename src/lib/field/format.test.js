@@ -13,6 +13,7 @@ import {
   farmConflict,
   mapLook,
   mapMarks,
+  seasonLine,
   riskNote,
   farmLine,
   fieldTiles,
@@ -208,10 +209,11 @@ test("the map's marks and its legend", () => {
     b: { status: { id: "harvested" }, condition: { class: null }, stress: { applies: false, patches: [{ lat: 1, lon: 2 }] }, harvest: { stage: "harvested" } },
     c: { status: { id: "ready" }, condition: { class: "great" }, harvest: { stage: "ready" } },
   };
-  assert.deepEqual(mapLook(analyses.b), { recovery: false, ready: false, bare: true, bareKind: "harvested", patches: [] });
+  const look = mapLook(analyses.b);
+  assert.deepEqual([look.kind, look.cls, look.label, look.ready, look.recovery, look.bareKind, look.patches], ["harvested", null, "Harvested", false, false, "harvested", []]);
   assert.equal(mapLook(analyses.a).patches.length, 1);
-  assert.deepEqual(mapMarks(fields, analyses), { classes: true, marks: ["ready", "stress", "harvested"] });
-  assert.deepEqual(mapMarks([{ id: "b" }], analyses), { classes: false, marks: ["harvested"] });
+  assert.deepEqual(mapMarks(fields, analyses), { classes: true, marks: ["ready", "stress", "harvested"], recovery: false, notSown: false });
+  assert.deepEqual(mapMarks([{ id: "b" }], analyses), { classes: false, marks: ["harvested"], recovery: false, notSown: false });
 });
 
 test("status counts follow the method's groups", () => {
@@ -335,10 +337,12 @@ test("a field with no crop is never 'Healthy' or a condition colour", () => {
   assert.equal(statusOf({ status: { id: "healthy", label: "Healthy" }, harvest: { stage: "growing", dryDown: "dry" } }).label, "Dried down");
   assert.equal(statusOf({ status: { id: "ready", label: "Ready to harvest" }, harvest: { stage: "ready" } }).id, "ready");
   assert.equal(statusOf(null), null);
-  assert.deepEqual(mapLook(old), { recovery: false, ready: false, bare: true, bareKind: "fallow", patches: [] });
+  const fallow = mapLook(old);
+  assert.deepEqual([fallow.kind, fallow.cls, fallow.label, fallow.bareKind], ["fallow", null, "Fallow or grass", "fallow"]);
   const look = mapLook({ status: { id: "driedDown" }, condition: { class: null }, harvest: { stage: "growing", dryDown: "dry" } });
   assert.equal(look.bareKind, "driedDown");
-  assert.deepEqual(mapMarks([{ id: "a" }, { id: "b" }], { a: old, b: { status: { id: "harvested" } } }), { classes: false, marks: ["harvested", "fallow"] });
+  assert.equal(look.kind, "driedDown");
+  assert.deepEqual(mapMarks([{ id: "a" }, { id: "b" }], { a: old, b: { status: { id: "harvested" } } }), { classes: false, marks: ["harvested", "fallow"], recovery: false, notSown: false });
 });
 
 test("medium or high stress with no patch is spread across the field", () => {
@@ -347,4 +351,57 @@ test("medium or high stress with no patch is spread across the field", () => {
   assert.equal(tile({ level: "high", patches: [], cause: "dry" }).line, "Spread across the field");
   assert.equal(tile({ level: "medium", patches: [{ lat: 1, lon: 2 }], cause: "dry" }).line, "Dry patch");
   assert.equal(tile({ level: "low", patches: [], cause: "dry" }).line, "No weak patches to check");
+});
+
+test("mapLook: every field gets its own look, a harvested one the colour of its season", () => {
+  const season = { score: 0.74, class: "good", label: "Good", peak: 0.774, normalPeak: 0.851, soFar: false };
+  const look = (a) => {
+    const l = mapLook(a);
+    return [l.kind, l.cls, l.label];
+  };
+  // A crop now: its condition class.
+  assert.deepEqual(look({ status: { id: "healthy" }, condition: { class: "great" }, harvest: { stage: "growing" } }), ["crop", "great", "Very good"]);
+  assert.deepEqual(look({ status: { id: "watch" }, condition: { class: "fair" }, harvest: { stage: "growing" } }), ["crop", "fair", "Fair"]);
+  const ready = mapLook({ status: { id: "ready" }, condition: { class: "good" }, harvest: { stage: "ready" }, lastSeason: { ...season, soFar: true } });
+  assert.deepEqual([ready.kind, ready.cls, ready.ready], ["crop", "good", true]);
+  // Harvested: the season's class, never a condition now.
+  assert.deepEqual(look({ status: { id: "harvested" }, condition: { class: null }, harvest: { stage: "harvested" }, lastSeason: season }), ["harvested", "good", "Harvested · season Good"]);
+  assert.deepEqual(look({ status: { id: "harvested" }, condition: { class: null }, harvest: { stage: "harvested" } }), ["harvested", null, "Harvested"]);
+  assert.deepEqual(look({ status: { id: "fallow" }, harvest: { stage: "growing", fallow: true } }), ["fallow", null, "Fallow or grass"]);
+  assert.deepEqual(look({ status: { id: "driedDown" }, harvest: { stage: "growing", dryDown: "dry" }, lastSeason: season }), ["driedDown", null, "Dried down"]);
+  assert.deepEqual(look({ status: { id: "notSown" }, harvest: { stage: "notSown" } }), ["notSown", null, "Not sown"]);
+  // Damage wins over everything: red hatch.
+  assert.deepEqual(look({ status: { id: "recovery" }, damage: { detected: true }, condition: { class: "good" }, harvest: { stage: "harvested" } }), ["recovery", null, "Needs recovery"]);
+  // No reading yet: grey.
+  assert.deepEqual(look(null), ["none", null, "No reading yet"]);
+  assert.deepEqual(look({ status: { id: "unknown" }, condition: { class: null }, harvest: { stage: "unknown" } }), ["none", null, "No reading yet"]);
+  // The legend knows when a season colour is on the map.
+  assert.equal(mapMarks([{ id: "a" }], { a: { status: { id: "harvested" }, harvest: { stage: "harvested" }, lastSeason: season } }).classes, true);
+  assert.equal(mapMarks([{ id: "a" }], { a: { status: { id: "notSown" }, harvest: { stage: "notSown" } } }).notSown, true);
+});
+
+test("seasonLine and the harvest tile: how a harvested field's season went", () => {
+  const lastSeason = { score: 0.74, class: "good", label: "Good", peak: 0.774, normalPeak: 0.851, soFar: false };
+  const a = { status: { id: "harvested" }, harvest: { stage: "harvested", harvestedOn: "2026-08-15" }, lastSeason, plantHealth: { ndvi: 0.6 } };
+  assert.equal(seasonLine(a), "Season: Good");
+  assert.equal(seasonLine(a, { peaks: true }), "Season: Good (peak 0.77, usual 0.85)");
+  assert.equal(seasonLine({ lastSeason: { ...lastSeason, soFar: true } }), "Season so far: Good");
+  assert.equal(seasonLine({}), null);
+  const [, health, , harvest] = fieldTiles(a);
+  assert.equal(harvest.value, "Harvested");
+  assert.equal(harvest.line, "Cut about Aug 15");
+  assert.equal(harvest.note, "Season: Good (peak 0.77, usual 0.85)");
+  // Plant health stays the reading now.
+  assert.equal(health.value, "0.60");
+});
+
+test("a cut field that is possibly grass shows plain Harvested, with no season grade", () => {
+  // Saved before the server stopped grading these (analysis.js seasonOf).
+  const lastSeason = { score: 0.98, class: "great", label: "Very good", peak: 0.734, normalPeak: 0.719, soFar: false };
+  const a = { status: { id: "harvested" }, harvest: { stage: "harvested", cropUnknown: true }, cropDetected: { id: "unknown", possiblyFallow: true }, cropUsed: { id: null }, lastSeason };
+  const look = mapLook(a);
+  assert.deepEqual([look.kind, look.cls, look.label, look.season], ["harvested", null, "Harvested", null]);
+  assert.equal(seasonLine(a), null);
+  // The same field with a crop the rules know keeps its grade.
+  assert.equal(mapLook({ ...a, cropUsed: { id: "wheat" } }).cls, "great");
 });

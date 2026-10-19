@@ -18,7 +18,9 @@
 //   detectedChoice(analysis)        -> "Detected: Corn" (the crop select before the farmer picks)
 //   analysingIds(farm, analyses, job)  the new fields the running update is analysing (a Set)
 //   farmConflict(farm, analyses)    the war covering the farm, null at peace, undefined when unknown
-//   mapLook(analysis) / mapMarks(fields, analyses)  how the map draws a field; the marks its legend lists
+//   mapLook(analysis)               -> { kind, cls, label, ... } how the map (and every field square) draws a field
+//   mapMarks(fields, analyses)      what the map legend needs to know (a field needing recovery, not sown...)
+//   seasonLine(analysis)            -> "Season: Good" (a harvested field: how its season went)
 //   causeText("dry")                -> "Dry patch"
 //   riskNote(analysis.pestRisk)     -> { text: "Disease risk high this week", tone: "red" } (medium or high only)
 //   basisText("heat units")         -> "from heat units"
@@ -296,25 +298,74 @@ function stressExempt(analysis) {
   return stage === "ready" ? "driedDown" : "noCrop";
 }
 
-// How the map draws one field, worked out once for the map and its legend:
-//   { recovery, ready, bare, bareKind: "harvested" | "notSown" | "fallow" | "driedDown" | null, patches }
-// recovery  red (damage found)
-// ready     gold outline (ready to harvest, or within two weeks)
-// bare      straw tint (no crop: harvested, not sown, fallow or grass,
-//           dried down; never a condition colour such as "Very good")
-// patches   the stress patches to circle (none when there is no crop)
+// How the map draws one field, worked out once for the map, its legend and
+// every list that shows a field's square:
+//   { kind, cls, label, ready, patches, recovery, bare, bareKind, season }
+// kind  "crop"       a crop in the field (growing, to watch, ready): its
+//                    condition class (cls) now
+//       "harvested"  stubble lines over the colour of how its season went
+//                    (cls = analysis.lastSeason.class, or null)
+//       "fallow"     fallow or grass: its own muted olive, never a class
+//       "driedDown"  a crop the app cannot name, dried down: its own tan
+//       "notSown"    bare ground
+//       "recovery"   red hatch (damage found)
+//       "none"       grey: no reading yet
+// cls      "poor" | "fair" | "good" | "great" or null
+// label    a few words for the square ("Good", "Harvested · season Good")
+// ready    gold outline (ready to harvest, or within two weeks)
+// patches  the stress patches to circle (none when there is no crop)
+// recovery, bare, bareKind  the same facts as kind, for older callers
+// season   analysis.lastSeason (how the season went) or null
+const SEASON_KINDS = ["harvested", "driedDown"];
 export function mapLook(analysis) {
   const status = statusOf(analysis)?.id;
-  const recovery = status === "recovery" || Boolean(analysis?.damage?.detected);
+  const recovery = Boolean(analysis) && (status === "recovery" || Boolean(analysis?.damage?.detected));
   const ready = !recovery && (status === "ready" || status === "harvestSoon");
   const bareKind = !recovery && !ready && GROUPS.noCrop.includes(status) ? status : null;
   const patches = !noCrop(analysis) && Array.isArray(analysis?.stress?.patches) ? analysis.stress.patches.filter((p) => isNum(p?.lat) && isNum(p?.lon)) : [];
-  return { recovery, ready, bare: Boolean(bareKind), bareKind, patches };
+  const season = seasonShown(analysis);
+  const base = { ready, patches, recovery, bare: Boolean(bareKind), bareKind, season: season && (SEASON_KINDS.includes(bareKind) || ready) ? season : null };
+  if (!analysis) return { ...base, kind: "none", cls: null, label: "No reading yet" };
+  if (recovery) return { ...base, kind: "recovery", cls: null, label: FIELD_STATUSES.recovery?.label || "Needs recovery" };
+  if (bareKind === "harvested") {
+    const cls = season?.class || null;
+    return { ...base, kind: "harvested", cls, label: cls ? `Harvested · season ${conditionWord(cls)}` : "Harvested" };
+  }
+  if (bareKind === "fallow") return { ...base, kind: "fallow", cls: null, label: FALLOW_LABEL };
+  if (bareKind === "driedDown") return { ...base, kind: "driedDown", cls: null, label: DRIED_DOWN_LABEL };
+  if (bareKind) return { ...base, kind: "notSown", cls: null, label: "Not sown" };
+  const cls = analysis.condition?.class || null;
+  if (!cls) return { ...base, kind: "none", cls: null, label: "No reading yet" };
+  return { ...base, kind: "crop", cls, label: conditionWord(cls) };
 }
 
-// Which marks the map legend lists: only the ones on the map.
-//   -> { classes: true when any field has a condition colour, marks: [...] }
-//   marks: any of "ready", "recovery", "stress", "harvested", "notSown", "fallow", "driedDown"
+// The season result shown for a field (analysis.lastSeason), or null. An
+// unknown crop that is possibly grass has none (its cut may be a hay cut:
+// analysis.js seasonOf), even in an analysis saved before that rule.
+function seasonShown(analysis) {
+  const r = analysis?.lastSeason;
+  return r?.class && !possiblyGrass(analysis) ? r : null;
+}
+
+// "Season: Good" for a field whose season result is shown (a harvested
+// field, a crop dried down), or null. With { peaks: true }:
+// "Season: Good (peak 0.78, usual 0.85)"; a crop not cut yet says
+// "Season so far: Good".
+export function seasonLine(analysis, { peaks = false } = {}) {
+  const r = seasonShown(analysis);
+  if (!r) return null;
+  const head = `${r.soFar ? "Season so far" : "Season"}: ${conditionWord(r.class)}`;
+  if (!peaks || !isNum(r.peak) || !isNum(r.normalPeak)) return head;
+  return `${head} (peak ${formatIndex(r.peak)}, usual ${formatIndex(r.normalPeak)})`;
+}
+
+// What the map legend needs to know beyond its fixed marks:
+//   -> { classes, marks, recovery, notSown }
+//   classes   true when any field is coloured by a class (now or its season)
+//   marks     the marks on the map, any of "ready", "recovery", "stress",
+//             "harvested", "notSown", "fallow", "driedDown"
+//   recovery  a field needs recovery
+//   notSown   a field is not sown
 export function mapMarks(fields = [], analyses = {}) {
   const marks = new Set();
   let classes = false;
@@ -326,9 +377,9 @@ export function mapMarks(fields = [], analyses = {}) {
     if (look.ready) marks.add("ready");
     if (look.bareKind) marks.add(look.bareKind);
     if (look.patches.length) marks.add("stress");
-    if (!look.recovery && !look.bare && analysis.condition?.class) classes = true;
+    if (look.cls) classes = true;
   }
-  return { classes, marks: ["ready", "recovery", "stress", ...NO_CROP_STATUSES].filter((id) => marks.has(id)) };
+  return { classes, marks: ["ready", "recovery", "stress", ...NO_CROP_STATUSES].filter((id) => marks.has(id)), recovery: marks.has("recovery"), notSown: marks.has("notSown") };
 }
 
 // ---------- The four tiles ----------
@@ -548,7 +599,11 @@ export function fieldTiles(analysis, { units = "ha", weather = null, crop = null
     word: fallowField ? null : word,
     tone: fallowField ? null : tone,
     line: fallowField ? (mownOn ? `About ${formatDay(mownOn)}` : null) : line,
-    note: fallowField ? `${FALLOW_LABEL}: no harvest expected` : unknownNote || (basis ? (crop ? `${crop} · ${basis}` : basis[0].toUpperCase() + basis.slice(1)) : null),
+    // A harvested field: how its season went (seasonLine), in place of how
+    // the harvest was seen.
+    note: fallowField
+      ? `${FALLOW_LABEL}: no harvest expected`
+      : (harvest.stage === "harvested" ? seasonLine(a, { peaks: true }) : null) || unknownNote || (basis ? (crop ? `${crop} · ${basis}` : basis[0].toUpperCase() + basis.slice(1)) : null),
     hint: isNum(gdd?.accumulated) && isNum(gdd?.needed) ? `${Math.round(gdd.accumulated).toLocaleString("en-US")} of about ${Math.round(gdd.needed).toLocaleString("en-US")} heat units (base ${gdd.base} °C) ${gddSince(gdd)}` : null,
   };
 

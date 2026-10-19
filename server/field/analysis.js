@@ -8,6 +8,7 @@
 //   finishAnalysis({ field, raw, weather, today, history, temperatures })
 //                                -> FieldAnalysis
 //   stripForList(analysis)       -> without the big parts
+//   seasonOf({ harvest, season, normalCurve, cropDetected, crop }) -> lastSeason or null
 //   cropSourceOf(field)          -> "user" | "detected" | "demo" | null
 //   cropForRules(field, detected) -> the crop the rules use { id, label, source }
 //
@@ -27,6 +28,9 @@
 //     cause (dry or not water), "No crop" when the field is harvested
 //     or not sown and "Dried down" when the crop has dried down for harvest; the weather-based pest and disease RISK while a crop
 //     grows (hours of wet warm weather, insect degree-days);
+//   - how the season went (lastSeason: this season's plant health from
+//     green-up to harvest against the normal on the same days, method.js
+//     seasonResult) for a harvested, dried-down or ready crop;
 //   - the condition (none for a field with no crop: harvested, not sown,
 //     fallow or grass, or an unknown crop dried down), damage
 //     (damageDetected, from fires ABOVE the normal years' rate, radar change
@@ -60,6 +64,7 @@ import {
   pestRiskApplies,
   unknownCropHarvest,
   radarForHarvest,
+  seasonResult,
   soilTypeFor,
   STRESS_CAUSES,
   stressCause,
@@ -67,6 +72,7 @@ import {
   stressSummary,
   cleanSeries,
   NOT_SOWN_PEAK,
+  noCropState,
   SEASON_DONE_DROP,
   versusNormal,
   vhPeakNear,
@@ -206,6 +212,25 @@ function seasonPassesDone(season) {
   const i = series.reduce((best, p, k) => (p.ndvi > series[best].ndvi ? k : best), 0);
   const peak = series[i].ndvi;
   return peak >= NOT_SOWN_PEAK && series.slice(i + 1).some((p) => p.ndvi <= peak - SEASON_DONE_DROP);
+}
+
+// How the season went (method.js seasonResult) for a harvested field, a
+// crop dried down (an unknown crop: noCropState "driedDown") or a crop
+// ready to harvest (these two "so far": not cut yet). Null otherwise, and
+// null for a field with no crop known that is possibly grass (crops.js
+// possiblyFallow: the page says "Unknown · possibly grass", so its cut may
+// be a hay cut, not a crop season to grade).
+//   cropDetected  classifyCrop() result, crop  cropForRules() result (both
+//                 optional)
+export function seasonOf({ harvest, season, normalCurve, cropDetected = null, crop = null }) {
+  if (!harvest || harvest.fallow) return null;
+  if (!crop?.id && cropDetected?.possiblyFallow) return null;
+  const cut = harvest.stage === "harvested";
+  const soFar = harvest.stage === "ready" || noCropState(harvest) === "driedDown";
+  if (!cut && !soFar) return null;
+  const harvestedOn = cut ? [harvest.harvestedOn, harvest.radarHarvestOn].filter(Boolean).sort()[0] || null : null;
+  const result = seasonResult({ points: season, normalCurve: Array.isArray(normalCurve) ? normalCurve : [], harvestedOn });
+  return result ? { ...result, soFar: !cut, harvestedOn } : null;
 }
 
 // The radar series a data source sent: [{ date, vh }] (dB) and the peak.
@@ -354,6 +379,15 @@ export function finishAnalysis({ field, raw, weather = null, today, provider, hi
     mown: Boolean(combined.mown),
   };
 
+  // How the season went, for a crop that is harvested, dried down or ready
+  // (method.js seasonResult): this season from green-up to the cut (or to
+  // the last pass, "so far", for a crop not cut yet) against the normal on
+  // the same days. Never for fallow or grass (nor an unknown crop that is
+  // possibly grass) or a field not sown. The
+  // condition stays null for a field with no crop: this is the season,
+  // not the crop now.
+  const lastSeason = seasonOf({ harvest, season, normalCurve: r.normalCurve, cropDetected, crop });
+
   // Stress: the share the data source found (NDVI rule OR red-edge rule),
   // its likely cause, and nothing at all when there is no crop.
   const share = num(r.stress?.share);
@@ -444,6 +478,9 @@ export function finishAnalysis({ field, raw, weather = null, today, provider, hi
     // The crop the rules used and where it came from.
     cropUsed: crop,
     condition,
+    // { score, class, label, peak, highest, normalPeak, mean, normalMean,
+    // from, to, passes, soFar, harvestedOn } or null (seasonOf).
+    lastSeason,
     damage,
     conflict,
     status,

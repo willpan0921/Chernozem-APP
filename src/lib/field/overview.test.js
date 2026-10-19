@@ -3,7 +3,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fieldNames, latestPass, likelyRain, needsDoing, shortUsd, showRecoveryTile, statusSentence, usdRange } from "./overview.js";
+import { fieldKind, fieldNames, latestPass, likelyRain, needsDoing, shortUsd, showRecoveryTile, statTiles, statusSentence, usdRange } from "./overview.js";
 
 const STATUS = {
   recovery: { id: "recovery", label: "Needs recovery", tone: "red" },
@@ -259,4 +259,33 @@ test("ready, harvest soon and growing well are named apart; a crop unclear is to
   const item = needsDoing({ farm, analyses }).find((x) => x.fieldId === "f6");
   assert.equal(item.title, "Field 6: crop unclear");
   assert.equal(item.action.to, "/field/settings");
+});
+
+test("the big tiles show the farm's real mix, never a row of zeros", () => {
+  const war = { id: "ukraine-2022", name: "War", since: "2022-02-24" };
+  const ids = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
+  const farm = { fields: ids.map((id) => ({ id })) };
+  const status = (id, extra = {}) => ({ status: { id }, ...extra });
+  // The real Kupiansk mix in mid-October: no crop in the ground, but each
+  // kind of "no crop" is its own tile.
+  const autumn = { a: status("harvested"), b: status("harvested"), c: status("harvested"), d: status("fallow"), e: status("fallow"), f: status("fallow"), g: status("fallow"), h: status("fallow"), i: status("fallow"), j: status("driedDown") };
+  const tiles = statTiles(farm, autumn, war);
+  assert.deepEqual(tiles.map((t) => [t.label, t.value]), [["Needs recovery", 0], ["Harvested", 3], ["Fallow or grass", 6], ["Dried down", 1]]);
+  // Nothing to recover inside a war is good news.
+  assert.equal(tiles[0].tone, "green");
+  // The no-crop tiles carry the fields' look from the map beside the label.
+  assert.deepEqual(tiles.map((t) => t.look?.kind || null), [null, "harvested", "fallow", "driedDown"]);
+  assert.equal(tiles[1].look.split, true);
+  // At peace with nothing to recover: no recovery tile.
+  assert.deepEqual(statTiles(farm, autumn, null).map((t) => t.id), ["harvested", "fallow", "driedDown"]);
+  // An in-season farm: each status of the crop.
+  const summer = { a: status("healthy"), b: status("healthy"), c: status("watch"), d: status("ready"), e: status("ready"), f: status("harvestSoon"), g: status("recovery"), h: status("healthy", { stress: { applies: true, level: "high" } }) };
+  assert.deepEqual(statTiles(farm, summer, null).map((t) => [t.id, t.value]), [["recovery", 1], ["watch", 2], ["ready", 2], ["harvestSoon", 1], ["growing", 2]]);
+  assert.equal(statTiles(farm, summer, null)[0].tone, "red");
+  assert.equal(fieldKind(summer.h), "watch");
+  assert.equal(fieldKind(summer.d), "ready");
+  assert.equal(fieldKind(autumn.d), "fallow");
+  assert.equal(fieldKind(undefined), null);
+  // Not analysed yet: no tile at all (not a row of zeros).
+  assert.deepEqual(statTiles(farm, {}, null), []);
 });

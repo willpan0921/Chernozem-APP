@@ -96,13 +96,19 @@
 
   /* ---- Field map (src/components/field/FieldMap.jsx, on satellite imagery) ----
      The one map layer, "Field condition", worst to best: each field is
-     tinted with these. The legend and the field lists use the same ones. */
+     tinted with these (a crop now, or how the season went for a harvested
+     field). The legend and the field lists use the same ones. */
   --fmap-poor: #d9a54c;
   --fmap-fair: #eedd9c;
   --fmap-good: #b7cd78;
   --fmap-great: #79ad5c;
-  --fmap-nodata: #a9a487;       /* no clear reading yet */
-  --fmap-harvested: #ecdcb4;    /* straw tint of a harvested field */
+  --fmap-nodata: #a6a6a1;       /* grey: no clear reading yet */
+  --fmap-harvested: #ecdcb4;    /* straw under the stubble lines when the season is not known */
+  --fmap-stubble: #7a5a26;      /* the stubble lines over a harvested field */
+  --fmap-fallow: #8b8760;       /* grey olive: fallow or grass (off the green scale) */
+  --fmap-fallow-dot: #dfe3b8;   /* the light dots over it */
+  --fmap-drieddown: #b88c5f;    /* tan: a crop dried down */
+  --fmap-bare: #8f8172;         /* bare ground: not sown */
   --fmap-ready: #f2b632;        /* gold outline: ready to harvest, or due soon */
   --fmap-candidate: #f5d76e;    /* a found field not chosen yet (farm setup) */
   --fmap-chosen: #8fd16a;       /* a found field that is chosen */

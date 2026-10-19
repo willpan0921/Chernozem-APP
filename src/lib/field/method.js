@@ -311,6 +311,124 @@ export function fieldCondition({ stage, health, water, stress, damage } = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// How the season went (after harvest)
+// ---------------------------------------------------------------------------
+// A harvested field has no crop to grade NOW (fieldCondition gives it no
+// class: bare stubble is not "Very good" plant health), but it has a season
+// to look back on. seasonResult compares this season's plant health from
+// green-up to harvest with the normal years on the same days:
+//   mean NDVI of the clear passes in that window, against the 2019-2021
+//   normal median on those same days (normalCurve, half-month points
+//   "MM-DD", read in a straight line between them),
+//   scored with healthScore against that normal mean and put in the four
+//   CONDITION_CLASSES (Poor, Fair, Good, Very good);
+//   peak  the mean of the season's SEASON_PEAK_PASSES greenest passes in
+//   the window (one pass alone runs high against a smoothed median),
+//   normalPeak the highest normal median over the same days; the peak is
+//   scored the same way and the season gets the LOWER of the two scores
+//   (see below). In practice the peak decides most seasons; the mean
+//   lowers the grade of a season that was green only briefly.
+// Null when there are fewer than SEASON_MIN_PASSES clear passes in the
+// window or the field was never cropped (fallow or grass, or a season that
+// never got greener than NOT_SOWN_PEAK).
+//   points       this season's clear passes [{ date, ndvi }]
+//   normalCurve  [{ day: "MM-DD", low, high, median }]
+//   greenUp      "YYYY-MM-DD" or null (then found from the curve, else the
+//                first pass)
+//   harvestedOn  "YYYY-MM-DD": passes from this day on are stubble and left
+//                out; null for a crop not cut yet (ready or dried down:
+//                the season so far, to the last pass)
+//   fallow       true for a field read as fallow or grass
+// -> { score, class, label, mean, normalMean, peak, highest, normalPeak, from, to, passes } or null
+//    highest  the single greenest pass
+export const SEASON_MIN_PASSES = 4;
+// The season's peak is the mean of this many greenest passes (fewer when
+// the window has fewer).
+export const SEASON_PEAK_PASSES = 3;
+// A winter crop's curve may start already green (sown in autumn): its
+// green-up is its spring regrowth, from up to this level.
+const SEASON_GREEN_UP_MAX_BASE = 0.6;
+
+const DAYS_IN_YEAR = 365;
+const dayOfYear = (mmdd) => {
+  const [m, d] = String(mmdd).split("-").map(Number);
+  if (!Number.isFinite(m) || !Number.isFinite(d)) return null;
+  return Math.round((Date.UTC(2001, m - 1, d) - Date.UTC(2001, 0, 1)) / DAY_MS);
+};
+
+// The normal median on one date ("YYYY-MM-DD"), read in a straight line
+// between the half-month points either side (over New Year too), or null.
+export function normalMedianOn(normalCurve, iso) {
+  const points = (Array.isArray(normalCurve) ? normalCurve : [])
+    .map((p) => ({ at: dayOfYear(p?.day), median: p?.median }))
+    .filter((p) => Number.isFinite(p.at) && Number.isFinite(p.median))
+    .sort((a, b) => a.at - b.at);
+  const at = dayOfYear(String(iso).slice(5, 10));
+  if (!points.length || !Number.isFinite(at)) return null;
+  if (points.length === 1) return points[0].median;
+  let after = points.findIndex((p) => p.at >= at);
+  const a = after <= 0 ? points[points.length - 1] : points[after - 1];
+  const b = after === -1 ? points[0] : points[after];
+  if (after === -1) after = 0;
+  const span = (b.at - a.at + DAYS_IN_YEAR) % DAYS_IN_YEAR || DAYS_IN_YEAR;
+  const t = ((at - a.at + DAYS_IN_YEAR) % DAYS_IN_YEAR) / span;
+  return a.median + (b.median - a.median) * Math.min(1, Math.max(0, t));
+}
+
+const round3 = (value) => Math.round(value * 1000) / 1000;
+
+export function seasonResult({ points, normalCurve, greenUp = null, harvestedOn = null, fallow = false } = {}) {
+  if (fallow) return null;
+  const series = cleanSeries((Array.isArray(points) ? points : []).filter((p) => p && typeof p.date === "string" && Number.isFinite(p.ndvi)));
+  const before = harvestedOn ? series.filter((p) => p.date < harvestedOn) : series;
+  if (before.length < SEASON_MIN_PASSES) return null;
+  if (Math.max(...before.map((p) => p.ndvi)) < NOT_SOWN_PEAK) return null;
+  const from = greenUp || greenUpDate(before, { maxBase: SEASON_GREEN_UP_MAX_BASE }) || before[0].date;
+  const pairs = before
+    .filter((p) => p.date >= from)
+    .map((p) => ({ date: p.date, ndvi: p.ndvi, normal: normalMedianOn(normalCurve, p.date) }))
+    .filter((p) => Number.isFinite(p.normal));
+  if (pairs.length < SEASON_MIN_PASSES) return null;
+  const mean = pairs.reduce((sum, p) => sum + p.ndvi, 0) / pairs.length;
+  const normalMean = pairs.reduce((sum, p) => sum + p.normal, 0) / pairs.length;
+  const to = pairs[pairs.length - 1].date;
+  // The normal's highest median over the same days: the passes' days and
+  // the half-month points between the first and the last of them.
+  const startAt = dayOfYear(from.slice(5, 10));
+  const endAt = dayOfYear(to.slice(5, 10));
+  const inside = (at) => (startAt <= endAt ? at >= startAt && at <= endAt : at >= startAt || at <= endAt);
+  const normals = [
+    ...pairs.map((p) => p.normal),
+    ...(Array.isArray(normalCurve) ? normalCurve : []).filter((p) => Number.isFinite(p?.median) && inside(dayOfYear(p.day))).map((p) => p.median),
+  ];
+  const greenest = pairs.map((p) => p.ndvi).sort((a, b) => b - a).slice(0, SEASON_PEAK_PASSES);
+  const peak = greenest.reduce((sum, v) => sum + v, 0) / greenest.length;
+  const normalPeak = Math.max(...normals);
+  // The lower of the two scores: a season is only as good as both its
+  // greenness over the weeks and its peak. The normal median of each day
+  // mixes the three years' crops (rotation, sowing dates), so it runs lower
+  // than any one crop's curve and the mean alone flatters nearly every
+  // season (real data, near Kupiansk, 2026-10-19: all ten fields "Very
+  // good" on the mean, while most peaked below the usual peak).
+  const score = Math.min(healthScore(mean, normalMean), healthScore(peak, normalPeak) ?? Infinity);
+  const cls = conditionClass(score);
+  if (!cls) return null;
+  return {
+    score: round3(score),
+    class: cls.id,
+    label: cls.label,
+    mean: round3(mean),
+    normalMean: round3(normalMean),
+    peak: round3(peak),
+    highest: round3(greenest[0]),
+    normalPeak: round3(normalPeak),
+    from,
+    to,
+    passes: pairs.length,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Pest and disease RISK from the weather (a forecast, not a detection)
 // ---------------------------------------------------------------------------
 // From Open-Meteo hourly temperature_2m and relative_humidity_2m, asked

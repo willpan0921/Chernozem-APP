@@ -4,8 +4,9 @@
   Field map, its legend, the metric tiles, the farm setup) and for the
   loading, progress and setup screens in src/state/FieldData.jsx.
 
-  Prefixes: fm- the map, fl- the legend, mt- the metric tiles,
-  fs- the farm setup, fd- the FieldData screens.
+  Prefixes: fm- the map, fl- the legend, fk- a field's look (its square
+  in the legend and the field lists, format.js mapLook), mt- the metric
+  tiles, fs- the farm setup, fd- the FieldData screens.
 
   WHO EDITS IT
   Whoever changes how those blocks look. Colours come from tokens.css;
@@ -273,20 +274,11 @@
   gap: 6px;
 }
 
-/* The marks, drawn as they look on the satellite map. */
+/* The marks, drawn as they look on the satellite map (fk- looks below). */
 
-/* Gold outline: ready to harvest, or due within two weeks. */
-.fl-ready {
+.fl-mark .fl-mark-swatch {
   width: 16px;
-  background: var(--fmap-great);
-  box-shadow: inset 0 0 0 2.5px var(--fmap-ready);
-}
-
-/* Red tint with a red outline. */
-.fl-recovery {
-  width: 16px;
-  background: color-mix(in srgb, var(--c-red) 40%, transparent);
-  box-shadow: inset 0 0 0 2px var(--c-red);
+  height: 14px;
 }
 
 /* A dashed white circle, on a dark square standing in for the imagery. */
@@ -304,11 +296,90 @@
   border: 1.5px dashed #ffffff;
 }
 
-/* A plain straw tint with a grey edge. */
-.fl-harvested {
-  width: 16px;
-  background: color-mix(in srgb, var(--fmap-harvested) 60%, var(--c-surface-2));
-  box-shadow: inset 0 0 0 1.5px var(--c-muted);
+.fl-scale-block {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.fl-caption {
+  font-size: 11.5px;
+  color: var(--c-muted);
+}
+
+.fl-legend.is-compact .fl-scale-block {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 10px;
+}
+
+/* ---------- A field's look (format.js mapLook) ----------
+   The same colours and patterns as the map: a crop in its condition class,
+   a harvested field with stubble lines over the colour of how its season
+   went, fallow or grass in olive with light dots, a crop dried down in
+   tan, bare ground for not sown, a red hatch for needs recovery, grey for
+   no reading yet, and a gold edge when ready to harvest. */
+
+.fk-look {
+  --fk-base: var(--fmap-nodata);
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: var(--fk-base);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-ink) 12%, transparent);
+}
+
+/* Before the class colours, so a harvested field takes its season's class. */
+.fk-harvested {
+  --fk-base: var(--fmap-harvested);
+}
+
+.fk-poor { --fk-base: var(--fmap-poor); }
+.fk-fair { --fk-base: var(--fmap-fair); }
+.fk-good { --fk-base: var(--fmap-good); }
+.fk-great { --fk-base: var(--fmap-great); }
+
+.fk-look.fk-harvested {
+  background:
+    repeating-linear-gradient(135deg, color-mix(in srgb, var(--fmap-stubble) 75%, transparent) 0 1.5px, transparent 1.5px 4px),
+    var(--fk-base);
+}
+
+/* The legend's Harvested chip: lines over Fair and Very good, so it reads
+   "the colour is the season's", matching any harvested field on the map. */
+.fk-look.fk-harvested.fk-split {
+  background:
+    repeating-linear-gradient(135deg, color-mix(in srgb, var(--fmap-stubble) 75%, transparent) 0 1.5px, transparent 1.5px 4px),
+    linear-gradient(90deg, var(--fmap-fair) 0 50%, var(--fmap-great) 50% 100%);
+}
+
+.fk-look.fk-fallow {
+  background:
+    radial-gradient(circle, var(--fmap-fallow-dot) 0 0.8px, transparent 1.2px) 0 0 / 4px 4px,
+    var(--fmap-fallow);
+}
+
+.fk-look.fk-driedDown {
+  background: var(--fmap-drieddown);
+}
+
+.fk-look.fk-notSown {
+  background: var(--fmap-bare);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--c-ink) 25%, transparent);
+}
+
+.fk-look.fk-recovery {
+  background:
+    repeating-linear-gradient(45deg, var(--c-red) 0 1.5px, transparent 1.5px 4px),
+    color-mix(in srgb, var(--c-red) 30%, var(--c-surface));
+  box-shadow: inset 0 0 0 1.5px var(--c-red);
+}
+
+.fk-look.is-ready {
+  box-shadow: inset 0 0 0 2.5px var(--fmap-ready);
 }
 
 /* ---------- MetricTile ---------- */

@@ -2,8 +2,8 @@
   WHAT THIS FILE DOES
   The styling for the Field Settings page (src/pages/field/SettingsPage.jsx):
   the Farm, Units, Data and AI cards. In the field list the swatch is
-  the "Show on the map" button: condition colour, or the red/beige
-  recovery stripes, like the map. Every class starts with "fset-"
+  the "Show on the map" button, drawn like the field on the map (the fk-
+  classes in src/components/field/field.css). Every class starts with "fset-"
   (Field settings) so nothing here changes another page.
   On phones (under 640 px wide) every button is at least 40 px tall so it
   is easy to tap.
@@ -389,41 +389,11 @@
   min-width: 120px;
 }
 
+/* The field's square: format.js mapLook, drawn by the fk- classes in
+   src/components/field/field.css (the same colours and patterns as the map). */
 .fset-field-swatch {
-  flex: 0 0 auto;
   width: 14px;
   height: 14px;
-  border-radius: 4px;
-  background: var(--fmap-nodata);
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
-}
-
-.fset-field-swatch.is-poor {
-  background: var(--fmap-poor);
-}
-
-.fset-field-swatch.is-fair {
-  background: var(--fmap-fair);
-}
-
-.fset-field-swatch.is-good {
-  background: var(--fmap-good);
-}
-
-.fset-field-swatch.is-great {
-  background: var(--fmap-great);
-}
-
-/* Harvested or not sown: the map's straw tint, no condition colour. */
-.fset-field-swatch.is-bare {
-  background: color-mix(in srgb, var(--fmap-harvested) 60%, var(--c-surface-2));
-  box-shadow: inset 0 0 0 1.5px var(--c-muted);
-}
-
-/* "Needs recovery": the red tint and outline it has on the map. */
-.fset-field-swatch.is-recovery {
-  background: color-mix(in srgb, var(--c-red) 40%, transparent);
-  box-shadow: inset 0 0 0 2px var(--c-red);
 }
 
 .fset-field-name {

@@ -5,6 +5,9 @@
 //
 //   statusSentence(farm, analyses, job)  -> { text: "1 field needs recovery · 1 to watch · 2 harvested", tone: "red" }
 //   showRecoveryTile(counts, conflict)   -> false on a peaceful farm with nothing to recover
+//   statTiles(farm, analyses, conflict)  -> the big tiles, one per status that has fields:
+//                                           [{ id: "harvested", label: "Harvested", value: 3, tone }]
+//   fieldKind(analysis)                  -> the tile a field is counted in ("harvested", "growing"...)
 //   needsDoing({ farm, analyses, weather, job })  -> the "What needs doing" items, most urgent first
 //   latestPass(farm, analyses)      -> "2026-10-16" (the newest clear Sentinel-2 pass) or null
 //   likelyRain(weather)             -> { from, to, mm } or null
@@ -18,7 +21,7 @@
 // Whoever changes what the Field overview says.
 
 import { COST_NOTE, recoveryCost } from "./method.js";
-import { SPREAD_LABEL, analysingIds, causeText, formatArea, formatDay, formatDayRange, riskNote, spreadOut, statusCounts, statusOf } from "./format.js";
+import { SPREAD_LABEL, analysingIds, causeText, fieldGroup, formatArea, formatDay, formatDayRange, riskNote, spreadOut, statusCounts, statusOf } from "./format.js";
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
@@ -78,6 +81,52 @@ export function statusSentence(farm, analyses = {}, job = null) {
 // farm a "0" there only worries people.
 export function showRecoveryTile(counts, conflict) {
   return Boolean(counts?.recovery) || Boolean(conflict);
+}
+
+// The big tiles of the overview: the farm's real mix, one tile per status
+// that has fields, in the order of the status sentence, never a row of
+// zeros. "Needs recovery" shows where a known war covers the farm (0 there
+// is good news) or a field needs it.
+//   -> [{ id, label, value, tone, look }]   (id is what fieldKind gives a field;
+//      look: the small square drawn beside the label, the same colour and
+//      pattern as these fields on the map (ConditionLegend LookSwatch), or
+//      null for a tile whose number is coloured already)
+// A growing field with high stress is "To watch" (format.js fieldGroup).
+const TILE_KINDS = [
+  { id: "recovery", label: "Needs recovery", tone: "red" },
+  { id: "watch", label: "To watch", tone: "amber" },
+  { id: "ready", label: "Ready to harvest", tone: "ink", look: { kind: "crop", cls: "great", ready: true } },
+  { id: "harvestSoon", label: "Harvest soon", tone: "blue" },
+  { id: "growing", label: "Growing well", tone: "green" },
+  { id: "harvested", label: "Harvested", tone: null, look: { kind: "harvested", cls: null, split: true } },
+  { id: "fallow", label: "Fallow or grass", tone: null, look: { kind: "fallow", cls: null } },
+  { id: "driedDown", label: "Dried down", tone: null, look: { kind: "driedDown", cls: null } },
+  { id: "notSown", label: "Not sown", tone: null, look: { kind: "notSown", cls: null } },
+  { id: "noCrop", label: "No crop", tone: null },
+];
+
+// The tile a field is counted in (an id of statTiles), or null before its
+// analysis.
+export function fieldKind(analysis) {
+  const group = fieldGroup(analysis);
+  if (!group) return null;
+  const id = statusOf(analysis)?.id;
+  if (group === "growing") return id === "ready" || id === "harvestSoon" ? id : "growing";
+  if (group === "noCrop") return ["harvested", "fallow", "driedDown", "notSown"].includes(id) ? id : "noCrop";
+  return group;
+}
+
+export function statTiles(farm, analyses = {}, conflict = null) {
+  const counts = {};
+  for (const field of farm?.fields || []) {
+    const kind = fieldKind(analyses[field.id]);
+    if (kind) counts[kind] = (counts[kind] || 0) + 1;
+  }
+  return TILE_KINDS.filter((tile) => counts[tile.id] || (tile.id === "recovery" && conflict)).map((tile) => {
+    const value = counts[tile.id] || 0;
+    // Nothing to recover inside a war: good news, in green.
+    return { ...tile, value, tone: tile.id === "recovery" && !value ? "green" : tile.tone, look: tile.look || null };
+  });
 }
 
 // $1,948 -> "$1.9k", $12,710 -> "$12.7k", $640 -> "$640", $1.2M.

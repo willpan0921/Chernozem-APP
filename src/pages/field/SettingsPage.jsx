@@ -45,6 +45,7 @@ import { FarmGate, FieldProgress, useFieldData } from "../../state/FieldData.jsx
 import { API_ROOT, getStatus } from "../../api/atlasApi.js";
 import { checkPolygon, pointsToGeometry } from "../../lib/atlas/coords.js";
 import { STATUS_GROUPS, UNITS } from "../../lib/field/method.js";
+import { LookSwatch } from "../../components/field/ConditionLegend.jsx";
 import { ANALYSING_LABEL, candidateTotals, cropInfo, detectedChoice, farmAreaHa, formatArea, formatDay, mapLook, statusOf, unitShort } from "../../lib/field/format.js";
 import { compareNames, matchFields, overlappingFields, planFieldsToSave, redetectBody } from "../../lib/field/geometry.js";
 import "./SettingsPage.css";
@@ -288,25 +289,24 @@ function InlineName({ value, label, className = "", maxLength = 60, onSave, onEr
 // ---------- Farm: one field in the list ----------
 
 // What the list shows next to a field's name, matching the map: the
-// red "Needs recovery" tint and pill, a "Watch" badge, the straw swatch of
-// a harvested or not-sown field (no condition class), or "Analysing…" for
-// a new field.
+// "Recovery" pill, a "Watch" badge, "Crop unclear", or "Analysing…" for a
+// new field. The square beside it is the field's look on the map
+// (format.js mapLook: LookSwatch).
 function statusMark(analysis, analysing) {
   const id = statusOf(analysis)?.id;
-  if (!analysis && analysing) return { swatch: null, badge: { tone: "outline", label: ANALYSING_LABEL } };
-  if (STATUS_GROUPS.recovery.includes(id)) return { swatch: "is-recovery", badge: { tone: "red", label: "Recovery" } };
-  if (id === "watch") return { swatch: null, badge: { tone: "amber", label: "Watch" } };
+  if (!analysis && analysing) return { badge: { tone: "outline", label: ANALYSING_LABEL } };
+  if (STATUS_GROUPS.recovery.includes(id)) return { badge: { tone: "red", label: "Recovery" } };
+  if (id === "watch") return { badge: { tone: "amber", label: "Watch" } };
   // Possibly grass, crop unknown: the farmer can set the crop here.
-  if (id === "unclear") return { swatch: null, badge: { tone: "outline", label: "Crop unclear" } };
-  if (mapLook(analysis).bare) return { swatch: "is-bare", badge: null };
-  return { swatch: null, badge: null };
+  if (id === "unclear") return { badge: { tone: "outline", label: "Crop unclear" } };
+  return { badge: null };
 }
 
 function FieldRow({ field, analysis, analysing, units, selected, onSelect, busy }) {
   const { actions } = useFieldData();
   const [error, setError] = useState(null);
   const [savingCrop, setSavingCrop] = useState(false);
-  const conditionClass = analysis?.condition?.class || "nodata";
+  const look = analysis ? mapLook(analysis) : null;
   const mark = statusMark(analysis, analysing);
   const select = () => onSelect(selected ? null : field.id);
   // The farmer's own crop, if any; until then the select shows the
@@ -343,7 +343,7 @@ function FieldRow({ field, analysis, analysing, units, selected, onSelect, busy 
         title="Show on the map"
         onClick={select}
       >
-        <span className={`fset-field-swatch is-${conditionClass} ${mark.swatch || ""}`} aria-hidden="true" />
+        <LookSwatch look={look} className="fset-field-swatch" title={look?.label} />
       </button>
       <span className="fset-field-id">
         <InlineName

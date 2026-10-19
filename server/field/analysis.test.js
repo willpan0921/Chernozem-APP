@@ -7,7 +7,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { cropForRules, cropSourceOf, finishAnalysis, harvestWindow, peakMonthFromHistory, pestRiskFrom, stripForList } from "./analysis.js";
+import { cropForRules, cropSourceOf, finishAnalysis, harvestWindow, peakMonthFromHistory, pestRiskFrom, seasonOf, stripForList } from "./analysis.js";
 import { KUPIANSK_FALLOW, KUPIANSK_FALLOW_SLOW, KUPIANSK_UNKNOWN } from "../../src/lib/field/crops.test-data.js";
 
 const field = { id: "fld-test0001", name: "Field 1", areaHa: 40, geometry: { type: "Polygon", coordinates: [[[37.5, 49.7], [37.51, 49.7], [37.51, 49.705], [37.5, 49.705], [37.5, 49.7]]] } };
@@ -367,4 +367,64 @@ test("a dried-down (ready) crop is not read for stress; a harvested one says how
   const h = finishAnalysis({ field, raw: { ...base, season: season([0.3, 0.6, 0.85, 0.8, 0.5, 0.2, 0.18, 0.2], "2026-05-01", 10) }, today: "2026-07-20" });
   assert.equal(h.harvest.stage, "harvested");
   assert.equal(h.harvest.basis, "images");
+});
+
+test("how the season went: kept for a harvested field (its condition stays none), never for fallow or a growing crop", () => {
+  // A harvested field: green-up in May, peak 0.85, cut in July. The normal
+  // peaks at 0.80 on the same days.
+  const normalCurve = ["04-16:0.25", "05-01:0.35", "05-16:0.55", "06-01:0.8", "06-16:0.75", "07-01:0.6", "07-16:0.35", "08-01:0.25"].map((item) => ({ day: item.slice(0, 5), low: null, high: null, median: Number(item.slice(6)) }));
+  const raw = { ...base, normalCurve, season: season([0.3, 0.6, 0.85, 0.8, 0.5, 0.2, 0.18, 0.2], "2026-05-01", 10) };
+  const a = finishAnalysis({ field, raw, today: "2026-07-20" });
+  assert.equal(a.harvest.stage, "harvested");
+  assert.deepEqual(a.condition, { score: null, class: null });
+  assert.equal(a.lastSeason.soFar, false);
+  // The peak is the mean of the three greenest passes (0.85, 0.8, 0.6).
+  assert.equal(a.lastSeason.peak, 0.75);
+  assert.equal(a.lastSeason.highest, 0.85);
+  assert.equal(a.lastSeason.normalPeak, 0.8);
+  assert.ok(["good", "great"].includes(a.lastSeason.class));
+  assert.equal(stripForList(a).lastSeason.class, a.lastSeason.class);
+  // Fallow or grass: no season to grade.
+  assert.equal(finishAnalysis({ field, raw: kupiansk(KUPIANSK_FALLOW), today: "2026-10-19" }).lastSeason, null);
+  // A crop still growing has its condition now, no season result.
+  assert.equal(finishAnalysis({ field, raw: base, today: "2026-06-10" }).lastSeason, null);
+});
+
+// Review round: the season result's cut date, a crop not cut yet, and an
+// unknown crop that is possibly grass.
+const seasonNormal = ["04-16:0.25", "05-01:0.35", "05-16:0.55", "06-01:0.8", "06-16:0.75", "07-01:0.6", "07-16:0.35", "08-01:0.25"].map((item) => ({ day: item.slice(0, 5), low: null, high: null, median: Number(item.slice(6)) }));
+const seasonPasses = season([0.3, 0.45, 0.6, 0.75, 0.82, 0.8, 0.7, 0.55, 0.3, 0.2], "2026-04-20", 8);
+
+test("seasonOf: the earlier of the optical and the radar cut date ends the season", () => {
+  // Optical cut 2026-07-10, radar cut 2026-06-26: the passes from 26 June
+  // on are stubble.
+  const r = seasonOf({ harvest: { stage: "harvested", harvestedOn: "2026-07-10", radarHarvestOn: "2026-06-26" }, season: seasonPasses, normalCurve: seasonNormal });
+  assert.equal(r.harvestedOn, "2026-06-26");
+  assert.ok(r.to < "2026-06-26");
+  assert.equal(r.soFar, false);
+  const later = seasonOf({ harvest: { stage: "harvested", harvestedOn: "2026-07-10", radarHarvestOn: null }, season: seasonPasses, normalCurve: seasonNormal });
+  assert.equal(later.harvestedOn, "2026-07-10");
+  assert.ok(later.to > r.to);
+});
+
+test("seasonOf: a crop ready to harvest gives the season so far; a growing one none", () => {
+  const r = seasonOf({ harvest: { stage: "ready" }, season: seasonPasses, normalCurve: seasonNormal });
+  assert.equal(r.soFar, true);
+  assert.equal(r.harvestedOn, null);
+  assert.equal(r.to, seasonPasses[seasonPasses.length - 1].date);
+  assert.equal(seasonOf({ harvest: { stage: "growing" }, season: seasonPasses, normalCurve: seasonNormal }), null);
+});
+
+test("seasonOf: an unknown crop that is possibly grass, cut, is not graded as a crop season", () => {
+  const harvest = { stage: "harvested", harvestedOn: "2026-06-26", cropUnknown: true };
+  const grass = { id: "unknown", possiblyFallow: true };
+  assert.equal(seasonOf({ harvest, season: seasonPasses, normalCurve: seasonNormal, cropDetected: grass, crop: { id: null } }), null);
+  // Possibly grass and dried down: no "season so far" either.
+  assert.equal(seasonOf({ harvest: { stage: "growing", dryDown: "dry", cropUnknown: true }, season: seasonPasses, normalCurve: seasonNormal, cropDetected: grass, crop: { id: null } }), null);
+  // The farmer named the crop: graded.
+  assert.ok(seasonOf({ harvest, season: seasonPasses, normalCurve: seasonNormal, cropDetected: grass, crop: { id: "wheat" } }));
+  // Through finishAnalysis: the real Kupiansk unknown crop (possibly grass,
+  // dried down) gets no season result.
+  const a = finishAnalysis({ field, raw: kupiansk(KUPIANSK_UNKNOWN), today: "2026-10-19" });
+  if (a.cropDetected.possiblyFallow) assert.equal(a.lastSeason, null);
 });
