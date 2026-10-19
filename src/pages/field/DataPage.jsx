@@ -33,7 +33,7 @@ import { PageHeader, Card, Badge, Button, Segmented, ChipSelect } from "../../co
 import { FarmGate, FieldProgress, useFieldData } from "../../state/FieldData.jsx";
 import { exportUrl, getGeotiffUrl } from "../../api/fieldApi.js";
 import { BASELINE } from "../../lib/field/method.js";
-import { ANALYSING_LABEL, cropInfo, farmLine, formatArea, formatDay, formatIndex, stageWord, stressWord, versusWord } from "../../lib/field/format.js";
+import { ANALYSING_LABEL, cropInfo, farmLine, formatArea, formatDay, formatIndex, stageWord, statusOf, stressWord, versusWord, waterWord } from "../../lib/field/format.js";
 import "./DataPage.css";
 
 // The two readings the chart can show. One at a time: they have different
@@ -772,14 +772,14 @@ function PrintReport({ farm, analyses, analysing, provider, field, chart, measur
                 <td>{item.name}</td>
                 <td>{cropInfo(item, a).text || "–"}</td>
                 <td className="num">{formatArea(item.areaHa, farm.units)}</td>
-                <td>{a?.status?.label || (analysing.has(item.id) ? ANALYSING_LABEL : "–")}</td>
+                <td>{statusOf(a)?.label || (analysing.has(item.id) ? ANALYSING_LABEL : "–")}</td>
                 <td>
                   <span className="fdata-print-num">{formatIndex(a?.plantHealth?.ndvi)}</span> <span className="fdata-print-soft">{a?.plantHealth?.versus ? versusWord(a.plantHealth.versus) : ""}</span>
                 </td>
                 <td>
-                  <span className="fdata-print-num">{formatIndex(a?.water?.ndwi)}</span> <span className="fdata-print-soft">{a?.water?.versus ? versusWord(a.water.versus) : ""}</span>
+                  <span className="fdata-print-num">{formatIndex(a?.water?.ndwi)}</span> <span className="fdata-print-soft">{a?.water?.versus ? waterWord(a.water.versus) : ""}</span>
                 </td>
-                <td>{a?.stress?.applies === false ? "No crop" : a?.stress?.level ? stressWord(a.stress.level) : "–"}</td>
+                <td>{a?.stress?.applies === false ? (a.stress.reason === "driedDown" ? "Dried down" : "No crop") : a?.stress?.level ? stressWord(a.stress.level) : "–"}</td>
                 <td>{a ? stageWord(a.harvest) : "–"}</td>
                 <td>{a?.latestPass?.date ? dayText(a.latestPass.date) : "–"}</td>
               </tr>

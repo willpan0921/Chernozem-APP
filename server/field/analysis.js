@@ -27,7 +27,8 @@
 //     cause (dry or not water), "No crop" when the field is harvested
 //     or not sown and "Dried down" when the crop has dried down for harvest; the weather-based pest and disease RISK while a crop
 //     grows (hours of wet warm weather, insect degree-days);
-//   - the condition (none for a harvested or not-sown field), damage
+//   - the condition (none for a field with no crop: harvested, not sown,
+//     fallow or grass, or an unknown crop dried down), damage
 //     (damageDetected, from fires ABOVE the normal years' rate, radar change
 //     and the health index; away from any war radar change alone is not
 //     damage), the field's status and the soil type; and which known war,
@@ -50,17 +51,19 @@ import {
   fieldCondition,
   fieldStatus,
   gddEstimate,
+  gddStartDate,
   greenUpDate,
   HARVEST_WINDOW_DAYS,
   harvestStage,
   healthScore,
   insectRisk,
-  PEST_RISK_STAGES,
+  pestRiskApplies,
   unknownCropHarvest,
   radarForHarvest,
   soilTypeFor,
   STRESS_CAUSES,
   stressCause,
+  stressCauseShown,
   stressSummary,
   cleanSeries,
   NOT_SOWN_PEAK,
@@ -179,9 +182,12 @@ export function harvestWindow(harvest, weather, today) {
 
 // The weather-based pest and disease risk from the weather's hourly
 // summary ({ wetHours14, gdd14 }, server/field/weather.js), only while a
-// crop is growing or ripening. Null otherwise.
-export function pestRiskFrom(hourly, stage) {
-  if (!hourly || !PEST_RISK_STAGES.includes(stage)) return null;
+// crop is growing or ripening and the field is not fallow, possibly grass
+// or dried down (method.js pestRiskApplies). Null otherwise.
+//   harvest       the harvest object (or a stage id)
+//   cropDetected  classifyCrop() result (optional)
+export function pestRiskFrom(hourly, harvest, cropDetected = null) {
+  if (!hourly || !pestRiskApplies(harvest, cropDetected)) return null;
   const wetHours = num(hourly.wetHours14);
   const gdd14 = num(hourly.gdd14);
   const disease = diseaseRisk(wetHours);
@@ -288,19 +294,22 @@ export function finishAnalysis({ field, raw, weather = null, today, provider, hi
     const cycle = stage.cycleStart ? season.filter((p) => p.date >= stage.cycleStart) : season;
     const cropping = stage.stage === "growing" || stage.stage === "ripening";
     const greenUp = cropping && cropId ? greenUpDate(cycle, profile.gddFrom === "spring regrowth" ? { maxBase: WINTER_GREEN_UP_MAX_BASE } : {}) : null;
-    const gdd = greenUp && Array.isArray(temperatures) && temperatures.length ? gddEstimate({ crop: cropId, greenUp, temperatures, today: day }) : null;
+    // Counted from the green-up, or from the start of spring for a crop
+    // counted from spring regrowth (crops.js gddStartDate).
+    const from = gddStartDate({ crop: cropId, greenUp, today: day, lat });
+    const gdd = from && Array.isArray(temperatures) && temperatures.length ? gddEstimate({ crop: cropId, greenUp: from, temperatures, today: day }) : null;
     const read = radarForHarvest({ vhSeries: radar.series, season: cycle, peakDate: stage.peakDate, crop: cropId });
     const radarRead = radar.series.length && stage.peakDate ? read.radar : null;
-    return { greenUp, combined: combineHarvestEstimate({ ndvi: stage, gdd, radar: radarRead, crop: cropId, today: day, leavesDownOn: read.leavesDownOn }) };
+    return { greenUp, gddFrom: from, combined: combineHarvestEstimate({ ndvi: stage, gdd, radar: radarRead, crop: cropId, today: day, leavesDownOn: read.leavesDownOn }) };
   };
-  let { greenUp, combined } = estimate(crop.id);
+  let { greenUp, gddFrom, combined } = estimate(crop.id);
   // A detected crop whose dry-down does not fit its usual harvest months
   // (cropMismatch) was probably misread: its rules are dropped (the field
   // is read as an unknown crop) and the detection is only "possible".
   if (combined.cropMismatch && crop.source === "detected") {
     cropDetected = { ...cropDetected, confidence: "possible", reason: `${cropDetected.reason}; the dry-down does not fit a usual ${String(cropDetected.label).toLowerCase()} harvest, so it is uncertain` };
     crop = { id: null, label: null, source: null };
-    ({ greenUp, combined } = estimate(null));
+    ({ greenUp, gddFrom, combined } = estimate(null));
   }
   // No crop known for this season: no date is estimated (a harvest date
   // for a crop the app cannot name would be a guess); only what was
@@ -323,7 +332,10 @@ export function finishAnalysis({ field, raw, weather = null, today, provider, hi
     // What the estimate rests on: "dry-down" (plant-health curve), "heat
     // units" (growing degree-days), "both" (they agree), "radar" or null.
     basis: combined.basis || null,
-    gdd: combined.gdd ? { ...combined.gdd, greenUp } : null,
+    // greenUp: the green-up the satellite saw; from: the day heat units are
+    // counted from (the start of spring for a winter cereal or rapeseed
+    // that greened up earlier: crops.js gddStartDate).
+    gdd: combined.gdd ? { ...combined.gdd, greenUp, from: gddFrom } : null,
     radarHarvestOn: combined.radarHarvestOn || null,
     // A tall crop dried down but not cut (no radar drop): "ready".
     standingDry: Boolean(combined.standingDry),
@@ -337,6 +349,9 @@ export function finishAnalysis({ field, raw, weather = null, today, provider, hi
     dryDown: combined.dryDown || null,
     // Read as fallow or grass: no crop in the field.
     fallow: Boolean(combined.fallow),
+    // Fallow or grass with a radar drop: cut or mown (method.js MOWN_LABEL),
+    // not harvested.
+    mown: Boolean(combined.mown),
   };
 
   // Stress: the share the data source found (NDVI rule OR red-edge rule),
@@ -345,7 +360,14 @@ export function finishAnalysis({ field, raw, weather = null, today, provider, hi
   // A crop dried down for harvest is not read for stress either (its
   // leaves die back on purpose: method.js stressExemption).
   const summary = stressSummary({ stage: harvest.stage, dryDown: harvest.dryDown, fallow: harvest.fallow, share, ndwiAnomaly: num(r.stress?.ndwiAnomaly), redEdgeOnlyShare: num(r.stress?.redEdgeOnlyShare) });
-  const givenCause = STRESS_CAUSES[r.stress?.cause] ? r.stress.cause : null;
+  const givenCause = STRESS_CAUSES[r.stress?.cause] && r.stress.cause !== "spread" ? r.stress.cause : null;
+  const patches = summary.applies
+    ? (Array.isArray(r.stress?.patches) ? r.stress.patches : [])
+        .filter((p) => [p?.lat, p?.lon].every(Number.isFinite))
+        .slice(0, 3)
+        .map((p) => ({ lat: p.lat, lon: p.lon, radiusM: num(p.radiusM), ha: num(p.ha), cause: STRESS_CAUSES[p.cause] && p.cause !== "spread" ? p.cause : stressCause(num(p.ndwiAnomaly)) }))
+    : [];
+  const measuredCause = summary.cause ?? (summary.applies && Number.isFinite(share) && share > 0 ? givenCause : null);
   const stress = {
     applies: summary.applies,
     // Why stress is not read: "noCrop" or "driedDown" (null when it is).
@@ -353,16 +375,14 @@ export function finishAnalysis({ field, raw, weather = null, today, provider, hi
     share: summary.share,
     level: summary.level,
     stressedHa: summary.applies ? num(r.stress?.stressedHa) ?? (Number.isFinite(share) && Number.isFinite(areaHa) ? round(share * areaHa, 2) : null) : null,
-    cause: summary.cause ?? (summary.applies && Number.isFinite(share) && share > 0 ? givenCause : null),
+    // The cause shown: "dry" or "other" (measured over the stressed
+    // pixels), or "spread" when medium or high stress has no mapped patch
+    // (method.js stressCauseShown).
+    cause: summary.applies ? stressCauseShown({ level: summary.level, cause: measuredCause, patches }) : null,
     redEdge: summary.redEdge,
     ndwiAnomaly: summary.applies ? round(num(r.stress?.ndwiAnomaly)) : null,
     redEdgeOnlyShare: summary.applies ? round(num(r.stress?.redEdgeOnlyShare)) : null,
-    patches: summary.applies
-      ? (Array.isArray(r.stress?.patches) ? r.stress.patches : [])
-          .filter((p) => [p?.lat, p?.lon].every(Number.isFinite))
-          .slice(0, 3)
-          .map((p) => ({ lat: p.lat, lon: p.lon, radiusM: num(p.radiusM), ha: num(p.ha), cause: STRESS_CAUSES[p.cause] ? p.cause : stressCause(num(p.ndwiAnomaly)) }))
-      : [],
+    patches,
   };
 
   // Fires count only above the normal years' rate (excessFires). An
@@ -388,12 +408,15 @@ export function finishAnalysis({ field, raw, weather = null, today, provider, hi
     damagedHa: damagedArea({ ...evidence, atWar: Boolean(conflict) }, areaHa),
   };
 
-  // The combined condition: none for a harvested or not-sown field; a
-  // damaged field is never shown better than "Fair" (method.js).
-  const measured = fieldCondition({ stage: harvest.stage, health: plantHealth.score, water: water.score, stress: stress.share, damage });
+  // The combined condition: none for a field with no crop (harvested, not
+  // sown, fallow or grass, an unknown crop dried down: method.js
+  // noCropState); a damaged field is never shown better than "Fair".
+  const measured = fieldCondition({ stage: harvest, health: plantHealth.score, water: water.score, stress: stress.share, damage });
   const condition = { score: round(measured.score), class: measured.class };
 
-  const status = fieldStatus({ damage, harvest, condition: condition.score, stress: stress.level, health: plantHealth.versus });
+  // An unknown crop on a field that is possibly fallow or grass is "Crop
+  // unclear" (To watch), never "Growing well".
+  const status = fieldStatus({ damage, harvest, condition: condition.score, stress: stress.level, health: plantHealth.versus, possiblyFallow: !crop.id && Boolean(cropDetected?.possiblyFallow) });
   const chernozemProbability = num(r.soil?.chernozemProbability);
 
   const latestPass = r.latestPass?.date
@@ -414,8 +437,8 @@ export function finishAnalysis({ field, raw, weather = null, today, provider, hi
     redEdge: r.redEdge && Number.isFinite(r.redEdge.ndre) ? { ndre: r.redEdge.ndre, normal: cleanNormal(r.redEdge.normal) } : null,
     stress,
     // No risk for a field dried down to harvest level (nothing left to
-    // infect) or with no crop (fallow or grass).
-    pestRisk: pestRiskFrom(weather?.hourly, harvest.dryDown === "dry" || harvest.fallow ? "ready" : harvest.stage),
+    // infect) or with no crop (fallow, possibly grass).
+    pestRisk: pestRiskFrom(weather?.hourly, harvest, cropDetected),
     harvest,
     cropDetected,
     // The crop the rules used and where it came from.

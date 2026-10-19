@@ -128,12 +128,12 @@ function FieldAi() {
     ...(aboutField ? [{ key: "field", icon: "sprout", label: "Field", value: aboutField.name, onClear: () => dropParam("about") }] : []),
   ];
 
-  const suggestions = useMemo(() => fieldSuggestions(starterFields(farm, analyses)), [farm, analyses]);
   // No known war covers the farm: no talk of deminers. The analyses say
   // so; before any analysis, the farm's place does (farm.conflict from the
   // server, format.js farmConflict). Only when nothing says either way is
   // the careful war wording kept.
   const peace = conflict === null;
+  const suggestions = useMemo(() => fieldSuggestions({ ...starterFields(farm, analyses), peace }), [farm, analyses, peace]);
   const text = {
     placeholder: composer.field.placeholder,
     disclaimer: peace ? composer.field.disclaimerPeace : composer.field.disclaimer,

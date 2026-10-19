@@ -436,6 +436,12 @@
   font-weight: 600;
 }
 
+/* "In top area 2": the link to a top area, under the alert's own place. */
+.ao-alert-area {
+  font-size: 11px;
+  color: var(--c-muted);
+}
+
 .ao-alert-place,
 .ao-alert-detail {
   font-size: 11px;

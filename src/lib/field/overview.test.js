@@ -13,6 +13,8 @@ const STATUS = {
   notSown: { id: "notSown", label: "Not sown", tone: null },
   watch: { id: "watch", label: "Watch", tone: "amber" },
   healthy: { id: "healthy", label: "Healthy", tone: "green" },
+  fallow: { id: "fallow", label: "Fallow or grass", tone: null },
+  driedDown: { id: "driedDown", label: "Dried down", tone: null },
   unknown: { id: "unknown", label: "No clear image yet", tone: null },
 };
 
@@ -52,7 +54,7 @@ const WEATHER = { rain: { likely: true, from: "2026-10-19", to: "2026-10-19", mm
 
 test("the demo farm's status sentence", () => {
   const { farm, analyses } = demoFarm();
-  assert.deepEqual(statusSentence(farm, analyses), { text: "1 field needs recovery · 1 to watch · 2 harvested · 2 ready to harvest", tone: "red" });
+  assert.deepEqual(statusSentence(farm, analyses), { text: "1 field needs recovery · 1 to watch · 2 ready to harvest · 1 harvest soon · 2 harvested", tone: "red" });
 });
 
 test("the demo farm's five things to do, in order", () => {
@@ -75,11 +77,11 @@ test("the demo farm's five things to do, in order", () => {
   assert.equal(items[3].line, "Harvest before the rain on Oct 19");
 });
 
-test("harvested and not-sown fields are not counted as healthy", () => {
+test("fields with no crop are never counted as growing well", () => {
   const { farm } = demoFarm();
   const analyses = {};
   farm.fields.forEach((field, i) => (analyses[field.id] = analysis(i < 4 ? "harvested" : i < 6 ? "healthy" : "ready")));
-  assert.deepEqual(statusSentence(farm, analyses), { text: "3 healthy · 4 harvested · 1 ready to harvest", tone: "green" });
+  assert.deepEqual(statusSentence(farm, analyses), { text: "1 ready to harvest · 2 growing well · 4 harvested", tone: "green" });
   for (const field of farm.fields) analyses[field.id] = analysis("harvested");
   assert.equal(statusSentence(farm, analyses).text, "All 7 fields harvested");
   analyses.f1 = analysis("notSown");
@@ -88,13 +90,13 @@ test("harvested and not-sown fields are not counted as healthy", () => {
   assert.equal(statusSentence(farm, analyses).text, "1 field to watch · 5 harvested · 1 not sown");
 });
 
-test("all fields healthy", () => {
+test("all fields growing well", () => {
   const { farm, analyses } = demoFarm();
   for (const id of Object.keys(analyses)) analyses[id] = analysis("healthy");
-  assert.deepEqual(statusSentence(farm, analyses), { text: "All 7 fields healthy", tone: "green" });
+  assert.deepEqual(statusSentence(farm, analyses), { text: "All 7 fields growing well", tone: "green" });
   assert.deepEqual(needsDoing({ farm, analyses }), []);
   const one = { units: "ha", fields: [farm.fields[0]] };
-  assert.equal(statusSentence(one, analyses).text, "Your field is healthy");
+  assert.equal(statusSentence(one, analyses).text, "Your field is growing well");
 });
 
 test("fields waiting for analysis", () => {
@@ -110,7 +112,7 @@ test("fields waiting for analysis", () => {
 test("several damaged fields make one recovery item", () => {
   const { farm, analyses } = demoFarm();
   analyses.f6 = analysis("recovery", { damage: { detected: true, damagedHa: 9.5 } });
-  assert.equal(statusSentence(farm, analyses).text, "2 fields need recovery · 1 to watch · 1 harvested · 2 ready to harvest");
+  assert.equal(statusSentence(farm, analyses).text, "2 fields need recovery · 1 to watch · 2 ready to harvest · 1 harvest soon · 1 harvested");
   const recovery = needsDoing({ farm, analyses }).find((item) => item.id === "recovery");
   assert.equal(recovery.title, "Fields 6 and 7 need recovery");
   assert.equal(recovery.amount, "30 ha damaged");
@@ -160,7 +162,8 @@ test("a failed update comes first, with Try again", () => {
 
 test("stress and the other watch reasons", () => {
   const { farm, analyses } = demoFarm();
-  analyses.f3.stress = { level: "medium", stressedHa: 2.1 };
+  analyses.f3.stress = { level: "medium", share: 0.15, stressedHa: 2.1, patches: [{ lat: 0, lon: 0, radiusM: 50, ha: 2.1 }] };
+  analyses.f2.stress = { level: "medium", share: 0.072, stressedHa: 0.2, patches: [] };
   analyses.f1 = analysis("watch", { water: { versus: "below" } });
   analyses.f6 = analysis("unknown");
   const titles = needsDoing({ farm, analyses }).map((item) => item.title);
@@ -219,4 +222,41 @@ test("stress says its likely cause; a high pest risk is one item", () => {
   assert.equal(risk.title, "Disease risk high this week");
   assert.equal(risk.line, "Fields 1 and 2 · from the weather, check on the ground");
   assert.equal(needsDoing({ farm, analyses: { a: analysis("healthy", { pestRisk: { disease: "medium", insects: "low" } }) } }).some((item) => item.id === "pest-risk"), false);
+});
+
+test("fallow and dried-down fields are 'no crop', in the sentence and the counts", () => {
+  const { farm } = demoFarm();
+  const analyses = {};
+  farm.fields.forEach((field, i) => (analyses[field.id] = analysis(["harvested", "harvested", "fallow", "driedDown", "ready", "ready", "watch"][i])));
+  assert.deepEqual(statusSentence(farm, analyses), { text: "1 field to watch · 2 ready to harvest · 2 harvested · 1 fallow or grass · 1 dried down", tone: "amber" });
+  for (const field of farm.fields) analyses[field.id] = analysis("fallow");
+  assert.equal(statusSentence(farm, analyses).text, "All 7 fields fallow or grass");
+  // Saved before the fallow status existed: still never "growing well".
+  for (const field of farm.fields) analyses[field.id] = analysis("healthy", { harvest: { stage: "growing", fallow: true } });
+  assert.equal(statusSentence(farm, analyses).text, "All 7 fields fallow or grass");
+  analyses.f1 = analysis("healthy", { harvest: { stage: "growing", dryDown: "dry", cropUnknown: true } });
+  assert.equal(statusSentence(farm, analyses).text, "6 fallow or grass · 1 dried down");
+});
+
+test("stress with no patch on the map is spread across the field", () => {
+  const { farm, analyses } = demoFarm();
+  analyses.f3 = analysis("watch", { stress: { level: "medium", stressedHa: 9, patches: [], cause: "other" } });
+  const item = needsDoing({ farm, analyses }).find((entry) => entry.id === "stress-f3");
+  assert.equal(item.line, "Spread across the field");
+  analyses.f3.stress.patches = [{ lat: 1, lon: 2, radiusM: 30, ha: 1, cause: "dry" }];
+  analyses.f3.stress.cause = "dry";
+  assert.equal(needsDoing({ farm, analyses }).find((entry) => entry.id === "stress-f3").line, "Dry patch");
+});
+
+// Polish round 2: the sentence names each status inside "In crop".
+test("ready, harvest soon and growing well are named apart; a crop unclear is to watch", () => {
+  const { farm } = demoFarm();
+  const analyses = {};
+  farm.fields.forEach((field, i) => (analyses[field.id] = analysis(i < 5 ? "ready" : i < 6 ? "healthy" : "driedDown")));
+  assert.equal(statusSentence(farm, analyses).text, "5 ready to harvest · 1 growing well · 1 dried down");
+  analyses.f6 = analysis("unclear", { status: { id: "unclear", label: "Crop unclear", tone: null } });
+  assert.equal(statusSentence(farm, analyses).text, "1 field to watch · 5 ready to harvest · 1 dried down");
+  const item = needsDoing({ farm, analyses }).find((x) => x.fieldId === "f6");
+  assert.equal(item.title, "Field 6: crop unclear");
+  assert.equal(item.action.to, "/field/settings");
 });

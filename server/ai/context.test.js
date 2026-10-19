@@ -10,7 +10,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { buildAtlasContext, fallbackGroupHotspots, coordLabel, placeLabel, ATLAS_TOOLS, conflictLine } from "./context.js";
+import { buildAtlasContext, fallbackGroupHotspots, coordLabel, placeLabel, ATLAS_TOOLS, conflictLine, settingsLine } from "./context.js";
 import { scorePlaces } from "../../src/lib/atlas/scoring.js";
 
 // A 6 x 6 grid with a strong corner (top left) and a weak rest.
@@ -86,11 +86,21 @@ test("the war line: a known war, no war, ACLED at peace, older runs", () => {
   assert.match(peace, /none in the app's list covers this area/);
   assert.match(peace, /does NOT mean the land is safe/);
   assert.match(peace, /Do not talk about a war, a front line or demining/);
+  // At peace: the damage score as used, and never "distance to fighting" (10.6).
+  assert.match(peace, /Damage score: the share of each place's black-soil cropland that is heavily damaged \(radar change of 3 dB or more backed by an unusual fire within 1 km/);
+  assert.match(peace, /full at 20%/);
+  assert.match(peace, /Safe access: no war is recorded here, so it is full \(100\) everywhere/);
+  assert.doesNotMatch(peace, /fighting/);
+  assert.match(war, /Damage score: the mean of unusual fire and radar change/);
   assert.doesNotMatch(peace, /safe to reach|counts as safe/i);
   const acled = conflictLine(null, "acled");
   assert.match(acled, /battles in the ACLED file/);
   assert.doesNotMatch(acled, /nothing is set aside/);
   assert.equal(conflictLine(undefined), "");
+  // In a war with no ACLED file: unusual fires, an estimate, not "recorded fighting".
+  const fires = conflictLine({ id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" }, "fires");
+  assert.match(fires, /distance to unusual fires \(an estimate of where fighting is; there is no ACLED file/);
+  assert.doesNotMatch(fires, /recorded fighting,/);
 });
 
 test("labels", () => {
@@ -139,7 +149,10 @@ test("context text and tools over a run", async () => {
   assert.match(ctx.text, /Area: Grid Oblast/);
   assert.match(ctx.text, /2026-09/);
   assert.match(ctx.text, /SAMPLE DATA/);
-  assert.match(ctx.text, /weights soil 30%, damage 40%, safe access 30%/);
+  // The weights as each ranking uses them (10.6).
+  assert.match(ctx.text, /Near term ranks by soil value 43% and damage 57%; safe access is a cutoff, not a weight/);
+  assert.match(ctx.text, /Postwar blends soil value 30%, damage 40% and safe access 30%/);
+  assert.match(ctx.text, /1\. Bucha, Kyiv \([^)]*\), \d+ squares?:/);
   assert.match(ctx.text, /Top places, near term:/);
   assert.match(ctx.text, /Top places, postwar:\n1\. Bucha, Kyiv/);
   assert.match(ctx.text, /History by month/);
@@ -166,6 +179,13 @@ test("context text and tools over a run", async () => {
   const budget = await ctx.runTool("budget_coverage", { usd: 1000000 });
   assert.deepEqual(budget.coversHa.fastPathHa, [Math.round(1e6 / 290), Math.round(1e6 / 95)]);
   assert.ok(budget.coversFirst.length >= 1);
+  // Each place says what its hectares are; black soil is never called damage.
+  for (const item of budget.coversFirst) {
+    assert.equal(item.countedHa, item.heavyDamageHa > 0 ? item.heavyDamageHa : item.blackSoilHa);
+    assert.equal(item.counted, item.heavyDamageHa > 0 ? "heavily damaged hectares" : "black-soil cropland (no heavy damage found)");
+    assert.ok(item.squares >= 1);
+  }
+  assert.equal((await ctx.runTool("get_ranking", { timeframe: "nearTerm", limit: 2 })).weightsUsed.soil, 43);
   assert.ok((await ctx.runTool("budget_coverage", { usd: -5 })).error);
 
   const history = await ctx.runTool("get_history", {});
@@ -273,4 +293,57 @@ test("context over a real sample run", { skip: haveServer ? false : "server/runs
   const compare = await ctx.runTool("compare_months", { a: "2026-08", b: "2026-09" });
   assert.equal(compare.error, undefined);
   assert.ok(Number.isFinite(compare.change.heavyDamageHa));
+});
+
+test("the weights as used, in a war and at peace (10.6)", () => {
+  const settings = { weights: { soil: 30, damage: 40, access: 30 }, gatePercentile: 30, r: 0.5 };
+  const scored = { places: [{ nearTerm: { tier: "setAside" } }, { nearTerm: { tier: "high" } }] };
+  const war = settingsLine(settings, { conflict: { id: "x", since: "2022-02-24" }, accessSource: "fires" }, scored, "nearTerm");
+  assert.match(war, /Near term ranks by soil value 43% and damage 57%/);
+  assert.match(war, /least safe 30% of the black soil is set aside first \(1 squares set aside\)|least safe 30% of the black soil is set aside first \(1 square/);
+  assert.match(war, /Postwar blends soil value 30%, damage 40% and safe access 30% \(weighted power mean, r = 0.5\)\./);
+  assert.match(war, /viewing Near term/);
+  const peace = settingsLine(settings, { conflict: null, accessSource: "none" }, scored, "postwar");
+  assert.match(peace, /nothing is set aside \(no war recorded\)/);
+  assert.match(peace, /Long term blends soil value 30%/);
+  assert.match(peace, /changes no order: both rankings put the squares in the same order/);
+  assert.match(peace, /viewing Long term/);
+  assert.doesNotMatch(peace, /fighting|least safe/);
+  // With an ACLED file at peace, access is measured and can set land aside.
+  assert.match(settingsLine(settings, { conflict: null, accessSource: "acled" }, scored, "nearTerm"), /set aside first/);
+});
+
+test("at peace both rankings really sort the same way (10.6)", async () => {
+  const peace = await buildAtlasContext({ store: fakeStore(gridCells().map((c) => ({ ...c, distance: 1 })), { conflict: null, accessSource: "none" }) });
+  const order = (tf) => peace.scored.places.filter((p) => Number.isFinite(p[tf].rank)).sort((a, b) => a[tf].rank - b[tf].rank).map((p) => p.id);
+  assert.deepEqual(order("nearTerm"), order("postwar"));
+  assert.match(peace.text, /Top places, long term:/);
+  assert.doesNotMatch(peace.text, /fighting/);
+});
+
+test("at peace the data warnings do not repeat the no-war note or say 'fires only' (10.6)", async () => {
+  const { NO_WAR_WARNING } = await import("../runs.js");
+  const base = fakeStore(gridCells(), { conflict: null, accessSource: "none" });
+  const checks = { passed: 2, total: 2, warnings: [NO_WAR_WARNING, "5 of 36 cells had no radar reading on cropland; their damage uses fires only."] };
+  const store = { ...base, getRun: async (id) => ({ ...(await base.getRun(id)), checks }) };
+  const ctx = await buildAtlasContext({ store });
+  assert.doesNotMatch(ctx.text, /distance to fighting|fires only/);
+  assert.match(ctx.text, /5 of 36 cells had no radar reading on cropland; no heavy damage can be found there \(here it needs radar change\)/);
+  assert.equal((await ctx.runTool("get_ranking", { timeframe: "nearTerm", limit: 1 })).weightsUsed.safeAccess, "not used: full everywhere (no war recorded)");
+});
+
+test("an older Ukraine run (no conflict, no accessSource) still reads as the war, fires-based access (10.6)", async () => {
+  const base = fakeStore(gridCells());
+  const firesWarning = "Distance to fighting is estimated from unusual fires of the last 12 months (far more than in 2019-2021; no ACLED file), so treat safe access as rough.";
+  const store = {
+    ...base,
+    getRun: async (id) => {
+      const run = await base.getRun(id);
+      return run && { ...run, areaId: "country-804", checks: { passed: 2, total: 2, warnings: [firesWarning] } };
+    },
+  };
+  const ctx = await buildAtlasContext({ store });
+  assert.match(ctx.text, /War: Full-scale invasion of Ukraine, since 2022-02-24/);
+  assert.match(ctx.text, /distance to unusual fires \(an estimate of where fighting is/);
+  assert.doesNotMatch(ctx.text, /distance to recorded fighting/);
 });

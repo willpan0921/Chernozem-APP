@@ -8,7 +8,8 @@
 //   POST   /api/areas                   save an area (country, coordinates, box, drawn)
 //   GET    /api/areas                   saved areas
 //   GET    /api/areas/:id               one area with its outline
-//   GET    /api/workspace               settings, team, budget...
+//   GET    /api/workspace               settings, team, budget... (a current
+//                                       area that no longer exists is cleared)
 //   PATCH  /api/workspace               change any of those
 //   POST   /api/team                    add a team member
 //   PATCH  /api/team/:id                 change a member
@@ -228,6 +229,20 @@ function cleanRole(value, fallback) {
   return value;
 }
 
+// The workspace, with a current area that still exists: when the saved
+// area was deleted (its file is gone), currentAreaId is cleared and saved,
+// so the pages start at "pick an area" instead of asking for a missing
+// area and getting a 404.
+async function workspaceWithArea() {
+  const ws = await getWorkspace();
+  const id = ws.currentAreaId;
+  if (!id || (isSafeId(id) && (await getArea(id)))) return ws;
+  return updateWorkspace((current) => {
+    // Only clear it if nobody picked another area in the meantime.
+    if (current.currentAreaId === id) current.currentAreaId = null;
+  });
+}
+
 async function patchWorkspace(body) {
   // Check the area before taking the lock.
   if (body.currentAreaId !== undefined && body.currentAreaId !== null) {
@@ -388,7 +403,7 @@ async function route(req, res, url) {
   }
 
   if (first === "workspace" && !second) {
-    if (method === "GET") return sendJson(res, 200, { workspace: await getWorkspace() });
+    if (method === "GET") return sendJson(res, 200, { workspace: await workspaceWithArea() });
     if (method === "PATCH") return sendJson(res, 200, { workspace: await patchWorkspace(await readJson(req)) });
   }
 

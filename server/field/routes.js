@@ -6,7 +6,10 @@
 //                                          season and normal curve; zones stay in downloads), the data source, the running job.
 //                                          The farm comes with farm.conflict (the known war at its place, or null)
 //                                          and every field with cropSource ("user" | "detected" | "demo" | null)
-//   POST   /api/farm/demo                  load the demo farm (7 real fields near Kupiansk) and analyse it
+//   POST   /api/farm/demo                  { example?: "ukraine" | "iowa" | "argentina" } load an example farm of
+//                                          real field outlines (default "ukraine": 7 fields near Kupiansk; iowa:
+//                                          17 near Ames; argentina: 18 near Chivilcoy) and analyse it now.
+//                                          The farm has demo: true and example: "<id>"
 //   POST   /api/farm/detect                find fields: { source: "boundary", points: [[lat, lon], ...] }
 //                                          or { source: "point", lat, lon, radiusM? } -> { job }
 //   GET    /api/geocode?q=                 find a place (or read typed coordinates)
@@ -26,6 +29,10 @@
 //   GET    /api/farm/reports               newest first
 //   GET    /api/farm/uploads/:photoId      a report photo
 //   GET    /api/farm/export/fields.geojson | readings.csv | history.csv
+//
+// Every save path (PUT, the examples, POST /fields) stores the fields
+// ordered north-west -> south-east, and unnamed fields are numbered in that
+// order ("Field 1" is the north-west one).
 //
 // Errors are thrown as HttpError and answered by app.js as { error: { code, message } }.
 //
@@ -56,7 +63,7 @@ import { fieldProviderStatus, getFieldProvider } from "../providers/index.js";
 import { UNITS } from "../../src/lib/field/method.js";
 import { CROP_SOURCES, cropSourceOf, stripForList } from "./analysis.js";
 import { conflictAt } from "../conflicts.js";
-import { demoFarmParts } from "./demo.js";
+import { exampleFarmParts } from "./demo.js";
 import { fieldsGeoJson, historyCsv, readingsCsv } from "./exports.js";
 import { geocode } from "./geocode.js";
 import { farmCentre, orderNorthWestFirst, runningFieldAnalysis, startFieldAnalysis, startFieldDetection } from "./run.js";
@@ -214,8 +221,13 @@ function cropOf(item, old) {
   return { crop, cropSource: "user" };
 }
 
-// Makes the farm's field list from what was sent. Fields with the same
-// outline as an old field keep that field's id (and so its analysis).
+// Fields ordered north-west -> south-east (run.js orderNorthWestFirst).
+const northWestFirst = (fields) => orderNorthWestFirst(fields, (f) => centroidOf(f.geometry));
+
+// Makes the farm's field list from what was sent, ordered north-west ->
+// south-east. Fields with the same outline as an old field keep that
+// field's id (and so its analysis); unnamed fields are numbered in that
+// order.
 //   labelFor(i) - what to call an unnamed field in error messages
 function buildFields(list, oldFields = [], defaultSource = "detected", labelFor = (i) => `Field ${i + 1}`) {
   if (!Array.isArray(list)) throw bad("Send the fields as a list.");
@@ -247,15 +259,17 @@ function buildFields(list, oldFields = [], defaultSource = "detected", labelFor 
       createdAt: keepOld ? old.createdAt : now,
     };
   });
-  // Unnamed fields are numbered north-west to south-east.
-  const taken = new Set(fields.filter((field) => field.name).map((field) => field.name.toLowerCase()));
+  // Sorted north-west to south-east first, then the unnamed fields are
+  // numbered in that order.
+  const ordered = northWestFirst(fields);
+  const taken = new Set(ordered.filter((field) => field.name).map((field) => field.name.toLowerCase()));
   let n = 1;
-  for (const field of orderNorthWestFirst(fields.filter((f) => !f.name), (f) => centroidOf(f.geometry))) {
+  for (const field of ordered.filter((f) => !f.name)) {
     while (taken.has(`field ${n}`)) n += 1;
     field.name = `Field ${n}`;
     taken.add(`field ${n}`);
   }
-  return fields;
+  return ordered;
 }
 
 // True when a place is within about 25 km of the middle of the farm's fields.
@@ -342,6 +356,8 @@ async function replaceFarm(body, { demo = false } = {}) {
     units: old?.units && UNITS[old.units] ? old.units : "ha",
     autoUpdate: old?.autoUpdate ?? true,
     demo,
+    // Which example farm this is ("ukraine", "iowa", "argentina"), or null.
+    example: demo && typeof body.example === "string" ? body.example : null,
     createdAt: old?.createdAt || now,
     updatedAt: now,
   };
@@ -384,7 +400,7 @@ async function addField(body) {
     const [made] = buildFields([{ ...body, source: SOURCES.includes(body.source) ? body.source : "drawn" }], [], "drawn", () => name);
     if (!cleanText(body.name, 60)) made.name = name;
     field = made;
-    base.fields = [...base.fields, made];
+    base.fields = northWestFirst([...base.fields, made]);
     if (!base.location) base.location = locationFor(base);
     base.updatedAt = now;
     return base;
@@ -597,7 +613,10 @@ export async function handleFieldRoutes(req, res, url) {
   }
 
   if (second === "demo" && !third && method === "POST") {
-    const parts2 = await demoFarmParts();
+    const body = await readJson(req);
+    const parts2 = await exampleFarmParts(body.example).catch((error) => {
+      throw error.code === "unknown_example" ? bad(error.message, "unknown_example") : error;
+    });
     const { farm, job } = await replaceFarm(parts2, { demo: true });
     return sendJson(res, 201, { farm: presentFarm(farm), job }), true;
   }

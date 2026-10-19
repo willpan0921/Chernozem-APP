@@ -202,6 +202,30 @@ export function gddEstimate({ crop, greenUp, temperatures, today } = {}) {
   };
 }
 
+// Crops whose heat units count from spring regrowth (gddFrom "spring
+// regrowth": winter cereal, rapeseed) count them from the start of spring
+// at the earliest: 1 March in the north, 1 September in the south. Their
+// winter growth is held back by short days and the cold whatever the
+// thermometer says, and the totals above are from spring regrowth. Where
+// winters are mild the curve greens up in winter: real data, Chivilcoy,
+// Argentina, 2026-10-19: a field green from mid June had "1,453 of 1,400"
+// heat units by 19 October while still at full canopy (NDVI 0.88), and
+// read "Harvest soon" two months early.
+export const SPRING_REGROWTH_START = { north: "03-01", south: "09-01" };
+
+// The day heat units are counted from: the green-up, or for a crop counted
+// from spring regrowth the latest start of spring on or before today when
+// that is later. Null without a green-up.
+//   crop  crop id or name; greenUp, today  "YYYY-MM-DD"; lat  latitude
+export function gddStartDate({ crop, greenUp, today, lat } = {}) {
+  if (!greenUp) return null;
+  if (cropProfile(crop).gddFrom !== "spring regrowth" || !today) return greenUp;
+  const md = Number.isFinite(lat) && lat < 0 ? SPRING_REGROWTH_START.south : SPRING_REGROWTH_START.north;
+  const year = Number(today.slice(0, 4));
+  const spring = `${year}-${md}` <= today ? `${year}-${md}` : `${year - 1}-${md}`;
+  return greenUp > spring ? greenUp : spring;
+}
+
 // True when a harvest on `date` fits the crop's usual months after its
 // NDVI peak (harvestMonthsAfterPeak, with a month to spare either side).
 export function harvestPlausible(crop, peakDate, date) {
@@ -346,6 +370,31 @@ export const HAY_CUTS = { minHigh: 0.6, drop: 0.25, fallDays: 21, regrowDays: 45
 export const FALLOW = { maxPeakDoy: 185, minFadeDays: 50, minReGap: 0.27, minNdvi: 0.25 };
 export const FALLOW_LABEL = "Fallow or grass";
 export const FALLOW_CONFIDENCE = "possible";
+
+// A winter cereal growing NOW, before its season can be read the usual
+// way (the rules above need the peak and the dry-down). The southern
+// wheat and barley of the Pampas are sown in June and July, green through
+// the southern winter and peak in September to November (northern March to
+// May), so in October their curve is still at its highest: without this
+// rule the classifier fell back to LAST summer's crop (soybean) and the
+// field had no crop for this season, so no harvest estimate (real data,
+// near Chivilcoy, Argentina, 2026-10-19: fields green from June to
+// August, 0.78 to 0.94 on 2 October). All must hold, in northern days of
+// the year (the south moved by 6 months), outside the tropics, for the
+// crop now in the field (from the last harvest in the curve, if any):
+//   greenBy / greenFrom  first at WINTER_GREEN_NDVI or more on or before
+//                        greenBy (1 March) or from greenFrom (1 October,
+//                        an autumn sowing): green through the winter
+//   latest               the latest clear pass between these days (March
+//                        to mid July): the time a winter cereal is at or
+//                        near its peak and not yet harvested
+//   minHigh              its highest NDVI so far at least this
+//   nearHigh             either that highest pass is in March to May, or
+//                        the latest pass is still at this share of it
+//   not harvested        harvestStage of the curve says "growing" or "ripening"
+// Never more than "possible": dates alone cannot tell wheat from barley,
+// oats or a winter pasture.
+export const WINTER_CEREAL_IN_SEASON = { greenBy: 60, greenFrom: 274, latest: [60, 196], peak: [60, 151], minHigh: 0.55, nearHigh: 0.85 };
 
 // Confidence: "likely" needs this score, this much evidence (weights) and
 // this lead over the next crop; "possible" needs MIN_POSSIBLE_SCORE.
@@ -586,16 +635,16 @@ export function cropFeatures({ months = [], passes = [], peakMonth, lat, vhPeak 
   const shiftMonths = south ? 6 : 0;
   const toNorthDoy = (iso) => dayOfYear(south ? addDays(iso, 182) : iso);
 
-  if (band === "tropics" && peakMonth === null) return { unknown: "No clear growing season here" };
+  if (band === "tropics" && peakMonth === null) return { unknown: "No clear growing season here", tropicsUnclear: true };
   const cuts = cutsAndRegrowth(passes);
-  if (cuts >= HAY_CUTS.minCuts) return { unknown: `Cut and grown back ${cuts} times this season: grass or hay, not a field crop the satellite can name` };
+  if (cuts >= HAY_CUTS.minCuts) return { unknown: `Cut and grown back ${cuts} times this season: grass or hay, not a field crop the satellite can name`, hay: true };
   const season = pickSeason(passes, months);
   if (!season) return { unknown: "No crop season found in the last 18 months" };
   if (season.early) return { unknown: "Still greening up: the crop can be told once it has peaked", early: true };
   if (band === "tropics") {
     const values = monthPoints(months).slice(-12).map((p) => p.ndvi);
     const swing = values.length >= 8 ? Math.max(...values) - Math.min(...values) : null;
-    if (!(swing >= TROPICS_MIN_AMPLITUDE)) return { unknown: "No clear growing season in this field" };
+    if (!(swing >= TROPICS_MIN_AMPLITUDE)) return { unknown: "No clear growing season in this field", tropicsUnclear: true };
   }
 
   const { points, peakDate } = season;
@@ -620,6 +669,35 @@ export function cropFeatures({ months = [], passes = [], peakMonth, lat, vhPeak 
     lowSinceGreenUp: sinceGreenUp.length ? Math.min(...sinceGreenUp.map((p) => p.ndvi)) : null,
   };
   return { band, source: season.source, last: Boolean(season.last), peakDate, greenUp, harvest, features };
+}
+
+// The winter cereal growing now (WINTER_CEREAL_IN_SEASON): { greenSince,
+// highDate, high, latestDate } or null when the rule does not hold.
+//   passes  this season's clear passes [{ date, ndvi }]; lat  latitude
+export function inSeasonWinterCereal({ passes = [], lat } = {}) {
+  const rule = WINTER_CEREAL_IN_SEASON;
+  if (climateBand(lat) === "tropics") return null;
+  const south = Number.isFinite(lat) && lat < 0;
+  const toNorthDoy = (iso) => dayOfYear(south ? addDays(iso, 182) : iso);
+  const series = cleanSeries((Array.isArray(passes) ? passes : []).filter((p) => p && typeof p.date === "string" && Number.isFinite(p.ndvi)));
+  if (series.length < 3) return null;
+  const latest = series[series.length - 1];
+  const now = harvestStage(series, latest.date);
+  if (now.stage !== "growing" && now.stage !== "ripening") return null;
+  const cycle = now.cycleStart ? series.filter((p) => p.date >= now.cycleStart) : series;
+  if (cycle.length < 3) return null;
+  const latestDoy = toNorthDoy(latest.date);
+  if (latestDoy < rule.latest[0] || latestDoy > rule.latest[1]) return null;
+  const top = cycle.reduce((best, p) => (p.ndvi > best.ndvi ? p : best));
+  if (top.ndvi < rule.minHigh) return null;
+  const topDoy = toNorthDoy(top.date);
+  const peakInWindow = topDoy >= rule.peak[0] && topDoy <= rule.peak[1];
+  if (!peakInWindow && latest.ndvi < rule.nearHigh * top.ndvi) return null;
+  const green = cycle.find((p) => p.ndvi >= WINTER_GREEN_NDVI);
+  if (!green || green.date > top.date) return null;
+  const greenDoy = toNorthDoy(green.date);
+  if (!(greenDoy <= rule.greenBy || greenDoy >= rule.greenFrom)) return null;
+  return { greenSince: green.date, highDate: top.date, high: top.ndvi, latestDate: latest.date };
 }
 
 // True when a season read from this season's passes has the fallow or
@@ -662,6 +740,16 @@ function seenText(read) {
 // season: "this" | "last" } or { id: "unknown", label: "Unknown", reason }.
 export function classifyCrop(input = {}) {
   const read = cropFeatures(input);
+  // This season's crop cannot be read the usual way yet (still greening
+  // up, or only last season's crop can be read): a winter cereal growing
+  // now is named from its curve so far (WINTER_CEREAL_IN_SEASON).
+  if (read.early || read.last || read.source === "months" || (read.unknown && !read.hay)) {
+    const now = !read.hay && !read.tropicsUnclear ? inSeasonWinterCereal({ passes: input.passes, lat: input.lat }) : null;
+    if (now) {
+      const reason = `Green through the winter (from ${whenText(now.greenSince)}) and ${now.highDate === now.latestDate ? "still greening" : `greenest in ${whenText(now.highDate)}`}, not harvested yet: a winter cereal (wheat or barley) growing now`;
+      return { id: "winterCereal", label: CROP_PROFILES.winterCereal.label, confidence: "possible", reason, season: "this", inSeason: true };
+    }
+  }
   if (read.unknown) return { ...UNKNOWN, reason: read.unknown };
   const { features, peakDate, greenUp, harvest, band } = read;
   const { vhPeak } = input;
@@ -681,8 +769,10 @@ export function classifyCrop(input = {}) {
       const reason = `${seenText(read)}, never back to bare soil, and a leaf canopy unlike any field crop's (red-edge gap ${round(features.reGap, 2)}): fallow or grass, not a sown crop`;
       return { id: "fallow", label: FALLOW_LABEL, confidence: FALLOW_CONFIDENCE, reason, season: seasonTag };
     }
-    const maybe = features.peakDoy <= FALLOW.maxPeakDoy + CROP_WINDOW_SLACK_DAYS && features.fadeDays >= FALLOW.minFadeDays && features.lowSinceGreenUp >= FALLOW.minNdvi ? "; possibly fallow or grass" : "";
-    return { ...UNKNOWN, reason: `${seenText(read)}: not the pattern of a known crop${maybe}`, season: seasonTag };
+    // possiblyFallow: close to the fallow pattern, so no pest risk is given
+    // (method.js pestRiskApplies).
+    const maybe = features.peakDoy <= FALLOW.maxPeakDoy + CROP_WINDOW_SLACK_DAYS && features.fadeDays >= FALLOW.minFadeDays && features.lowSinceGreenUp >= FALLOW.minNdvi;
+    return { ...UNKNOWN, reason: `${seenText(read)}: not the pattern of a known crop${maybe ? "; possibly fallow or grass" : ""}`, season: seasonTag, ...(maybe ? { possiblyFallow: true } : {}) };
   }
 
   const lead = ranked[1] ? top.score - ranked[1].score : 1;

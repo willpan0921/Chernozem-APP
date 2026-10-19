@@ -58,6 +58,9 @@ import {
   populationPlan,
   isTooMuchWorkError,
   isTransientError,
+  isBusyError,
+  retryTransient,
+  BUSY_RETRIES,
   isUnknownArgumentError,
   fromSentinel,
   cleanCounts,
@@ -872,6 +875,49 @@ test("a chunk whose connection drops is tried once more as it is", async () => {
   // A connection that keeps dropping still stops the analysis.
   const down = createGeeProvider({ ee: createFakeEe({ fail: (request) => (request.has("Dictionary") && request.find("reduceRegions").length ? dropped : null) }), getConfig: () => TEST_CFG, now: () => new Date(`${TODAY}T12:00:00Z`), retryDelayMs: 0 });
   await assert.rejects(down.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.05 }), /HTTP code: -1/);
+});
+
+test("a busy Earth Engine ('capacity exceeded') is tried again after longer pauses, not with coarser pixels", async () => {
+  const busy = "Earth Engine capacity exceeded.";
+  // What counts as busy: not "memory capacity exceeded" (too much work).
+  for (const text of [busy, "Too many concurrent aggregations."]) {
+    assert.equal(isBusyError(new Error(text)), true, text);
+    assert.equal(isTransientError(new Error(text)), true, text);
+    assert.equal(isTransientError(explainGeeError(new Error(text))), true, `${text} (explained)`);
+  }
+  assert.equal(isTooMuchWorkError(new Error(busy)), false);
+  assert.equal(isBusyError(new Error("Earth Engine memory capacity exceeded.")), false);
+  assert.equal(isTransientError(new Error("Earth Engine memory capacity exceeded.")), false);
+
+  // Up to BUSY_RETRIES more tries; a dropped connection only one.
+  let calls = 0;
+  assert.equal(await retryTransient(async () => (++calls <= BUSY_RETRIES ? Promise.reject(new Error(busy)) : "ok"), 0), "ok");
+  assert.equal(calls, BUSY_RETRIES + 1);
+  calls = 0;
+  await assert.rejects(retryTransient(async () => { calls += 1; throw new Error(busy); }, 0), /capacity exceeded/);
+  assert.equal(calls, BUSY_RETRIES + 1);
+  calls = 0;
+  await assert.rejects(retryTransient(async () => { calls += 1; throw new Error("socket hang up"); }, 0), /socket hang up/);
+  assert.equal(calls, 2);
+
+  // In an analysis: the image check and a chunk each fail once, the month still finishes.
+  let failedChunk = 0;
+  let failedCheck = 0;
+  const ee = createFakeEe({
+    fail: (request) => {
+      const isChunk = request.find("reduceRegions").length > 0 && request.has("Dictionary");
+      if (isChunk && failedChunk === 0) return (failedChunk += 1), busy;
+      if (!isChunk && request.has("Dictionary") && failedCheck === 0) return (failedCheck += 1), busy;
+      return null;
+    },
+  });
+  const provider = createGeeProvider({ ee, getConfig: () => TEST_CFG, now: () => new Date(`${TODAY}T12:00:00Z`), retryDelayMs: 0 });
+  const { area, cells } = gridArea(3, 3, 0.05);
+  const result = await provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.05 });
+  assert.equal(failedChunk, 1);
+  assert.equal(failedCheck, 1);
+  assert.equal(result.readings.length, 9);
+  assert.ok(!result.warnings.some((w) => /coarser pixels/.test(w)), "same pixels on the retry");
 });
 
 test("GAUL's \"Administrative unit not available\" is dropped from place names", async () => {

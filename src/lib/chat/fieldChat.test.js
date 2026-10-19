@@ -38,6 +38,9 @@ test("there are always four starters, named when there is a field to name", () =
   const plain = fieldSuggestions();
   assert.equal(plain.length, 4);
   assert.equal(plain[0], "Which field needs me first?");
+  assert.equal(plain[3], "Is any field damaged?");
+  // On a peaceful farm the last starter asks about stress, not damage.
+  assert.equal(fieldSuggestions({ peace: true })[3], "Is any field under stress?");
 });
 
 test("the source line shows the newest pass and says when it is sample data", () => {

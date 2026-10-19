@@ -36,7 +36,7 @@ import RunPicker from "../../components/atlas/RunPicker.jsx";
 import WeightsPanel from "../../components/atlas/WeightsPanel.jsx";
 import { cellBounds, compassName, coordDigits, findFocus, labelParts, placesExtent } from "../../lib/atlas/hotspots.js";
 import { rankedCount } from "../../lib/atlas/mapColors.js";
-import { recoveryCost } from "../../lib/atlas/overview.js";
+import { accessMeasured, recoveryCost } from "../../lib/atlas/overview.js";
 import { COST_NOTE } from "../../lib/atlas/method.js";
 import { formatAreaSize, formatCoord, formatCount, formatHaShort } from "../../lib/format.js";
 import { haFixed } from "./overviewHelpers.js";
@@ -116,7 +116,17 @@ function TopAreas({ hotspots, headingRef, onPick, onHover }) {
                 <span className="mp-top-rank">{hotspot.rank}</span>
                 <span className="mp-top-text">
                   <span className="mp-top-name">{hotspot.name}</span>
-                  <span className="mp-top-coords">{hotspot.coords}</span>
+                  {/* Each part ("1.41° S, 34.80° E", "1 square") stays whole when the line wraps. */}
+                  <span className="mp-top-coords">
+                    {String(hotspot.coords || "")
+                      .split(" · ")
+                      .map((part, i) => (
+                        <span key={i} className="mp-top-part">
+                          {i > 0 ? " · " : ""}
+                          {part}
+                        </span>
+                      ))}
+                  </span>
                   <span className="mp-top-bar" aria-hidden="true">
                     <span style={{ width: `${Math.round(hotspot.share * 100)}%` }} />
                   </span>
@@ -295,7 +305,10 @@ function MapView({ held }) {
   const { run, runSummary, scored, hotspots } = held || live;
   const loadingMonth = !!held;
   const [timeframe] = useTimeframe();
-  const [colorBy, setColorBy] = useColorBy();
+  const [chosenColor, setColorBy] = useColorBy();
+  // At peace with no ACLED file safe access is 100 everywhere: there is no
+  // Access layer (an old ?color=access link shows Priority).
+  const colorBy = chosenColor === "access" && !accessMeasured(run) ? "priority" : chosenColor;
   const [params, setParams] = useSearchParams();
   const [hoverIds, setHoverIds] = useState(null);
   const [changing, setChanging] = useState(false);

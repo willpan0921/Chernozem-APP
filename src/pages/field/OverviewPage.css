@@ -61,15 +61,16 @@
 
 /* ---------- Big tiles ---------- */
 
+/* In crop, To watch, Needs recovery, No crop, Farm area, Weather. */
 .fo-stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(0, 1.35fr);
+  grid-template-columns: repeat(5, minmax(0, 1fr)) minmax(0, 1.35fr);
   gap: var(--s-3);
 }
 
 /* A peaceful farm: no "Needs recovery" tile. */
 .fo-stats.is-peace {
-  grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.35fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(0, 1.35fr);
 }
 
 .fo-stat {
@@ -576,12 +577,11 @@
   color: var(--c-text);
 }
 
+/* Wraps rather than cutting off: the area always shows. */
 .fo-field-sub {
   font-size: 12px;
   color: var(--c-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 
 /* ---------- Smaller screens ---------- */
@@ -617,23 +617,25 @@
   }
 }
 
-/* Three group tiles on top, farm area and weather under them. */
+/* The group tiles on top, farm area and weather under them. */
 @media (max-width: 1000px) {
-  .fo-stats {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+  .fo-stats,
+  .fo-stats.is-peace {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
   }
 
   .fo-stat {
-    grid-column: span 2;
-  }
-
-  .fo-stat-area,
-  .fo-weather {
     grid-column: span 3;
   }
 
   .fo-stats.is-peace .fo-stat {
-    grid-column: span 3;
+    grid-column: span 4;
+  }
+
+  .fo-stat-area,
+  .fo-weather,
+  .fo-stats.is-peace .fo-stat-area {
+    grid-column: span 6;
   }
 }
 
@@ -642,17 +644,19 @@
     font-size: 17px;
   }
 
-  .fo-stats {
+  .fo-stats,
+  .fo-stats.is-peace {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .fo-stat,
-  .fo-stat-area,
-  .fo-stats.is-peace .fo-stat {
+  .fo-stats.is-peace .fo-stat,
+  .fo-stats.is-peace .fo-stat-area {
     grid-column: auto;
   }
 
-  .fo-stats.is-peace .fo-stat-area {
+  /* Four group tiles fill two rows: the farm area has a row of its own. */
+  .fo-stat-area {
     grid-column: 1 / -1;
   }
 

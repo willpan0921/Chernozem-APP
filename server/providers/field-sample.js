@@ -128,6 +128,8 @@ export function cropKey(name, seedText) {
   if (text.includes("corn") || text.includes("maize")) return "corn";
   if (text.includes("soy")) return "soybean";
   if (text.includes("rape") || text.includes("canola")) return "rapeseed";
+  // A field the analysis read as fallow or grass stays so on the next run.
+  if (text.includes("fallow") || text.includes("grass")) return "fallow";
   return MAIN_CROPS[hashText(`crop:${seedText}`) % MAIN_CROPS.length];
 }
 

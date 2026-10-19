@@ -119,7 +119,7 @@ export const atlasMethods = {
     {
       id: "access",
       name: "Safe access",
-      what: "Distance to recorded fighting. 100 km or more scores full access (1.0); this does not make the land safe.",
+      what: "Distance to fighting: ACLED battles when a file is connected, else unusual fires (a rough estimate). 100 km or more scores full access (1.0); this does not make the land safe.",
       whatPeace: "No known war covers this area, so access is not measured (this does not make the land safe).",
       formula: "Distance to the nearest fighting, capped at 100 km",
       source: "ACLED battles when connected, else unusual fire inside a known war",

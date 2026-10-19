@@ -16,9 +16,10 @@
 // Tool definitions must stay in the same order (it keeps Claude's prompt
 // cache working).
 
-import { scorePlaces, ranking } from "../../src/lib/atlas/scoring.js";
-import { COSTS, DEFAULT_SETTINGS, checkSettings, runsComparable } from "../../src/lib/atlas/method.js";
-import { shownNewDamage } from "../../src/lib/atlas/overview.js";
+import { scorePlaces, ranking, nearTermShares } from "../../src/lib/atlas/scoring.js";
+import { COSTS, DEFAULT_SETTINGS, HEAVY_DAMAGE, PEACE_DAMAGE, checkSettings, runsComparable } from "../../src/lib/atlas/method.js";
+import { accessSourceOf, alertPlaces, conflictOf, shownNewDamage } from "../../src/lib/atlas/overview.js";
+import { NO_WAR_WARNING } from "../runs.js";
 
 // ---------- Tool definitions (sent to Claude) ----------
 // strict: true makes Claude's tool inputs always match these shapes.
@@ -224,7 +225,7 @@ export async function buildAtlasContext({ store, runs, context = {} }) {
   if (!run && summaries.length) run = await safe(() => store.getRun(summaries[0].id));
 
   const cells = Array.isArray(run?.cells) ? run.cells : [];
-  const scored = scorePlaces(cells, { settings, conflict: run?.conflict, cellSizeDeg: run?.cellSizeDeg });
+  const scored = scorePlaces(cells, { settings, conflict: conflictOf(run), cellSizeDeg: run?.cellSizeDeg });
   const groupHotspots = await loadGroupHotspots();
   const hotspotsFor = (tf, count) =>
     cells.length ? groupHotspots(scored.places, tf, { count, cellSizeDeg: run.cellSizeDeg }) : [];
@@ -252,21 +253,60 @@ async function safe(fn) {
 
 // ---------- The context text ----------
 
-// The war covering the area, as the AI should read it. Older runs have no
-// `conflict` field: then nothing is said.
-//   accessSource  where distance to fighting came from (run.accessSource:
-//                 "acled", "fires", "none" or null)
+// The war covering the area, as the AI should read it, with what the
+// damage score and safe access mean for this run (they differ at peace:
+// src/lib/atlas/scoring.js). Callers pass conflictOf(run) (overview.js),
+// which fills in the war for older country runs; when it is still
+// undefined nothing is said.
+//   accessSource  where safe access came from (run.accessSource: "acled",
+//                 "fires", "none" or null)
 export function conflictLine(conflict, accessSource = null) {
   if (conflict === undefined) return "";
   if (conflict && conflict.since) {
-    return `War: ${conflict.name || conflict.id}, since ${conflict.since}. Damage is counted from that day; safe access is the distance to recorded fighting.`;
+    // With no ACLED file the distance is to unusual fires: an estimate of
+    // where fighting is, not recorded fighting (server/providers/gee.js).
+    const warAccess =
+      accessSource === "acled"
+        ? "Safe access: the distance to battles in the ACLED file, full at 100 km."
+        : accessSource === "fires"
+          ? "Safe access: the distance to unusual fires (an estimate of where fighting is; there is no ACLED file of recorded fighting), full at 100 km. Treat it as rough."
+          : "Safe access: the distance to recorded fighting, full at 100 km.";
+    return `War: ${conflict.name || conflict.id}, since ${conflict.since}. Damage is counted from that day. Damage score: the mean of unusual fire and radar change against the normal years 2019 to 2021. ${warAccess}`;
   }
-  const damage = "Damage means unusual fire and radar change compared with the normal years 2019 to 2021, from any cause (harvest and tillage, drought, wildfire, flooding).";
+  const fullAt = Math.round(PEACE_DAMAGE.fullShare * 100);
+  const damage = `Damage score: the share of each place's black-soil cropland that is heavily damaged (radar change of ${HEAVY_DAMAGE.radarDb} dB or more backed by an unusual fire within ${HEAVY_DAMAGE.fireNearM / 1000} km, against the normal years 2019 to 2021), full at ${fullAt}%. Here that change has everyday causes (tillage, new buildings, wildfire, flooding).`;
   const access =
     accessSource === "acled"
-      ? "Safe access is the distance to battles in the ACLED file."
-      : "Distance to fighting is not measured here, so nothing is set aside for it. That does NOT mean the land is safe: never call land safe, and point to local authorities for unexploded ordnance or security questions.";
+      ? "Safe access: the distance to battles in the ACLED file, full at 100 km."
+      : "Safe access: no war is recorded here, so it is full (100) everywhere and nothing is set aside for it. That does NOT mean the land is safe: never call land safe, and point to local authorities for unexploded ordnance or security questions.";
   return `War: none in the app's list covers this area (wars are matched by country and, where listed, by area, e.g. the Gaza Strip only). ${damage} ${access} Do not talk about a war, a front line or demining for this area unless the user raises it.`;
+}
+
+// The weights as the two rankings really use them (scoring.js):
+//   Near term   soil and damage only, as shares of 100; safe access is a
+//               cutoff there (the least safe share of the black soil is set
+//               aside first), not a weight
+//   Long term / Postwar   all three, weighted power mean
+// At peace without ACLED safe access is full everywhere, so it changes no
+// order: both rankings put the squares in the same order (real Kenya run,
+// 2026-09: 135 of 135 ranked squares in the same place). Their top places
+// can still group differently: the 70% grouping rule is applied to scores
+// of a different size.
+export function settingsLine(settings, run, scored, timeframe) {
+  const w = settings.weights;
+  const near = nearTermShares(w);
+  const peace = conflictOf(run) === null;
+  const measured = !peace || accessSourceOf(run) === "acled";
+  const setAside = scored.places.filter((p) => p.nearTerm.tier === "setAside").length;
+  const longName = peace ? "Long term" : "Postwar";
+  const cutoff = !measured
+    ? "nothing is set aside (no war recorded)"
+    : settings.gatePercentile > 0
+      ? `safe access is a cutoff, not a weight: the least safe ${settings.gatePercentile}% of the black soil is set aside first (${setAside} squares set aside)`
+      : "safe access is a cutoff, not a weight, and the cutoff is 0%: nothing is set aside";
+  const longNote = measured ? "" : "; safe access is 100 everywhere here, so it changes no order: both rankings put the squares in the same order (their top places can still group differently)";
+  const viewing = timeframe === "postwar" ? longName : "Near term";
+  return `Weights as used: Near term ranks by soil value ${near.soil}% and damage ${near.damage}%; ${cutoff}. ${longName} blends soil value ${w.soil}%, damage ${w.damage}% and safe access ${w.access}% (weighted power mean, r = ${settings.r})${longNote}. The user is viewing ${viewing}.`;
 }
 
 function hotspotLine(h, index) {
@@ -275,7 +315,8 @@ function hotspotLine(h, index) {
   // src/lib/atlas/hotspots.js), so it is used as it is.
   const labelHasCoords = Boolean(h.coords && h.label?.endsWith(` · ${h.coords}`));
   const where = h.label === coords || labelHasCoords ? h.label : `${h.label} (${coords})`;
-  return `${index + 1}. ${where}: score ${score100(h.score)}/100, tier ${h.tier}, black-soil ${ha(h.blackSoilHa)}, heavily damaged ${ha(h.heavyDamageHa)}, soil ${score100(h.soil)} / damage ${score100(h.damage)} / access ${score100(h.access)}, ${h.cellIds.length} cell(s)`;
+  const squares = h.cellIds.length;
+  return `${index + 1}. ${where}, ${squares} ${squares === 1 ? "square" : "squares"}: score ${score100(h.score)}/100, tier ${h.tier}, black-soil ${ha(h.blackSoilHa)}, heavily damaged ${ha(h.heavyDamageHa)}, soil ${score100(h.soil)} / damage ${score100(h.damage)} / access ${score100(h.access)}`;
 }
 
 export function contextText({ workspace, area, run, summaries, scored, settings, timeframe, hotspots, selected }) {
@@ -292,33 +333,42 @@ export function contextText({ workspace, area, run, summaries, scored, settings,
   const source = run.provider === "gee" ? "Google Earth Engine (real satellite data)" : "SAMPLE DATA (synthetic, for testing only — not real measurements)";
   lines.push(`Month: ${run.label || run.month} (imagery ${run.imagery?.from || "?"} to ${run.imagery?.to || "?"}, baseline ${run.baseline?.label || "2019 to 2021"}).`);
   lines.push(`Data source: ${source}.`);
-  const war = conflictLine(run.conflict, run.accessSource);
+  const peace = conflictOf(run) === null;
+  const war = conflictLine(conflictOf(run), accessSourceOf(run));
   if (war) lines.push(war);
-  lines.push(`Grid: ${run.cellCount ?? run.cells?.length ?? 0} cells of about ${round(run.cellSizeKm, 2)} km.`);
+  lines.push(`Grid: ${run.cellCount ?? run.cells?.length ?? 0} map squares (cells) of about ${round(run.cellSizeKm, 2)} km.`);
   const t = run.totals || {};
   lines.push(
     `Totals: cropland ${ha(t.croplandHa)}, black-soil cropland ${ha(t.blackSoilHa)}, heavily damaged ${ha(t.heavyDamageHa)}, people on damaged land ${people(t.peopleOnDamagedSoil)}.` +
       (Number.isFinite(shownNewDamage(run, summaries)) ? ` New heavy damage since the previous month: ${ha(run.newHeavyDamageHa)}.` : "")
   );
-  if (run.checks?.warnings?.length) lines.push(`Data warnings: ${run.checks.warnings.map((w) => String(w).replace(/[.\s]+$/, "")).join("; ")}.`);
+  // The "no war" warning is said better by the War line above (it still
+  // names distance to fighting, which is not part of a run at peace).
+  // At peace the damage score needs radar change (scoring.js), so a square
+  // without radar has no damage score from fires alone.
+  const warnings = (run.checks?.warnings || [])
+    .filter((w) => !(peace && w === NO_WAR_WARNING))
+    .map((w) => (peace ? String(w).replace(/their damage uses fires only\.?$/, "no heavy damage can be found there (here it needs radar change).") : w));
+  if (warnings.length) lines.push(`Data warnings: ${warnings.map((w) => String(w).replace(/[.\s]+$/, "")).join("; ")}.`);
 
-  const w = settings.weights;
-  const setAside = scored.places.filter((p) => p.nearTerm.tier === "setAside").length;
-  lines.push(
-    `Settings: weights soil ${w.soil}%, damage ${w.damage}%, safe access ${w.access}%; near term sets aside the least safe ${settings.gatePercentile}% (${setAside} cells set aside). The user is viewing the ${timeframe === "postwar" ? "postwar" : "near-term"} ranking.`
-  );
+  lines.push(settingsLine(settings, run, scored, timeframe));
 
+  // Top places are groups of touching squares; the same name in both lists
+  // can be two different groups (see the square counts).
   lines.push("", "Top places, near term:");
   hotspots.nearTerm.forEach((h, i) => lines.push(hotspotLine(h, i)));
   if (!hotspots.nearTerm.length) lines.push("(none)");
-  lines.push("", "Top places, postwar:");
+  lines.push("", `Top places, ${peace ? "long term" : "postwar"}:`);
   hotspots.postwar.forEach((h, i) => lines.push(hotspotLine(h, i)));
   if (!hotspots.postwar.length) lines.push("(none)");
 
   const alerts = run.alerts || [];
+  // Named as the Overview and the Report name them (coordinates added when
+  // two of a kind share a place).
+  const alertNames = alertPlaces(alerts);
   lines.push("", alerts.length ? "Alerts this month:" : "Alerts this month: none.");
   for (const a of alerts) {
-    lines.push(`- ${a.kind === "radar" ? "Radar change" : "Fires"} on ${a.date} at ${a.place || coordLabel(a.lat, a.lon)}: ${round(a.magnitude, 1)} ${a.unit}.`);
+    lines.push(`- ${a.kind === "radar" ? "Radar change" : "Fires"} on ${a.date} at ${alertNames.get(a.id) || a.place || coordLabel(a.lat, a.lon)}: ${round(a.magnitude, 1)} ${a.unit}.`);
   }
 
   if (summaries.length) {
@@ -341,7 +391,8 @@ export function contextText({ workspace, area, run, summaries, scored, settings,
 // True when a known war covers the run's area (run.conflict). Older runs
 // have no conflict field: they were all made inside Ukraine.
 export function atWar(run) {
-  return run?.conflict === undefined ? true : Boolean(run.conflict);
+  const conflict = conflictOf(run);
+  return conflict === undefined ? true : Boolean(conflict);
 }
 
 // What the recovery cost leaves out: demining only where a war is listed.
@@ -394,7 +445,7 @@ function hotspotDetail(h) {
     heavyDamageHa: round(h.heavyDamageHa),
     scores: { soil: score100(h.soil), damage: score100(h.damage), access: score100(h.access) },
     cellIds: h.cellIds.slice(0, 12),
-    cellCount: h.cellIds.length,
+    squares: h.cellIds.length,
   };
 }
 
@@ -415,7 +466,11 @@ export async function runAtlasTool(name, input = {}, data) {
         month: run.month,
         dataSource: run.provider,
         timeframe,
-        weights: data.settings.weights,
+        // The weights as this ranking uses them (see settingsLine).
+        weightsUsed:
+          timeframe === "nearTerm"
+            ? { ...nearTermShares(data.settings.weights), safeAccess: conflictOf(run) === null && accessSourceOf(run) !== "acled" ? "not used: full everywhere (no war recorded)" : "cutoff, not a weight" }
+            : data.settings.weights,
         setAsideCells: scored.places.filter((p) => p.nearTerm.tier === "setAside").length,
         places: list.map(hotspotDetail),
       };
@@ -489,13 +544,25 @@ export async function runAtlasTool(name, input = {}, data) {
         fullRecoveryHa: [Math.round(usd / fullHi), Math.round(usd / fullLo)],
       };
       // Walk down the near-term list with the cautious (smaller) estimate.
+      // A place with heavy damage needs its damaged hectares restored; one
+      // with none found is counted by its black-soil cropland, and says so
+      // (black soil is never called damage).
       let left = coverage.fastPathHa[0];
       const coversFirst = [];
       for (const h of data.hotspotsFor("nearTerm", 20)) {
         if (left <= 0) break;
-        const need = h.heavyDamageHa > 0 ? h.heavyDamageHa : h.blackSoilHa;
+        const damaged = h.heavyDamageHa > 0;
+        const need = damaged ? h.heavyDamageHa : h.blackSoilHa;
         const share = need > 0 ? Math.min(1, left / need) : 1;
-        coversFirst.push({ label: h.label, heavyDamageHa: round(need), coveredShare: round(share, 2) });
+        coversFirst.push({
+          label: h.label,
+          squares: h.cellIds.length,
+          heavyDamageHa: round(h.heavyDamageHa),
+          blackSoilHa: round(h.blackSoilHa),
+          countedHa: round(need),
+          counted: damaged ? "heavily damaged hectares" : "black-soil cropland (no heavy damage found)",
+          coveredShare: round(share, 2),
+        });
         left -= need;
       }
       return {

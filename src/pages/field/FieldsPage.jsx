@@ -46,7 +46,7 @@ import FieldMap, { fieldsBounds } from "../../components/field/FieldMap.jsx";
 import ConditionLegend from "../../components/field/ConditionLegend.jsx";
 import MetricTile from "../../components/field/MetricTile.jsx";
 import HowMeasured from "../../components/field/HowMeasured.jsx";
-import { ANALYSING_LABEL, cropInfo, fieldTiles, formatArea, formatDay, formatIndex, mapMarks } from "../../lib/field/format.js";
+import { ANALYSING_LABEL, cropInfo, fieldTiles, formatArea, formatDay, formatIndex, mapMarks, statusOf } from "../../lib/field/format.js";
 import { BASELINE } from "../../lib/field/method.js";
 import { fieldMethods } from "../../config/research.js";
 import "./FieldsPage.css";
@@ -216,7 +216,7 @@ function FieldPanel({ field, analysis, units, weather, job, analysing, count, on
   // The harvest note names the crop the numbers were worked out with
   // (analysis.cropUsed), which can lag a crop the farmer just changed.
   const tiles = fieldTiles(analysis, { units, weather, crop: analysis?.cropUsed?.label || null });
-  const status = analysis?.status;
+  const status = statusOf(analysis);
   const damage = analysis?.damage;
   const updating = job?.kind !== "field-detect";
   const running = job?.status === "running" && updating;

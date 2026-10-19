@@ -22,14 +22,16 @@ import {
   dailyGdd,
   gddDaysToReady,
   gddEstimate,
+  gddStartDate,
   harvestPlausible,
+  inSeasonWinterCereal,
   isFallowPattern,
   isTallCrop,
   meanGdd,
   redEdgeGap,
   vhPeakNear,
 } from "./crops.js";
-import { IOWA_CORN, IOWA_SOYBEAN, IOWA_SOYBEAN_EARLY, KUPIANSK_FALLOW, KUPIANSK_FALLOW_SLOW, KUPIANSK_UNKNOWN, MN_CANOLA, MT_WINTER_WHEAT, SD_SPRING_WHEAT, SD_SUNFLOWER } from "./crops.test-data.js";
+import { IOWA_CORN, IOWA_SOYBEAN, IOWA_SOYBEAN_EARLY, KUPIANSK_FALLOW, KUPIANSK_FALLOW_SLOW, KUPIANSK_UNKNOWN, MN_CANOLA, PAMPAS_WHEAT_AFTER_SOY, PAMPAS_WHEAT_DOUBLE, PAMPAS_WHEAT_EARLY, MT_WINTER_WHEAT, SD_SPRING_WHEAT, SD_SUNFLOWER } from "./crops.test-data.js";
 import * as method from "./method.js";
 
 // "MM-DD:ndvi" pairs in one year -> passes.
@@ -233,10 +235,56 @@ const PAMPAS_DOUBLE = "2025-10-02:0.21 2025-10-07:0.23 2025-11-01:0.17 2025-11-1
   .map((item) => ({ date: item.slice(0, 10), ndvi: Number(item.slice(11)) }));
 
 test("a crop harvested before the one now growing is LAST season's (southern double crop)", () => {
-  const crop = classifyCrop({ months: [], passes: PAMPAS_DOUBLE, peakMonth: 1, lat: -34.9 });
+  // The crop now growing greened up only in late September (spring): not a
+  // winter cereal, so the crop read is last summer's.
+  const spring = [...PAMPAS_DOUBLE.filter((p) => p.date <= "2026-07-14"), ...passes(2026, "09-07:0.25 09-17:0.3 09-22:0.45 10-02:0.62")];
+  const crop = classifyCrop({ months: [], passes: spring, peakMonth: 1, lat: -34.9 });
   assert.notEqual(crop.id, "unknown", crop.reason);
   assert.equal(crop.season, "last", crop.reason);
   assert.equal(method.harvestStage(PAMPAS_DOUBLE, "2026-10-19").cycleStart, "2026-05-30");
+});
+
+test("a winter cereal growing now in the southern spring is this season's crop (Pampas, real curves)", () => {
+  // The synthetic double crop above, with the wheat green from late July.
+  const now = classifyCrop({ months: [], passes: PAMPAS_DOUBLE, peakMonth: 1, lat: -34.9 });
+  assert.equal(now.id, "winterCereal", now.reason);
+  assert.equal(now.season, "this");
+  assert.equal(now.confidence, "possible");
+  assert.equal(now.inSeason, true);
+  // Real fields near Chivilcoy, 2026-10-19: they read "Last season: Soybean" or "Unknown" before.
+  for (const f of [PAMPAS_WHEAT_AFTER_SOY, PAMPAS_WHEAT_DOUBLE, PAMPAS_WHEAT_EARLY]) {
+    const crop = classifyCrop(f);
+    assert.deepEqual([crop.id, crop.season, crop.confidence], ["winterCereal", "this", "possible"], crop.reason);
+    assert.match(crop.reason, /winter cereal/);
+  }
+  const read = inSeasonWinterCereal({ passes: PAMPAS_WHEAT_AFTER_SOY.passes, lat: -34.9 });
+  assert.equal(read.highDate, "2026-10-02");
+  assert.ok(read.greenSince >= "2026-08-01" && read.greenSince <= "2026-08-31", read.greenSince);
+});
+
+test("the in-season winter cereal rule stays out of other cases", () => {
+  // The same curve in the north (October is autumn there): no.
+  assert.equal(inSeasonWinterCereal({ passes: PAMPAS_WHEAT_AFTER_SOY.passes, lat: 34.9 }), null);
+  // In the tropics: no.
+  assert.equal(inSeasonWinterCereal({ passes: PAMPAS_WHEAT_AFTER_SOY.passes, lat: -10 }), null);
+  // Harvested already (the curve stops after a fall to bare soil): no.
+  const cut = [...PAMPAS_WHEAT_AFTER_SOY.passes, { date: "2026-10-10", ndvi: 0.22 }, { date: "2026-10-15", ndvi: 0.2 }];
+  assert.equal(inSeasonWinterCereal({ passes: cut, lat: -34.9 }), null);
+  // A northern winter wheat still green in April is one too.
+  const april = passes(2026, "01-10:0.4 02-05:0.42 03-01:0.45 03-20:0.55 04-05:0.7 04-20:0.82");
+  assert.ok(inSeasonWinterCereal({ passes: april, lat: 49.7 }));
+  // A northern spring crop greening in May is not (not green over winter).
+  assert.equal(inSeasonWinterCereal({ passes: passes(2026, "03-01:0.2 04-01:0.22 05-01:0.3 05-20:0.5 06-10:0.75"), lat: 49.7 }), null);
+  // The real Iowa and Kupiansk fields in October: not touched.
+  assert.notEqual(classifyCrop(IOWA_CORN).inSeason, true);
+  assert.notEqual(classifyCrop(KUPIANSK_FALLOW).inSeason, true);
+});
+
+test("a field near the fallow pattern is flagged possiblyFallow", () => {
+  const read = classifyCrop(KUPIANSK_UNKNOWN);
+  if (read.id === "unknown" && /possibly fallow/.test(read.reason)) assert.equal(read.possiblyFallow, true);
+  else assert.equal(read.possiblyFallow, undefined);
+  assert.equal(classifyCrop(IOWA_CORN).possiblyFallow, undefined);
 });
 
 test("too early, or no crop at all: unknown with a reason", () => {
@@ -269,4 +317,17 @@ test("method.js re-exports the crop rules", () => {
   assert.equal(method.classifyCrop, classifyCrop);
   assert.equal(method.CROP_PROFILES, CROP_PROFILES);
   assert.equal(method.gddDaysToReady, gddDaysToReady);
+});
+
+test("winter crops count heat units from the start of spring at the earliest", () => {
+  // Southern wheat green in June: counted from 1 September.
+  assert.equal(gddStartDate({ crop: "winterCereal", greenUp: "2026-06-17", today: "2026-10-19", lat: -34.9 }), "2026-09-01");
+  // Green-up after that: from the green-up.
+  assert.equal(gddStartDate({ crop: "winterCereal", greenUp: "2026-09-10", today: "2026-10-19", lat: -34.9 }), "2026-09-10");
+  // North: from 1 March; an autumn green-up is not counted through the winter.
+  assert.equal(gddStartDate({ crop: "Winter wheat", greenUp: "2025-10-20", today: "2026-05-10", lat: 49.7 }), "2026-03-01");
+  assert.equal(gddStartDate({ crop: "rapeseed", greenUp: "2026-03-20", today: "2026-05-10", lat: 49.7 }), "2026-03-20");
+  // Crops counted from emergence: the green-up as it is.
+  assert.equal(gddStartDate({ crop: "corn", greenUp: "2026-06-05", today: "2026-07-31", lat: 42 }), "2026-06-05");
+  assert.equal(gddStartDate({ crop: "corn", greenUp: null, today: "2026-07-31", lat: 42 }), null);
 });

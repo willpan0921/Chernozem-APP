@@ -1,16 +1,24 @@
 // WHAT THIS FILE DOES
 // The printable report (/atlas/report), opened by "Report" on the
 // overview. For the current area and month it shows where the data came
-// from, the four totals, the top 10 places for Near term and for Postwar,
-// the settings used, this month's alerts, the method in one line and the
-// disclaimer (mine risk and deminers only inside a known war, run.conflict;
-// at peace a plain "check the land on the ground"). Everything is worked out from the selected run and the team's
-// current weights, so it always matches what the map shows. The month is
-// kept in the address (?month=2026-09), so a shared link opens the same
-// month. Top areas get the same names as on the overview and the map
-// (place names, else "North-west", "East"…), with the coordinates under
-// the name, and their
-// priority is shown 0–100 (100 = the best square in that time frame).
+// from, the four totals, the top 10 places for Near term and for Postwar
+// (called Long term at peace), the settings as the rankings use them, this
+// month's alerts, the method and the disclaimer (mine risk and deminers
+// only inside a known war, run.conflict; at peace a plain "check the land
+// on the ground").
+// The method says what the damage score and safe access really are for
+// this run (overview.js damageMeaning, accessMeaning): in a war, unusual
+// fire and radar change, and distance to fighting; at peace, the heavily
+// damaged share of the black soil, and "everywhere counts as safe to
+// reach" (never "distance to fighting").
+// Everything is worked out from the selected run and the team's current
+// weights, so it always matches what the map shows. The month is kept in
+// the address (?month=2026-09), so a shared link opens the same month. Top
+// areas get the same names as on the overview and the map (place names,
+// else "North-west", "East"…), with the coordinates under the name; the
+// black-soil column gives each group's size ("12 squares"), so groups with
+// the same name in the two lists can be told apart. Priority is shown
+// 0–100 (100 = the best square in that time frame).
 //
 // "Save as PDF" opens the browser's print window (pick "Save as PDF"
 // there). When printed, the sidebar and the buttons are hidden.
@@ -24,7 +32,7 @@ import { ArrowLeft, Download, Printer } from "lucide-react";
 import { Button, Badge } from "../../components/ui/index.js";
 import { AtlasGate, useAtlasData, useTimeframe } from "../../state/AtlasData.jsx";
 import { placeLabel } from "../../lib/atlas/hotspots.js";
-import { atPeace, describeAlert, imageryText, kpis, shownNewDamage, summarize, timeframeLabel } from "../../lib/atlas/overview.js";
+import { accessMeaning, accessMeasured, alertPlaces, atPeace, damageMeaning, describeAlert, imageryText, kpis, nearTermSetAside, shownNewDamage, summarize, timeframeLabel } from "../../lib/atlas/overview.js";
 import { formatHaShort, listNames } from "../../lib/format.js";
 import { toCsv } from "../../lib/csv.js";
 import { atlasLink, haFixed, nameAreas, priorityIndex, useMonthInUrl, warNote, weightItems } from "./overviewHelpers.js";
@@ -54,7 +62,7 @@ function slug(text) {
 
 // The indicator names in plain words, for the method line.
 const INDICATOR_NAMES = {
-  wrb: "chernozem probability",
+  wrb: "black-soil share",
   agOutput: "cropland share",
   firms: "unusual fire detections",
   radar: "radar change",
@@ -144,6 +152,17 @@ function Report() {
   }, [area.name, run.label]);
 
   const comp = run.method?.components || {};
+  const longTerm = timeframeLabel("postwar", run);
+  // At peace without an ACLED file safe access is full everywhere: there
+  // is no cutoff, and it changes no order (scoring.js).
+  // Alerts named as on the Overview and in the AI (overview.js alertPlaces).
+  const alertNames = alertPlaces(run.alerts || []);
+  const measured = accessMeasured(run);
+  const nearTermWeights = weightItems(settings, "nearTerm")
+    .filter((item) => measured || item.key !== "access")
+    .map((item) => item.text)
+    .concat(measured ? [] : ["nothing set aside (no war recorded)"])
+    .join(" · ");
 
   return (
     <div className="page rp-page">
@@ -192,7 +211,7 @@ function Report() {
         </section>
 
         <section className="rp-section">
-          <h2>Top 10 · {timeframeLabel("postwar", run)}</h2>
+          <h2>Top 10 · {longTerm}</h2>
           <TopTable list={postwar} />
         </section>
 
@@ -202,15 +221,18 @@ function Report() {
             <div>
               <dt>Near term</dt>
               <dd>
-                {weightItems(settings, "nearTerm").map((item) => item.text).join(" · ")}
-                {settings.gatePercentile > 0 && Math.round((scored.setAsideShare ?? 0) * 100) !== settings.gatePercentile
+                {nearTermWeights}
+                {measured && settings.gatePercentile > 0 && Math.round((scored.setAsideShare ?? 0) * 100) !== settings.gatePercentile
                   ? ` (${Math.round((scored.setAsideShare ?? 0) * 100)}% of black soil set aside in practice)`
                   : ""}
               </dd>
             </div>
             <div>
-              <dt>{timeframeLabel("postwar", run)}</dt>
-              <dd>{weightItems(settings, "postwar").map((item) => item.text).join(" · ")}</dd>
+              <dt>{longTerm}</dt>
+              <dd>
+                {weightItems(settings, "postwar").map((item) => item.text).join(" · ")}
+                {measured ? "" : " (access is full everywhere, so the order follows soil and damage)"}
+              </dd>
             </div>
             <div>
               <dt>Squares</dt>
@@ -232,7 +254,7 @@ function Report() {
                 return (
                   <li key={alert.id}>
                     <strong>{view.title}</strong>
-                    <span>{view.place}</span>
+                    <span>{alertNames.get(alert.id) || view.place}</span>
                     <span className="rp-mono">{view.detail}</span>
                   </li>
                 );
@@ -244,14 +266,12 @@ function Report() {
         <section className="rp-section rp-method">
           <h2>Method</h2>
           <p>
-            {madeOf("Soil value", comp.soil)}; {madeOf("damage", comp.damage)}; {madeOf("safe access", comp.access)}. Each indicator is
-            scaled 0–1 on fixed scales.{" "}
-            {atPeace(run) && run.accessSource !== "acled"
-              ? "No war in the app's list covers this area, so distance to fighting is not measured and nothing is set aside for it (this does not mean the land is safe); Near term ranks by soil value and damage"
-              : `Near term sets aside the least safe ${settings.gatePercentile}% of black soil (the squares nearest the fighting; squares 100 km or more from any recorded fighting are never set aside) and ranks the rest by soil value and damage`}
-            ; {timeframeLabel("postwar", run)} blends all three (weighted power mean, r = {settings.r}). The soil-health index (chi) is a diagnostic in the CSV, not part of the damage score. In the
-            tables, soil value, damage and safe access are shown 0–100, and priority is each area's score as a share of the best square
-            in that time frame (100 = the best). The exact scores are in the CSV.
+            {madeOf("Soil value", comp.soil)}. Damage is {damageMeaning(run)}. Safe access is {accessMeaning(run)}. Each is scaled 0–1 on fixed
+            scales.{" "}
+            {nearTermSetAside(run, settings)}{" "}
+            {longTerm} blends all three (weighted power mean, r = {settings.r}). The soil-health index (chi) is a diagnostic in the CSV, not part
+            of the damage score. In the tables the three scores are shown 0–100, and priority is each area's score as a share of the best
+            square in that time frame (100 = the best). The exact scores are in the CSV.
           </p>
           {atPeace(run) ? (
             <p className="rp-disclaimer">
@@ -273,8 +293,9 @@ function Report() {
 // 0.734 -> 73 (the three scores are 0–1).
 const outOf100 = (value) => (Number.isFinite(value) ? Math.round(value * 100) : "–");
 
-// One ranking: rank, area (name, then coordinates), black-soil and damaged
-// hectares, the three scores and the priority, all 0–100.
+// One ranking: rank, area (name, then coordinates), black-soil hectares
+// with the group's size, damaged hectares, the three scores and the
+// priority, all 0–100.
 function TopTable({ list }) {
   if (!list.length) return <p className="rp-line">No place qualifies with these settings.</p>;
   return (
@@ -298,9 +319,12 @@ function TopTable({ list }) {
               <td>{item.rank}</td>
               <td className="rp-place">
                 <span className="rp-place-name">{item.title}</span>
-                {item.coords && <span className="rp-place-coords">{item.coords}</span>}
+                {item.point && <span className="rp-place-coords">{item.point}</span>}
               </td>
-              <td className="num">{haFixed(item.blackSoilHa)}</td>
+              <td className="num">
+                <span className="rp-ha">{haFixed(item.blackSoilHa)}</span>
+                {item.size && <span className="rp-size">{item.size}</span>}
+              </td>
               <td className="num">{haFixed(item.heavyDamageHa)}</td>
               <td className="num">{outOf100(item.soil)}</td>
               <td className="num">{outOf100(item.damage)}</td>

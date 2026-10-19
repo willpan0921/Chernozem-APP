@@ -4,7 +4,9 @@
 // src/state/FieldData.jsx (useFieldData) rather than directly.
 //
 //   getFarm({ full })                 the farm, each field's analysis, the data source, the running job
-//   loadDemoFarm()                    the demo farm (7 real fields near Kupiansk) -> { farm, job }
+//   loadDemoFarm(example)             an example farm -> { farm, job }: "ukraine" (default,
+//                                       7 fields near Kupiansk), "iowa" (near Ames) or
+//                                       "argentina" (near Chivilcoy); EXAMPLE_FARMS lists them
 //   detectFields(body)                find fields -> the job (poll it with pollJob)
 //                                       { source: "boundary", points: [[lat, lon], ...] }
 //                                       { source: "point", lat, lon, radiusM? }
@@ -95,8 +97,15 @@ const enc = (value) => encodeURIComponent(value);
 // downloads and the AI).
 export const getFarm = ({ full = true, signal } = {}) => request("GET", `/farm${full ? "?full=1" : ""}`, undefined, { signal });
 
+// The example farms POST /api/farm/demo can load (server/field/demo.js).
+export const EXAMPLE_FARMS = [
+  { id: "ukraine", label: "Ukraine" },
+  { id: "iowa", label: "Iowa" },
+  { id: "argentina", label: "Argentina" },
+];
+
 // -> { farm, job }
-export const loadDemoFarm = () => request("POST", "/farm/demo", {});
+export const loadDemoFarm = (example = "ukraine") => request("POST", "/farm/demo", { example });
 
 // body: { name?, location?: { label, lat, lon }, boundary?: GeoJSON, fields: [{ geometry, name?, crop?, source? }] }
 // -> { farm, job }

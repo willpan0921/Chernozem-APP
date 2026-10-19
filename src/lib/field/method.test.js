@@ -597,3 +597,80 @@ test("long after the peak and far below it, a field is no longer 'growing'", () 
   assert.equal(weak.stage, "harvested");
   assert.equal(weak.harvestedOn, "2026-08-17");
 });
+
+// ---------------------------------------------------------------------------
+// No crop is never "Healthy" (FINAL-SPEC 10.1)
+// ---------------------------------------------------------------------------
+import { FIELD_STATUSES, MOWN_LABEL, STATUS_GROUPS, noCropState, pestRiskApplies, statusGroup, stressCauseShown } from "./method.js";
+
+test("fallow, dried down, harvested and not sown: no condition, never Healthy", () => {
+  const fallow = { stage: "growing", fallow: true, cropUnknown: true, dryDown: null };
+  const dried = { stage: "growing", cropUnknown: true, dryDown: "dry" };
+  const fading = { stage: "growing", cropUnknown: true, dryDown: "fading" };
+  assert.equal(noCropState(fallow), "fallow");
+  assert.equal(noCropState(dried), "driedDown");
+  assert.equal(noCropState(fading), null);
+  assert.equal(noCropState("harvested"), "harvested");
+  assert.equal(noCropState({ stage: "notSown" }), "notSown");
+  assert.equal(noCropState({ stage: "ready" }), null, "a known crop ready to harvest has a crop");
+  for (const harvest of [fallow, dried, { stage: "harvested" }, { stage: "notSown" }]) {
+    assert.deepEqual(fieldCondition({ stage: harvest, health: 1, water: 1, stress: 0 }), { score: null, class: null });
+  }
+  assert.equal(fieldCondition({ stage: fading, health: 1, water: 1, stress: 0 }).class, "great");
+  assert.deepEqual(fieldStatus({ harvest: fallow, condition: null }), { id: "fallow", label: "Fallow or grass", tone: null });
+  assert.deepEqual(fieldStatus({ harvest: dried, condition: null }), { id: "driedDown", label: "Dried down", tone: null });
+  assert.equal(fieldStatus({ harvest: fading, condition: 0.9 }).id, "healthy");
+  // Damage still comes first.
+  assert.equal(fieldStatus({ damage: { detected: true }, harvest: fallow, condition: null }).id, "recovery");
+});
+
+test("a radar drop on a fallow field is a cut or mowing, not a harvest", () => {
+  const mown = unknownCropHarvest({ stage: "harvested", basis: "radar", harvestedOn: "2026-09-09", radarHarvestOn: "2026-09-09" }, { fallow: true });
+  assert.equal(mown.mown, true);
+  assert.equal(mown.stage, "harvested");
+  assert.equal(MOWN_LABEL, "Cut or mown");
+  assert.equal(fieldStatus({ harvest: mown, condition: null }).id, "fallow");
+  assert.equal(unknownCropHarvest({ stage: "harvested", basis: "radar" }).mown, undefined, "not fallow: a harvest");
+});
+
+test("status groups: growing, watch, recovery, noCrop; healthy is an alias of growing", () => {
+  assert.deepEqual(Object.keys(STATUS_GROUPS), ["growing", "watch", "recovery", "noCrop"]);
+  assert.deepEqual(STATUS_GROUPS.growing, ["healthy", "harvestSoon", "ready"]);
+  assert.deepEqual(STATUS_GROUPS.noCrop, ["harvested", "notSown", "fallow", "driedDown"]);
+  assert.equal(STATUS_GROUPS.healthy, STATUS_GROUPS.growing);
+  // Every status is in exactly one group.
+  for (const id of Object.keys(FIELD_STATUSES)) assert.equal(Object.values(STATUS_GROUPS).filter((ids) => ids.includes(id)).length, 1, id);
+  assert.equal(statusGroup("fallow"), "noCrop");
+  assert.equal(statusGroup("ready"), "growing");
+  assert.equal(statusGroup("nope"), null);
+});
+
+test("pest risk only for a crop growing, never fallow, possibly grass or dried down", () => {
+  assert.equal(pestRiskApplies("growing"), true);
+  assert.equal(pestRiskApplies({ stage: "ripening" }), true);
+  assert.equal(pestRiskApplies({ stage: "ready" }), false);
+  assert.equal(pestRiskApplies({ stage: "growing", fallow: true }), false);
+  assert.equal(pestRiskApplies({ stage: "growing", cropUnknown: true, dryDown: "dry" }), false);
+  assert.equal(pestRiskApplies({ stage: "growing", cropUnknown: true, dryDown: "fading" }), true);
+  assert.equal(pestRiskApplies("growing", { id: "unknown", possiblyFallow: true }), false);
+});
+
+test("medium or high stress with no mapped patch is spread across the field", () => {
+  assert.equal(stressCauseShown({ level: "high", cause: "dry", patches: [] }), "spread");
+  assert.equal(stressCauseShown({ level: "medium", cause: "other" }), "spread");
+  assert.equal(stressCauseShown({ level: "medium", cause: "dry", patches: [{ lat: 1, lon: 2 }] }), "dry");
+  // Low stress names no cause.
+  assert.equal(stressCauseShown({ level: "low", cause: "other", patches: [] }), null);
+  assert.equal(stressCauseShown({ level: "low", cause: "dry", patches: [{ lat: 1, lon: 2 }] }), null);
+  assert.equal(STRESS_CAUSES.spread.label, "Spread across the field");
+});
+
+// Polish round 2: an unknown crop that is possibly grass is "Crop unclear".
+test("fieldStatus: possibly grass with no crop known is unclear, not growing well", () => {
+  const harvest = { stage: "growing", cropUnknown: true, dryDown: "fading" };
+  assert.equal(fieldStatus({ harvest, condition: 0.9, stress: "low", health: "normal", possiblyFallow: true }).id, "unclear");
+  assert.equal(fieldStatus({ harvest, condition: 0.9, stress: "low", health: "normal" }).label, "Growing well");
+  // A known crop is never "unclear".
+  assert.equal(fieldStatus({ harvest: { stage: "growing" }, condition: 0.9, possiblyFallow: true }).id, "healthy");
+  assert.equal(statusGroup("unclear"), "watch");
+});

@@ -51,8 +51,9 @@
 //   lights         NASA/VIIRS/002/VNP46A2 night lights, median of the month
 //   admin1/admin2  FAO/GAUL/2015/level2 names (best effort)
 // Alerts: Sentinel-1 radar change (COPERNICUS/S1_GRD, VV, one orbit
-// direction) in the month against the same month of 2019-2021, and FIRMS
-// fires in the month above the same month's 2019-2021 count.
+// direction) in the month against the same month of 2019-2021 (only in
+// squares with enough black-soil cropland to be ranked), and FIRMS fires in
+// the month above the same month's 2019-2021 count.
 //
 // Safety rules that keep a first real run from failing (each one is a
 // problem Earth Engine really has):
@@ -89,6 +90,7 @@ import { config, missingGeeSettings } from "../env.js";
 import { cellAreaKm2, formatCoord } from "../geo.js";
 import { NO_WAR_WARNING, addMonths, cleanConflict } from "../runs.js";
 import { HEAVY_DAMAGE } from "../../src/lib/atlas/method.js";
+import { blackSoilFloor } from "../../src/lib/atlas/scoring.js";
 import { baselineWindows, climateBand, lastCompleteSeason, peakMonthFrom, sameWindowIn, windowLabel } from "../../src/lib/season.js";
 import { damageWindow } from "../../src/config/conflicts.js";
 import { conflictForArea } from "../conflicts.js";
@@ -622,7 +624,7 @@ async function preflight(ee, { region, bufferRegion, windows, context }) {
     firmsYear: windows.conflict ? firms(ee, bufferRegion, windows.lastYear).size() : ee.Number(0),
     worldPop: worldPop(ee, region).size(),
   });
-  const raw = await evaluate(counts, { timeoutMs: 2 * 60 * 1000, what: "Checking which satellite images exist", context });
+  const raw = await retryTransient(() => evaluate(counts, { timeoutMs: 2 * 60 * 1000, what: "Checking which satellite images exist", context }), context.retryDelayMs);
   return cleanCounts(raw);
 }
 
@@ -657,7 +659,9 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conf
   if (!(Number(cellSizeDeg) > 0)) throw new GeeError("bad_request", `Not a cell size: ${cellSizeDeg}`);
   const cfg = deps.getConfig();
   const ee = await deps.connect(cfg);
-  const context = contextOf(cfg);
+  // retryDelayMs: every request below is tried again after a dropped
+  // connection or a busy Earth Engine (retryTransient).
+  const context = { ...contextOf(cfg), retryDelayMs: deps.retryDelayMs };
   const warnings = [];
   const bbox = area.bbox;
   // The Earth Engine region is built from the cells themselves (one box per
@@ -955,14 +959,19 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conf
 
   // 7. Alerts, with the day each one was last seen.
   step("Finding alerts");
+  const readingById = new Map(readings.map((reading) => [reading.id, reading]));
   const candidates = cells.map((cell) => {
     const props = means.get(cell.id) || {};
     const areaKm2 = cellAreaKm2(cellSizeDeg, cell.lat);
     const n = names.get(cell.id) || {};
+    const reading = readingById.get(cell.id) || {};
     return {
       id: cell.id,
       lat: cell.lat,
       lon: cell.lon,
+      // Black-soil cropland, worked out as server/runs.js does, so radar
+      // alerts skip the squares the ranking leaves out (pickAlerts).
+      blackSoilHa: (Number.isFinite(cell.areaHa) ? cell.areaHa : areaKm2 * 100) * numberOr(reading.croplandShare, 0) * numberOr(reading.chernozem, 0),
       radarShare: numberOr(props.radarShare, 0),
       radarKm2: numberOr(props.radarShare, 0) * areaKm2,
       // Fires in the month above the same month's normal, for the whole cell
@@ -1071,7 +1080,7 @@ async function seasonPreflight(ee, { region, windows, context }) {
       [`s1SeasonBase_${pass}`, s1(windows.baselines, pass)],
     ])),
   });
-  const raw = (await evaluate(counts, { timeoutMs: 2 * 60 * 1000, what: "Checking which satellite images exist for the season", context })) || {};
+  const raw = (await retryTransient(() => evaluate(counts, { timeoutMs: 2 * 60 * 1000, what: "Checking which satellite images exist for the season", context }), context.retryDelayMs)) || {};
   const count = (key) => Math.max(0, numberOr(raw[key], 0));
   return {
     s2Current: count("s2Current"),
@@ -1122,7 +1131,7 @@ async function seasonPeaks(ee, { cells, cellSizeDeg, scale, tileScale, chunkSize
   await mapLimit(chunk(cells, chunkSize), MAX_PARALLEL_CHUNKS, async (part) => {
     const squares = cellCollection(ee, part, cellSizeDeg);
     const args = { collection: squares, reducer: ee.Reducer.mean(), scale: pixel, crs: "EPSG:4326", tileScale, ...(state.noMaxPixelsArg ? {} : { maxPixelsPerRegion: MAX_PIXELS_PER_CELL }) };
-    const result = await evaluate(monthly.reduceRegions(args).select([".*"], null, false).toList(part.length), { what: "Finding the growing season", context });
+    const result = await retryTransient(() => evaluate(monthly.reduceRegions(args).select([".*"], null, false).toList(part.length), { what: "Finding the growing season", context }), context.retryDelayMs);
     for (const feature of Array.isArray(result) ? result : result?.features || []) {
       const p = feature?.properties || {};
       const values = Array.from({ length: 12 }, (_, i) => numberOr(p[`ndvi${pad(i + 1)}`], null));
@@ -1149,7 +1158,7 @@ async function placeNames(ee, { region, cells, context }) {
       const adm = ee.Feature(feature.get("adm"));
       return ee.Feature(null, { id: feature.get("id"), admin1: adm.get("ADM1_NAME"), admin2: adm.get("ADM2_NAME") });
     });
-    const result = await evaluate(joined, { timeoutMs: 2 * 60 * 1000, what: "Looking up place names", context });
+    const result = await retryTransient(() => evaluate(joined, { timeoutMs: 2 * 60 * 1000, what: "Looking up place names", context }), context.retryDelayMs);
     for (const feature of result?.features || []) {
       const p = feature.properties || {};
       names.set(p.id, { admin1: cleanName(p.admin1), admin2: cleanName(p.admin2) });
@@ -1179,12 +1188,10 @@ async function alertDates(ee, { alerts, cells, cellSizeDeg, region, windows, mon
         .map((image) => ee.Image.constant(image.date().get("day")).toInt().updateMask(image.select(BANDS.firms).mask()).rename("day"))
         .max()
     : emptyBand(ee, "day");
-  const result = await evaluate(
-    fireDay
-      .reduceRegions({ collection: withRadar, reducer: ee.Reducer.max().setOutputs(["fireDay"]), scale: Math.max(scale, 100), crs: "EPSG:4326", tileScale })
-      .select([".*"], null, false),
-    { timeoutMs: 2 * 60 * 1000, what: "Dating the alerts", context },
-  );
+  const dated = fireDay
+    .reduceRegions({ collection: withRadar, reducer: ee.Reducer.max().setOutputs(["fireDay"]), scale: Math.max(scale, 100), crs: "EPSG:4326", tileScale })
+    .select([".*"], null, false);
+  const result = await retryTransient(() => evaluate(dated, { timeoutMs: 2 * 60 * 1000, what: "Dating the alerts", context }), context.retryDelayMs);
   const found = new Map(
     (result?.features || []).map((feature) => {
       const p = feature.properties || {};
@@ -1560,20 +1567,43 @@ export function isTooMuchWorkError(error) {
 // after a pause. Real data, 2026-10-19: a Brazil box run failed after
 // 321 s on "Server returned HTTP code: -1 for POST .../value:compute"
 // while other runs were going; the same request passed on a retry.
+// Earth Engine busy (isBusyError) counts too.
 export function isTransientError(error) {
   const texts = [error?.message, error?.cause?.message, typeof error === "string" ? error : ""].filter(Boolean).join(" ");
-  return /HTTP code: -1\b|HTTP code: (429|5\d\d)\b|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|socket hang up|network error|fetch failed/i.test(texts);
+  return /HTTP code: -1\b|HTTP code: (429|5\d\d)\b|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|socket hang up|network error|fetch failed/i.test(texts) || isBusyError(error);
 }
 
+// Was Earth Engine as a whole too busy for the request ("Earth Engine
+// capacity exceeded.", "Too many concurrent aggregations.")? Real data,
+// Kenya 12 months, 2026-10-19: a month failed on "Earth Engine capacity
+// exceeded." after 637 s and the job stopped. Nothing is wrong with the
+// request, so it is tried again as it is after a longer pause
+// (BUSY_RETRY_FACTOR). "memory capacity exceeded" is not this: it means
+// the request is too big (isTooMuchWorkError, coarser pixels).
+export function isBusyError(error) {
+  const texts = [error?.message, error?.cause?.message, typeof error === "string" ? error : ""].filter(Boolean).join(" ");
+  return /(?<!memory )capacity exceeded|too many concurrent/i.test(texts);
+}
+
+// A busy Earth Engine gets BUSY_RETRIES more tries, the pause growing by
+// BUSY_RETRY_FACTOR × the normal pause each time (8 s -> 40 s, then 80 s).
+export const BUSY_RETRIES = 2;
+export const BUSY_RETRY_FACTOR = 5;
+
 // Runs `request` (a function giving a promise); on a transient failure
-// waits `delayMs` and runs it once more.
+// waits `delayMs` and runs it once more (a busy Earth Engine: up to
+// BUSY_RETRIES more times, with longer pauses).
 export async function retryTransient(request, delayMs = TRANSIENT_RETRY_MS) {
-  try {
-    return await request();
-  } catch (error) {
-    if (!isTransientError(error)) throw error;
-    await new Promise((resolve) => setTimeout(resolve, Math.max(0, Number.isFinite(delayMs) ? delayMs : TRANSIENT_RETRY_MS)));
-    return request();
+  const pause = Math.max(0, Number.isFinite(delayMs) ? delayMs : TRANSIENT_RETRY_MS);
+  for (let tries = 0; ; tries++) {
+    try {
+      return await request();
+    } catch (error) {
+      if (!isTransientError(error)) throw error;
+      const busy = isBusyError(error);
+      if (tries >= (busy ? BUSY_RETRIES : 1)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, busy ? pause * BUSY_RETRY_FACTOR * (tries + 1) : pause));
+    }
   }
 }
 
@@ -1705,7 +1735,7 @@ export function placeLabel({ admin1, admin2, lat, lon }) {
 }
 
 // Picks at most `max` alerts from the cells' radar change and fires.
-//   candidates [{ id, lat, lon, radarShare, radarKm2, fires, admin1?, admin2? }]
+//   candidates [{ id, lat, lon, radarShare, radarKm2, fires, blackSoilHa?, admin1?, admin2? }]
 // A cell counts when at least 5% of it changed on radar (radar), or it had
 // at least one fire detection (fire). Touching cells of the same kind join
 // the strongest one, so one event is one alert. Radar and fire alerts take
@@ -1719,10 +1749,17 @@ export function placeLabel({ admin1, admin2, lat, lon }) {
 // 2026-09). A group also stops RADAR_ALERT.reach cells from its strongest
 // cell (with both rules, Ukraine 2026-09: 19,915 km² at most before the
 // reach limit, 92,625 km² before either).
+// Radar alerts only in squares the ranking keeps: a candidate with a
+// `blackSoilHa` under the ranking's floor (scoring.js blackSoilFloor, from
+// method.js BLACK_SOIL_MIN) is never part of a radar alert, so an alert
+// never points at a square shown as "No black soil" (a town, a lake, arid
+// land). Fire alerts stay everywhere: a fire is a fire. Candidates without
+// `blackSoilHa` count as kept.
 export function pickAlerts(candidates, { cellSizeDeg, month, max = 6, minRadarShare = 0.05, minFires = 1 } = {}) {
   const shares = candidates.map((c) => c.radarShare).filter((v) => Number.isFinite(v) && v > 0).sort((a, b) => a - b);
   const typical = shares.length >= RADAR_ALERT.minCells ? shares[Math.floor(shares.length / 2)] : 0;
   const radarMin = Math.max(minRadarShare, RADAR_ALERT.timesTypical * typical);
+  const ranked = (c) => !Number.isFinite(c.blackSoilHa) || c.blackSoilHa >= blackSoilFloor(c, cellSizeDeg);
   const near = (a, b) => Math.abs(a.lat - b.lat) <= cellSizeDeg * 1.01 && Math.abs(a.lon - b.lon) <= cellSizeDeg * 1.01;
   const groups = (kind, strength, keep) => {
     const pool = candidates.filter(keep).sort((a, b) => strength(b) - strength(a));
@@ -1758,7 +1795,7 @@ export function pickAlerts(candidates, { cellSizeDeg, month, max = 6, minRadarSh
     }
     return out;
   };
-  const radar = groups("radar", (c) => c.radarKm2, (c) => c.radarShare >= radarMin && c.radarKm2 > 0);
+  const radar = groups("radar", (c) => c.radarKm2, (c) => c.radarShare >= radarMin && c.radarKm2 > 0 && ranked(c));
   const fire = groups("fire", (c) => c.fires, (c) => Math.round(c.fires) >= minFires);
   const alerts = [];
   for (let i = 0; alerts.length < max && (i < radar.length || i < fire.length); i += 1) {

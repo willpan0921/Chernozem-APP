@@ -9,6 +9,7 @@
 //                            uses (its "label" from hotspots.js: the place
 //                            name, else "North-west", "East"…), split in
 //                            two for lists: the name, then the coordinates
+//                            and the group's size ("· 12 squares")
 //   planSteps({ run, hotspots, alerts, isLatest })   the "Next steps",
 //                            worded with those short names
 //   weightItems(settings, timeframe)   the weights in one line, as the
@@ -29,7 +30,7 @@
 import { useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useAtlasData } from "../../state/AtlasData.jsx";
-import { atPeace, nextSteps } from "../../lib/atlas/overview.js";
+import { accessMeaning, accessMeasured, atPeace, damageMeaning, nextSteps } from "../../lib/atlas/overview.js";
 import { labelParts } from "../../lib/atlas/hotspots.js";
 import { nearTermShares } from "../../lib/atlas/scoring.js";
 import { addDays, formatHaShort, formatKm2, toDay } from "../../lib/format.js";
@@ -90,12 +91,15 @@ export function atlasLink(path, { month, timeframe } = {}) {
 //   name    its one-line label, for sentences: "Bakhmut, Donetsk", "East",
 //           or "West · 47.98° N, 24.76° E" when two areas share a name
 //   title   the name for a two-line list: "West"
-//   coords  "47.98° N, 24.76° E", the list's second line
+//   coords  the list's second line: "47.98° N, 24.76° E · 12 squares" (the
+//           size keeps two different groups from looking the same)
+//   point   the coordinates alone; size "12 squares"
 export function nameAreas(hotspots = []) {
   return hotspots.map((hotspot) => ({ ...hotspot, name: hotspot.label, ...labelParts(hotspot) }));
 }
 
-// The top area an alert falls in, or null.
+// The top area an alert falls in, or null. Shown as a second line ("In top
+// area 2"), never as the alert's name: the alert keeps its own place.
 export function areaOfAlert(alert, namedHotspots = []) {
   const ids = new Set(alert?.cellIds || []);
   return namedHotspots.find((hotspot) => hotspot.cellIds.some((id) => ids.has(id))) || null;
@@ -124,23 +128,13 @@ export function planSteps({ run, hotspots = [], alerts = [], isLatest = false })
     if (step.id === `${run.id}-demining`) next.id = `${step.id}-${named.slice(0, 2).map((hotspot) => hotspot.id).join("-")}`;
     if (step.id === `${run.id}-soil-test` && named[2]) next.id = `${step.id}-${named[2].id}`;
     const alert = alerts.find((item) => step.id === `${run.id}-${item.id}-review`);
-    if (alert) {
-      // Away from any known war a radar change is not "damage" (overview.js
-      // words it the same way).
-      const area = areaOfAlert(alert, named);
-      if (peace) {
-        next.title = area
-          ? `Check the radar change in ${area.name}`
-          : Number.isFinite(alert.magnitude)
-            ? `Check ${formatKm2(alert.magnitude)} of radar change`
-            : "Check the radar change";
-      } else {
-        next.title = area
-          ? `Review new damage in ${area.name}`
-          : Number.isFinite(alert.magnitude)
-            ? `Review ${formatKm2(alert.magnitude)} of new damage`
-            : "Review new damage";
-      }
+    if (alert && !alert.place && !Number.isFinite(alert.lat)) {
+      // An alert with no place: named by its size. (With a place, the step
+      // keeps overview.js's words, which use the alert's own place, as the
+      // alert list, the Report and the AI do.)
+      next.title = peace
+        ? Number.isFinite(alert.magnitude) ? `Check ${formatKm2(alert.magnitude)} of radar change` : "Check the radar change"
+        : Number.isFinite(alert.magnitude) ? `Review ${formatKm2(alert.magnitude)} of new damage` : "Review new damage";
     }
     if (earliest && next.due < earliest) next.due = earliest;
     return next;
@@ -151,15 +145,18 @@ export function planSteps({ run, hotspots = [], alerts = [], isLatest = false })
 
 // Gives back [{ key: "soil" | "damage" | "access", text }], in that order.
 // "key" picks the colour dot; for Near term the "access" item is the cutoff.
-export function weightItems(settings, timeframe) {
+// With a run at peace and no ACLED file (overview.js accessMeasured) nothing
+// is set aside, so Near term has no cutoff item.
+export function weightItems(settings, timeframe, run = null) {
   const weights = settings?.weights || {};
   if (timeframe === "nearTerm") {
     const shares = nearTermShares(weights);
-    return [
+    const items = [
       { key: "soil", text: `Soil ${shares.soil}` },
       { key: "damage", text: `Damage ${shares.damage}` },
-      { key: "access", text: `Cutoff ${settings?.gatePercentile ?? 0}%` },
     ];
+    if (!run || accessMeasured(run)) items.push({ key: "access", text: `Cutoff ${settings?.gatePercentile ?? 0}%` });
+    return items;
   }
   return [
     { key: "soil", text: `Soil ${weights.soil}` },
@@ -193,16 +190,18 @@ export function warNote(run) {
   const conflict = run?.conflict;
   if (conflict === undefined) return null;
   if (!conflict?.since) {
-    const damage = "Damage is unusual fire and radar change against the normal years 2019–2021, from any cause.";
-    // With an ACLED file, distance to fighting is measured from its battles
-    // even at peace, so places can still be set aside.
+    // At peace the damage score is the heavily damaged share of the black
+    // soil (overview.js damageMeaning), from any cause.
+    const damage = `Damage is ${damageMeaning(run)}, from any cause.`;
+    // With an ACLED file, safe access is measured from its battles even at
+    // peace, so places can still be set aside.
     if (run.accessSource === "acled") {
-      return { war: false, badge: null, line: `No war in the app's list covers this area; safe access is the distance to battles in the ACLED file. ${damage}` };
+      return { war: false, badge: null, line: `No war in the app's list covers this area; safe access is ${accessMeaning(run)}. ${damage}` };
     }
     return {
       war: false,
       badge: null,
-      line: `No war in the app's list covers this area, so distance to fighting is not measured and nothing is set aside for it. ${damage} This does not mean the land is safe.`,
+      line: `No war recorded here, so nothing is set aside. ${damage} Everywhere counts as safe to reach; this does not prove the land is safe.`,
     };
   }
   const day = new Date(`${conflict.since}T00:00:00Z`);

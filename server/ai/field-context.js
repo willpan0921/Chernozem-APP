@@ -25,8 +25,9 @@
 // cache working). The rules (statuses, normal ranges, costs) come from
 // src/lib/field/method.js; do not repeat them here.
 
-import { CONDITION_CLASSES, conditionClass, recoveryCost, UNITS, convertArea, BASELINE, DRIED_DOWN_LABEL, NO_CROP_LABEL, pestRiskLine, STRESS_CAUSES } from "../../src/lib/field/method.js";
+import { CONDITION_CLASSES, conditionClass, recoveryCost, UNITS, convertArea, BASELINE, DRIED_DOWN_LABEL, MOWN_LABEL, NO_CROP_LABEL, noCropState, pestRiskLine, STRESS_CAUSES } from "../../src/lib/field/method.js";
 import { cropSourceOf } from "../field/analysis.js";
+import { statusOf } from "../../src/lib/field/format.js";
 import { soilTypes } from "../../src/data/soilTypes.js";
 import { conflictAt } from "../conflicts.js";
 
@@ -300,8 +301,20 @@ const BASIS_WORDS = {
   images: "from the satellite images: plant health fell to bare-soil level",
 };
 
+// Why a field has no condition, in words (method.js noCropState).
+const NO_CROP_WORDS = {
+  fallow: "fallow or grass",
+  harvested: "harvested",
+  notSown: "not sown",
+  driedDown: "dried down, crop not known",
+};
+
 function harvestText(h) {
   if (!h) return "unknown";
+  if (h.fallow && (h.mown || h.stage === "harvested")) {
+    const on = h.radarHarvestOn || h.harvestedOn;
+    return `fallow or grass, no crop to harvest; ${MOWN_LABEL.toLowerCase()}${on ? ` (the radar saw it cut on ${on})` : ""}, not a harvest`;
+  }
   let text;
   switch (h.stage) {
     case "notSown":
@@ -332,7 +345,8 @@ function harvestText(h) {
   }
   if (h.basis && BASIS_WORDS[h.basis] && h.stage !== "harvested") text += ` (${BASIS_WORDS[h.basis]})`;
   if (h.gdd && Number.isFinite(h.gdd.accumulated) && Number.isFinite(h.gdd.needed) && ["growing", "ripening"].includes(h.stage)) {
-    text += `; ${Math.round(h.gdd.accumulated)} of about ${Math.round(h.gdd.needed)} degree-days (base ${h.gdd.base} °C) since green-up`;
+    const since = h.gdd.from && h.gdd.greenUp && h.gdd.from > h.gdd.greenUp ? `the start of spring (${h.gdd.from}; green-up was ${h.gdd.greenUp})` : "green-up";
+    text += `; ${Math.round(h.gdd.accumulated)} of about ${Math.round(h.gdd.needed)} degree-days (base ${h.gdd.base} °C) since ${since}`;
   }
   if (h.window?.from) text += `; best window ${h.window.from} to ${h.window.to || h.window.from}`;
   if (h.rainBefore === true) text += "; rain forecast before it";
@@ -382,7 +396,10 @@ function stressText(s, units, harvest = null) {
   if (s && s.applies === false && harvest?.fallow) return `Stress: ${NO_CROP_LABEL} (fallow or grass, so no crop stress).`;
   if (s && s.applies === false) return `Stress: ${NO_CROP_LABEL} (nothing growing, so no crop stress).`;
   const parts = [`Stress ${s?.level || "unknown"}${Number.isFinite(s?.share) ? `, ${pct(s.share)} of the field` : ""}${Number.isFinite(s?.stressedHa) ? ` (${areaText(s.stressedHa, units)})` : ""}`];
-  if (s?.cause && STRESS_CAUSES[s.cause]) parts.push(`likely cause: ${STRESS_CAUSES[s.cause].label}`);
+  const strong = s?.level === "medium" || s?.level === "high";
+  if (s?.cause === "spread") parts.push("spread across the field, with no single patch to point to (no cause named)");
+  else if (strong && s?.cause && STRESS_CAUSES[s.cause]) parts.push(`likely cause: ${STRESS_CAUSES[s.cause].label}`);
+  else if (!strong && Number.isFinite(s?.share) && s.share > 0) parts.push("low, so no cause is named");
   if (s?.redEdge) parts.push("the red edge (Sentinel-2 B5/B8A) shows early stress that plant health does not show yet");
   const patches = Array.isArray(s?.patches) ? s.patches : [];
   if (patches.length) parts.push(`${patches.length} patch${patches.length > 1 ? "es" : ""} (${patches.map((p) => `${Number.isFinite(p.ha) ? `${round(p.ha, 1)} ha` : "?"}${p.cause && STRESS_CAUSES[p.cause] ? ` ${p.cause === "dry" ? "dry" : "not water"}` : ""}`).join(", ")})`);
@@ -405,11 +422,11 @@ function fieldLine(field, analysis, units, mixed, farmWar = null) {
   const w = analysis.water || {};
   const s = analysis.stress || {};
   const c = analysis.condition || {};
-  const noCrop = s.applies === false;
+  const noCrop = noCropState(analysis.harvest) || (s.applies === false && !Number.isFinite(c.score) ? (analysis.harvest?.stage === "notSown" ? "notSown" : "harvested") : null);
   const parts = [
     head,
-    `Status: ${analysis.status?.label || "unknown"}.`,
-    noCrop && !Number.isFinite(c.score) ? `Condition: none (${analysis.harvest?.stage === "notSown" ? "not sown" : "harvested"}, no crop to score).` : `Condition ${score100(c.score) ?? "unknown"}/100 (${conditionClass(c.score)?.label || "unknown"}).`,
+    `Status: ${statusOf(analysis)?.label || "unknown"}.`,
+    noCrop && !Number.isFinite(c.score) ? `Condition: none (${NO_CROP_WORDS[noCrop]}, no crop to score).` : `Condition ${score100(c.score) ?? "unknown"}/100 (${conditionClass(c.score)?.label || "unknown"}).`,
     `Plant health NDVI ${fixed(ph.ndvi, 2)} (normal ${fixed(ph.normal?.low, 2)} to ${fixed(ph.normal?.high, 2)}, ${VERSUS_WORDS[ph.versus] || "no normal"}).`,
     `Water NDWI ${fixed(w.ndwi, 2)} (normal ${fixed(w.normal?.low, 2)} to ${fixed(w.normal?.high, 2)}, ${VERSUS_WORDS[w.versus] || "no normal"}).`,
     stressText(s, units, analysis.harvest),
@@ -480,7 +497,7 @@ function conflictLine(conflict) {
 export function fieldContextText({ farm, fields, analyses, reports, weather, today, report, reportId, images = [], skippedPhotos = 0 }) {
   const lines = [`Today: ${today}.`];
   if (!farm || !fields.length) {
-    lines.push("The farmer has not set up a farm yet. Tell them to open Field → Settings (or the Overview) and type a place or coordinates, or try the demo farm. The app then finds their fields automatically.");
+    lines.push("The farmer has not set up a farm yet. Tell them to open Field → Settings (or the Overview) and type a place or coordinates, or try an example farm (Ukraine, Iowa or Argentina). The app then finds their fields automatically.");
     return lines.join("\n");
   }
   const units = farm.units || "ha";
@@ -547,11 +564,20 @@ export function fieldDetail(field, analysis, units, farmWar = null) {
     dataSource: analysis.provider === "gee" ? "Google Earth Engine (real)" : "SAMPLE DATA (made up for testing)",
     updatedAt: analysis.updatedAt || null,
     latestPass: analysis.latestPass || null,
-    status: analysis.status?.label || null,
+    status: statusOf(analysis)?.label || null,
     condition: { score: score100(analysis.condition?.score), class: conditionClass(analysis.condition?.score)?.label || null },
     plantHealth: analysis.plantHealth || null,
     water: analysis.water || null,
-    stress: analysis.stress ? { ...analysis.stress, ...(analysis.stress.applies === false ? { note: analysis.stress.reason === "driedDown" ? `${DRIED_DOWN_LABEL}: the crop has dried down for harvest, so stress is not read.` : `${NO_CROP_LABEL}: harvested or not sown, so no crop stress.` } : {}), causeLabel: STRESS_CAUSES[analysis.stress.cause]?.label || null } : null,
+    stress: analysis.stress
+      ? {
+          ...analysis.stress,
+          ...(analysis.stress.applies === false
+            ? { note: analysis.stress.reason === "driedDown" ? `${DRIED_DOWN_LABEL}: the crop has dried down for harvest, so stress is not read.` : `${NO_CROP_LABEL}: ${analysis.harvest?.fallow ? "fallow or grass" : "harvested or not sown"}, so no crop stress.` }
+            : {}),
+          // A cause is named for medium or high stress only.
+          causeLabel: analysis.stress.level === "medium" || analysis.stress.level === "high" ? STRESS_CAUSES[analysis.stress.cause]?.label || null : null,
+        }
+      : null,
     pestRisk: analysis.pestRisk ? { ...analysis.pestRisk, line: pestRiskLine(analysis.pestRisk), note: "A forecast from the weather (hours of wet, warm weather; insect degree-days), not a detection. Check the crop on the ground." } : null,
     harvest: analysis.harvest || null,
     cropDetected: analysis.cropDetected || null,

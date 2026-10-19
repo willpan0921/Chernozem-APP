@@ -130,6 +130,18 @@
   color: var(--c-muted);
 }
 
+/* Black soil: the hectares, then the group's size ("12 squares"). */
+.rp-ha,
+.rp-size {
+  display: block;
+  white-space: nowrap;
+}
+
+.rp-size {
+  font-size: 11px;
+  color: var(--c-muted);
+}
+
 .rp-score {
   font-weight: 650;
 }

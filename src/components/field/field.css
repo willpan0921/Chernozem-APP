@@ -720,6 +720,23 @@
   gap: var(--s-3);
 }
 
+/* "Try an example: Ukraine · Iowa · Argentina" */
+.fs-examples {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--c-muted);
+}
+
+.fs-example-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
 .fs-demo {
   font-size: 13px;
   font-weight: 600;

@@ -12,7 +12,7 @@ This page explains every number the app shows: where it comes from, how it is wo
 **Contents**
 
 - [Shared foundations](#shared-foundations): normal years, clouds, seasons, wars
-- [Field: a farmer's own fields](#field-a-farmers-own-fields)
+- [Field: a farmer's own fields](#field-a-farmers-own-fields), with [three example farms](#example-farms)
 - [Atlas: a region or a country](#atlas-a-region-or-a-country)
 - [Datasets](#datasets)
 - [Where the rules live](#where-the-rules-live)
@@ -82,14 +82,17 @@ A farmer types a place, pastes coordinates or draws on the map. The app finds th
 4. **Fields** = connected cropland between the edges (10 m), from 1.5 ha up, simplified to 10 m and cut to the farmer's boundary. Touching pieces whose NDVI and NDWI stay within 0.05 in every window are joined, because the same crop on both sides means one field. The 60 largest are offered.
 5. When a pin lands in a town or a forest, the nearest farmland within 8 km is searched instead, and the app says so.
 
+6. **Pieces of one big field** are joined too when their season NDVI curves match (correlated 0.95 or more, peaks at most 10 days apart) and the line between them is not a real edge (not straight, not a road or trees).
+
 *Checked on real data:* the demo farm near Kupiansk, Ukraine, against 7 hand-drawn outlines (measured 2026-10-19): mean overlap (IoU) **0.805**. Six fields match well (0.83 to 0.96); one (Field 5) scores only 0.14: no detected outline matches it, so the farmer has to draw it. The same score with and without the join of touching pieces by their season curves (that join leaves the demo farm's fields apart).
+*Known limit: very large fields come out in pieces.* In Mato Grosso, Brazil (soy near Sorriso, 2026-10-19), where real fields are hundreds of hectares, the edge detector cuts one field along wet hollows and soil changes. Joining the pieces by their season curves (step 6) halved the count (16 to 8 fields; median 16 to 49 ha, mean 49 to 97 ha), but the fields are still smaller than the real ones. On such farms, draw the fields or remove the extra pieces in Settings.
 *Cannot see:* a boundary with no visible difference on the ground (the same crop, sown on the same day, on both sides of a property line). The farmer can draw or remove fields.
 
 ### Plant health (NDVI)
 
 **Formula:** NDVI = (B8 − B4) / (B8 + B4), the standard vegetation index (near-infrared against red). Bare soil is about 0.2, a dense green crop 0.8 to 0.9.
 **Window:** median of clear pixels over the last 30 days, or the 30 days up to the latest clear pass when that is 30 to 90 days old.
-**Normal:** the same calendar window (±15 days) in 2019, 2020 and 2021. The tile shows the reading, "Below", "Normal" or "Above" the normal range (a margin of 0.02 stops a hair's difference from flipping the word), and the range.
+**Normal:** the same calendar window (±15 days) in 2019, 2020 and 2021. The tile shows the reading, "Below", "Normal" or "Above" the normal range (a margin of 0.02 stops a hair's difference from flipping the word), and the range. When the range is wider than 0.4 the tile says **"Usual range varies (crop rotation)"** instead of the numbers: those fields grew crops sown in different seasons in 2019 to 2021 (near Chivilcoy, Argentina: winter wheat one year, summer soybean the next), so the "usual" spans bare soil to full canopy (for example 0.19 to 0.89) and tells a reader nothing. The word ("Below", "Normal", "Above") still uses the full range.
 **Score (for the condition):** 1 at or above normal, falling to 0 at 0.3 below normal.
 **Cannot see:** the crop's yield or quality; why a field is lower (see Stress).
 
@@ -112,17 +115,17 @@ A pixel is **stressed** when either rule holds:
 NDRE = (B8A − B5) / (B8A + B5). The red edge reacts to chlorophyll loss **one to two weeks before NDVI does**, so it gives an early warning; the analysis records when the red-edge rule found stress (over at least 1 % of the field) that the NDVI rule missed.
 Both halves of each rule are needed: "weaker than the field" alone flags natural soil patterns, "weaker than normal" alone flags a whole field that was simply sown late.
 
-- **Stressed share** = the share of the field's pixels that are stressed. Level: high from 15 %, medium from 5 %, else low.
+- **Stressed share** = the share of the field's pixels that are stressed. Level: high from 15 %, medium from 5 %, else low. The tile shows hectares when a patch is mapped and the share of the field otherwise, the same on every field.
 - **Patches** = stressed blobs of 0.3 ha or more (the 3 largest per field), drawn as dashed circles on the map.
-- **Likely cause**: the mean NDWI anomaly (NDWI minus normal) over the stressed pixels. At −0.05 or lower: **"Dry patch"**. Otherwise: **"Not water: check for pests or disease"**.
-- **No crop, no stress**: when the field is harvested or not sown (or reads as fallow or grass), the tile says **"No crop"**, and a harvested or not-sown field has no condition score (it is not "Poor").
+- **Likely cause**, for **medium or high** stress only: the mean NDWI anomaly (NDWI minus normal) over the stressed pixels. At −0.05 or lower: **"Dry patch"**. Otherwise: **"Not water: check for pests or disease"**. Low stress names no cause: a few weak pixels say nothing about water or pests (real data, near Chivilcoy, 2026-10-19: "Low · 1% · Dry patch" next to "Wetter than usual"). When stress is medium or high but no patch of 0.3 ha or more was mapped, weak plants are scattered over the field and the tile says **"Spread across the field"** instead of naming a cause for a place nobody could find.
+- **No crop, no stress**: when the field is harvested or not sown (or reads as fallow or grass), the tile says **"No crop"**, and the field has no condition score (it is not "Poor").
 - **Dried down, no stress**: once a crop is ready (dried down, standing dry or with its leaves down), or a field of unknown crop has dried down to the ready level, the tile says **"Dried down"** and stress is not read: leaves die back unevenly as a crop dries, and both rules would read that as stress. (Real data, Iowa, 2026-10-19: a dried-down field read "Stress high · Dry patch" while its water was normal and its condition "Very good".)
 
 **Cannot see:** which pest or disease it is. A satellite sees that plants are weaker and whether water explains it, nothing more. Hail, herbicide drift, nutrient shortage and waterlogging can all look like "not water". The app says "check on the ground".
 
 ### Pest and disease risk (a forecast, not a detection)
 
-Only while a crop is growing or ripening (not once it has dried down, and not on fallow or grass). From Open-Meteo hourly air temperature and relative humidity over **14 days: the last 7 and the next 7**.
+Only while a crop is growing or ripening (not once it has dried down, and not on a field read as fallow or grass, or possibly so). From Open-Meteo hourly air temperature and relative humidity over **14 days: the last 7 and the next 7**.
 
 | Risk | Rule | Low | Medium | High |
 | --- | --- | --- | --- | --- |
@@ -193,18 +196,19 @@ On real data **soybean gives a stronger radar return than corn** near its peak (
 Inputs: monthly NDVI of the last 18 months, this season's passes (NDVI, NDYI) and the field-mean Sentinel-1 VH within 30 days of the NDVI peak (never the winter maximum: frozen ground reads brighter than any crop). Each feature scores 1 inside its window and fades to 0 ten days (0.6 dB) outside; the crop with the best weighted score is named when it reaches 0.65. "Yellow flowers" means NDYI = (B3 − B2) / (B3 + B2) at least 0.08 above what the field's own NDVI predicts (a robust line through its green passes) on two or more passes around the peak; NDYI rising with any green canopy is not flowering, and haze that lifts NDYI on many passes is ignored.
 
 **This season or last season.** The crop is read from this season's passes once the season has peaked. Before that it is read from the last complete season in the monthly record and shown as **"Last season: Soybean"**: it is never written as the field's crop and never drives this season's harvest rules, because fields are rotated.
+One exception: a **winter cereal growing now**. A field green through the winter (in the south: sown in June or July) that is at or near its highest NDVI in the cereal's peak months (north: March to May; south: September to November) and not harvested yet is read as **winter cereal, "possible"**, for this season, so the heat-unit harvest estimate runs. (Real data, near Chivilcoy, Argentina, 2026-10-19: wheat-like fields green from June, NDVI 0.78 to 0.94 on 2 October, were read as last summer's soybean before this rule.) Dates alone cannot tell wheat from barley, oats or a winter pasture, so it is never "likely".
 
 **Red-edge gap.** Radar VH peaks shift by a decibel or more from one region to the next (North Dakota corn −15.1 dB against Iowa corn −16.2 dB, median), so VH alone could not tell corn from soybean or sunflower outside the calibration area. The classifier also reads the **red-edge gap**: the mean of NDVI − NDRE over this season's clear passes within 20 days of the NDVI peak (at least 2 passes), a property of the canopy. Calibration windows (10th to 90th percentile): **corn 0.111 to 0.155** (128 fields), **soybean 0.161 to 0.195** (71), **sunflower 0.193 to 0.267** (10); spring cereal 0.154 to 0.21, winter cereal 0.152 to 0.243, spring canola 0.178 to 0.26.
 
 **Grass or hay.** A field cut and grown back two or more times in one season (a fall of 0.25 or more from NDVI 0.6 or higher within 21 days, then regrowth back to 0.6 within 45 days) is grass or hay, not a field crop the rules know (real alfalfa near Ames, cut three times in 2026, was read "winter cereal" before this rule). A cereal followed by a second crop is one cut, not two.
 
-**Fallow or grass.** When no crop rule fits, a field that greens up in spring, peaks before early July (northern day 185), fades for 50 days or more without ever going back to bare soil (NDVI never under 0.25 after green-up) and has a red-edge gap above **0.27** (wider than any crop's window) reads **"Fallow or grass"**: mixed grasses and weeds, not a sown crop. It has no harvest, no crop stress and no pest risk, and its slow fade to dry grass is never called a harvest. This is the pattern of 8 of the 11 fields on the Kupiansk demo farm (peaks of 0.66 to 0.89 in late June, the same in 2025), a few kilometres from the front: fallow or abandoned cropland gone to grass. Checked against the CDL (below): not one of 528 crop fields is called fallow or grass, but neither is any of 60 CDL grassland, hay or summer-fallow fields in the Dakotas and Montana (prairie grass there has a narrower red-edge gap, and US "fallow" is bare tilled land, which this rule does not describe). Because the rule rests on one region it is only ever **"possible"**. A field that fades the same way but fails one test stays "Unknown", and the reason says what was seen ("Green from early May, greenest in late June, a slow fade over 110 days: not the pattern of a known crop; possibly fallow or grass").
+**Fallow or grass.** When no crop rule fits, a field that greens up in spring, peaks before early July (northern day 185), fades for 50 days or more without ever going back to bare soil (NDVI never under 0.25 after green-up) and has a red-edge gap above **0.27** (wider than any crop's window) reads **"Fallow or grass"**: mixed grasses and weeds, not a sown crop. It has no harvest, no crop stress, no pest risk and no condition, and its slow fade to dry grass is never called a harvest; a radar drop on it is a mowing or a cut for hay and reads **"Cut or mown"**, not "Harvested". It is the pattern of the Ukraine example farm near Kupiansk (peaks of 0.66 to 0.89 in late June, the same in 2025), a few kilometres from the front: 5 of its 7 fields read "Fallow or grass" and the other 2 "possibly" so. Fallow or abandoned cropland gone to grass. Checked against the CDL (below): not one of 528 crop fields is called fallow or grass, but neither is any of 60 CDL grassland, hay or summer-fallow fields in the Dakotas and Montana (prairie grass there has a narrower red-edge gap, and US "fallow" is bare tilled land, which this rule does not describe). Because the rule rests on one region it is only ever **"possible"**. A field that fades the same way but fails one test stays "Unknown", and the reason says what was seen ("Green from early May, greenest in late June, a slow fade over 110 days: not the pattern of a known crop; possibly fallow or grass"). Such a field shows **"Unknown · possibly grass"** and the status **"Crop unclear"** (counted "To watch", never "Growing well") until the farmer sets its crop. It is not sure enough to be read as fallow, so a radar drop on it stays "Harvested", with the note "Possibly grass: may be a hay cut".
 
 **A double crop.** When a crop was harvested and another has grown since (a southern double crop: last summer's soybean, then wheat), the crop read is the one harvested, so it is **last season's** and never drives this season's harvest rules.
 
-**Validation against the USDA Cropland Data Layer** (`USDA/NASS/CDL` 2025, 30 m, band `cropland`), run on 2025-10-19 conditions with this app's own Earth Engine provider (the 2025 season, the same code path as a live analysis; script and logs: the build scratchpad `cdl/` and `val/cdl/`). Each field's truth is its CDL majority class (fields with a majority under 60 % left out). The rules were calibrated on **176 fields near Ames, Iowa** (corn, soybean; detected outlines) and **95 sample fields in central South Dakota, north-west Minnesota and north Montana** (homogeneous 240 m squares sampled per CDL class), then frozen and measured on **248 held-out North Dakota fields** (detected outlines and 240 m squares in four areas: north-east, centre, south-east and south-centre).
+**Validation against the USDA Cropland Data Layer** (`USDA/NASS/CDL` 2025, 30 m, band `cropland`), run on 2025-10-19 conditions with this app's own Earth Engine provider (the 2025 season, the same code path as a live analysis; script and logs: the build scratchpad `cdl/` and `val/cdl/`). Each field's truth is its CDL majority class (fields with a majority under 60 % left out). The rules were calibrated on **176 fields near Ames, Iowa** (detected outlines: 113 corn, 61 soybean and 2 hay, so 174 of the six crops) and **95 sample fields in central South Dakota, north-west Minnesota and north Montana** (homogeneous 240 m squares sampled per CDL class), then frozen and measured on **248 held-out North Dakota fields** (detected outlines and 240 m squares in four areas: north-east, centre, south-east and south-centre; 245 of the six crops, plus 2 grass fields and 1 other crop).
 
-Accuracy = the share of a crop's fields that were named as that crop. "Likely right" = of the fields named that crop with confidence "likely", how many were right.
+Accuracy = the share of a crop's fields that were named as that crop; the totals count only fields of the six crops (hay, grass and other crops are left out). "Likely right" = of the fields named that crop with confidence "likely", how many were right.
 
 | Crop | Iowa (calibration) | SD, MN, MT (calibration) | North Dakota (held out) | "Likely" right in ND | Highest confidence |
 | --- | --- | --- | --- | --- | --- |
@@ -224,9 +228,19 @@ A crop whose dry-down ends outside its usual harvest months after the peak (for 
 
 ### Field condition (the map layer) and status
 
-**Condition** = 0.5 × plant health score + 0.3 × water score + 0.2 × (1 − stressed share), from 0 to 1. Missing parts are left out and the rest re-weighted. Classes: Poor under 0.40, Fair under 0.65, Good under 0.85, Very good above. Because health and water are compared with the normal for the **same weeks**, a crop drying down on time for harvest still scores well. A damaged field is never shown better than Fair, and a field with **high stress** (15 % or more) never better than Good (0.84). A harvested or not-sown field has no condition.
+**Condition** = 0.5 × plant health score + 0.3 × water score + 0.2 × (1 − stressed share), from 0 to 1. Missing parts are left out and the rest re-weighted. Classes: Poor under 0.40, Fair under 0.65, Good under 0.85, Very good above. Because health and water are compared with the normal for the **same weeks**, a crop drying down on time for harvest still scores well. A damaged field is never shown better than Fair, and a field with **high stress** (15 % or more) never better than Good (0.84).
+**No crop, no condition.** A field that is harvested, not sown, fallow or grass, or "dried down" (a crop the app cannot name, dried to the ready level) has no condition score and no class: it is never "Poor", and never "Growing well" or "Very good" either. The map keeps its straw style.
 
-**Status**, most urgent first: Needs recovery (damage) → Ready to harvest → Harvest soon (ready within 14 days) → Harvested → Not sown → Watch (condition below Fair, stress medium or high, or plant health below normal) → Healthy. "No clear image yet" when there is no clear pass. The overview counts harvested and not-sown fields on their own, never as "healthy" (for example "4 healthy · 5 harvested · 1 ready to harvest"), and a field with high stress is counted "to watch" even when its status is a harvest one.
+**Status**, most urgent first: Needs recovery (damage) → Fallow or grass → Ready to harvest → Harvest soon (ready within 14 days) → Harvested / Not sown / Dried down → Crop unclear (an unknown crop on a field that is possibly fallow or grass) → Watch (condition below Fair, stress medium or high, or plant health below normal) → Growing well. "No clear image yet" when there is no clear pass.
+
+| Overview group | Statuses |
+| --- | --- |
+| In crop | Growing well, Harvest soon, Ready to harvest |
+| To watch | Watch, Crop unclear, No clear image yet |
+| Needs recovery | Needs recovery (the tile is hidden when no field needs it and no war covers the farm) |
+| No crop | Harvested, Not sown, Fallow or grass, Dried down |
+
+The overview's stat row shows these four groups, the farm area and the weather, and the status sentence names the statuses inside them (for example "1 to watch · 15 ready to harvest · 1 growing well · 1 dried down" next to "In crop 16"), so "growing well" is only said of a field whose status is Growing well. A field with high stress is counted "to watch" even when its status is a harvest one.
 
 ### Damage
 
@@ -254,6 +268,16 @@ The share of the field on black soil, from OpenLandMap's USDA great-group map (2
 - **History** (Data page): monthly field means of clear NDVI and NDWI since January 2019, refreshed every 30 days.
 - **Downloads**: field outlines (GeoJSON), every reading (CSV), the history (CSV) and, with Earth Engine, a GeoTIFF of the latest NDVI, NDWI and condition clipped to the field.
 
+### Example farms
+
+The farm setup offers three example farms ("Try an example: Ukraine · Iowa · Argentina"). Each is a set of **real field outlines**; the fields are named Field 1 to Field N from north-west to south-east (as on every farm) and carry **no crop**: the first analysis detects each crop from the field's own record and runs on real data when Earth Engine is connected, like any farm.
+
+| Example | Where | Fields | Outlines from |
+| --- | --- | --- | --- |
+| Ukraine (the default) | Near Kupiansk, Ukraine | 7 | Drawn by hand by the team (`scripts/fields.geojson`) |
+| Iowa | Near Ames, Iowa, USA | 17 | This app's field detection on Earth Engine (`server/field/examples/iowa.geojson`) |
+| Argentina | Near Chivilcoy, Argentina | 18 | The same (`server/field/examples/argentina.geojson`) |
+
 ---
 
 ## Atlas: a region or a country
@@ -267,13 +291,13 @@ An area (a drawn shape, a region, a country) is cut into a grid of squares: as s
 | Number | Source and resolution | How it is worked out | Updates |
 | --- | --- | --- | --- |
 | Soil value | OpenLandMap USDA soil classes, 250 m; ESA WorldCover, 10 m | Mean of black-soil share and cropland share | Monthly |
-| Damage | FIRMS fire, 1 km; Sentinel-1 VV radar, 10 m | Mean of unusual fire and radar change | Monthly |
+| Damage | FIRMS fire, 1 km; Sentinel-1 VV radar, 10 m | In a war: mean of unusual fire and radar change. At peace: heavily damaged share of the black soil, full at 20 % | Monthly |
 | Heavily damaged hectares | Same | Black-soil cropland pixels with strong radar change (with fire) | Monthly |
 | Soil health index (CHI) | Sentinel-2, 10 to 20 m | Five-index blend, this season vs normal | Monthly, diagnostic only |
-| Safe access | ACLED battles, or FIRMS unusual fire | Distance to fighting, full at 100 km | Monthly |
+| Safe access | ACLED battles, or FIRMS unusual fire | Distance to fighting, full at 100 km. At peace without ACLED: full everywhere | Monthly |
 | Priority, rank, tier | The three scores | Near term and Postwar formulas | Instantly when weights change |
 | People, night lights | WorldPop 100 m (2020); VIIRS 500 m | Sum and median | Monthly, context only |
-| Alerts | Sentinel-1 VV; FIRMS | This month vs the same month of 2019 to 2021 | Monthly |
+| Alerts | Sentinel-1 VV; FIRMS | This month vs the same month of 2019 to 2021 (radar alerts only in ranked squares) | Monthly |
 
 **Monthly**: with "Analyze automatically each month" on, the server analyses each month once it is over (it checks every 6 hours). The damage evidence uses the last **complete** growing season, so it changes once per season; month-to-month change comes from that month's new fires and radar change.
 
@@ -305,7 +329,7 @@ Damage = mean of two indicators:
 Safe access = distance to the nearest recorded fighting ÷ 100 km, held at 1 (100 km or more scores full access, 1.0; this does not make the land safe: a satellite cannot see mines or unexploded ordnance).
 - With an **ACLED** export (optional): distance to battles of the last 12 months.
 - Without it, **inside a known war**: distance to unusual fire, meaning a fire of the last 12 months where the fire density within 10 km is at least 3 times the same months of 2019 to 2021 and at least 1 per km².
-- **At peace** without ACLED: not measured. Every square counts as reachable, the run says so, and nothing is set aside.
+- **At peace** without ACLED: not measured. Every square counts as safe to reach (full access), the run and the report say so, nothing is set aside, and access then changes no order: Near term and Long term rank the squares the same way (their top areas can still group differently, which is why each shows its size). A full score is not a safety check.
 
 **Cannot see:** mines, checkpoints, roads or legal access. Far from fighting does not mean safe.
 
@@ -314,7 +338,11 @@ Safe access = distance to the nearest recorded fighting ÷ 100 km, held at 1 (10
 Weights default to soil value 30, damage 40, safe access 30 (they always add up to 100 and can be changed in the app).
 
 - **Near term**: the least safe squares, holding **30 %** of the black soil, are set aside (counted by rank; squares 100 km or more from fighting are never set aside). Just above that line, scores fade in over a **0.2** ramp of safe access. The rest are ranked by a weighted power mean of soil value and damage.
-- **Postwar**: all three scores blended with a weighted power mean, no set-aside.
+- **Postwar** (called **Long term** where no war is recorded): all three scores blended with a weighted power mean, no set-aside.
+
+Near term uses only soil value and damage, so its weights are their shares of 100 (30 and 40 become 43 and 57) and safe access is the cutoff. The report's "Settings used" and the Atlas AI give the weights this way, per time frame.
+
+**Top areas** are groups of touching squares: the best square not yet used takes in neighbours (up to 3 squares away) that score at least 70 % of it. Each top area is named by its district, else by where it sits ("North-west"), with its starting point and its size ("12 squares") under the name. The Near term and Long term lists can start at the same square and still be different groups, so the size is always shown.
 
 Weighted power mean = (Σ wᵢ · xᵢʳ)^(1/r) with the weights made to add up to 1. The default **r = 0.5** sits between a plain average (r = 1) and the paper's geometric mean (r = 0, Value^w × Damage^w × Access^w), so one weak score pulls a square down without zeroing it.
 
@@ -326,7 +354,7 @@ Weighted power mean = (Σ wᵢ · xᵢʳ)^(1/r) with the weights made to add up 
 
 - **People**: WorldPop 2020 (100 m), people living in the square and on its heavily damaged black soil.
 - **Night lights**: NASA VIIRS VNP46A2 (500 m), the month's median, for context.
-- **Radar alerts**: squares whose VV changed by more than 2 dB this month against the same month of 2019 to 2021, after removing the neighbourhood's own shift (20 km), and at least twice as much as the area's typical square.
+- **Radar alerts**: squares whose VV changed by more than 2 dB this month against the same month of 2019 to 2021, after removing the neighbourhood's own shift (20 km), and at least twice as much as the area's typical square. Only squares with enough black-soil cropland to be ranked count (the 0.5 % rule above), so an alert never points at a town, a lake or arid land the ranking leaves out.
 - **Fire alerts**: fires in the month above the same month's 2019 to 2021 count.
 
 ### Comparing months

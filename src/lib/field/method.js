@@ -189,11 +189,27 @@ export const DRY_NDWI_ANOMALY = -0.05;
 export const STRESS_CAUSES = {
   dry: { id: "dry", label: "Dry patch" },
   other: { id: "other", label: "Not water: check for pests or disease" },
+  // Medium or high stress with no patch mapped: weak plants scattered over
+  // the field, not one place to look at (stressCauseShown).
+  spread: { id: "spread", label: "Spread across the field" },
 };
 
 export function stressCause(ndwiAnomaly) {
   if (!Number.isFinite(ndwiAnomaly)) return null;
   return ndwiAnomaly <= DRY_NDWI_ANOMALY ? "dry" : "other";
+}
+
+// The cause the field shows. A cause is named only for medium or high
+// stress: at "low" a few weak pixels say nothing about water or pests (real
+// data, Argentina 2026-10-19: "Low · 1% · Dry patch" next to "Wetter than
+// usual"), so it is null. A medium or high stress with no patch mapped is
+// spread thinly over the field: "spread" (STRESS_CAUSES.spread), not a
+// cause named for a place nobody can find. Otherwise the measured cause.
+//   level    stressLevel(); cause  stressCause() of the field; patches  the mapped patches
+export function stressCauseShown({ level, cause = null, patches = [] } = {}) {
+  if (level !== "medium" && level !== "high") return null;
+  if (!(Array.isArray(patches) && patches.length)) return "spread";
+  return cause ?? null;
 }
 
 // Stages with no crop in the field: no stress, no condition, no pest risk.
@@ -213,6 +229,27 @@ const stageId = (stage) => (typeof stage === "string" ? stage : stage?.stage) ??
 // False when the field has no crop (harvested or not sown).
 export function hasCrop(stage) {
   return !NO_CROP_STAGES.includes(stageId(stage));
+}
+
+// A radar drop (Sentinel-1 VH) on a field read as fallow or grass is a
+// mowing or a cut for hay, not a harvest (unknownCropHarvest sets mown).
+export const MOWN_LABEL = "Cut or mown";
+
+// Why a field has no crop to score, or null when it has one:
+//   "fallow"     read as fallow or grass (harvest.fallow), mown or not
+//   "harvested"  harvested, "notSown" never greened up this season
+//   "driedDown"  a crop the app cannot name, dried down to the ready level
+//                (harvest.cropUnknown with dryDown "dry"): no harvest date
+//                and no condition can be given for it
+//   harvest  the harvest object (or a stage id)
+// These fields have no condition (score and class null) and are never
+// "Healthy": they are counted in the "noCrop" group (STATUS_GROUPS).
+export function noCropState(harvest) {
+  const h = harvest && typeof harvest === "object" ? harvest : { stage: stageId(harvest) };
+  if (h.fallow) return "fallow";
+  if (NO_CROP_STAGES.includes(h.stage)) return h.stage;
+  if (h.cropUnknown && h.dryDown === "dry") return "driedDown";
+  return null;
 }
 
 // Why stress is not read for a field, or null when it is:
@@ -259,13 +296,15 @@ export function stressSummary({ stage, dryDown = null, fallow = false, share, nd
 export const STRESSED_CONDITION_MAX = 0.84;
 
 // The field condition { score, class } with the "no crop" rule: a
-// harvested or not-sown field has no condition (null, never "Poor"), and
-// its stress never counts as "no stress".
+// harvested, not-sown, fallow or dried-down (unknown crop) field has no
+// condition (null, never "Poor" or "Very good": noCropState), and its
+// stress never counts as "no stress".
+//   stage           the harvest object (or a stage id)
 //   health, water   scores 0..1; stress the stressed share
 //   damage          { detected } (a damaged field is never above "Fair")
 // High stress caps the score at STRESSED_CONDITION_MAX.
 export function fieldCondition({ stage, health, water, stress, damage } = {}) {
-  if (!hasCrop(stage)) return { score: null, class: null };
+  if (noCropState(stage)) return { score: null, class: null };
   let score = conditionForDamage(conditionScore({ health, water, stress }), damage);
   if (Number.isFinite(score) && stressLevel(stress) === "high") score = Math.min(score, STRESSED_CONDITION_MAX);
   return { score: Number.isFinite(score) ? score : null, class: conditionClass(score)?.id ?? null };
@@ -287,6 +326,18 @@ export const RISK_DAYS = 14;
 export const RISK_MIN_HOURS_PER_DAY = 18;
 // Risk is given only while a crop is growing or ripening.
 export const PEST_RISK_STAGES = ["growing", "ripening"];
+
+// True when the weather risk is given for a field: a crop is growing or
+// ripening, and the field is not read as fallow or grass (harvest.fallow,
+// or "possibly fallow or grass" in the crop detection) nor dried down.
+//   harvest       the harvest object (or a stage id)
+//   cropDetected  classifyCrop() result (possiblyFallow), optional
+export function pestRiskApplies(harvest, cropDetected = null) {
+  const h = harvest && typeof harvest === "object" ? harvest : { stage: stageId(harvest) };
+  if (!PEST_RISK_STAGES.includes(h.stage) || noCropState(h)) return false;
+  if (h.dryDown === "dry") return false;
+  return !cropDetected?.possiblyFallow;
+}
 
 export function diseaseRisk(wetHours) {
   if (!Number.isFinite(wetHours)) return null;
@@ -808,11 +859,13 @@ export function combineHarvestEstimate({ ndvi, gdd = null, radar = null, crop = 
 //   options.fallow  the field reads as fallow or grass (crops.js FALLOW):
 //                   never bare after green-up, so a "harvest" seen in the
 //                   optical record is its slow fade to dry grass, not a
-//                   cut: it is read as "dry" (a radar drop, a mowing, stays
-//                   "harvested"). The result has fallow: true.
+//                   cut: it is read as "dry". A radar drop is a mowing or a
+//                   cut for hay: the stage stays "harvested" with mown: true
+//                   (MOWN_LABEL, "Cut or mown"). The result has fallow: true.
 export function unknownCropHarvest(h, { fallow = false } = {}) {
   const out = { ...(h || { stage: "unknown" }), cropUnknown: true, dryDown: null, ...(fallow ? { fallow: true } : {}) };
-  if (fallow && out.stage === "harvested" && out.basis !== "radar") return { ...out, stage: "growing", harvestedOn: null, daysToReady: null, basis: null, dryDown: "dry" };
+  if (fallow && out.stage === "harvested" && out.basis === "radar") return { ...out, mown: true };
+  if (fallow && out.stage === "harvested") return { ...out, stage: "growing", harvestedOn: null, daysToReady: null, basis: null, dryDown: "dry" };
   if (out.stage === "growing") return { ...out, daysToReady: null, basis: null };
   if (out.stage !== "ripening" && out.stage !== "ready") return out;
   const level = Number.isFinite(out.readyLevel) ? out.readyLevel : Number.isFinite(out.peak) ? BARE_NDVI + READY_SHARE * (out.peak - BARE_NDVI) : null;
@@ -924,8 +977,17 @@ export const FIELD_STATUSES = {
   harvestSoon: { label: "Harvest soon", tone: "blue" },
   harvested: { label: "Harvested", tone: null },
   notSown: { label: "Not sown", tone: null },
+  // Read as fallow or grass (crops.js FALLOW), mown or not: no crop.
+  fallow: { label: "Fallow or grass", tone: null },
+  // A crop the app cannot name, dried down to the ready level: no crop to
+  // score and no harvest date (noCropState).
+  driedDown: { label: "Dried down", tone: null },
   watch: { label: "Watch", tone: "amber" },
-  healthy: { label: "Healthy", tone: "green" },
+  // A crop the app cannot name, on a field that looks possibly like fallow
+  // or grass (crops.js possiblyFallow): not "Growing well" until the farmer
+  // says what grows there. Counted "To watch".
+  unclear: { label: "Crop unclear", tone: null },
+  healthy: { label: "Growing well", tone: "green" },
   unknown: { label: "No clear image yet", tone: null },
 };
 
@@ -938,31 +1000,51 @@ function harvestDue(harvest) {
 
 // The field's one status, most urgent first.
 //   damage    - { detected }
-//   harvest   - the result of harvestStage()
+//   harvest   - the harvest object (harvestStage / combineHarvestEstimate /
+//               unknownCropHarvest result)
 //   condition - the field's condition score, 0 to 1
 //   stress    - stressLevel()
 //   health    - versusNormal() for plant health
-export function fieldStatus({ damage, harvest, condition, stress, health }) {
+//   possiblyFallow - true for an unknown crop on a field that is possibly
+//               fallow or grass (crops.js possiblyFallow): "unclear"
+// A field with no crop (noCropState: fallow, harvested, not sown, dried
+// down) is never "Growing well" or "Watch".
+export function fieldStatus({ damage, harvest, condition, stress, health, possiblyFallow = false }) {
   let id = "healthy";
+  const noCrop = harvest ? noCropState(harvest) : null;
   if (damage?.detected) id = "recovery";
+  else if (noCrop === "fallow") id = "fallow";
   else if (harvest?.stage === "ready") id = "ready";
   else if (harvestDue(harvest)) id = "harvestSoon";
-  else if (harvest?.stage === "harvested") id = "harvested";
-  else if (harvest?.stage === "notSown") id = "notSown";
+  else if (noCrop) id = noCrop;
   else if (!Number.isFinite(condition)) id = "unknown";
+  else if (possiblyFallow && harvest?.cropUnknown) id = "unclear";
   else if (condition < CONDITION_CLASSES[1].upTo || stress === "medium" || stress === "high" || health === "below") id = "watch";
   return { id, ...FIELD_STATUSES[id] };
 }
 
-// Which statuses count in the overview's groups. A harvested or not-sown
-// field has no crop and no condition, so it is not "healthy": it has a
-// group of its own (noCrop).
+// Which statuses count in the overview's groups:
+//   growing   a crop in the field, "In crop": growing well (healthy),
+//             harvest soon, ready to harvest
+//   watch     to watch (or no clear image yet, or the crop is unclear)
+//   recovery  needs recovery (damage)
+//   noCrop    no crop to score: harvested, not sown, fallow or grass,
+//             dried down (a crop the app cannot name)
+// STATUS_GROUPS.healthy is the old name of "growing", kept so older code
+// still works; it is not enumerable, so Object.keys / entries list each
+// group once.
 export const STATUS_GROUPS = {
-  healthy: ["healthy", "harvestSoon", "ready"],
-  noCrop: ["harvested", "notSown"],
-  watch: ["watch", "unknown"],
+  growing: ["healthy", "harvestSoon", "ready"],
+  watch: ["watch", "unknown", "unclear"],
   recovery: ["recovery"],
+  noCrop: ["harvested", "notSown", "fallow", "driedDown"],
 };
+Object.defineProperty(STATUS_GROUPS, "healthy", { value: STATUS_GROUPS.growing, enumerable: false });
+
+// The group of a status id ("growing", "watch", "recovery", "noCrop"), or null.
+export function statusGroup(statusId) {
+  return Object.keys(STATUS_GROUPS).find((group) => STATUS_GROUPS[group].includes(statusId)) || null;
+}
 
 // ---------------------------------------------------------------------------
 // Recovery cost and units

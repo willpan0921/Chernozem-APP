@@ -154,10 +154,20 @@ test("stress v2: the likely cause for the field and each patch, the red-edge fla
   assert.equal(wet.stress.redEdge, false);
   assert.equal(wet.pestRisk, null, "no weather, no risk");
   // A data source that sends the cause itself.
-  const given = finishAnalysis({ field, raw: { ...raw, stress: { share: 0.1, cause: "other" } }, today: "2026-06-10" });
+  const given = finishAnalysis({ field, raw: { ...raw, stress: { share: 0.1, cause: "other", patches: raw.stress.patches } }, today: "2026-06-10" });
   assert.equal(given.stress.cause, "other");
+  // Low stress names no cause (a few weak pixels say nothing about water or pests).
+  const low = finishAnalysis({ field, raw: { ...raw, stress: { share: 0.03, cause: "other", ndwiAnomaly: -0.2, patches: raw.stress.patches } }, today: "2026-06-10" });
+  assert.equal(low.stress.level, "low");
+  assert.equal(low.stress.cause, null);
+  // Medium or high stress with no patch mapped: spread across the field, no cause named.
+  const spread = finishAnalysis({ field, raw: { ...raw, stress: { share: 0.1, ndwiAnomaly: -0.2, patches: [] } }, today: "2026-06-10" });
+  assert.equal(spread.stress.level, "medium");
+  assert.equal(spread.stress.cause, "spread");
   assert.equal(pestRiskFrom({ wetHours14: 3, gdd14: 10 }, "ripening").disease, "low");
   assert.equal(pestRiskFrom({ wetHours14: 3, gdd14: 10 }, "ready"), null);
+  assert.equal(pestRiskFrom({ wetHours14: 30, gdd14: 10 }, { stage: "growing", fallow: true }), null, "fallow: no crop to infect");
+  assert.equal(pestRiskFrom({ wetHours14: 30, gdd14: 10 }, "growing", { id: "unknown", possiblyFallow: true }), null, "possibly grass: no risk");
 });
 
 test("harvest v2: a standing dry corn crop is ready, a radar drop is a harvest", () => {
@@ -210,9 +220,13 @@ test("double crop: the heat units count from the green-up of the crop now growin
   const temperatures = daysFrom("2025-09-01", 440, (date) => ({ date, tmax: 24, tmin: 10 }));
   const a = finishAnalysis({ field: pampas, raw: { ...base, conflict: null, season: curve }, today: "2026-10-19", temperatures });
   assert.equal(a.harvest.stage, "growing");
-  assert.notEqual(a.cropDetected.season, "this", JSON.stringify(a.cropDetected));
-  assert.equal(a.cropUsed.id, null);
-  assert.equal(a.harvest.basis, null, "no heat-unit estimate from last summer's crop");
+  // The wheat now growing is detected for this season (crops.js
+  // WINTER_CEREAL_IN_SEASON), so its heat units run from ITS green-up.
+  assert.deepEqual([a.cropDetected.id, a.cropDetected.season], ["winterCereal", "this"], JSON.stringify(a.cropDetected));
+  assert.equal(a.cropUsed.id, "winterCereal");
+  assert.equal(a.harvest.basis, "heat units");
+  assert.ok(a.harvest.gdd.greenUp >= "2026-07-01", JSON.stringify(a.harvest.gdd));
+  assert.ok(a.harvest.daysToReady >= 1 && a.harvest.daysToReady < 90, String(a.harvest.daysToReady));
   // With the farmer's wheat: heat units from the wheat's own green-up (August), not November 2025.
   const wheat = finishAnalysis({ field: { ...pampas, crop: "Winter wheat", cropSource: "user" }, raw: { ...base, conflict: null, season: curve }, today: "2026-10-19", temperatures });
   assert.ok(wheat.harvest.gdd && wheat.harvest.gdd.greenUp >= "2026-07-01", JSON.stringify(wheat.harvest));

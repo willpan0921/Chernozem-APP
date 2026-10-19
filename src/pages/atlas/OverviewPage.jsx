@@ -28,7 +28,7 @@ import { AnalysisProgress, AtlasGate, useAtlasData, useTimeframe } from "../../s
 import AtlasMap from "../../components/atlas/AtlasMap.jsx";
 import MapLegend from "../../components/atlas/MapLegend.jsx";
 import RunPicker from "../../components/atlas/RunPicker.jsx";
-import { describeAlert, kpis, shownNewDamage, springPlan, summarize, timeframeOptions } from "../../lib/atlas/overview.js";
+import { alertPlaces, describeAlert, kpis, shownNewDamage, springPlan, summarize, timeframeOptions } from "../../lib/atlas/overview.js";
 import { COST_NOTE } from "../../lib/atlas/method.js";
 import { dueLabel, formatHaShort, formatUsd, listNames, toDay } from "../../lib/format.js";
 import { areaOfAlert, atlasLink, haFixed, nameAreas, planSteps, useMonthInUrl, warNote, weightItems } from "./overviewHelpers.js";
@@ -62,7 +62,8 @@ function Overview() {
   const summary = useMemo(() => summarize(scored.places), [scored]);
   // The top areas with the names every page uses.
   const named = useMemo(() => nameAreas(hotspots[timeframe]), [hotspots, timeframe]);
-  const weightLine = weightItems(settings, timeframe);
+  // At peace with no ACLED file nothing is set aside: no cutoff chip.
+  const weightLine = weightItems(settings, timeframe, run);
   const top = named.slice(0, TOP_COUNT);
   const isLatest = runs[0]?.id === run.id;
   const reanalyzing = job?.status === "running" && job.areaId === area.id;
@@ -283,11 +284,13 @@ function NextSteps({ run, hotspots, isLatest, linkTo }) {
 
 // ---------- Alerts ----------
 
-// An alert inside a top area is named after it ("North-west"); others keep
-// their coordinates.
+// Each alert keeps its own place (the same as in the Report and the AI),
+// with coordinates when two would read the same (overview.js alertPlaces).
+// An alert inside a top area says so on a second line ("In top area 2").
 function Alerts({ alerts, areas, onOpen }) {
   const [showAll, setShowAll] = useState(false);
   const shown = showAll ? alerts : alerts.slice(0, ALERTS_SHOWN);
+  const places = alertPlaces(alerts);
   return (
     <Card title="Alerts" actions={alerts.length > 0 && <span className="ao-count">{alerts.length}</span>}>
       {alerts.length === 0 ? (
@@ -297,6 +300,7 @@ function Alerts({ alerts, areas, onOpen }) {
           {shown.map((alert) => {
             const view = describeAlert(alert);
             const area = areaOfAlert(alert, areas);
+            const rank = area ? areas.indexOf(area) + 1 : 0;
             const Icon = alert.kind === "fire" ? Flame : Radar;
             return (
               <li key={alert.id}>
@@ -306,7 +310,8 @@ function Alerts({ alerts, areas, onOpen }) {
                   </span>
                   <span className="ao-alert-text">
                     <span className="ao-alert-title">{view.title}</span>
-                    <span className="ao-alert-place">{area ? area.name : view.place}</span>
+                    <span className="ao-alert-place">{places.get(alert.id) || view.place}</span>
+                    {rank > 0 && <span className="ao-alert-area">In top area {rank}</span>}
                   </span>
                   <span className="ao-alert-detail">{view.detail}</span>
                 </button>

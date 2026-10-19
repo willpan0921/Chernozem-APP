@@ -26,7 +26,19 @@ npm run dev      # starts the app at http://localhost:5173
 
 Open **http://localhost:5173**. The Field product opens first; the Atlas is at **/atlas**. The page refreshes by itself when a file is saved. To stop, press **Control + C** in the Terminal.
 
-Without any settings the app runs on **sample data** (pages show a "Sample data" badge), so it can be tried straight away. In Field, **Try the demo farm** loads 7 real field outlines near Kupiansk, Ukraine.
+Without any settings the app runs on **sample data** (pages show a "Sample data" badge), so it can be tried straight away.
+
+### Example farms
+
+In Field, the farm setup has a quiet row **"Try an example: Ukraine · Iowa · Argentina"**. Each loads a farm of real field outlines and analyses it at once (on real satellite data when Earth Engine is connected). The fields start with no crop: the app detects each one, as it would on your own farm.
+
+| Example | Where | Fields |
+| --- | --- | --- |
+| Ukraine (default) | Near Kupiansk, Ukraine (close to the front line) | 7, drawn by hand (`scripts/fields.geojson`) |
+| Iowa | Near Ames, Iowa, USA (corn and soybean) | 17, found by the app (`server/field/examples/iowa.geojson`) |
+| Argentina | Near Chivilcoy, Argentina (southern hemisphere) | 18, found by the app (`server/field/examples/argentina.geojson`) |
+
+The same is available to scripts: `POST /api/farm/demo` with `{ "example": "ukraine" | "iowa" | "argentina" }`. Loading an example replaces the current farm.
 
 To run it for other people:
 
@@ -72,11 +84,11 @@ src/                      the app in the browser (React + Vite, plain CSS)
 ├── data/                 fixed wording: chat text (chats.js) and soil types (soilTypes.js)
 └── styles/               tokens.css (every colour, font and spacing), base, shell, components
 server/                   the Node server: API, jobs, scheduler, store
-├── field/                Field routes, analysis, weather, place search, exports, demo farm
+├── field/                Field routes, analysis, weather, place search, exports, example farms (examples/)
 ├── providers/            data sources: gee.js and field-gee.js (Earth Engine),
 │                         sample.js and field-sample.js (sample data), fake-ee.js (test stand-in)
 └── ai/                   the Claude chat and what it knows (context.js, field-context.js)
-scripts/                  gee-check.js, the demo farm outlines (fields.geojson), Danny's Firestore scripts
+scripts/                  gee-check.js, the Ukraine example farm's outlines (fields.geojson), Danny's Firestore scripts
 docs/                     METHODS.md, CONNECT-DATA.md
 ```
 
@@ -108,7 +120,8 @@ docs/                     METHODS.md, CONNECT-DATA.md
 | --- | --- | --- |
 | `src/components/chat/`, `src/api/chatApi.js` | Danny | The chat screens used by both AI pages |
 | `scripts/fetch-ndvi.js`, `scripts/seed-fields.js` | Danny | Firestore NDVI scripts (the app itself no longer uses Firestore) |
-| `scripts/fields.geojson` | Danny | The demo farm's 7 real field outlines |
+| `scripts/fields.geojson` | Danny | The Ukraine example farm's 7 real field outlines |
+| `server/field/demo.js`, `server/field/examples/*.geojson` | Whoever changes the example farms | The three example farms (Ukraine, Iowa, Argentina) |
 | `src/data/soilTypes.js` | Shirley | Soil type names and descriptions |
 | `src/data/chats.js` | Danny, or whoever changes the chat wording | Starter questions, report kinds, the "Connect Claude" card |
 | `src/lib/field/method.js`, `src/lib/field/crops.js` | Whoever changes the Field method | Every Field rule; a change applies to every analysis from then on |

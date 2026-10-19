@@ -115,10 +115,13 @@ test("the demo farm loads, is analysed, and shows 7 statuses", async () => {
   assert.equal(demo.status, 201);
   assert.equal(demo.json.farm.fields.length, 7);
   assert.equal(demo.json.farm.demo, true);
+  assert.equal(demo.json.farm.example, "ukraine");
+  assert.equal(demo.json.farm.location.label, "Near Kupiansk, Ukraine");
+  // Named north-west to south-east, and no made-up crop: the analysis detects them.
   assert.deepEqual(demo.json.farm.fields.map((f) => f.name), ["Field 1", "Field 2", "Field 3", "Field 4", "Field 5", "Field 6", "Field 7"]);
-  // Placeholder crops until the analysis detects the real ones.
-  assert.equal(demo.json.farm.fields[2].crop, "Corn");
-  assert.equal(demo.json.farm.fields[2].cropSource, "demo");
+  assert.ok(demo.json.farm.fields.every((f) => f.crop === null && f.cropSource === null && f.source === "demo"));
+  const lons = demo.json.farm.fields.map((f) => f.geometry.coordinates[0][0][0]);
+  assert.ok(lons[0] < lons[lons.length - 1], "Field 1 is west of Field 7");
   assert.equal(demo.json.farm.conflict.id, "ukraine-2022");
   const job = await waitForJob(demo.json.job.id);
   assert.equal(job.kind, "field-analyze");
@@ -129,7 +132,7 @@ test("the demo farm loads, is analysed, and shows 7 statuses", async () => {
   for (const f of json.farm.fields) {
     const detected = json.analyses[f.id].cropDetected;
     assert.ok(detected && detected.id, f.name);
-    assert.ok(["winterCereal", "springCereal", "rapeseed", "sunflower", "corn", "soybean", "unknown"].includes(detected.id), detected.id);
+    assert.ok(["winterCereal", "springCereal", "rapeseed", "sunflower", "corn", "soybean", "fallow", "unknown"].includes(detected.id), detected.id);
     if (detected.id === "unknown") assert.deepEqual([f.crop, f.cropSource], [null, null]);
     else assert.deepEqual([f.crop, f.cropSource], [detected.label, "detected"]);
   }
@@ -137,7 +140,8 @@ test("the demo farm loads, is analysed, and shows 7 statuses", async () => {
   // The temperatures for heat units were read once for the farm.
   assert.ok(outside.some((u) => u.startsWith("https://archive-api.open-meteo.com/v1/archive?")));
   const byName = Object.fromEntries(json.farm.fields.map((f) => [f.name, json.analyses[f.id]]));
-  assert.equal(byName["Field 7"].status.id, "recovery");
+  // The westernmost field (Danny's "Field 7"), nearest the sample front line.
+  assert.equal(byName["Field 1"].status.id, "recovery");
   for (const a of Object.values(json.analyses)) {
     assert.ok(a.status.label);
     assert.equal(a.season, undefined, "the list leaves out the season curve");
@@ -150,6 +154,55 @@ test("the demo farm loads, is analysed, and shows 7 statuses", async () => {
   assert.equal(one.status, 200);
   assert.ok(one.json.analysis.zones.values.length > 0);
   assert.equal(one.json.history.months[0].month, "2019-01");
+});
+
+test("the Iowa and Argentina example farms: real outlines, named north-west to south-east, at peace", async () => {
+  const { orderNorthWestFirst } = await import("./run.js");
+  const centre = (f) => {
+    const ring = f.geometry.coordinates[0].slice(0, -1);
+    return [ring.reduce((s, p) => s + p[1], 0) / ring.length, ring.reduce((s, p) => s + p[0], 0) / ring.length];
+  };
+  for (const [example, count, label, lat] of [["iowa", 17, "Near Ames, Iowa, USA", 42.06], ["argentina", 18, "Near Chivilcoy, Argentina", -34.9]]) {
+    const loaded = await call("POST", "/api/farm/demo", { example });
+    assert.equal(loaded.status, 201, JSON.stringify(loaded.json));
+    const farm = loaded.json.farm;
+    assert.equal(farm.example, example);
+    assert.equal(farm.demo, true);
+    assert.equal(farm.fields.length, count);
+    assert.equal(farm.location.label, label);
+    assert.ok(Math.abs(farm.location.lat - lat) < 0.1, String(farm.location.lat));
+    assert.equal(farm.conflict, null);
+    assert.deepEqual(farm.fields.map((f) => f.name), Array.from({ length: count }, (_, i) => `Field ${i + 1}`));
+    assert.deepEqual(orderNorthWestFirst(farm.fields, centre).map((f) => f.name), farm.fields.map((f) => f.name));
+    assert.equal((await waitForJob(loaded.json.job.id)).status, "done");
+    const { json } = await call("GET", "/api/farm");
+    assert.equal(Object.keys(json.analyses).length, count, "only this example's fields are analysed");
+  }
+  const wrong = await call("POST", "/api/farm/demo", { example: "mars" });
+  assert.equal(wrong.status, 400);
+  assert.equal(wrong.json.error.code, "unknown_example");
+  // Back to the Ukraine example for the tests below.
+  const back = await call("POST", "/api/farm/demo", {});
+  assert.equal(back.json.farm.example, "ukraine");
+  await waitForJob(back.json.job.id);
+});
+
+test("every save path stores the fields north-west to south-east", async () => {
+  const square = (lat, lon) => ({ type: "Polygon", coordinates: [[[lon, lat], [lon + 0.004, lat], [lon + 0.004, lat + 0.003], [lon, lat + 0.003], [lon, lat]]] });
+  const before = (await call("GET", "/api/farm")).json.farm;
+  // Sent south-east first: stored north-west first, numbered in that order.
+  const put = await call("PUT", "/api/farm", { fields: [{ geometry: square(49.70, 37.62) }, { geometry: square(49.72, 37.60) }, { geometry: square(49.71, 37.61), name: "Middle" }] });
+  assert.deepEqual(put.json.farm.fields.map((f) => f.name), ["Field 1", "Middle", "Field 2"]);
+  await waitForJob(put.json.job.id);
+  // A drawn field in the north-west goes first in the list.
+  const added = await call("POST", "/api/farm/fields", { geometry: square(49.73, 37.59) });
+  assert.equal(added.json.field.name, "Field 3");
+  await waitForJob(added.json.job.id);
+  assert.deepEqual((await call("GET", "/api/farm")).json.farm.fields.map((f) => f.name), ["Field 3", "Field 1", "Middle", "Field 2"]);
+  // Back to the Ukraine example for the tests below.
+  const back = await call("POST", "/api/farm/demo", { example: "ukraine" });
+  await waitForJob(back.json.job.id);
+  assert.equal((await call("GET", "/api/farm")).json.farm.fields.length, before.fields.length);
 });
 
 test("finding fields inside a typed boundary and around a point, then saving some", async () => {
@@ -196,7 +249,7 @@ test("finding fields inside a typed boundary and around a point, then saving som
   assert.equal(put.json.farm.name, "My farm");
   assert.deepEqual(put.json.farm.fields.map((f) => f.name).sort(), ["Field 1", "Field 2", "Field 3"]);
   // The fields are near the demo farm, so its place name is kept.
-  assert.equal(put.json.farm.location.label, "Near Kupiansk, Kharkiv region, Ukraine");
+  assert.equal(put.json.farm.location.label, "Near Kupiansk, Ukraine");
   assert.equal((await waitForJob(put.json.job.id)).status, "done");
   const { json } = await call("GET", "/api/farm");
   assert.equal(Object.keys(json.analyses).length, 3, "the old demo analyses are gone");

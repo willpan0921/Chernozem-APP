@@ -17,6 +17,12 @@
 // except runs made from sample data once Earth Engine is connected: those
 // are redone with the real data.
 //
+// A month that fails (Earth Engine busy or timed out after its retries) is
+// skipped and the job goes on with the other months; at the end the job
+// reports which months are missing, so running it again (without rerun)
+// fills in only those. Problems that would fail every month (a bad key,
+// no permission, a quota) stop the job at once (stopsJob).
+//
 // WHO EDITS IT
 // Nobody, normally.
 
@@ -58,6 +64,25 @@ function prune() {
 
 const pause = () => new Promise((resolve) => setImmediate(resolve));
 
+// Error codes (server/providers/gee.js explainGeeError) that would fail
+// every month the same way: the job stops at once instead of going on.
+const STOPPING_CODES = new Set(["bad_key", "no_permission", "api_disabled", "not_registered", "asset_not_found", "quota", "bad_request", "gee_unavailable", "not_configured"]);
+export function stopsJob(error) {
+  return Boolean(error && (STOPPING_CODES.has(error.code) || error.status === 503));
+}
+
+// The error a job ends with when some months failed:
+//   "2 of 12 months could not be analyzed (July 2026, May 2026): <first error>
+//    Run the analysis again to fill them in."
+export function missingMonthsError(failed, total) {
+  const first = failed[0].error;
+  const reason = String(first?.message || first || "unknown error").replace(/[.\s]+$/, "");
+  const error = new Error(`${failed.length} of ${total} months could not be analyzed (${failed.map((f) => monthLabel(f.month)).join(", ")}): ${reason}. Run the analysis again to fill them in.`);
+  error.code = first?.code || "months_missing";
+  error.months = failed.map((f) => f.month);
+  return error;
+}
+
 // Starts analyzing an area. Gives back the job right away; the work goes on
 // in the background. If the area is already being analyzed, that job is
 // given back instead of starting a second one.
@@ -93,7 +118,8 @@ export async function startAnalysis({ areaId, months = 12, rerun = false, trigge
     job.status = "error";
     job.error = error.message || String(error);
     job.errorCode = error.code || null;
-    job.message = `Analysis stopped: ${job.error}`;
+    // Months missing: the error already says what to do.
+    job.message = error.months ? job.error : `Analysis stopped: ${job.error}`;
     job.finishedAt = new Date().toISOString();
     console.error(`[chernozem] Analysis of ${area.name} failed:`, error);
   });
@@ -117,6 +143,7 @@ async function runJob(job, area, count, rerun) {
   const existing = new Map();
   for (const summary of await listRuns(area.id)) if (!existing.has(summary.month)) existing.set(summary.month, summary);
 
+  const failed = [];
   try {
     for (const month of months) {
       const old = existing.get(month);
@@ -128,16 +155,30 @@ async function runJob(job, area, count, rerun) {
         continue;
       }
       job.message = `Analyzing ${area.name}: ${monthLabel(month)} (${job.done + 1} of ${job.total})`;
-      const result = await provider.analyze({
-        area,
-        cells: grid.cells,
-        month,
-        cellSizeDeg: grid.cellSizeDeg,
-        conflict,
-        onProgress: (share) => {
-          job.monthProgress = Math.max(0, Math.min(1, Number(share) || 0));
-        },
-      });
+      let result;
+      try {
+        result = await provider.analyze({
+          area,
+          cells: grid.cells,
+          month,
+          cellSizeDeg: grid.cellSizeDeg,
+          conflict,
+          onProgress: (share) => {
+            job.monthProgress = Math.max(0, Math.min(1, Number(share) || 0));
+          },
+        });
+      } catch (error) {
+        if (stopsJob(error)) throw error;
+        // Skip this month and go on (an older run of it, if any, is kept).
+        console.warn(`[chernozem] ${area.name} ${month} failed, going on with the other months: ${error.message}`);
+        failed.push({ month, error });
+        if (old) job.runIds.push(old.id);
+        job.done += 1;
+        job.monthProgress = 0;
+        job.failedMonths = failed.map((f) => f.month);
+        await pause();
+        continue;
+      }
       const run = buildRun({
         area,
         month,
@@ -174,6 +215,7 @@ async function runJob(job, area, count, rerun) {
     }
   }
 
+  if (failed.length) throw missingMonthsError(failed, job.total);
   job.status = "done";
   job.message = `${area.name}: ${job.total === 1 ? "1 month" : `${job.total} months`} analyzed`;
   job.finishedAt = new Date().toISOString();

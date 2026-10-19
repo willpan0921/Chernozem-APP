@@ -3,7 +3,7 @@
 // its analyses, the weather and the latest update job. No React here, so
 // it is tested in overview.test.js:
 //
-//   statusSentence(farm, analyses, job)  -> { text: "1 field needs recovery · 1 to watch", tone: "red" }
+//   statusSentence(farm, analyses, job)  -> { text: "1 field needs recovery · 1 to watch · 2 harvested", tone: "red" }
 //   showRecoveryTile(counts, conflict)   -> false on a peaceful farm with nothing to recover
 //   needsDoing({ farm, analyses, weather, job })  -> the "What needs doing" items, most urgent first
 //   latestPass(farm, analyses)      -> "2026-10-16" (the newest clear Sentinel-2 pass) or null
@@ -18,45 +18,58 @@
 // Whoever changes what the Field overview says.
 
 import { COST_NOTE, recoveryCost } from "./method.js";
-import { analysingIds, causeText, formatArea, formatDay, formatDayRange, riskNote, statusCounts } from "./format.js";
+import { SPREAD_LABEL, analysingIds, causeText, formatArea, formatDay, formatDayRange, riskNote, spreadOut, statusCounts, statusOf } from "./format.js";
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
-// "1 field needs recovery · 1 to watch · 2 ready to harvest", "All 7
-// fields healthy", or "4 healthy · 5 harvested · 1 ready to harvest" (a
-// harvested or not-sown field has no crop, so it is never "healthy").
-// tone: "green" | "amber" | "red". With the running update (job), new
-// fields read "1 being analysed".
+// The overview groups in words, in the order of the stat tiles:
+// "1 field needs recovery · 1 to watch · 2 ready to harvest · 1 harvest
+// soon · 1 growing well · 2 harvested", "All 7 fields growing well" or
+// "All 7 fields harvested". The "In crop" tile counts ready, harvest soon
+// and growing well together; here each is named, so "growing well" is
+// only said of a field whose status is "Growing well". A field with no
+// crop (harvested, not sown, fallow or grass, dried down) is never
+// "growing well". tone: "green" | "amber" | "red".
+// With the running update (job), new fields read "1 being analysed".
+const NO_CROP_WORDS = [
+  ["harvested", "harvested"],
+  ["notSown", "not sown"],
+  ["fallow", "fallow or grass"],
+  ["driedDown", "dried down"],
+];
+
 export function statusSentence(farm, analyses = {}, job = null) {
   const counts = statusCounts(farm, analyses);
-  const ready = (farm?.fields || []).filter((field) => analyses[field.id]?.status?.id === "ready").length;
-  const analysed = counts.healthy + counts.noCrop + counts.watch + counts.recovery;
+  const analysed = counts.growing + counts.noCrop + counts.watch + counts.recovery;
   const analysing = analysingIds(farm, analyses, job).size;
   const waiting = counts.total - analysed - analysing;
-  const noCrop = [];
-  if (counts.harvested) noCrop.push(`${counts.harvested} harvested`);
-  if (counts.notSown) noCrop.push(`${counts.notSown} not sown`);
+  const soon = counts.harvestSoon || 0;
+  const growingWell = counts.growing - counts.ready - soon;
+  const noCrop = NO_CROP_WORDS.filter(([id]) => counts[id]).map(([id, word]) => ({ n: counts[id], word }));
+  // Older analyses may count a no-crop field under a status this list
+  // does not know: they still show up, as "no crop".
+  const named = noCrop.reduce((sum, item) => sum + item.n, 0);
+  if (counts.noCrop > named) noCrop.push({ n: counts.noCrop - named, word: "no crop" });
 
+  // Every analysed field in one group, one kind: "All 7 fields harvested".
+  const one = (word) => (analysed === 1 && counts.total === 1 ? `Your field is ${word}` : `All ${plural(analysed, "field", "fields")} ${word}`);
   const parts = [];
-  let tone = "green";
-  if (!counts.recovery && !counts.watch) {
-    if (analysed === 0 && analysing) parts.push(counts.total === 1 ? "Your field is being analysed" : `${counts.total} fields being analysed`);
-    else if (analysed === 0) parts.push(counts.total === 1 ? "Your field is waiting for analysis" : `${counts.total} fields waiting for analysis`);
-    else if (!counts.noCrop) parts.push(analysed === 1 && counts.total === 1 ? "Your field is healthy" : `All ${plural(analysed, "field", "fields")} healthy`);
-    else if (!counts.healthy && noCrop.length === 1) parts.push(analysed === 1 && counts.total === 1 ? `Your field is ${noCrop[0].replace(/^\d+ /, "")}` : `All ${plural(analysed, "field", "fields")} ${noCrop[0].replace(/^\d+ /, "")}`);
-    else {
-      if (counts.healthy) parts.push(`${counts.healthy} healthy`);
-      parts.push(...noCrop);
-    }
-  } else {
+  if (analysed === 0) {
+    if (analysing) parts.push(counts.total === 1 ? "Your field is being analysed" : `${counts.total} fields being analysed`);
+    else parts.push(counts.total === 1 ? "Your field is waiting for analysis" : `${counts.total} fields waiting for analysis`);
+  } else if (growingWell === analysed) parts.push(one("growing well"));
+  else if (noCrop.length === 1 && noCrop[0].n === analysed) parts.push(one(noCrop[0].word));
+  else {
     if (counts.recovery) parts.push(plural(counts.recovery, "field needs recovery", "fields need recovery"));
     if (counts.watch) parts.push(parts.length ? `${counts.watch} to watch` : plural(counts.watch, "field to watch", "fields to watch"));
-    parts.push(...noCrop);
-    tone = counts.recovery ? "red" : "amber";
+    if (counts.ready) parts.push(`${counts.ready} ready to harvest`);
+    if (soon) parts.push(`${soon} harvest soon`);
+    if (growingWell) parts.push(`${growingWell} growing well`);
+    parts.push(...noCrop.map((item) => `${item.n} ${item.word}`));
   }
-  if (ready) parts.push(`${ready} ready to harvest`);
   if (analysing && analysed) parts.push(`${analysing} being analysed`);
   if (waiting > 0 && analysed) parts.push(`${waiting} waiting for analysis`);
+  const tone = counts.recovery ? "red" : counts.watch ? "amber" : "green";
   return { text: parts.join(" · "), tone };
 }
 
@@ -106,6 +119,15 @@ export function latestPass(farm, analyses = {}) {
 const mapLink = (field) => `/field/fields?field=${encodeURIComponent(field.id)}`;
 const aiLink = (field) => `/field/ai?about=${encodeURIComponent(field.id)}`;
 
+// Same unit as the Stress tile (format.js): hectares only when a patch is
+// mapped, else the share of the field.
+function stressTitle(stress, name, unitsIn) {
+  const mapped = Array.isArray(stress.patches) && stress.patches.length > 0;
+  if (mapped && Number.isFinite(stress.stressedHa) && stress.stressedHa > 0) return `Stress on ${formatArea(stress.stressedHa, unitsIn)} in ${name}`;
+  if (Number.isFinite(stress.share) && stress.share > 0) return `Stress on ${stress.share * 100 < 1 ? "under 1%" : `${Math.round(stress.share * 100)}%`} of ${name}`;
+  return `Stress in ${name}`;
+}
+
 // What needs doing, most urgent first. Each item:
 //   { id, tone, icon, fieldId?, title, amount?, costs?, line?, action }
 //   tone   "red" | "amber" | "blue" | "ink" | null
@@ -119,7 +141,7 @@ export function needsDoing({ farm, analyses = {}, weather = null, job = null }) 
   const rainOn = rain ? formatDay(rain.from) : null;
   const items = [];
   const fields = (farm.fields || []).filter((field) => analyses[field.id]);
-  const on = (id) => fields.filter((field) => analyses[field.id].status?.id === id);
+  const on = (id) => fields.filter((field) => statusOf(analyses[field.id])?.id === id);
 
   if (job?.status === "error") {
     items.push({
@@ -198,8 +220,8 @@ export function needsDoing({ farm, analyses = {}, weather = null, job = null }) 
       tone: a.stress.level === "high" ? "red" : "amber",
       icon: "stress",
       fieldId: field.id,
-      title: Number.isFinite(a.stress.stressedHa) && a.stress.stressedHa > 0 ? `Stress on ${formatArea(a.stress.stressedHa, units)} in ${field.name}` : `Stress in ${field.name}`,
-      line: causeText(a.stress.cause),
+      title: stressTitle(a.stress, field.name, units),
+      line: spreadOut(a.stress) ? SPREAD_LABEL : causeText(a.stress.cause),
       action: { label: "View", to: mapLink(field) },
     });
     listed.add(field.id);
@@ -218,20 +240,28 @@ export function needsDoing({ farm, analyses = {}, weather = null, job = null }) 
       action: { label: "View", to: mapLink(atRisk[0]) },
     });
   }
-  for (const field of on("watch").concat(on("unknown"))) {
+  for (const field of on("watch").concat(on("unknown"), on("unclear"))) {
     if (listed.has(field.id)) continue;
     const a = analyses[field.id];
     let title;
     let icon = "health";
-    if (a.status?.id === "unknown") {
+    let line;
+    let action = { label: "View", to: mapLink(field) };
+    if (statusOf(a)?.id === "unknown") {
       title = `No clear image of ${field.name} yet`;
       icon = "cloud";
+    } else if (statusOf(a)?.id === "unclear") {
+      title = `${field.name}: crop unclear`;
+      line = "Possibly grass · set the crop for a harvest estimate";
+      icon = "wheat";
+      action = { label: "Set crop", to: "/field/settings" };
     } else if (a.plantHealth?.versus === "below") title = `Plant health below normal in ${field.name}`;
     else if (a.water?.versus === "below") {
       title = `${field.name} is drier than normal`;
       icon = "water";
     } else title = `${field.name} is in ${a.condition?.class === "poor" ? "poor" : "fair"} condition`;
-    items.push({ id: `watch-${field.id}`, tone: a.status?.id === "unknown" ? null : "amber", icon, fieldId: field.id, title, action: { label: "View", to: mapLink(field) } });
+    const quiet = statusOf(a)?.id === "unknown" || statusOf(a)?.id === "unclear";
+    items.push({ id: `watch-${field.id}`, tone: quiet ? null : "amber", icon, fieldId: field.id, title, ...(line ? { line } : {}), action });
   }
   return items;
 }

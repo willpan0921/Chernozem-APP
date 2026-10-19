@@ -46,7 +46,9 @@ test("the demo farm on 18 Oct 2026: Field 7 needs recovery, the rest do not, and
   assert.ok(corn.stress.patches.length >= 1, "Field 3 has a stress patch");
   assert.ok(corn.stress.patches[0].ha >= 0.3);
   assert.ok(["dry", "other"].includes(corn.stress.patches[0].cause));
-  assert.ok(["dry", "other"].includes(corn.stress.cause));
+  // A cause is named for medium or high stress only.
+  if (corn.stress.level === "medium" || corn.stress.level === "high") assert.ok(["dry", "other", "spread"].includes(corn.stress.cause));
+  else assert.equal(corn.stress.cause, null);
   // Harvested and unsown fields: "No crop", no condition class (never "Poor").
   for (const a of Object.values(result).filter((x) => ["harvested", "notSown"].includes(x.harvest.stage))) {
     assert.equal(a.stress.applies, false);
@@ -222,5 +224,6 @@ test("crop names, including the detected crops, map to the sample's crops", () =
   assert.equal(cropKey("Spring cereal"), "barley");
   assert.equal(cropKey("Corn"), "corn");
   assert.equal(cropKey("Rapeseed"), "rapeseed");
+  assert.equal(cropKey("Fallow or grass"), "fallow");
   assert.equal(cropKey(null, "seed-a"), cropKey(null, "seed-a"));
 });

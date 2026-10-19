@@ -8,7 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { scorePlaces } from "./scoring.js";
-import { cellBounds, compassName, findFocus, groupHotspots, labelHasCoords, labelParts, parseCellId, placeLabel, placesExtent } from "./hotspots.js";
+import { cellBounds, compassName, findFocus, groupHotspots, labelHasCoords, labelParts, parseCellId, placeLabel, placesExtent, squaresText } from "./hotspots.js";
 import { makePlaces } from "./testPlaces.js";
 
 const { places } = scorePlaces(makePlaces(12, 12));
@@ -53,8 +53,10 @@ test("top areas are named by place, else by compass, with coordinates only when 
     const repeated = bases.filter((b) => b === bases[i]).length > 1;
     assert.equal(labelHasCoords(h), repeated, h.label);
     if (repeated) assert.equal(h.label, `${bases[i]} · ${h.coords}`);
-    // Split for two-line lists: the compass part, then the coordinates.
-    assert.deepEqual(labelParts(h), { title: bases[i], coords: h.coords });
+    // Split for two-line lists: the compass part, then the coordinates and
+    // the group's size.
+    assert.deepEqual(labelParts(h), { title: bases[i], coords: `${h.coords} · ${squaresText(h.squares)}`, point: h.coords, size: squaresText(h.squares) });
+    assert.equal(h.squares, h.cellIds.length);
   });
   // Place names win when the run has them.
   const named = scorePlaces(makePlaces(12, 12).map((p) => ({ ...p, admin1: "Kharkiv", admin2: `D${p.id.split("c")[1]}` }))).places;
@@ -116,4 +118,32 @@ test("findFocus finds a hotspot id or a square id", () => {
 
 test("an empty run gives no groups", () => {
   assert.deepEqual(groupHotspots([], "nearTerm"), []);
+});
+
+test("the size tells apart groups that share a name and a start (10.7)", () => {
+  assert.equal(squaresText(1), "1 square");
+  assert.equal(squaresText(12), "12 squares");
+  assert.equal(squaresText(1200), "1,200 squares");
+  // Two groups from the same starting square, one per time frame, with a
+  // different number of squares: their second lines differ.
+  const near = { label: "North-west", coords: "47.98° N, 24.76° E", squares: 12, cellIds: [] };
+  const long = { ...near, squares: 3 };
+  assert.equal(labelParts(near).title, labelParts(long).title);
+  assert.notEqual(labelParts(near).coords, labelParts(long).coords);
+  assert.equal(labelParts(near).coords, "47.98° N, 24.76° E · 12 squares");
+  // Older hotspots without "squares" count their cell ids.
+  assert.equal(labelParts({ label: "East", coords: "1.00° N, 2.00° E", cellIds: ["a", "b"] }).size, "2 squares");
+  assert.deepEqual(labelParts(null), { title: "", coords: null, point: null, size: null });
+  // On the made-up grid: whenever the two time frames give a top area the
+  // same name and start, the full two-line text still differs unless it
+  // is the very same group.
+  const byTf = ["nearTerm", "postwar"].map((tf) => groupHotspots(places, tf, { count: 10, cellSizeDeg: 0.25 }));
+  for (const a of byTf[0]) {
+    for (const b of byTf[1]) {
+      const same = a.cellIds.length === b.cellIds.length && a.cellIds.every((id) => b.cellIds.includes(id));
+      const pa = labelParts(a);
+      const pb = labelParts(b);
+      if (pa.title === pb.title && pa.coords === pb.coords) assert.ok(same, `${pa.title} ${pa.coords}`);
+    }
+  }
 });

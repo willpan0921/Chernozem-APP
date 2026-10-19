@@ -4,10 +4,14 @@
 //   - the farm name, where the data comes from and the date of the latest
 //     satellite pass, with the "Open map" button,
 //   - one status sentence ("1 field needs recovery · 1 to watch"),
-//   - five tiles: healthy / to watch / needs recovery / farm area / weather
-//     (press one of the first three to pick out its fields in the list).
-//     On a peaceful farm (no known war) with nothing to recover, the
-//     "Needs recovery" tile is left out,
+//   - six tiles: in crop / to watch / needs recovery / no crop /
+//     farm area / weather (press one of the first four to pick out its
+//     fields in the list). "In crop" counts the fields growing well, to
+//     harvest soon and ready to harvest (the sentence names each). A field
+//     with no crop (harvested, not sown, fallow or grass, dried down) is
+//     "No crop", never "In crop". On
+//     a peaceful farm (no known war) with nothing to recover, the "Needs
+//     recovery" tile is left out,
 //   - "What needs doing": only things worked out from the analyses
 //     (recovery of damaged fields with its cost, fields ready to harvest
 //     before the rain, stress patches...), or "Nothing urgent",
@@ -56,8 +60,7 @@ import {
 } from "lucide-react";
 import { PageHeader, Badge, Button } from "../../components/ui/index.js";
 import { FarmGate, FieldProgress, useFieldData } from "../../state/FieldData.jsx";
-import { STATUS_GROUPS } from "../../lib/field/method.js";
-import { ANALYSING_LABEL, cropInfo, farmAreaHa, formatArea, formatDay, formatDayRange, mapLook, statusCounts } from "../../lib/field/format.js";
+import { ANALYSING_LABEL, cropInfo, farmAreaHa, formatArea, formatDay, formatDayRange, fieldGroup, mapLook, statusCounts, statusOf } from "../../lib/field/format.js";
 import { latestPass, likelyRain, needsDoing, showRecoveryTile, statusSentence } from "../../lib/field/overview.js";
 import { REPORT_KINDS } from "../../data/chats.js";
 import { PHOTO_TYPES } from "../../api/fieldApi.js";
@@ -103,7 +106,7 @@ function Overview() {
   // A group tile that is pressed: its fields stand out in "Your fields".
   const [group, setGroup] = useState(null);
   const toggleGroup = (id) => setGroup((now) => (now === id ? null : id));
-  const inGroup = (statusId) => !group || STATUS_GROUPS[group].includes(statusId);
+  const inGroup = (analysis) => !group || fieldGroup(analysis) === group;
 
   const status = statusSentence(farm, analyses, job);
   const counts = statusCounts(farm, analyses);
@@ -151,11 +154,12 @@ function Overview() {
       )}
 
       <div className={recoveryTile ? "fo-stats" : "fo-stats is-peace"}>
-        <StatTile id="healthy" label="Healthy" value={counts.healthy} tone="green" pressed={group === "healthy"} onPress={toggleGroup} />
+        <StatTile id="growing" label="In crop" value={counts.growing} tone={counts.growing ? "green" : null} pressed={group === "growing"} onPress={toggleGroup} />
         <StatTile id="watch" label="To watch" value={counts.watch} tone={counts.watch ? "amber" : null} pressed={group === "watch"} onPress={toggleGroup} />
         {recoveryTile && (
           <StatTile id="recovery" label="Needs recovery" value={counts.recovery} tone={counts.recovery ? "red" : null} pressed={group === "recovery"} onPress={toggleGroup} />
         )}
+        <StatTile id="noCrop" label="No crop" value={counts.noCrop} pressed={group === "noCrop"} onPress={toggleGroup} />
         <StatTile id="area" label="Farm area" value={formatArea(farmAreaHa(farm), farm.units)} />
         <WeatherTile weather={weather} error={weatherError} onRetry={actions.reloadWeather} />
       </div>
@@ -192,14 +196,17 @@ function Overview() {
           <ul className={group ? "fo-field-list is-filtered" : "fo-field-list"}>
             {farm.fields.map((field) => {
               const a = analyses[field.id];
-              const statusId = a?.status?.id;
-              // A harvested or not-sown field has no condition class: the
-              // straw swatch of the map, and its status word.
+              const status = statusOf(a);
+              const statusId = status?.id;
+              // A field with no crop has no condition class: the straw
+              // swatch of the map, and its status word.
               const look = mapLook(a);
               const cls = look.bare ? "bare" : a?.condition?.class || "nodata";
-              const crop = cropInfo(field, a).text;
+              // The badge already says "Fallow or grass": the crop is not
+              // repeated, so the area always shows.
+              const crop = statusId === "fallow" ? null : statusId === "unclear" ? "Possibly grass" : cropInfo(field, a).text;
               return (
-                <li key={field.id} className={inGroup(statusId) ? "is-in" : "is-out"}>
+                <li key={field.id} className={inGroup(a) ? "is-in" : "is-out"}>
                   <Link
                     to={`/field/fields?field=${encodeURIComponent(field.id)}`}
                     className="fo-field"
@@ -214,7 +221,7 @@ function Overview() {
                       <span className="fo-field-sub">{[crop, formatArea(field.areaHa, farm.units)].filter(Boolean).join(" · ")}</span>
                     </span>
                     {a ? (
-                      <Badge tone={a.status?.tone || undefined}>{a.status?.label}</Badge>
+                      <Badge tone={status?.tone || undefined}>{status?.label}</Badge>
                     ) : analysing.has(field.id) ? (
                       <Badge tone="outline">{ANALYSING_LABEL}</Badge>
                     ) : (

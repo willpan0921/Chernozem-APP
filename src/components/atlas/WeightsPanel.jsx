@@ -11,6 +11,8 @@
 //              Damage as shares of 100 that trade with each other (30 / 40
 //              shows as 43% / 57%), and the cutoff "Set aside least safe
 //              30%". The Postwar safe-access weight is kept as it is.
+//              At peace with no ACLED file there is no cutoff: the panel
+//              says "No war recorded: nothing set aside" instead.
 //
 // A drag (or a run of arrow-key presses) is always worked out from the
 // weights it started from, so moving a slider and putting it back gives
@@ -31,7 +33,7 @@ import { useAtlasData, useTimeframe } from "../../state/AtlasData.jsx";
 import { isDefaultSettings } from "../../lib/atlas/method.js";
 import { WEIGHT_KEYS, rebalanceWeights } from "../../lib/atlas/weights.js";
 import { nearTermShares } from "../../lib/atlas/scoring.js";
-import { timeframeOptions } from "../../lib/atlas/overview.js";
+import { accessMeasured, timeframeOptions } from "../../lib/atlas/overview.js";
 import "./atlas.css";
 
 const LABELS = {
@@ -149,7 +151,7 @@ export default function WeightsPanel({ showTimeframe = true, className = "" }) {
   // The share of black soil the cutoff really sets aside. In a small area
   // with few squares it can differ a little from the slider; then it shows.
   const asidePercent = Math.round((scored?.setAsideShare ?? 0) * 100);
-  const showAside = nearTerm && scored?.settings.gatePercentile > 0 && asidePercent !== scored.settings.gatePercentile;
+  const showAside = nearTerm && (!run || accessMeasured(run)) && scored?.settings.gatePercentile > 0 && asidePercent !== scored.settings.gatePercentile;
 
   return (
     <section className={["weights", className].filter(Boolean).join(" ")} aria-label="Weights">
@@ -188,7 +190,10 @@ export default function WeightsPanel({ showTimeframe = true, className = "" }) {
           />
         ))}
 
-        {nearTerm && (
+        {/* At peace with no ACLED file nothing can be set aside: access is
+            100 everywhere, so the cutoff slider would change nothing. */}
+        {nearTerm && run && !accessMeasured(run) && <p className="weights-note">No war recorded: nothing set aside</p>}
+        {nearTerm && (!run || accessMeasured(run)) && (
           <WeightRow
             id="weight-gate"
             label="Set aside least safe"

@@ -45,7 +45,7 @@ import { FarmGate, FieldProgress, useFieldData } from "../../state/FieldData.jsx
 import { API_ROOT, getStatus } from "../../api/atlasApi.js";
 import { checkPolygon, pointsToGeometry } from "../../lib/atlas/coords.js";
 import { STATUS_GROUPS, UNITS } from "../../lib/field/method.js";
-import { ANALYSING_LABEL, candidateTotals, cropInfo, detectedChoice, farmAreaHa, formatArea, formatDay, mapLook, unitShort } from "../../lib/field/format.js";
+import { ANALYSING_LABEL, candidateTotals, cropInfo, detectedChoice, farmAreaHa, formatArea, formatDay, mapLook, statusOf, unitShort } from "../../lib/field/format.js";
 import { compareNames, matchFields, overlappingFields, planFieldsToSave, redetectBody } from "../../lib/field/geometry.js";
 import "./SettingsPage.css";
 
@@ -292,10 +292,12 @@ function InlineName({ value, label, className = "", maxLength = 60, onSave, onEr
 // a harvested or not-sown field (no condition class), or "Analysing…" for
 // a new field.
 function statusMark(analysis, analysing) {
-  const id = analysis?.status?.id;
+  const id = statusOf(analysis)?.id;
   if (!analysis && analysing) return { swatch: null, badge: { tone: "outline", label: ANALYSING_LABEL } };
   if (STATUS_GROUPS.recovery.includes(id)) return { swatch: "is-recovery", badge: { tone: "red", label: "Recovery" } };
   if (id === "watch") return { swatch: null, badge: { tone: "amber", label: "Watch" } };
+  // Possibly grass, crop unknown: the farmer can set the crop here.
+  if (id === "unclear") return { swatch: null, badge: { tone: "outline", label: "Crop unclear" } };
   if (mapLook(analysis).bare) return { swatch: "is-bare", badge: null };
   return { swatch: null, badge: null };
 }
@@ -1039,7 +1041,7 @@ export default function SettingsPage() {
     return (
       <div className="page-full fs-page fset-changing">
         <Suspense fallback={null}>
-          <FarmSetup title="Change farm" showDemo={!farm.demo} onDone={() => setChanging(false)} onCancel={() => setChanging(false)} />
+          <FarmSetup title="Change farm" current={farm.demo ? farm.example || null : null} onDone={() => setChanging(false)} onCancel={() => setChanging(false)} />
         </Suspense>
       </div>
     );

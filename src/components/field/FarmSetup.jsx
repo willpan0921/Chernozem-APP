@@ -13,14 +13,16 @@
 //   Step 2  the fields found, on the satellite map: inside your land all are
 //           chosen, around a point none are; click a field to add or remove
 //           it; "Select all"; "Save N fields" -> the farm is saved and analysed.
-//   A quiet "Try the demo farm" link loads 7 real fields near Kupiansk,
-//   Ukraine (the case study). Any other place on Earth works the same way.
+//   A quiet "Try an example: Ukraine · Iowa · Argentina" row loads a real
+//   farm (fields near Kupiansk, Ames or Chivilcoy) and analyses it at once.
+//   Any other place on Earth works the same way.
 //
 // WHAT IT RECEIVES
-//   onDone()    called once the farm is saved (or the demo loaded), e.g. to close Settings' panel
+//   onDone()    called once the farm is saved (or an example loaded), e.g. to close Settings' panel
 //   onCancel()  shows a "Cancel" button when given
 //   title       the heading (default "Set up your farm")
-//   showDemo    false hides "Try the demo farm"
+//   showDemo    false hides the example farms
+//   current     the example loaded now (farm.example), left out of the row
 //
 // WHO EDITS IT
 // Whoever changes the farm setup. The coordinate reading is shared with
@@ -31,7 +33,7 @@ import { ArrowLeft, Check, MapPin, Search, Undo2, X } from "lucide-react";
 import { Button, Segmented, Tabs } from "../ui/index.js";
 import FieldMap from "./FieldMap.jsx";
 import { useFieldData } from "../../state/FieldData.jsx";
-import { geocode } from "../../api/fieldApi.js";
+import { EXAMPLE_FARMS, geocode } from "../../api/fieldApi.js";
 import { checkPolygon, parseCoordinates } from "../../lib/atlas/coords.js";
 import { candidateTotals, formatArea } from "../../lib/field/format.js";
 import "./field.css";
@@ -153,13 +155,42 @@ function SearchTab({ picked, onPick }) {
   );
 }
 
+// ---------- Example farms ----------
+
+// "Try an example: Ukraine · Iowa · Argentina". busy "demo:iowa" while
+// one loads.
+function Examples({ current, busy, onPick }) {
+  const list = EXAMPLE_FARMS.filter((item) => item.id !== current);
+  const loading = EXAMPLE_FARMS.find((item) => busy === `demo:${item.id}`);
+  if (!list.length) return null;
+  return (
+    <p className="fs-examples">
+      {loading ? (
+        <span role="status">Loading {loading.label}…</span>
+      ) : (
+        <>
+          <span>Try an example:</span>
+          {list.map((item, i) => (
+            <span key={item.id} className="fs-example-item">
+              {i > 0 && <span aria-hidden="true">·</span>}
+              <button type="button" className="fs-demo" onClick={() => onPick(item.id)} disabled={Boolean(busy)} aria-label={`Try the example farm in ${item.label}`}>
+                {item.label}
+              </button>
+            </span>
+          ))}
+        </>
+      )}
+    </p>
+  );
+}
+
 // ---------- The setup ----------
 
-export default function FarmSetup({ onDone, onCancel, title = "Set up your farm", showDemo = true }) {
+export default function FarmSetup({ onDone, onCancel, title = "Set up your farm", showDemo = true, current = null }) {
   const { provider, actions } = useFieldData();
   const [tab, setTab] = useState("search");
   const [step, setStep] = useState("find"); // find | choose
-  const [busy, setBusy] = useState(null); // null | "detect" | "save" | "demo"
+  const [busy, setBusy] = useState(null); // null | "detect" | "save" | "demo:<example id>"
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState(null);
 
@@ -282,12 +313,12 @@ export default function FarmSetup({ onDone, onCancel, title = "Set up your farm"
     }
   };
 
-  const tryDemo = async () => {
+  const tryExample = async (example) => {
     if (busy) return;
-    setBusy("demo");
+    setBusy(`demo:${example}`);
     setError(null);
     try {
-      await actions.loadDemo();
+      await actions.loadDemo(example);
       onDone?.();
     } catch (err) {
       setError(err?.message || String(err));
@@ -410,11 +441,7 @@ export default function FarmSetup({ onDone, onCancel, title = "Set up your farm"
             )}
 
             <div className="fs-foot">
-              {showDemo && (
-                <button type="button" className="fs-demo" onClick={tryDemo} disabled={Boolean(busy)}>
-                  {busy === "demo" ? "Loading the demo farm…" : "Try the demo farm"}
-                </button>
-              )}
+              {showDemo && <Examples current={current} busy={busy} onPick={tryExample} />}
               {onCancel && (
                 <Button variant="ghost" size="sm" onClick={onCancel}>
                   Cancel

@@ -3,14 +3,16 @@
 // from Poor to Very good, and the marks drawn on the satellite map: the
 // gold outline of a field ready to harvest, the red tint of a field that
 // needs recovery, the dashed white circle round a stress patch and the
-// plain straw tint of a harvested field. Together they cover all four
+// plain straw tint of a field with no crop (harvested, not sown, fallow or
+// grass, dried down), which never gets a condition colour. Together they cover all four
 // parts of the assessment: plant health and water (the colours), stress
 // (the circles) and harvest readiness (gold).
 //
 // WHAT IT RECEIVES
 //   compact     true: one line, no title
 //   marks       which marks to list: any of "ready", "recovery", "stress",
-//               "harvested", "notSown" (default: the first four). Give it
+//               "harvested", "notSown", "fallow", "driedDown" (default:
+//               the first four). Give it
 //               format.js mapMarks(fields, analyses).marks so the legend
 //               lists only the marks on the map.
 //   scale       false hides the Poor-to-Very-good scale (no field has a
@@ -34,11 +36,19 @@ const MARKS = [
 ];
 const DEFAULT_MARKS = MARKS.map((mark) => mark.id);
 
+// Every field with no crop shares the plain straw tint.
+const BARE = { harvested: "Harvested", notSown: "Not sown", fallow: "Fallow or grass", driedDown: "Dried down" };
+
+function bareLabel(kinds) {
+  if (kinds.length === 1) return BARE[kinds[0]];
+  if (kinds.length === 2 && kinds.includes("harvested") && kinds.includes("notSown")) return "Harvested or not sown";
+  return "No crop";
+}
+
 export default function ConditionLegend({ compact = false, marks = DEFAULT_MARKS, scale = true, className = "" }) {
-  // Harvested and not-sown fields share the plain straw tint.
-  const bare = marks.includes("harvested") && marks.includes("notSown") ? "Harvested or not sown" : marks.includes("notSown") ? "Not sown" : "Harvested";
-  const shown = MARKS.filter((mark) => marks.includes(mark.id) || (mark.id === "harvested" && marks.includes("notSown"))).map((mark) =>
-    mark.id === "harvested" ? { ...mark, label: bare } : mark
+  const bareKinds = Object.keys(BARE).filter((id) => marks.includes(id));
+  const shown = MARKS.filter((mark) => (mark.id === "harvested" ? bareKinds.length > 0 : marks.includes(mark.id))).map((mark) =>
+    mark.id === "harvested" ? { ...mark, label: bareLabel(bareKinds) } : mark
   );
   const first = CONDITION_CLASSES[0].label;
   const last = CONDITION_CLASSES[CONDITION_CLASSES.length - 1].label;

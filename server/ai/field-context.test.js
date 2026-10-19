@@ -346,3 +346,46 @@ test("the new readings in words: detected crop, No crop, likely cause, pest risk
   const two = await ctx.runTool("get_field", { name_or_id: "Field 2" });
   assert.match(two.stress.note, /No crop/);
 });
+
+test("fallow, mown, dried down and spread stress in words (no crop is never scored)", async () => {
+  const farm = {
+    id: "farm-4",
+    name: "Demo farm",
+    location: { label: "Near Kupiansk, Ukraine", lat: 49.72, lon: 37.54 },
+    units: "ha",
+    demo: true,
+    fields: [
+      { id: "fld-aaaa1111", name: "Field 1", areaHa: 40, crop: "Fallow or grass", cropSource: "detected", source: "demo" },
+      { id: "fld-bbbb2222", name: "Field 2", areaHa: 30, crop: null, cropSource: null, source: "demo" },
+      { id: "fld-cccc3333", name: "Field 3", areaHa: 20, crop: "Winter cereal", cropSource: "detected", source: "demo" },
+    ],
+  };
+  const noStress = { applies: false, reason: "noCrop", share: null, level: null, stressedHa: null, cause: null, redEdge: false, patches: [] };
+  const mown = analysis("fld-aaaa1111", {
+    conflict: null,
+    stress: noStress,
+    condition: { score: null, class: null },
+    harvest: { stage: "harvested", fallow: true, mown: true, cropUnknown: true, basis: "radar", radarHarvestOn: "2026-09-09", harvestedOn: "2026-09-09" },
+    status: { id: "fallow", label: "Fallow or grass", tone: null },
+  });
+  const dried = analysis("fld-bbbb2222", {
+    conflict: null,
+    stress: { ...noStress, reason: "driedDown" },
+    condition: { score: null, class: null },
+    harvest: { stage: "growing", cropUnknown: true, dryDown: "dry" },
+    status: { id: "driedDown", label: "Dried down", tone: null },
+  });
+  const spread = analysis("fld-cccc3333", {
+    conflict: null,
+    stress: { applies: true, share: 0.2, level: "high", stressedHa: 4, cause: "spread", redEdge: false, patches: [] },
+    status: { id: "watch", label: "Watch", tone: "amber" },
+  });
+  const store = fieldStore({ farm, analyses: { "fld-aaaa1111": mown, "fld-bbbb2222": dried, "fld-cccc3333": spread } });
+  const text = (await buildFieldContext({ store, getWeather: async () => null, today: "2026-10-19" })).text;
+  assert.match(text, /Field 1 .*Status: Fallow or grass\. Condition: none \(fallow or grass, no crop to score\)/);
+  assert.match(text, /cut or mown \(the radar saw it cut on 2026-09-09\), not a harvest/);
+  assert.doesNotMatch(text, /Field 1 [^\n]*Harvest: harvested/);
+  assert.match(text, /Field 2 .*Status: Dried down\. Condition: none \(dried down, crop not known, no crop to score\)/);
+  assert.match(text, /Stress high, 20% of the field \(4 ha\); spread across the field, with no single patch to point to/);
+  assert.doesNotMatch(text, /likely cause: Spread/);
+});

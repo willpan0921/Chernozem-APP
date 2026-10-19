@@ -9,7 +9,9 @@
 //   formatDay("2026-10-16")         -> "Oct 16"
 //   formatDayRange(from, to)        -> "Oct 18–28"
 //   stageWord(harvest)              -> "Ready" | "8 days" | "Harvested" | "Growing" | "Past peak" | "Dried down" | "Not sown" | "No clear image"
+//                                      (fallow or grass: "No crop", or "Cut or mown")
 //   versusWord("below")             -> "Below normal"
+//   waterWord("below")              -> "Drier than usual" (the Water tile's words)
 //   stressWord("medium")            -> "Medium"
 //   conditionWord("great")          -> "Very good"
 //   cropInfo(field, analysis)       -> { name: "Corn", text: "Corn · detected", source: "user" | "detected" | null }
@@ -21,7 +23,10 @@
 //   riskNote(analysis.pestRisk)     -> { text: "Disease risk high this week", tone: "red" } (medium or high only)
 //   basisText("heat units")         -> "from heat units"
 //   fieldTiles(analysis, { units, weather, crop })  the four tiles: Water, Plant health, Stress, Harvest readiness
-//   statusCounts(farm, analyses)    -> { healthy, noCrop, harvested, notSown, watch, recovery, total }
+//   statusOf(analysis)              the field's status { id, label, tone } (a no-crop field is never "Healthy")
+//   GROUPS / groupOf(statusId)      the overview groups: growing, watch, recovery, noCrop
+//   fieldGroup(analysis)            the group a field is counted in (high stress: "watch")
+//   statusCounts(farm, analyses)    -> { growing, ready, harvestSoon, watch, recovery, noCrop, harvested, notSown, fallow, driedDown, total }
 //   candidateTotals(candidates, selectedIds) -> { count, areaHa }
 //
 // The rules (what counts as stressed, ready, normal...) are NOT here: they
@@ -31,7 +36,7 @@
 // WHO EDITS IT
 // Whoever changes how the Field pages word things.
 
-import { CONDITION_CLASSES, DRIED_DOWN_LABEL, FALLOW_LABEL, NO_CROP_LABEL, NO_CROP_STAGES, STATUS_GROUPS, STRESS_CAUSES, UNITS, convertArea, pestRiskLine } from "./method.js";
+import { CONDITION_CLASSES, DRIED_DOWN_LABEL, FALLOW_LABEL, FIELD_STATUSES, MOWN_LABEL, NO_CROP_LABEL, NO_CROP_STAGES, STATUS_GROUPS, STRESS_CAUSES, UNITS, convertArea, pestRiskLine } from "./method.js";
 
 const MINUS = "−";
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -129,6 +134,8 @@ export function formatDayRange(from, to) {
 
 // The big word for harvest readiness.
 export function stageWord(harvest) {
+  // Fallow or grass: nothing to harvest; cut on radar is "Cut or mown".
+  if (harvest?.fallow) return harvest.stage === "harvested" || harvest.mown || harvest.mownOn || harvest.radarHarvestOn ? "Cut or mown" : NO_CROP_LABEL;
   switch (harvest?.stage) {
     case "ready":
       return "Ready";
@@ -163,6 +170,7 @@ export function stageWord(harvest) {
 //   -> { name, text, source: "user" | "detected" | null, confidence, reason }
 //      name  "Corn"              (for sentences: "Corn · from heat units")
 //      text  "Corn · detected"   (next to the field's name)
+export const POSSIBLY_GRASS_TEXT = "Unknown · possibly grass";
 export function cropInfo(field, analysis) {
   const found = analysis?.cropDetected;
   const detected = found?.id && found.id !== "unknown" && found.label ? found : null;
@@ -176,6 +184,9 @@ export function cropInfo(field, analysis) {
   if (detected?.season === "last") return { name: null, text: `Last season: ${detected.label}`, source: "detected", confidence: detected.confidence || null, reason: detected.reason || null, lastSeason: true };
   if (detected) return { name: detected.label, text: `${detected.label} · detected`, source: "detected", confidence: detected.confidence || null, reason: detected.reason || null };
   if (own && source === "detected") return { name: own, text: `${own} · detected`, source: "detected", confidence: null, reason: null };
+  // No known crop, but the field looks possibly like fallow or grass
+  // (crops.js possiblyFallow): said, so the page agrees with the AI.
+  if (found?.possiblyFallow && !own) return { name: null, text: POSSIBLY_GRASS_TEXT, source: "detected", confidence: "possible", reason: found.reason || null };
   return { name: null, text: null, source: null, confidence: null, reason: null };
 }
 
@@ -217,12 +228,63 @@ export function farmConflict(farm, analyses = {}) {
   return undefined;
 }
 
+// ---------- Status and groups ----------
+
+// The overview groups (method.js STATUS_GROUPS): growing well, to watch,
+// needs recovery and no crop. A field with no crop (harvested, not sown,
+// fallow or grass, dried down) is never in "growing".
+const NO_CROP_STATUSES = ["harvested", "notSown", "fallow", "driedDown"];
+export const GROUPS = {
+  growing: STATUS_GROUPS.growing || STATUS_GROUPS.healthy || ["healthy", "harvestSoon", "ready"],
+  watch: STATUS_GROUPS.watch || ["watch", "unknown"],
+  recovery: STATUS_GROUPS.recovery || ["recovery"],
+  noCrop: [...new Set([...(STATUS_GROUPS.noCrop || []), ...NO_CROP_STATUSES])],
+};
+
+// The group a status is in ("growing" | "watch" | "recovery" | "noCrop"), or null.
+export function groupOf(statusId) {
+  return Object.keys(GROUPS).find((group) => GROUPS[group].includes(statusId)) || null;
+}
+
+const STATUS_FALLBACK = {
+  fallow: { label: FALLOW_LABEL, tone: null },
+  driedDown: { label: DRIED_DOWN_LABEL, tone: null },
+  unclear: { label: "Crop unclear", tone: null },
+};
+
+// The field's status { id, label, tone }, or null before its analysis.
+// An analysis saved before the fallow and dried-down statuses existed
+// may still say "Healthy" (or "Watch") for a field with no crop growing:
+// it is shown as "Fallow or grass" or "Dried down" here, and an unknown
+// crop that is possibly grass as "Crop unclear", never "Growing well".
+// The label is always today's word for the status (method.js
+// FIELD_STATUSES), so an older "Healthy" reads "Growing well".
+export function statusOf(analysis) {
+  const status = analysis?.status;
+  if (!status?.id) return null;
+  let id = status.id;
+  if (id === "healthy" || id === "watch") {
+    if (analysis.harvest?.fallow) id = "fallow";
+    else if (analysis.harvest?.dryDown === "dry") id = "driedDown";
+    else if (id === "healthy" && possiblyGrass(analysis)) id = "unclear";
+  }
+  const known = FIELD_STATUSES?.[id] || STATUS_FALLBACK[id];
+  if (id === status.id && (!known || (known.label === status.label && known.tone === status.tone))) return status;
+  return { ...status, id, ...known };
+}
+
+// True for an unknown crop on a field that is possibly fallow or grass
+// (crops.js possiblyFallow) when the rules ran with no crop.
+function possiblyGrass(analysis) {
+  return Boolean(analysis?.cropDetected?.possiblyFallow) && analysis?.cropDetected?.id === "unknown" && !analysis?.cropUsed?.id;
+}
+
 // ---------- The map's marks ----------
 
-// No crop in the field: harvested or not sown (method.js NO_CROP_STAGES).
+// No crop in the field: harvested, not sown, fallow (method.js NO_CROP_STAGES).
 // Stress is not read then, nor once a crop has dried down (stress.applies
 // false, stress.reason "driedDown").
-const noCrop = (analysis) => analysis?.stress?.applies === false || NO_CROP_STAGES.includes(analysis?.harvest?.stage);
+const noCrop = (analysis) => analysis?.stress?.applies === false || NO_CROP_STAGES.includes(analysis?.harvest?.stage) || GROUPS.noCrop.includes(statusOf(analysis)?.id);
 
 // Why the Stress tile shows no reading: "noCrop", "driedDown" or null.
 // Older analyses without stress.reason: from the harvest stage.
@@ -235,23 +297,24 @@ function stressExempt(analysis) {
 }
 
 // How the map draws one field, worked out once for the map and its legend:
-//   { recovery, ready, bare, bareKind: "harvested" | "notSown" | null, patches }
+//   { recovery, ready, bare, bareKind: "harvested" | "notSown" | "fallow" | "driedDown" | null, patches }
 // recovery  red (damage found)
 // ready     gold outline (ready to harvest, or within two weeks)
-// bare      straw tint (harvested or not sown: no condition colour)
+// bare      straw tint (no crop: harvested, not sown, fallow or grass,
+//           dried down; never a condition colour such as "Very good")
 // patches   the stress patches to circle (none when there is no crop)
 export function mapLook(analysis) {
-  const status = analysis?.status?.id;
+  const status = statusOf(analysis)?.id;
   const recovery = status === "recovery" || Boolean(analysis?.damage?.detected);
   const ready = !recovery && (status === "ready" || status === "harvestSoon");
-  const bareKind = !recovery && !ready && (status === "harvested" || status === "notSown") ? status : null;
+  const bareKind = !recovery && !ready && GROUPS.noCrop.includes(status) ? status : null;
   const patches = !noCrop(analysis) && Array.isArray(analysis?.stress?.patches) ? analysis.stress.patches.filter((p) => isNum(p?.lat) && isNum(p?.lon)) : [];
   return { recovery, ready, bare: Boolean(bareKind), bareKind, patches };
 }
 
 // Which marks the map legend lists: only the ones on the map.
 //   -> { classes: true when any field has a condition colour, marks: [...] }
-//   marks: any of "ready", "recovery", "stress", "harvested", "notSown"
+//   marks: any of "ready", "recovery", "stress", "harvested", "notSown", "fallow", "driedDown"
 export function mapMarks(fields = [], analyses = {}) {
   const marks = new Set();
   let classes = false;
@@ -265,7 +328,7 @@ export function mapMarks(fields = [], analyses = {}) {
     if (look.patches.length) marks.add("stress");
     if (!look.recovery && !look.bare && analysis.condition?.class) classes = true;
   }
-  return { classes, marks: ["ready", "recovery", "stress", "harvested", "notSown"].filter((id) => marks.has(id)) };
+  return { classes, marks: ["ready", "recovery", "stress", ...NO_CROP_STATUSES].filter((id) => marks.has(id)) };
 }
 
 // ---------- The four tiles ----------
@@ -274,11 +337,23 @@ const VERSUS_TONES = { below: "amber", normal: "green", above: "blue" };
 const STRESS_TONES = { low: "green", medium: "amber", high: "red" };
 const WATER_WORDS = { below: "Drier than usual", normal: "Normal", above: "Wetter than usual" };
 const HEALTH_WORDS = { below: "Below normal", normal: "Normal", above: "Above normal" };
+
+// The Water tile's words for a reading ("Drier than usual"), for every page
+// that names water against normal (the printable report too).
+export function waterWord(versus) {
+  return WATER_WORDS[versus] || "No reading";
+}
 const round2 = (value) => Math.round(value * 100) / 100;
 
-// "Usual 0.26 to 0.29" (one number when both ends print the same).
+// "Usual 0.26 to 0.29" (one number when both ends print the same). A
+// normal range wider than WIDE_USUAL (fields whose 2019-2021 years mixed
+// crops sown in different seasons, so the range spans bare soil to full
+// canopy) tells a reader nothing: "Usual range varies (crop rotation)".
+export const WIDE_USUAL = 0.4;
+export const WIDE_USUAL_LABEL = "Usual range varies (crop rotation)";
 export function usualRange(normal) {
   if (!isNum(normal?.low) || !isNum(normal?.high)) return null;
+  if (normal.high - normal.low > WIDE_USUAL) return WIDE_USUAL_LABEL;
   const low = formatIndex(normal.low);
   const high = formatIndex(normal.high);
   return low === high ? `Usual ${low}` : `Usual ${low} to ${high}`;
@@ -307,6 +382,14 @@ function usualPeak(normalCurve) {
 // The likely cause of stress in a few words (method.js stressCause).
 export function causeText(cause) {
   return STRESS_CAUSES[cause]?.label || null;
+}
+
+// Medium or high stress with no patch on the map is spread thin over the
+// field: no single cause is named for it.
+export const SPREAD_LABEL = "Spread across the field";
+export function spreadOut(stress) {
+  if (stress?.level !== "medium" && stress?.level !== "high") return false;
+  return stress.cause === "spread" || (Array.isArray(stress.patches) && stress.patches.length === 0);
 }
 
 // The weather-based pest and disease risk as one short note, only when it
@@ -373,7 +456,9 @@ export function fieldTiles(analysis, { units = "ha", weather = null, crop = null
   if (exempt === "driedDown") {
     stressTile = { ...blank, id: "stress", label: "Stress", value: DRIED_DOWN_LABEL, line: "Not read once a crop dries down", hint: "Leaves die back unevenly as a crop dries for harvest, so the stress rules are not used then." };
   } else if (exempt) {
-    stressTile = { ...blank, id: "stress", label: "Stress", value: NO_CROP_LABEL, line: harvest.stage === "harvested" ? "Harvested" : harvest.fallow ? FALLOW_LABEL : "Nothing growing" };
+    // Fallow or grass first: a radar drop there is a cut, never "Harvested".
+    const fallowLine = harvest.mown || harvest.stage === "harvested" ? MOWN_LABEL : FALLOW_LABEL;
+    stressTile = { ...blank, id: "stress", label: "Stress", value: NO_CROP_LABEL, line: harvest.fallow ? fallowLine : harvest.stage === "harvested" ? "Harvested" : "Nothing growing" };
   } else {
     const share = isNum(stress.share) ? stress.share : null;
     const stressedHa = isNum(stress.stressedHa) && stress.stressedHa > 0 ? stress.stressedHa : null;
@@ -383,15 +468,21 @@ export function fieldTiles(analysis, { units = "ha", weather = null, crop = null
       stressTile = { ...blank, id: "stress", label: "Stress", value: "–", ...note };
     } else if (share > 0 || stressedHa) {
       const pct = share * 100 < 1 ? "Under 1%" : `${Math.round(share * 100)}%`;
-      const where = [stressedHa ? `${pct} of the field` : null, patches ? `${patches} ${patches === 1 ? "patch" : "patches"}` : null].filter(Boolean).join(" · ") || null;
+      // One unit on every field: hectares when a patch is mapped, else the
+      // share of the field.
+      const inHa = Boolean(patches && stressedHa);
+      const where = [inHa ? `${pct} of the field` : null, patches ? `${patches} ${patches === 1 ? "patch" : "patches"}` : null].filter(Boolean).join(" · ") || null;
+      // A cause is named only for medium or high stress (method.js
+      // stressCauseShown): low stress names none.
+      const strong = stress.level === "medium" || stress.level === "high";
       stressTile = {
         ...blank,
         id: "stress",
         label: "Stress",
-        value: stressedHa ? formatArea(stressedHa, units) : pct,
+        value: inHa ? formatArea(stressedHa, units) : pct,
         word: stress.level ? stressWord(stress.level) : null,
         tone: STRESS_TONES[stress.level] || null,
-        line: causeText(stress.cause) || where,
+        line: spreadOut(stress) ? SPREAD_LABEL : (strong ? causeText(stress.cause) : null) || where || (strong ? null : "No weak patches to check"),
         ...note,
         hint: [where, stress.redEdge ? "Found early by the red-edge band, before plant health drops" : null].filter(Boolean).join(". ") || null,
       };
@@ -439,41 +530,69 @@ export function fieldTiles(analysis, { units = "ha", weather = null, crop = null
   // No crop known this season (method.js unknownCropHarvest): no date, and
   // a pointer to where the farmer can set it. Fallow or grass has no harvest.
   const fallow = harvest.fallow || (a.cropDetected?.id === "fallow" && (!crop || crop === FALLOW_LABEL));
-  const unknownNote = harvest.cropUnknown && !["harvested", "notSown", "unknown"].includes(harvest.stage) ? (fallow ? `${FALLOW_LABEL}: no harvest expected` : "Crop unknown: pick it in Settings for a harvest estimate") : null;
+  // An unknown crop that is possibly grass and was cut: harvested, or a
+  // hay cut (it is not certain enough to be read as fallow, "Cut or mown").
+  const maybeHay = harvest.cropUnknown && harvest.stage === "harvested" && a.cropDetected?.possiblyFallow ? "Possibly grass: may be a hay cut" : null;
+  const unknownNote = harvest.cropUnknown && !["harvested", "notSown", "unknown"].includes(harvest.stage) ? (fallow ? `${FALLOW_LABEL}: no harvest expected` : "Crop unknown: pick it in Settings for a harvest estimate") : maybeHay;
   const gdd = harvest.gdd;
+  // Fallow or grass: nothing to harvest. Cut on radar (or by the optical
+  // drop) is "Cut or mown", never "Harvested".
+  const fallowField = Boolean(harvest.fallow || statusOf(a)?.id === "fallow");
+  const mownOn = fallowField ? harvest.mownOn || harvest.radarHarvestOn || harvest.harvestedOn || null : null;
+  const mown = fallowField && (harvest.mown || harvest.stage === "harvested" || Boolean(mownOn));
   const harvestTile = {
     ...blank,
     id: "harvest",
     label: "Harvest readiness",
-    value: stageWord(harvest),
-    word,
-    tone,
-    line,
-    note: unknownNote || (basis ? (crop ? `${crop} · ${basis}` : basis[0].toUpperCase() + basis.slice(1)) : null),
-    hint: isNum(gdd?.accumulated) && isNum(gdd?.needed) ? `${Math.round(gdd.accumulated).toLocaleString("en-US")} of about ${Math.round(gdd.needed).toLocaleString("en-US")} heat units (base ${gdd.base} °C) since green-up` : null,
+    value: fallowField ? (mown ? "Cut or mown" : NO_CROP_LABEL) : stageWord(harvest),
+    word: fallowField ? null : word,
+    tone: fallowField ? null : tone,
+    line: fallowField ? (mownOn ? `About ${formatDay(mownOn)}` : null) : line,
+    note: fallowField ? `${FALLOW_LABEL}: no harvest expected` : unknownNote || (basis ? (crop ? `${crop} · ${basis}` : basis[0].toUpperCase() + basis.slice(1)) : null),
+    hint: isNum(gdd?.accumulated) && isNum(gdd?.needed) ? `${Math.round(gdd.accumulated).toLocaleString("en-US")} of about ${Math.round(gdd.needed).toLocaleString("en-US")} heat units (base ${gdd.base} °C) ${gddSince(gdd)}` : null,
   };
 
   return [waterTile, healthTile, stressTile, harvestTile];
 }
 
+// Where the heat units are counted from: "since Sep 1" when counting starts
+// after the green-up (a winter cereal counted from the start of spring:
+// crops.js gddStartDate), else "since green-up".
+export function gddSince(gdd) {
+  const from = typeof gdd?.from === "string" ? gdd.from.slice(0, 10) : null;
+  const greenUp = typeof gdd?.greenUp === "string" ? gdd.greenUp.slice(0, 10) : null;
+  return from && (!greenUp || from > greenUp) ? `since ${formatDay(from)}` : "since green-up";
+}
+
 // ---------- The farm at a glance ----------
 
-// How many fields are in each overview group (method.js STATUS_GROUPS).
-// A field with no analysis yet is not counted in any group.
-// noCrop (harvested or not sown) is split into harvested and notSown too.
-// A field with high stress is never counted "healthy", even when its
-// status is a harvest one ("Harvest soon"): it is counted "to watch".
+// The overview group a field is counted in, or null before its analysis.
+// A growing field with high stress is "watch".
+export function fieldGroup(analysis) {
+  const group = groupOf(statusOf(analysis)?.id);
+  return group === "growing" && analysis?.stress?.applies !== false && analysis?.stress?.level === "high" ? "watch" : group;
+}
+
+// How many fields are in each overview group (GROUPS): growing well, to
+// watch, needs recovery, no crop. A field with no analysis yet is not
+// counted in any group. noCrop is split into harvested, notSown, fallow
+// and driedDown too, and ready counts the growing fields ready to harvest.
+// A growing field with high stress is counted "to
+// watch", even when its status is a harvest one ("Harvest soon").
+// healthy is the old name of growing (kept for older callers).
 export function statusCounts(farm, analyses = {}) {
-  const counts = { healthy: 0, noCrop: 0, harvested: 0, notSown: 0, watch: 0, recovery: 0, total: farm?.fields?.length || 0 };
+  const counts = { growing: 0, ready: 0, harvestSoon: 0, watch: 0, recovery: 0, noCrop: 0, harvested: 0, notSown: 0, fallow: 0, driedDown: 0, total: farm?.fields?.length || 0 };
   for (const field of farm?.fields || []) {
     const analysis = analyses[field.id];
-    const id = analysis?.status?.id;
-    for (const [group, ids] of Object.entries(STATUS_GROUPS)) {
-      if (!ids.includes(id)) continue;
-      counts[group === "healthy" && analysis?.stress?.applies !== false && analysis?.stress?.level === "high" ? "watch" : group] += 1;
-    }
-    if (id === "harvested" || id === "notSown") counts[id] += 1;
+    const id = statusOf(analysis)?.id;
+    const counted = fieldGroup(analysis);
+    if (!counted) continue;
+    counts[counted] += 1;
+    if (counted === "noCrop" && id in counts) counts[id] += 1;
+    if (counted === "growing" && id === "ready") counts.ready += 1;
+    if (counted === "growing" && id === "harvestSoon") counts.harvestSoon += 1;
   }
+  counts.healthy = counts.growing;
   return counts;
 }
 

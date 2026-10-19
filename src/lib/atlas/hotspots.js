@@ -11,16 +11,20 @@
 // "count" groups.
 //
 // Each group gives back
-//   { id, rank, label, coords, lat, lon, bounds: [[south, west], [north, east]],
-//     cellIds, blackSoilHa, heavyDamageHa, people, score, share, tier,
-//     soil, damage, access }
+//   { id, rank, label, coords, squares, lat, lon,
+//     bounds: [[south, west], [north, east]], cellIds, blackSoilHa,
+//     heavyDamageHa, people, score, share, tier, soil, damage, access }
 // "label" is the one name every page uses for the group:
 //   "District, Region" when the run has place names ("Bakhmut, Donetsk"),
 //   else where it sits in the area: "North-west", "East", "Centre"...
 // When two groups in the list would get the same name, both get their
 // coordinates added: "West · 47.98° N, 24.76° E".
-// "coords" is always the starting square's coordinates; labelParts() splits
-// the label into a title and that second line for lists.
+// "coords" is always the starting square's coordinates and "squares" the
+// group's size. labelParts() splits the label for two-line lists: the
+// name, then "47.98° N, 24.76° E · 12 squares". The size is on that line
+// so two different groups never look the same: the Near term and the Long
+// term lists can both start at the same square and still be different
+// groups (the 70% rule is applied to a different score).
 // soil / damage / access are the group's averages; score, share and tier
 // are the starting square's.
 //
@@ -156,6 +160,7 @@ export function groupHotspots(places, timeframe, { count = 5, cellSizeDeg = 0 } 
       rank: hotspots.length + 1,
       label: areaName(seed, extent),
       coords: formatCoord(seed.lat, seed.lon, digits),
+      squares: members.length,
       lat: seed.lat,
       lon: seed.lon,
       bounds: [
@@ -190,13 +195,24 @@ export function labelHasCoords(hotspot) {
   return Boolean(hotspot?.coords && hotspot.label?.endsWith(` · ${hotspot.coords}`));
 }
 
-// The name split in two for lists that show the coordinates on a second
-// line: { title: "West", coords: "47.98° N, 24.76° E" }. Read together they
-// are the same name as the one-line label.
+// "1 square", "12 squares".
+export function squaresText(count) {
+  const n = Number.isFinite(count) ? count : 0;
+  return `${n.toLocaleString("en-US")} ${n === 1 ? "square" : "squares"}`;
+}
+
+// The name split in two for lists, with where the group starts and how big
+// it is on the second line:
+//   { title: "West", coords: "47.98° N, 24.76° E · 12 squares",
+//     point: "47.98° N, 24.76° E", size: "12 squares" }
+// title + point read together are the one-line label.
 export function labelParts(hotspot) {
-  if (!hotspot) return { title: "", coords: null };
+  if (!hotspot) return { title: "", coords: null, point: null, size: null };
   const title = labelHasCoords(hotspot) ? hotspot.label.slice(0, -(hotspot.coords.length + 3)) : hotspot.label;
-  return { title, coords: hotspot.coords || null };
+  const count = Number.isFinite(hotspot.squares) ? hotspot.squares : hotspot.cellIds?.length;
+  const size = Number.isFinite(count) ? squaresText(count) : null;
+  const point = hotspot.coords || null;
+  return { title, coords: [point, size].filter(Boolean).join(" · ") || null, point, size };
 }
 
 // Finds what a "?focus=" value points at: a hotspot id ("h-r12c40") or a

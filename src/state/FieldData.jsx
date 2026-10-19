@@ -24,7 +24,7 @@
 //             farm.conflict, the server's answer for the farm's place)
 //   actions:
 //     reload()
-//     loadDemo()                     -> { farm, job, finished }
+//     loadDemo(example)              -> { farm, job, finished }   ("ukraine" | "iowa" | "argentina")
 //     detect(body, { onProgress, signal })  -> { candidates, boundary, provider, warnings }
 //     saveFarm(body)                 -> { farm, job, finished }   (PUT /api/farm)
 //     addField(body)                 -> { field, job, finished }
@@ -184,8 +184,8 @@ export function FieldDataProvider({ children }) {
     });
   }, []);
 
-  const loadDemo = useCallback(async () => {
-    const { farm: made, job: started } = await api.loadDemoFarm();
+  const loadDemo = useCallback(async (example = "ukraine") => {
+    const { farm: made, job: started } = await api.loadDemoFarm(example);
     setFarm(made);
     const finished = started ? startFollowing(started) : Promise.resolve(null);
     return { farm: made, job: started, finished };

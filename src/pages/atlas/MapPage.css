@@ -207,15 +207,19 @@
   text-overflow: ellipsis;
 }
 
+/* Wraps rather than cutting off: the "· 12 squares" at the end is what
+   tells two groups with the same name apart. */
 .mp-top-coords {
   margin-top: -4px;
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--c-muted);
   font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.mp-top-part {
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .mp-top-bar {

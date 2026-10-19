@@ -1,6 +1,7 @@
 // WHAT THIS FILE DOES
 // The small key for the Atlas map: an optional Priority | Damage | Access
-// switch, then the five colour steps from light to dark with a word at
+// switch (no Access at peace without an ACLED file: access is 100
+// everywhere there), then the five colour steps from light to dark with a word at
 // each end. In Near term priority it adds the grey "Set aside" square.
 //
 // WHAT IT RECEIVES
@@ -46,13 +47,15 @@ const MODES = [
 ];
 
 export default function MapLegend({ colorBy = "priority", timeframe = "nearTerm", run = null, onColorByChange, howMeasured, className = "" }) {
-  const mode = LEGENDS[colorBy] ? colorBy : "priority";
-  const legend = legendFor(mode, run);
   const peace = Boolean(run) && run.conflict === null && run.accessSource !== "acled";
+  // At peace with no ACLED file access is 100 everywhere: no Access layer.
+  const modes = peace ? MODES.filter((item) => item.value !== "access") : MODES;
+  const mode = LEGENDS[colorBy] && modes.some((item) => item.value === colorBy) ? colorBy : "priority";
+  const legend = legendFor(mode, run);
   const showAside = mode === "priority" && timeframe === "nearTerm" && !peace;
   return (
     <div className={["map-legend", className].filter(Boolean).join(" ")}>
-      {onColorByChange && <Segmented light options={MODES} value={mode} onChange={onColorByChange} ariaLabel="Colour the map by" />}
+      {onColorByChange && <Segmented light options={modes} value={mode} onChange={onColorByChange} ariaLabel="Colour the map by" />}
       <div className="map-legend-body">
         {!onColorByChange && <span className="map-legend-title">{legend.title}</span>}
         <div className="map-legend-ramp" aria-hidden="true">

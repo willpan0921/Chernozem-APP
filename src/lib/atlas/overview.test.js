@@ -9,7 +9,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { scorePlaces } from "./scoring.js";
 import { groupHotspots } from "./hotspots.js";
-import { atPeace, describeAlert, imageryText, kpis, nextSteps, recoveryCost, ruleText, shownNewDamage, sourceBadge, springPlan, summarize, timeframeLabel, timeframeOptions, weightsText } from "./overview.js";
+import { accessMeaning, accessMeasured, accessSourceOf, conflictOf, alertPlaces, atPeace, damageMeaning, describeAlert, nearTermSetAside, heavyDamageRule, imageryText, kpis, nextSteps, recoveryCost, ruleText, shownNewDamage, sourceBadge, springPlan, summarize, timeframeLabel, timeframeOptions, weightsText } from "./overview.js";
 import { runsComparable } from "./method.js";
 import { makePlaces } from "./testPlaces.js";
 
@@ -89,6 +89,24 @@ test("at peace: no demining, no 'new damage', no war words", () => {
   assert.deepEqual(timeframeOptions(peaceRun).map((o) => o.label), ["Near term", "Long term"]);
 });
 
+test("the damage score and safe access are described as used (10.6)", () => {
+  const warRun = { ...run, conflict: { id: "ukraine-2022", name: "War", since: "2022-02-24" }, accessSource: "fires" };
+  const peaceRun = { ...run, conflict: null, accessSource: "none" };
+  assert.equal(damageMeaning(warRun), "unusual fire and radar change against the normal years 2019–2021");
+  assert.equal(damageMeaning(run), damageMeaning(warRun), "older runs were made in a war");
+  assert.equal(damageMeaning(peaceRun), "the heavily damaged share of the black soil (radar change backed by unusual fire), full at 20%");
+  // In a war with no ACLED file the distance is to unusual fires, an estimate.
+  assert.equal(accessMeaning(warRun), "the distance to unusual fires (an estimate of where fighting is; no ACLED file), full at 100 km");
+  assert.equal(accessMeaning({ ...warRun, accessSource: null }), "the distance to recorded fighting, full at 100 km");
+  assert.equal(accessMeaning(peaceRun), "full everywhere: with no war recorded, every square counts as safe to reach (this does not prove the land is safe)");
+  assert.doesNotMatch(accessMeaning(peaceRun) + damageMeaning(peaceRun) + ruleText("nearTerm", {}, peaceRun), /fighting/);
+  assert.equal(accessMeasured(peaceRun), false);
+  assert.equal(accessMeasured({ ...peaceRun, accessSource: "acled" }), true);
+  assert.equal(accessMeaning({ ...peaceRun, accessSource: "acled" }), "the distance to battles in the ACLED file, full at 100 km");
+  assert.equal(heavyDamageRule(peaceRun), "radar change of 3 dB or more and an unusual fire within 1 km");
+  assert.match(heavyDamageRule(warRun), /3 dB or more, or of 2 dB or more with an unusual fire within 1 km/);
+});
+
 test("no run, no steps; no top areas, only the report", () => {
   assert.deepEqual(nextSteps({ run: null }), []);
   assert.deepEqual(nextSteps({ run, hotspots: [], alerts: [] }).map((s) => s.icon), ["report"]);
@@ -137,4 +155,51 @@ test("month to month: no new damage or comparison across data sources; the sourc
   assert.deepEqual(sourceBadge([sep]), { text: "Earth Engine", tone: null });
   assert.deepEqual(sourceBadge(months), { text: "Sample data", tone: "amber" });
   assert.equal(sourceBadge([]), null);
+});
+
+// Polish round 2 (critic's findings)
+test("the Near term set-aside sentence: nothing at peace, nothing at 0%, else from what was measured", () => {
+  const warRun = { ...run, conflict: { id: "ukraine-2022", name: "War", since: "2022-02-24" }, accessSource: "fires" };
+  const peaceRun = { ...run, conflict: null, accessSource: "none" };
+  assert.equal(nearTermSetAside(peaceRun, { gatePercentile: 30 }), "Near term sets nothing aside and ranks by soil value and damage.");
+  assert.equal(nearTermSetAside(warRun, { gatePercentile: 0 }), "Near term sets nothing aside (cutoff 0%) and ranks by soil value and damage.");
+  assert.equal(nearTermSetAside(warRun, { gatePercentile: 30 }), "Near term sets aside the least safe 30% of black soil (squares 100 km or more from an unusual fire are never set aside) and ranks the rest by soil value and damage.");
+  assert.match(nearTermSetAside({ ...warRun, accessSource: "acled" }, { gatePercentile: 30 }), /from an ACLED battle/);
+  assert.equal(ruleText("nearTerm", { gatePercentile: 0 }, warRun), "Nothing is set aside (cutoff 0%). Places are ranked by soil value and damage.");
+  assert.match(ruleText("nearTerm", { gatePercentile: 30 }, warRun), /unusual fires that stand in for fighting/);
+});
+
+test("alerts keep their own place; coordinates only when two read the same", () => {
+  const list = [
+    { id: "a", place: "Nakuru, Rift Valley", lat: -0.21, lon: 35.8 },
+    { id: "b", place: "Laikipia, Rift Valley", lat: 0.19, lon: 36.8 },
+    { id: "c", place: "Nakuru, Rift Valley", lat: -0.5, lon: 36.1 },
+    { id: "d", place: "", lat: 1, lon: 2 },
+  ];
+  const places = alertPlaces(list);
+  assert.equal(places.get("b"), "Laikipia, Rift Valley");
+  assert.equal(places.get("a"), "Nakuru, Rift Valley · 0.21° S, 35.80° E");
+  assert.equal(places.get("c"), "Nakuru, Rift Valley · 0.50° S, 36.10° E");
+  assert.equal(places.get("d"), "1.00° N, 2.00° E");
+  const peaceRun = { ...run, conflict: null, accessSource: "none" };
+  const steps = nextSteps({ run: peaceRun, hotspots: [], alerts: list.map((a) => ({ ...a, kind: "radar", cellIds: [] })) });
+  assert.equal(steps.find((s) => s.id.endsWith("-b-review")).title, "Check the radar change near Laikipia, Rift Valley");
+  assert.equal(steps.find((s) => s.id.endsWith("-a-review")).title, "Check the radar change near Nakuru, Rift Valley · 0.21° S, 35.80° E");
+});
+
+test("older runs: the access source from the fires warning, the war from the country (10.6)", () => {
+  const firesWarning = "Distance to fighting is estimated from unusual fires of the last 12 months (far more than in 2019-2021; no ACLED file), so treat safe access as rough.";
+  const old = { areaId: "country-804", provider: "gee", checks: { warnings: [firesWarning] } };
+  assert.equal(accessSourceOf(old), "fires");
+  assert.equal(conflictOf(old).id, "ukraine-2022");
+  assert.equal(atPeace(old), false);
+  assert.match(accessMeaning(old), /^the distance to unusual fires/);
+  assert.doesNotMatch(accessMeaning(old), /recorded fighting/);
+  assert.match(ruleText("nearTerm", { gatePercentile: 30 }, old), /unusual fires that stand in for fighting/);
+  // What a run says always wins; a drawn area or a country at peace stays as it was.
+  assert.equal(accessSourceOf({ ...old, accessSource: "acled" }), "acled");
+  assert.equal(conflictOf({ ...old, conflict: null }), null);
+  assert.equal(conflictOf({ areaId: "area-1234" }), undefined);
+  assert.equal(conflictOf({ areaId: "country-404" }), undefined);
+  assert.equal(accessSourceOf({ checks: { warnings: [] } }), null);
 });

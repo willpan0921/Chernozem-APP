@@ -16,13 +16,14 @@ export const aiName = "Chernozem AI";
 // The "Try asking" buttons. Clicking one sends the question straight away.
 // The Field ones name the farm's real fields: fieldSuggestions() is given
 // the name of the field that most needs work and the one closest to
-// harvest (either can be missing).
-export function fieldSuggestions({ urgent, harvest } = {}) {
+// harvest (either can be missing). peace: true when no known war covers
+// the farm, so the last question asks about stress, not damage.
+export function fieldSuggestions({ urgent, harvest, peace = false } = {}) {
   return [
     urgent ? `What should I do on ${urgent}?` : "Which field needs me first?",
     harvest ? `When should I harvest ${harvest}?` : "When can I harvest?",
     "How is this season vs normal?",
-    "Is any field damaged?",
+    peace ? "Is any field under stress?" : "Is any field damaged?",
   ];
 }
 

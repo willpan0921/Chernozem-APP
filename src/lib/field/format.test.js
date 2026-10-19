@@ -23,8 +23,13 @@ import {
   normalRange,
   stageWord,
   statusCounts,
+  statusOf,
+  groupOf,
   stressWord,
   versusWord,
+  gddSince,
+  usualRange,
+  waterWord,
 } from "./format.js";
 
 test("areas in each unit", () => {
@@ -118,8 +123,15 @@ test("stress: no crop, the likely cause and the pest risk", () => {
   assert.equal(dry.word, "Medium");
   assert.equal(dry.line, "Dry patch");
   assert.match(dry.hint, /12% of the field · 2 patches\. Found early by the red-edge band/);
-  const other = fieldTiles({ stress: { share: 0.05, level: "low", stressedHa: 1, cause: "other" }, pestRisk: { disease: "high", insects: "low" }, harvest: { stage: "growing" } })[2];
+  const other = fieldTiles({ stress: { share: 0.08, level: "medium", stressedHa: 1, patches: [{}], cause: "other" }, pestRisk: { disease: "high", insects: "low" }, harvest: { stage: "growing" } })[2];
   assert.equal(other.line, "Not water: check for pests or disease");
+  // Low stress names no cause; with no patch mapped the share is the value.
+  const low = fieldTiles({ stress: { share: 0.01, level: "low", stressedHa: 0.1, patches: [], cause: "dry" }, harvest: { stage: "growing" } })[2];
+  assert.equal(low.value, "1%");
+  assert.equal(low.line, "No weak patches to check");
+  const lowPatch = fieldTiles({ stress: { share: 0.01, level: "low", stressedHa: 0.4, patches: [{}], cause: "dry" }, harvest: { stage: "growing" } })[2];
+  assert.equal(lowPatch.value, "0.4\u00a0ha");
+  assert.equal(lowPatch.line, "1% of the field · 1 patch");
   assert.equal(other.note, "Disease risk high this week");
   assert.equal(other.noteTone, "red");
   const calm = fieldTiles({ stress: { share: 0, level: "low" }, pestRisk: { disease: "low", insects: "medium" }, harvest: { stage: "ripening" } })[2];
@@ -205,10 +217,62 @@ test("the map's marks and its legend", () => {
 test("status counts follow the method's groups", () => {
   const farm = { fields: [{ id: "a" }, { id: "b" }, { id: "c" }, { id: "d" }] };
   const analyses = { a: { status: { id: "ready" } }, b: { status: { id: "watch" } }, c: { status: { id: "recovery" } } };
-  assert.deepEqual(statusCounts(farm, analyses), { healthy: 1, noCrop: 0, harvested: 0, notSown: 0, watch: 1, recovery: 1, total: 4 });
+  assert.deepEqual(statusCounts(farm, analyses), { growing: 1, ready: 1, harvestSoon: 0, watch: 1, recovery: 1, noCrop: 0, harvested: 0, notSown: 0, fallow: 0, driedDown: 0, total: 4, healthy: 1 });
   // A harvested or not-sown field is not "healthy": it has no crop.
   const bare = { a: { status: { id: "harvested" } }, b: { status: { id: "notSown" } }, c: { status: { id: "healthy" } } };
-  assert.deepEqual(statusCounts(farm, bare), { healthy: 1, noCrop: 2, harvested: 1, notSown: 1, watch: 0, recovery: 0, total: 4 });
+  assert.deepEqual(statusCounts(farm, bare), { growing: 1, ready: 0, harvestSoon: 0, watch: 0, recovery: 0, noCrop: 2, harvested: 1, notSown: 1, fallow: 0, driedDown: 0, total: 4, healthy: 1 });
+  // Fallow or grass and dried down have no crop either.
+  const more = { a: { status: { id: "fallow" } }, b: { status: { id: "driedDown" } }, c: { status: { id: "healthy" }, harvest: { fallow: true } }, d: { status: { id: "healthy" }, harvest: { dryDown: "dry" } } };
+  const counts = statusCounts(farm, more);
+  assert.deepEqual([counts.growing, counts.noCrop, counts.fallow, counts.driedDown], [0, 4, 2, 2]);
+  assert.equal(groupOf("harvestSoon"), "growing");
+  assert.equal(groupOf("fallow"), "noCrop");
+  assert.equal(groupOf("unknown"), "watch");
+  assert.equal(groupOf("unclear"), "watch");
+});
+
+// Polish round 2 (critic's findings, 2026-10-19)
+test("an old 'Healthy' reads 'Growing well'; possibly grass is 'Crop unclear'", () => {
+  assert.deepEqual(statusOf({ status: { id: "healthy", label: "Healthy", tone: "green" } }), { id: "healthy", label: "Growing well", tone: "green" });
+  const grass = { status: { id: "healthy", label: "Healthy", tone: "green" }, harvest: { stage: "growing", cropUnknown: true, dryDown: "fading" }, cropDetected: { id: "unknown", label: "Unknown", possiblyFallow: true }, cropUsed: { id: null } };
+  assert.equal(statusOf(grass).id, "unclear");
+  assert.equal(statusOf(grass).label, "Crop unclear");
+  assert.equal(cropInfo({ crop: null, cropSource: null }, grass).text, "Unknown · possibly grass");
+  // The farmer's crop wins.
+  assert.equal(cropInfo({ crop: "Corn", cropSource: "user" }, grass).text, "Corn");
+  // Possibly grass and cut: "Harvested", with a hay-cut note.
+  const cut = fieldTiles({ harvest: { stage: "harvested", cropUnknown: true, radarHarvestOn: "2026-09-09" }, cropDetected: { id: "unknown", possiblyFallow: true } })[3];
+  assert.equal(cut.value, "Harvested");
+  assert.equal(cut.note, "Possibly grass: may be a hay cut");
+});
+
+test("a fallow field cut on radar: the Stress tile says 'Cut or mown', never 'Harvested'", () => {
+  const mown = fieldTiles({ stress: { applies: false, reason: "noCrop" }, harvest: { stage: "harvested", fallow: true, mown: true, radarHarvestOn: "2026-09-09", cropUnknown: true } });
+  assert.equal(mown[2].value, "No crop");
+  assert.equal(mown[2].line, "Cut or mown");
+  assert.equal(mown[3].value, "Cut or mown");
+  const grass = fieldTiles({ stress: { applies: false, reason: "noCrop" }, harvest: { stage: "growing", fallow: true, cropUnknown: true } });
+  assert.equal(grass[2].line, "Fallow or grass");
+  assert.equal(fieldTiles({ stress: { applies: false }, harvest: { stage: "harvested" } })[2].line, "Harvested");
+});
+
+test("heat units since the day counting starts, when that is after the green-up", () => {
+  const wheat = fieldTiles({ harvest: { stage: "growing", basis: "heat units", daysToReady: 40, gdd: { accumulated: 660, needed: 1400, base: 0, greenUp: "2026-06-20", from: "2026-09-01" } } })[3];
+  assert.equal(wheat.hint, "660 of about 1,400 heat units (base 0 °C) since Sep 1");
+  assert.equal(gddSince({ greenUp: "2026-05-20", from: "2026-05-20" }), "since green-up");
+  assert.equal(gddSince({}), "since green-up");
+});
+
+test("a very wide usual range says it varies, not the numbers", () => {
+  assert.equal(usualRange({ low: 0.19, high: 0.89 }), "Usual range varies (crop rotation)");
+  assert.equal(usualRange({ low: -0.26, high: 0.52 }), "Usual range varies (crop rotation)");
+  assert.equal(usualRange({ low: 0.26, high: 0.29 }), "Usual 0.26 to 0.29");
+});
+
+test("the print table uses the Water tile's words", () => {
+  assert.equal(waterWord("below"), "Drier than usual");
+  assert.equal(waterWord("above"), "Wetter than usual");
+  assert.equal(waterWord(undefined), "No reading");
 });
 
 test("a crop not known, fallow or grass, a dried-down crop and an optical harvest", () => {
@@ -226,6 +290,11 @@ test("a crop not known, fallow or grass, a dried-down crop and an optical harves
   // Fallow or grass: no harvest, and no crop to stress.
   const fallow = fieldTiles({ harvest: { stage: "growing", cropUnknown: true, fallow: true, dryDown: "fading", peak: 0.88 }, stress: { applies: false, reason: "noCrop" }, cropDetected: { id: "fallow", label: "Fallow or grass" } });
   assert.equal(fallow[3].note, "Fallow or grass: no harvest expected");
+  assert.equal(fallow[3].value, "No crop");
+  // Cut on radar: "Cut or mown", never "Harvested".
+  const mown = fieldTiles({ status: { id: "fallow" }, harvest: { stage: "harvested", fallow: true, radarHarvestOn: "2026-09-02" }, stress: { applies: false, reason: "noCrop" } })[3];
+  assert.equal(mown.value, "Cut or mown");
+  assert.equal(mown.line, "About Sep 2");
   assert.equal(fallow[2].value, "No crop");
   assert.equal(fallow[2].line, "Fallow or grass");
   // A crop dried down for harvest: "Dried down", not a stress reading.
@@ -257,4 +326,25 @@ test("candidate totals", () => {
   const candidates = [{ id: "cand-1", areaHa: 20.5 }, { id: "cand-2", areaHa: 30.25 }, { id: "cand-3", areaHa: 9 }];
   assert.deepEqual(candidateTotals(candidates, ["cand-1", "cand-2"]), { count: 2, areaHa: 50.75 });
   assert.deepEqual(candidateTotals(candidates, []), { count: 0, areaHa: 0 });
+});
+
+test("a field with no crop is never 'Healthy' or a condition colour", () => {
+  // Saved before the fallow and dried-down statuses existed.
+  const old = { status: { id: "healthy", label: "Healthy", tone: "green" }, condition: { class: "great" }, harvest: { stage: "growing", fallow: true } };
+  assert.deepEqual(statusOf(old), { id: "fallow", label: "Fallow or grass", tone: null });
+  assert.equal(statusOf({ status: { id: "healthy", label: "Healthy" }, harvest: { stage: "growing", dryDown: "dry" } }).label, "Dried down");
+  assert.equal(statusOf({ status: { id: "ready", label: "Ready to harvest" }, harvest: { stage: "ready" } }).id, "ready");
+  assert.equal(statusOf(null), null);
+  assert.deepEqual(mapLook(old), { recovery: false, ready: false, bare: true, bareKind: "fallow", patches: [] });
+  const look = mapLook({ status: { id: "driedDown" }, condition: { class: null }, harvest: { stage: "growing", dryDown: "dry" } });
+  assert.equal(look.bareKind, "driedDown");
+  assert.deepEqual(mapMarks([{ id: "a" }, { id: "b" }], { a: old, b: { status: { id: "harvested" } } }), { classes: false, marks: ["harvested", "fallow"] });
+});
+
+test("medium or high stress with no patch is spread across the field", () => {
+  const tile = (stress) => fieldTiles({ harvest: { stage: "growing" }, stress: { applies: true, share: 0.12, stressedHa: 6, ...stress } })[2];
+  assert.equal(tile({ level: "medium", patches: [], cause: "other" }).line, "Spread across the field");
+  assert.equal(tile({ level: "high", patches: [], cause: "dry" }).line, "Spread across the field");
+  assert.equal(tile({ level: "medium", patches: [{ lat: 1, lon: 2 }], cause: "dry" }).line, "Dry patch");
+  assert.equal(tile({ level: "low", patches: [], cause: "dry" }).line, "No weak patches to check");
 });

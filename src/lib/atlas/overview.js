@@ -16,6 +16,11 @@
 //   timeframeLabel(tf, run)      "Near term", and "Postwar" (a war) or "Long term"
 //   timeframeOptions(run)        the two time frames for a Near term | ... switch
 //   ruleText(tf, settings, run)  the one-line rule of a time frame
+//   damageMeaning(run)           what the damage score is for this run
+//   accessMeaning(run)           what safe access is for this run
+//   accessMeasured(run)          false at peace without an ACLED file
+//   accessSourceOf(run)          where safe access came from, also for older runs
+//   conflictOf(run)              the run's war, also for older runs
 //
 // Plain functions with no React, like scoring.js, so they can be tested and
 // reused by the report and the server.
@@ -24,8 +29,9 @@
 // Whoever changes the rules behind the overview. For example, to add a new
 // kind of next step, add a block to nextSteps() below.
 
-import { COSTS, runsComparable } from "./method.js";
-import { addDays, addMonths, formatHaShort, formatCount, formatMonthYear, formatShortDate, listNames, monthName, roundThousands, toDay } from "../format.js";
+import { COSTS, HEAVY_DAMAGE, PEACE_DAMAGE, SCALES, runsComparable } from "./method.js";
+import { conflictForCountry } from "../../config/conflicts.js";
+import { addDays, addMonths, formatCoord, formatHaShort, formatCount, formatMonthYear, formatShortDate, listNames, monthName, roundThousands, toDay } from "../format.js";
 
 // ---------- Totals and the four big numbers ----------
 
@@ -133,11 +139,34 @@ export function weightsText(settings) {
   return `Soil ${w.soil ?? "–"} · Damage ${w.damage ?? "–"} · Access ${w.access ?? "–"}`;
 }
 
+// Where safe access came from: "acled", "fires", "none" or null. Runs
+// saved before run.accessSource existed still carry the provider's warning
+// (server/providers/gee.js), so "fires" is read from that.
+const FIRES_WARNING = /estimated from unusual fires/i;
+export function accessSourceOf(run) {
+  if (!run) return null;
+  if (run.accessSource) return run.accessSource;
+  const warnings = run.checks?.warnings || run.warnings || [];
+  return warnings.some((w) => FIRES_WARNING.test(String(w))) ? "fires" : null;
+}
+
+// The war covering the run: { id, name, since }, null at peace, or
+// undefined for an older run that does not say. A country area saved
+// before run.conflict existed gets that country's war from
+// src/config/conflicts.js (the Ukraine runs, country-804).
+export function conflictOf(run) {
+  if (!run) return undefined;
+  if (run.conflict !== undefined) return run.conflict;
+  const code = /^country-(\d+)$/.exec(String(run.areaId || ""))?.[1];
+  const war = code ? conflictForCountry(code) : null;
+  return war ? { id: war.id, name: war.name, since: war.since } : undefined;
+}
+
 // True when the run says no war in src/config/conflicts.js covers its area
 // (conflict null). Older runs without the field were all made inside the
 // war in Ukraine, so they are not at peace.
 export function atPeace(run) {
-  return Boolean(run) && run.conflict === null;
+  return Boolean(run) && conflictOf(run) === null;
 }
 
 // The name of a time frame. Without a war "postwar" means nothing, so the
@@ -152,6 +181,65 @@ export function timeframeOptions(run) {
   return ["nearTerm", "postwar"].map((value) => ({ value, label: timeframeLabel(value, run) }));
 }
 
+// Whether safe access was measured for this run: in a war (or an older
+// run), or at peace with an ACLED file. At peace without one, every square
+// gets full access (nothing to measure it from).
+export function accessMeasured(run) {
+  return !atPeace(run) || accessSourceOf(run) === "acled";
+}
+
+// What the damage score is, as scoring.js uses it for this run:
+//   in a war   "unusual fire and radar change against the normal years 2019–2021"
+//   at peace   "the heavily damaged share of the black soil (radar change
+//              backed by unusual fire), full at 20%"
+export function damageMeaning(run) {
+  if (atPeace(run)) {
+    return `the heavily damaged share of the black soil (radar change backed by unusual fire), full at ${Math.round(PEACE_DAMAGE.fullShare * 100)}%`;
+  }
+  return "unusual fire and radar change against the normal years 2019–2021";
+}
+
+// What safe access is for this run. At peace without an ACLED file it is
+// never called "distance to fighting": nothing was measured. In a war with
+// no ACLED file it is the distance to unusual fires (run.accessSource
+// "fires", server/providers/gee.js), an estimate, never "recorded fighting".
+export function accessMeaning(run) {
+  const km = SCALES.distance.full;
+  if (!accessMeasured(run)) return "full everywhere: with no war recorded, every square counts as safe to reach (this does not prove the land is safe)";
+  if (accessSourceOf(run) === "acled") return `the distance to battles in the ACLED file, full at ${km} km`;
+  if (accessSourceOf(run) === "fires") return `the distance to unusual fires (an estimate of where fighting is; no ACLED file), full at ${km} km`;
+  return `the distance to recorded fighting, full at ${km} km`;
+}
+
+// What the distance is measured to, in a few words: "recorded fighting",
+// "an ACLED battle" or "an unusual fire".
+function accessTarget(run) {
+  if (accessSourceOf(run) === "acled") return "an ACLED battle";
+  if (accessSourceOf(run) === "fires") return "an unusual fire";
+  return "recorded fighting";
+}
+
+// The Near term set-aside in one sentence, for the report's method:
+//   at peace, no ACLED   "Near term sets nothing aside and ranks by soil value and damage."
+//   cutoff 0%            "Near term sets nothing aside (cutoff 0%) and ranks ..."
+//   else                 "Near term sets aside the least safe 30% of black soil
+//                        (squares 100 km or more from an unusual fire are never
+//                        set aside) and ranks the rest by soil value and damage."
+export function nearTermSetAside(run, settings) {
+  const gate = settings?.gatePercentile ?? 0;
+  if (!accessMeasured(run)) return "Near term sets nothing aside and ranks by soil value and damage.";
+  if (!(gate > 0)) return "Near term sets nothing aside (cutoff 0%) and ranks by soil value and damage.";
+  return `Near term sets aside the least safe ${gate}% of black soil (squares ${SCALES.distance.full} km or more from ${accessTarget(run)} are never set aside) and ranks the rest by soil value and damage.`;
+}
+
+// Heavy damage in one line, for the method notes:
+//   at peace "radar change of 3 dB or more AND an unusual fire within 1 km"
+export function heavyDamageRule(run) {
+  const km = HEAVY_DAMAGE.fireNearM / 1000;
+  if (atPeace(run)) return `radar change of ${HEAVY_DAMAGE.radarDb} dB or more and an unusual fire within ${km} km`;
+  return `radar change of ${HEAVY_DAMAGE.radarDb} dB or more, or of ${HEAVY_DAMAGE.radarWithFireDb} dB or more with an unusual fire within ${km} km`;
+}
+
 // The one-line rule for each time frame (for the report).
 export function ruleText(timeframe, settings, run) {
   const peace = atPeace(run);
@@ -160,10 +248,13 @@ export function ruleText(timeframe, settings, run) {
       ? "All three scores are blended into one long-term ranking."
       : "All three scores are blended, so heavy damage can outweigh lower access once fighting ends.";
   }
-  if (peace && run?.accessSource !== "acled") {
-    return "No war in the app's list covers this area, so nothing is set aside for distance to fighting. Places are ranked by soil value and damage.";
+  if (peace && accessSourceOf(run) !== "acled") {
+    return "No war is recorded here, so nothing is set aside. Places are ranked by soil value and damage.";
   }
-  return `The least safe ${settings?.gatePercentile ?? 30}% of black soil (nearest the fighting) is set aside. The rest is ranked by soil value and damage.`;
+  const gate = settings?.gatePercentile ?? 30;
+  if (!(gate > 0)) return "Nothing is set aside (cutoff 0%). Places are ranked by soil value and damage.";
+  const nearest = accessSourceOf(run) === "fires" ? "nearest the unusual fires that stand in for fighting" : accessSourceOf(run) === "acled" ? "nearest the ACLED battles" : "nearest the fighting";
+  return `The least safe ${gate}% of black soil (${nearest}) is set aside. The rest is ranked by soil value and damage.`;
 }
 
 // ---------- Alerts ----------
@@ -179,6 +270,25 @@ export function describeAlert(alert) {
   const detail = [when, size].filter(Boolean).join(" · ");
   if (alert?.kind === "fire") return { title: "Fires detected", place: alert.place || "", detail, tone: "red", icon: "fire" };
   return { title: "Radar change", place: alert?.place || "", detail, tone: "amber", icon: "radar" };
+}
+
+// Each alert's place in words, the same on the Overview, the Report and
+// in the AI's context: alert.place, with its coordinates when another
+// alert of the same kind has the same place ("Radar change · Nakuru, Rift
+// Valley · 0.21° S, 35.80° E"), so two alerts never read the same. Gives
+// back a Map alert.id -> label.
+export function alertPlaces(alerts = []) {
+  const key = (alert) => `${alert.kind || ""}|${alert.place || ""}`;
+  const count = new Map();
+  for (const alert of alerts) count.set(key(alert), (count.get(key(alert)) || 0) + 1);
+  const out = new Map();
+  for (const alert of alerts) {
+    const place = alert.place || "";
+    const coords = Number.isFinite(alert.lat) && Number.isFinite(alert.lon) ? formatCoord(alert.lat, alert.lon) : null;
+    const twin = count.get(key(alert)) > 1 || !place;
+    out.set(alert.id, twin && coords ? (place && place !== coords ? `${place} · ${coords}` : coords) : place);
+  }
+  return out;
 }
 
 // ---------- Next steps ----------
@@ -213,12 +323,15 @@ export function nextSteps({ run, hotspots = [], alerts = [] }) {
     });
   }
 
-  // 2. Each radar change (at most two) gets a review.
+  // 2. Each radar change (at most two) gets a review, named the way the
+  // alert list names it (alertPlaces).
+  const places = alertPlaces(alerts);
   for (const alert of alerts.filter((item) => item.kind === "radar").slice(0, 2)) {
     const focus = alert.cellIds?.[0];
+    const where = places.get(alert.id) || alert.place;
     steps.push({
       id: `${run.id}-${alert.id}-review`,
-      title: peace ? `Check the radar change near ${alert.place}` : `Review new damage near ${alert.place}`,
+      title: peace ? `Check the radar change near ${where}` : `Review new damage near ${where}`,
       due: alert.date ? addDays(alert.date, 7) : published,
       icon: "alert",
       tone: peace ? "amber" : "red",
