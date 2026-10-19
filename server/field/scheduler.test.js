@@ -15,10 +15,16 @@ import path from "node:path";
 
 process.env.CHERNOZEM_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "chernozem-field-sched-"));
 process.env.GEE_DISABLED = "1";
+// The weather services are not called from the tests (offline at once).
+const realFetch = globalThis.fetch;
+globalThis.fetch = async (url, options) => {
+  if (/^https:\/\/(api|archive-api)\.open-meteo\.com\//.test(String(url))) throw new Error("offline in the tests");
+  return realFetch(url, options);
+};
 const store = await import("../store.js");
 const { checkFieldsNow } = await import("../scheduler.js");
 const { getJob } = await import("../jobs.js");
-const { sampleWhileEarthEngine } = await import("./run.js");
+const { cropUpdate, sampleWhileEarthEngine } = await import("./run.js");
 
 const geometry = { type: "Polygon", coordinates: [[[37.5, 49.7], [37.506, 49.7], [37.506, 49.704], [37.5, 49.704], [37.5, 49.7]]] };
 const farm = {
@@ -78,4 +84,16 @@ test("auto-update off: sample analyses are redone once when Earth Engine is conn
   assert.deepEqual(sampleWhileEarthEngine({ fields }, analyses, "gee").map((f) => f.id), ["a"], "only stored sample analyses; a missing one waits for Update now");
   assert.deepEqual(sampleWhileEarthEngine({ fields }, analyses, "sample"), [], "nothing while Earth Engine is off");
   assert.deepEqual(sampleWhileEarthEngine(null, analyses, "gee"), []);
+});
+
+test("a new detection replaces a detected or demo crop, never the farmer's own", () => {
+  const corn = { id: "corn", label: "Corn", confidence: "likely" };
+  assert.equal(cropUpdate({ crop: "Soybean", cropSource: "user" }, corn), null);
+  assert.equal(cropUpdate({ name: "Field 1", crop: "Barley", source: "drawn" }, corn), null, "an older farm's crop is the farmer's");
+  assert.deepEqual(cropUpdate({ name: "Field 3", crop: "Corn", source: "demo" }, { id: "soybean", label: "Soybean" }), { crop: "Soybean", cropSource: "detected" });
+  assert.deepEqual(cropUpdate({ crop: "Corn", cropSource: "demo" }, corn), { crop: "Corn", cropSource: "detected" });
+  assert.equal(cropUpdate({ crop: "Corn", cropSource: "detected" }, corn), null, "nothing new");
+  assert.deepEqual(cropUpdate({ crop: "Corn", cropSource: "detected" }, { id: "unknown", label: "Unknown" }), { crop: null, cropSource: null });
+  assert.deepEqual(cropUpdate({ crop: null, cropSource: null }, corn), { crop: "Corn", cropSource: "detected" });
+  assert.equal(cropUpdate({ crop: null, cropSource: null }, { id: "unknown" }), null);
 });

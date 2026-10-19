@@ -164,6 +164,12 @@
   color: var(--c-muted);
 }
 
+.map-legend-how {
+  align-self: flex-start;
+  margin-top: calc(2px - var(--s-3) / 2);
+  font-size: 11.5px;
+}
+
 .map-legend-aside {
   display: flex;
   align-items: center;

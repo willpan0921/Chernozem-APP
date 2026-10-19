@@ -367,6 +367,17 @@
   line-height: 1.35;
 }
 
+/* The small second line: the pest risk, or how a harvest date was found. */
+.mt-note {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--c-text-2);
+}
+
+.mt-note.is-amber { color: var(--c-amber-text); }
+.mt-note.is-red { color: var(--c-red-text); }
+
 /* ---------- FieldData screens ---------- */
 
 .page.fd-center {

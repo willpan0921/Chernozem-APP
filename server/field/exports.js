@@ -4,10 +4,15 @@
 //   readingsCsv(farm, analyses)     this season's clear passes: field, date, ndvi, ndwi, clearPct
 //   historyCsv(farm, histories)     monthly means since 2019: field, month, ndvi, ndwi, clearPct
 // analyses / histories are maps fieldId -> the stored object.
+// The GeoJSON also carries where the crop came from (cropSource "user" /
+// "detected" / "demo"), the detected crop, the stress cause, the harvest
+// stage and what the harvest estimate rests on.
 //
 // WHO EDITS IT
 // Whoever adds a column. Keep the column names short and stable: people
 // open these in spreadsheets.
+
+import { cropSourceOf } from "./analysis.js";
 
 // One CSV value: quoted when it holds a comma, quote or line break; a
 // leading = + - @ is defused so spreadsheets never run it as a formula.
@@ -32,12 +37,17 @@ export function fieldsGeoJson(farm, analyses = {}) {
           id: field.id,
           name: field.name,
           crop: field.crop,
+          cropSource: cropSourceOf(field),
+          cropDetected: a?.cropDetected?.id ?? null,
           areaHa: field.areaHa,
           status: a?.status?.label ?? null,
           condition: a?.condition?.score ?? null,
           ndvi: a?.plantHealth?.ndvi ?? null,
           ndwi: a?.water?.ndwi ?? null,
           stressedHa: a?.stress?.stressedHa ?? null,
+          stressCause: a?.stress?.cause ?? null,
+          harvestStage: a?.harvest?.stage ?? null,
+          harvestBasis: a?.harvest?.basis ?? null,
           damaged: a?.damage?.detected ?? null,
           latestPass: a?.latestPass?.date ?? null,
           source: a?.provider ?? null,

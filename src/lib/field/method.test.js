@@ -236,3 +236,364 @@ test("recovery cost and units", () => {
   assert.equal(convertArea(10, "mu"), 150);
   assert.ok(Math.abs(convertArea(48.6, "acres") - 120.1) < 0.05);
 });
+
+// ---------------------------------------------------------------------------
+// Stress v2, pest risk, harvest v2 (FINAL-SPEC sections 2, 3, 7.11, 7.12)
+// ---------------------------------------------------------------------------
+import {
+  combineHarvestEstimate,
+  fieldCondition,
+  greenUpDate,
+  hasCrop,
+  DRIED_DOWN_LABEL,
+  STRESSED_CONDITION_MAX,
+  stressApplies,
+  stressExemption,
+  unknownCropHarvest,
+  hourlyRiskInputs,
+  isStandingDry,
+  ndre,
+  ndyi,
+  pestRisk,
+  pestRiskLine,
+  pixelStress,
+  radarHarvest,
+  radarForHarvest,
+  readyReachedOn,
+  redEdgeFound,
+  stressCause,
+  stressSummary,
+  NO_CROP_LABEL,
+  RED_EDGE_RULES,
+  STRESS_CAUSES,
+} from "./method.js";
+
+test("red edge: NDRE and NDYI, and the pixel rule (NDVI rule OR red-edge rule)", () => {
+  assert.ok(Math.abs(ndre(0.4, 0.2) - 1 / 3) < 1e-9);
+  assert.equal(ndre(0, 0), null);
+  assert.ok(Math.abs(ndyi(0.1, 0.06) - 0.25) < 1e-9);
+  assert.deepEqual(RED_EDGE_RULES, { belowFieldMedian: 0.06, belowNormal: 0.05 });
+  // NDVI looks fine, the red edge has dropped: caught early.
+  const early = pixelStress({ ndvi: 0.7, fieldMedianNdvi: 0.72, normalNdvi: 0.7, ndre: 0.28, fieldMedianNdre: 0.36, normalNdre: 0.35 });
+  assert.deepEqual(early, { stressed: true, byNdvi: false, byRedEdge: true, redEdgeOnly: true });
+  // Weaker than the field but normal for this spot: not stressed.
+  assert.equal(pixelStress({ ndvi: 0.7, fieldMedianNdvi: 0.72, normalNdvi: 0.7, ndre: 0.28, fieldMedianNdre: 0.36, normalNdre: 0.3 }).stressed, false);
+  const both = pixelStress({ ndvi: 0.5, fieldMedianNdvi: 0.65, normalNdvi: 0.7, ndre: 0.2, fieldMedianNdre: 0.36, normalNdre: 0.35 });
+  assert.equal(both.byNdvi && both.byRedEdge && !both.redEdgeOnly, true);
+  // Without red-edge bands the NDVI rule still works.
+  assert.equal(pixelStress({ ndvi: 0.5, fieldMedianNdvi: 0.65, normalNdvi: 0.7 }).stressed, true);
+  assert.equal(redEdgeFound(0.02), true);
+  assert.equal(redEdgeFound(0.002), false);
+});
+
+test("likely cause: dry when NDWI is 0.05 or more below normal, else not water", () => {
+  assert.equal(stressCause(-0.08), "dry");
+  assert.equal(stressCause(-0.05), "dry");
+  assert.equal(stressCause(-0.02), "other");
+  assert.equal(stressCause(null), null);
+  assert.equal(STRESS_CAUSES.dry.label, "Dry patch");
+  assert.match(STRESS_CAUSES.other.label, /pests or disease/);
+});
+
+test("no crop, no stress and no condition (harvested or not sown)", () => {
+  assert.equal(hasCrop("harvested"), false);
+  assert.equal(hasCrop({ stage: "notSown" }), false);
+  assert.equal(hasCrop("growing"), true);
+  assert.equal(NO_CROP_LABEL, "No crop");
+  assert.deepEqual(stressSummary({ stage: "harvested", share: 0.3, ndwiAnomaly: -0.1 }), { applies: false, reason: "noCrop", share: null, level: null, cause: null, redEdge: false });
+  assert.deepEqual(stressSummary({ stage: "growing", share: 0.08, ndwiAnomaly: -0.01, redEdgeOnlyShare: 0.03 }), { applies: true, reason: null, share: 0.08, level: "medium", cause: "other", redEdge: true });
+  assert.deepEqual(stressSummary({ stage: "growing", share: 0, ndwiAnomaly: -0.2 }), { applies: true, reason: null, share: 0, level: "low", cause: null, redEdge: false });
+  // A harvested field is "Harvested", never "Poor".
+  assert.deepEqual(fieldCondition({ stage: "harvested", health: 0.1, water: 0.1, stress: 0.5 }), { score: null, class: null });
+  assert.deepEqual(fieldCondition({ stage: { stage: "notSown" }, health: 1, water: 1, stress: 0 }), { score: null, class: null });
+  assert.deepEqual(fieldCondition({ stage: "growing", health: 1, water: 1, stress: 0 }), { score: 1, class: "great" });
+  assert.equal(fieldCondition({ stage: "growing", health: 1, water: 1, stress: 0, damage: { detected: true } }).class, "fair");
+  assert.equal(fieldStatus({ harvest: { stage: "harvested" }, condition: null }).id, "harvested");
+});
+
+test("a crop dried down for harvest is not read for stress, and high stress is never 'Very good'", () => {
+  // Real case, Iowa Field 13 (2026-10-19): ready, NDVI 0.40, "Stress High ·
+  // Dry patch" next to normal water and a "Very good" condition.
+  assert.equal(DRIED_DOWN_LABEL, "Dried down");
+  assert.equal(stressExemption("ready"), "driedDown");
+  assert.equal(stressExemption({ stage: "ready", standingDry: true }), "driedDown");
+  assert.equal(stressExemption({ stage: "growing", dryDown: "dry" }), "driedDown");
+  assert.equal(stressExemption({ stage: "growing", dryDown: "fading" }), null);
+  assert.equal(stressExemption("ripening"), null);
+  assert.equal(stressExemption("harvested"), "noCrop");
+  assert.equal(stressApplies("growing"), true);
+  assert.equal(stressApplies("ready"), false);
+  assert.deepEqual(stressSummary({ stage: "ready", share: 0.3, ndwiAnomaly: -0.1 }), { applies: false, reason: "driedDown", share: null, level: null, cause: null, redEdge: false });
+  assert.equal(stressSummary({ stage: "growing", dryDown: "dry", share: 0.3 }).reason, "driedDown");
+  // A ready field still has a condition (its crop is there).
+  assert.equal(fieldCondition({ stage: "ready", health: 1, water: 1, stress: null }).class, "great");
+  // 15 % or more stressed: held under "Very good".
+  const stressed = fieldCondition({ stage: "growing", health: 1, water: 1, stress: 0.2 });
+  assert.equal(stressed.score, STRESSED_CONDITION_MAX);
+  assert.equal(stressed.class, "good");
+  assert.equal(fieldCondition({ stage: "growing", health: 1, water: 1, stress: 0.1 }).class, "great");
+  assert.equal(fieldCondition({ stage: "growing", health: 0.2, water: 0.2, stress: 0.2 }).class, "poor");
+});
+
+test("a crop that is not known gets no harvest date: only what was measured", () => {
+  // Real shape, the field drawn next to the Kupiansk demo farm (probably
+  // grass): peak 0.88 on 29 June, 0.49 on 12 October -> "ripening, ready
+  // about Oct 22" before this rule.
+  const fading = { stage: "ripening", daysToReady: 3, peak: 0.88, peakDate: "2026-06-29", current: 0.49, readyLevel: 0.44, basis: "dry-down", lastDate: "2026-10-12" };
+  const a = unknownCropHarvest(fading);
+  assert.equal(a.stage, "growing");
+  assert.equal(a.daysToReady, null);
+  assert.equal(a.basis, null);
+  assert.equal(a.dryDown, "fading");
+  assert.equal(a.cropUnknown, true);
+  assert.equal(a.peakDate, "2026-06-29");
+  // Down at the ready level: "dry", still no date and never "ready".
+  const dry = unknownCropHarvest({ stage: "ready", daysToReady: 0, peak: 0.66, current: 0.31, readyLevel: 0.36, basis: "dry-down", standingDry: true });
+  assert.equal(dry.stage, "growing");
+  assert.equal(dry.dryDown, "dry");
+  assert.equal(dry.standingDry, false);
+  assert.equal(dry.daysToReady, null);
+  // Without a ready level: worked out from the peak.
+  assert.equal(unknownCropHarvest({ stage: "ready", peak: 0.8, current: 0.5 }).dryDown, "fading");
+  // Measurements stay as they are.
+  assert.equal(unknownCropHarvest({ stage: "harvested", basis: "radar", harvestedOn: "2026-09-20" }).basis, "radar");
+  assert.equal(unknownCropHarvest({ stage: "harvested", basis: "images" }).stage, "harvested");
+  assert.equal(unknownCropHarvest({ stage: "notSown" }).stage, "notSown");
+  const green = unknownCropHarvest({ stage: "growing", daysToReady: 40, basis: "heat units" });
+  assert.equal(green.daysToReady, null);
+  assert.equal(green.basis, null);
+  assert.equal(green.dryDown, null);
+  // No status says "Ready" or "Harvest soon" for it.
+  assert.notEqual(fieldStatus({ harvest: a, condition: 0.9 }).id, "harvestSoon");
+  assert.notEqual(fieldStatus({ harvest: dry, condition: 0.9 }).id, "ready");
+});
+
+// 14 days of hourly weather from 2026-10-12: `wet` hours a day at 95 %
+// humidity and 15 °C, the rest at 60 %; daily mean `mean` °C.
+function hourly({ wet = 0, mean = 15, days = 14, from = 12 } = {}) {
+  const time = [];
+  const temperature_2m = [];
+  const relative_humidity_2m = [];
+  for (let d = 0; d < days; d++) {
+    for (let h = 0; h < 24; h++) {
+      const day = new Date(Date.UTC(2026, 9, from + d)).toISOString().slice(0, 10);
+      time.push(`${day}T${String(h).padStart(2, "0")}:00`);
+      const isWet = h < wet;
+      temperature_2m.push(isWet ? 15 : mean + (mean - 15) * (wet / (24 - wet)));
+      relative_humidity_2m.push(isWet ? 95 : 60);
+    }
+  }
+  return { time, temperature_2m, relative_humidity_2m };
+}
+
+test("pest and disease risk from hourly weather (a forecast, not a detection)", () => {
+  const high = pestRisk({ hourly: hourly({ wet: 3, mean: 18 }), stage: "growing" });
+  assert.equal(high.basis.wetHours, 42);
+  assert.ok(Math.abs(high.basis.gdd14 - 112) < 0.2, `gdd ${high.basis.gdd14}`);
+  assert.deepEqual([high.disease, high.insects], ["high", "high"]);
+  const medium = pestRisk({ hourly: hourly({ wet: 1, mean: 13 }) });
+  assert.deepEqual([medium.disease, medium.insects], ["medium", "medium"]);
+  const low = pestRisk({ hourly: hourly({ wet: 0, mean: 9 }), stage: "ripening" });
+  assert.deepEqual([low.disease, low.insects, low.basis.gdd14], ["low", "low", 0]);
+  // Wet but too cold or too hot for fungi does not count.
+  const cold = hourly({ wet: 0, mean: 5 });
+  cold.relative_humidity_2m = cold.relative_humidity_2m.map(() => 95);
+  assert.equal(pestRisk({ hourly: cold }).disease, "low");
+  // Only while a crop is growing or ripening.
+  assert.equal(pestRisk({ hourly: hourly({ wet: 3 }), stage: "harvested" }), null);
+  assert.equal(pestRisk({ hourly: hourly({ wet: 3 }), stage: { stage: "notSown" } }), null);
+  assert.equal(pestRisk({ hourly: { time: [] } }), null);
+  // With today: the 7 days before it and the 7 from it.
+  const longer = hourlyRiskInputs(hourly({ wet: 2, days: 21, from: 5 }), "2026-10-19");
+  assert.equal(longer.days, 14);
+  assert.equal(longer.wetHours14, 28);
+  assert.equal(pestRiskLine(high), "Disease risk and insect activity high this week");
+  assert.equal(pestRiskLine({ disease: "high", insects: "low" }), "Disease risk high this week");
+  assert.equal(pestRiskLine({ disease: "low", insects: "medium" }), "Insect activity medium this week");
+  assert.equal(pestRiskLine(null), null);
+});
+
+test("green-up date: where the curve passes a quarter of the way from its low to its peak", () => {
+  // Low 0.2, peak 0.8: level 0.35, between 0.3 (Apr 21) and 0.4 (May 1).
+  assert.equal(greenUpDate(season([0.2, 0.25, 0.3, 0.4, 0.6, 0.8, 0.7])), "2026-04-26");
+  // A winter low then spring regrowth: green-up after the low.
+  const winter = [["2025-10-15", 0.45], ["2025-12-01", 0.3], ["2026-02-01", 0.22], ["2026-03-15", 0.3], ["2026-04-01", 0.5], ["2026-05-01", 0.85]].map(([date, ndvi]) => ({ date, ndvi }));
+  assert.equal(greenUpDate(winter), "2026-03-22");
+  // Already green at the start, or never green: unknown.
+  assert.equal(greenUpDate(season([0.6, 0.7, 0.8, 0.75])), null);
+  assert.equal(greenUpDate(season([0.2, 0.22, 0.25])), null);
+  assert.equal(greenUpDate(season([0.6, 0.7, 0.8, 0.75]), { maxBase: 0.65 }), "2026-04-06");
+});
+
+test("crop-specific ready level: a cereal is ready lower down than a row crop", () => {
+  const curve = season([0.3, 0.5, 0.7, 0.82, 0.75, 0.6, 0.48, 0.42, 0.4]);
+  assert.equal(harvestStage(curve, "2026-06-22").stage, "ready");
+  assert.equal(harvestStage(curve, "2026-06-22", { readyShare: 0.25 }).stage, "ripening");
+});
+
+test("radar harvest: a VH drop of 3 dB or more between passes up to 24 days apart, after the peak, that stays", () => {
+  const vh = (text) => text.split(" ").map((item) => ({ date: `2026-${item.split(":")[0]}`, vh: Number(item.split(":")[1]) }));
+  const cut = radarHarvest(vh("07-20:-13 08-01:-13.5 09-10:-15 09-22:-15.5 10-02:-20 10-08:-20.4"), "2026-07-28");
+  assert.equal(cut.harvestedOn, "2026-10-02");
+  assert.equal(cut.dropDb, 4.5);
+  assert.equal(cut.passesAfterPeak, 5);
+  assert.equal(cut.lastPass, "2026-10-08");
+  // Before the peak, too far apart, too small, or back up again (frost): no harvest.
+  assert.equal(radarHarvest(vh("06-01:-14 06-10:-18 08-01:-14"), "2026-07-28").harvestedOn, null);
+  assert.equal(radarHarvest(vh("08-01:-14 08-30:-18"), "2026-07-28").harvestedOn, null);
+  // One missed acquisition (13 days, or 24) still shows the cut.
+  assert.equal(radarHarvest(vh("09-27:-15 10-10:-19 10-16:-19.5"), "2026-07-28").harvestedOn, "2026-10-10");
+  assert.equal(radarHarvest(vh("09-15:-15 10-09:-19 10-15:-19.2"), "2026-07-28").harvestedOn, "2026-10-09");
+  assert.equal(radarHarvest(vh("08-01:-14 08-10:-16"), "2026-07-28").harvestedOn, null);
+  assert.equal(radarHarvest(vh("08-01:-14 08-10:-18 08-20:-14.5"), "2026-07-28").harvestedOn, null);
+  // Ascending and descending passes on the same day are averaged.
+  assert.equal(radarHarvest([...vh("08-01:-14 08-10:-18"), { date: "2026-08-10", vh: -17 }], "2026-07-28").dropDb, 3.5);
+  assert.equal(radarHarvest([], null).passesAfterPeak, 0);
+});
+
+// Iowa soybean: dried down fast in September (NDVI to 0.24), and still
+// standing on 19 October.
+const IOWA_SOY = [
+  ["2026-07-15", 0.7], ["2026-07-30", 0.8], ["2026-08-10", 0.85], ["2026-08-25", 0.8], ["2026-09-05", 0.65],
+  ["2026-09-15", 0.45], ["2026-09-22", 0.28], ["2026-10-01", 0.25], ["2026-10-12", 0.24],
+].map(([date, ndvi]) => ({ date, ndvi }));
+const VH_STANDING = ["08-10:-14", "08-22:-14.5", "09-03:-15", "09-15:-15.8", "09-27:-16.2", "10-09:-16.5", "10-15:-16.4"].map((x) => ({ date: `2026-${x.slice(0, 5)}`, vh: Number(x.slice(6)) }));
+
+test("standing dry vs harvested: NDVI at bare-soil level without a radar drop is still standing", () => {
+  const optical = harvestStage(IOWA_SOY, "2026-10-19");
+  assert.equal(optical.stage, "harvested");
+  const radar = radarHarvest(VH_STANDING, optical.peakDate);
+  assert.equal(radar.harvestedOn, null);
+  assert.equal(isStandingDry({ ndvi: optical, radar, crop: "corn", today: "2026-10-19" }), true);
+  // A soybean drops its leaves: the radar cannot tell it is standing.
+  assert.equal(isStandingDry({ ndvi: optical, radar, crop: "soybean", today: "2026-10-19" }), false);
+  const standing = combineHarvestEstimate({ ndvi: optical, radar, crop: "corn", today: "2026-10-19" });
+  assert.equal(standing.stage, "ready");
+  assert.equal(standing.daysToReady, 0);
+  assert.equal(standing.standingDry, true);
+  assert.equal(standing.basis, "radar");
+  assert.equal(standing.harvestedOn, null);
+  assert.equal(fieldStatus({ harvest: standing, condition: null }).id, "ready");
+
+  // With the drop: harvested on the radar date.
+  const cutVh = [...VH_STANDING.slice(0, 5), { date: "2026-10-09", vh: -20.5 }, { date: "2026-10-15", vh: -20.8 }];
+  const cut = combineHarvestEstimate({ ndvi: optical, radar: radarHarvest(cutVh, optical.peakDate), crop: "corn", today: "2026-10-19" });
+  assert.equal(cut.stage, "harvested");
+  assert.equal(cut.radarHarvestOn, "2026-10-09");
+  assert.equal(cut.harvestedOn, "2026-10-09");
+  assert.equal(cut.basis, "radar");
+  assert.equal(cut.standingDry, false);
+
+  // A cereal (not tall), or radar that has not looked since: optical stands.
+  assert.equal(combineHarvestEstimate({ ndvi: optical, radar, crop: "winterCereal", today: "2026-10-19" }).stage, "harvested");
+  const blind = radarHarvest(VH_STANDING.slice(0, 3), optical.peakDate);
+  assert.equal(combineHarvestEstimate({ ndvi: optical, radar: blind, crop: "corn", today: "2026-10-19" }).stage, "harvested");
+  // Low for months with no radar drop: left harvested.
+  assert.equal(isStandingDry({ ndvi: optical, radar, crop: "corn", today: "2026-12-30" }), false);
+  // No radar at all: unchanged.
+  const plain = combineHarvestEstimate({ ndvi: optical, crop: "corn", today: "2026-10-19" });
+  assert.equal(plain.stage, "harvested");
+  // Harvested by the optical record: the basis says so.
+  assert.equal(plain.basis, "images");
+  assert.equal(plain.radarHarvestOn, null);
+});
+
+test("leaf drop: a soybean's radar drop counts as the cut only after its leaves are down", () => {
+  // Real shape, Iowa soybean 2026 (60-field run, Field 1): NDVI 0.78 on 10
+  // September, 0.27 on 2 October; VH -14.7 dB on 27 September, -21.7 on 9
+  // October, while USDA had 31 % of Iowa's soybeans cut on 11 October.
+  const curve = [["2026-08-10", 0.88], ["2026-08-25", 0.86], ["2026-09-10", 0.78], ["2026-10-02", 0.27], ["2026-10-05", 0.23], ["2026-10-10", 0.23], ["2026-10-17", 0.19]].map(([date, ndvi]) => ({ date, ndvi }));
+  const vh = ["09-03:-14.7", "09-15:-14", "09-27:-14.7", "10-09:-21.7", "10-14:-22.4"].map((x) => ({ date: `2026-${x.slice(0, 5)}`, vh: Number(x.slice(6)) }));
+  // Seen yellow on 2 October (no guess across the cloudy gap): leaves down a week later.
+  assert.equal(readyReachedOn(curve, { readyShare: 0.35 }), "2026-10-02");
+  const down = "2026-10-09";
+  const optical = harvestStage(curve, "2026-10-19", { readyShare: 0.35 });
+  assert.equal(optical.stage, "harvested");
+  const soy = radarForHarvest({ vhSeries: vh, season: curve, peakDate: optical.peakDate, crop: "soybean" });
+  assert.equal(soy.leavesDownOn, down);
+  assert.equal(soy.radar.harvestedOn, null, "the drop spans the leaves falling");
+  const est = combineHarvestEstimate({ ndvi: optical, radar: soy.radar, crop: "soybean", today: "2026-10-19", leavesDownOn: soy.leavesDownOn });
+  assert.equal(est.stage, "ready");
+  assert.equal(est.leafDrop, true);
+  assert.equal(est.basis, "dry-down");
+  // Corn keeps its leaves: the same drop is the cut.
+  const corn = radarForHarvest({ vhSeries: vh, season: curve, peakDate: optical.peakDate, crop: "corn" });
+  assert.equal(corn.leavesDownOn, null);
+  assert.equal(corn.radar.harvestedOn, "2026-10-09");
+  // A soybean whose dry-down was never seen: no radar drop counts.
+  assert.equal(radarForHarvest({ vhSeries: vh, season: curve.slice(0, 3), peakDate: "2026-08-10", crop: "soybean" }).radar.harvestedOn, null);
+  // Long after the leaves came down: harvested.
+  assert.equal(combineHarvestEstimate({ ndvi: optical, radar: soy.radar, crop: "soybean", today: "2026-11-15", leavesDownOn: soy.leavesDownOn }).stage, "harvested");
+  assert.equal(radarHarvest(vh, "2026-08-10", { notBefore: "2026-10-09" }).harvestedOn, null);
+  assert.equal(radarHarvest(vh, "2026-08-10", { notBefore: "2026-09-27" }).harvestedOn, "2026-10-09");
+});
+
+test("radar marks a harvest the clouds hid", () => {
+  const ndvi = { stage: "ripening", daysToReady: 12, peak: 0.85, peakDate: "2026-08-10", current: 0.6, lastDate: "2026-09-10" };
+  const radar = { harvestedOn: "2026-10-01", dropDb: 4, passesAfterPeak: 6, lastPass: "2026-10-13" };
+  const cloudy = combineHarvestEstimate({ ndvi, radar, crop: "corn", today: "2026-10-19" });
+  assert.equal(cloudy.stage, "harvested");
+  assert.equal(cloudy.radarHarvestOn, "2026-10-01");
+  // A recent clear pass that still shows the crop: the drop is not trusted.
+  const clear = combineHarvestEstimate({ ndvi: { ...ndvi, lastDate: "2026-10-15" }, radar, crop: "corn", today: "2026-10-19" });
+  assert.equal(clear.stage, "ripening");
+});
+
+test("dry-down vs heat units: basis dry-down, heat units or both", () => {
+  const gdd = { accumulated: 1300, needed: 1450, base: 10, daysToReady: 14 };
+  const ripening = { stage: "ripening", daysToReady: 10, peak: 0.85, peakDate: "2026-08-01", current: 0.6, lastDate: "2026-09-10" };
+  const both = combineHarvestEstimate({ ndvi: ripening, gdd, crop: "corn", today: "2026-09-12" });
+  assert.equal(both.basis, "both");
+  assert.equal(both.daysToReady, 10); // the visible dry-down wins
+  assert.deepEqual(both.gdd, { accumulated: 1300, needed: 1450, base: 10 });
+  assert.equal(combineHarvestEstimate({ ndvi: ripening, gdd: { ...gdd, daysToReady: 40 }, crop: "corn", today: "2026-09-12" }).basis, "dry-down");
+  assert.equal(combineHarvestEstimate({ ndvi: ripening, crop: "corn", today: "2026-09-12" }).basis, "dry-down");
+  // Still green: the heat units give the estimate.
+  const growing = { stage: "growing", daysToReady: null, peak: 0.85, peakDate: "2026-08-01", current: 0.84, lastDate: "2026-08-20" };
+  const heat = combineHarvestEstimate({ ndvi: growing, gdd: { ...gdd, daysToReady: 9 }, crop: "corn", today: "2026-08-22" });
+  assert.equal(heat.basis, "heat units");
+  assert.equal(heat.daysToReady, 9);
+  assert.equal(heat.stage, "growing");
+  assert.equal(fieldStatus({ harvest: heat, condition: 0.9 }).id, "harvestSoon");
+  assert.equal(combineHarvestEstimate({ ndvi: growing, gdd: { ...gdd, daysToReady: 0 }, crop: "corn", today: "2026-08-22" }).daysToReady, 1);
+  // A heat-unit date far outside the crop's usual months is not used.
+  assert.equal(combineHarvestEstimate({ ndvi: growing, gdd: { ...gdd, daysToReady: 200 }, crop: "corn", today: "2026-08-22" }).basis, null);
+  // Growing with no heat units: no estimate, as before.
+  const none = combineHarvestEstimate({ ndvi: growing, crop: "corn", today: "2026-08-22" });
+  assert.equal(none.basis, null);
+  assert.equal(none.daysToReady, null);
+  assert.equal(fieldStatus({ harvest: none, condition: 0.9 }).id, "healthy");
+  assert.equal(combineHarvestEstimate({ ndvi: { stage: "ready", daysToReady: 0 } }).basis, "dry-down");
+  assert.equal(combineHarvestEstimate({}).stage, "unknown");
+});
+
+// Real data, Kupiansk demo farm, Field 3 (2026-10-19): peaked at 0.78 on
+// 24 June, dried down slowly to 0.33-0.37 by mid September and stayed flat.
+// Just above the spring-cereal ready level, flat: it used to read "growing"
+// (Healthy, with a pest risk) four months after its peak.
+const FIELD_3 = "03-08:0.23 03-10:0.20 03-11:0.25 03-13:0.24 03-16:0.20 03-21:0.23 03-23:0.23 04-02:0.18 04-05:0.27 04-12:0.30 04-25:0.37 05-05:0.37 05-07:0.38 05-09:0.42 05-10:0.44 05-19:0.53 05-20:0.55 05-22:0.56 06-08:0.71 06-11:0.71 06-21:0.76 06-24:0.78 07-01:0.77 07-04:0.74 07-08:0.74 07-28:0.65 08-03:0.64 08-05:0.58 08-07:0.55 08-08:0.55 08-10:0.55 08-13:0.56 08-15:0.54 08-17:0.50 08-18:0.50 08-23:0.46 08-25:0.44 08-30:0.43 09-02:0.40 09-07:0.40 09-09:0.40 09-12:0.35 09-17:0.36 09-19:0.33 09-26:0.33 09-29:0.35 10-02:0.35 10-07:0.34 10-09:0.34 10-12:0.37"
+  .split(" ")
+  .map((item) => ({ date: `2026-${item.slice(0, 5)}`, ndvi: Number(item.slice(6)) }));
+
+test("long after the peak and far below it, a field is no longer 'growing'", () => {
+  const field3 = harvestStage(FIELD_3, "2026-10-19", { readyShare: 0.25 });
+  assert.equal(field3.stage, "harvested");
+  assert.equal(field3.harvestedOn, "2026-08-23"); // first pass below 0.6 x peak
+  // The same shape got low only recently: ready, not harvested.
+  const recent = FIELD_3.filter((p) => p.date < "2026-08-10").concat(["08-20", "08-27", "09-01", "09-05"].map((day, i) => ({ date: `2026-${day}`, ndvi: i < 2 ? 0.45 : 0.46 })));
+  assert.equal(harvestStage(recent, "2026-09-06", { readyShare: 0.25 }).stage, "ready");
+  // Still near the peak 60+ days on (a long-season crop): growing.
+  const late = FIELD_3.filter((p) => p.date <= "2026-07-08").concat([{ date: "2026-08-30", ndvi: 0.7 }, { date: "2026-09-05", ndvi: 0.69 }]);
+  assert.equal(harvestStage(late, "2026-09-06", { readyShare: 0.25 }).stage, "growing");
+  // A new season growing after the low (NEW_SEASON_PEAK) is left to the
+  // other rules.
+  const regrow = FIELD_3.concat([{ date: "2026-10-16", ndvi: 0.45 }, { date: "2026-10-18", ndvi: 0.5 }]).map((p) => (p.date === "2026-09-02" ? { ...p, ndvi: 0.56 } : p));
+  assert.notEqual(harvestStage(regrow, "2026-10-19", { readyShare: 0.25 }).stage, "ready");
+  // Weak regrowth after the low (weeds, a new sowing at 0.45) does not make
+  // the old crop "growing" again. Real field drawn next to the demo farm
+  // (Kupiansk, 2026-10-19).
+  const drawn = [["06-16", 0.72], ["06-24", 0.72], ["07-14", 0.65], ["07-31", 0.62], ["08-07", 0.51], ["08-17", 0.42], ["08-30", 0.35], ["09-12", 0.31], ["09-26", 0.28], ["10-02", 0.40], ["10-09", 0.41], ["10-12", 0.45]].map(([d, ndvi]) => ({ date: `2026-${d}`, ndvi }));
+  const weak = harvestStage(drawn, "2026-10-19");
+  assert.equal(weak.stage, "harvested");
+  assert.equal(weak.harvestedOn, "2026-08-17");
+});

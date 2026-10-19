@@ -19,7 +19,7 @@
 //   warNote(run)             the war the run counted damage from, or the
 //                            "no war in the app's list" note; null for
 //                            older runs that do not say
-//   haFixed(ha)              hectares for tables: "4.0 ha", "4.7 ha", "52 ha"
+//   haFixed(ha)              hectares for tables: "4.0 ha", "4.7 ha", "52 ha", "0 ha"
 //   priorityIndex(hotspot)   the score as 0–100, where 100 is the best square
 //
 // WHO EDITS IT
@@ -173,6 +173,7 @@ export function weightItems(settings, timeframe) {
 // One decimal under 10 ha, so a column lines up: "4.0 ha", "4.7 ha", "52 ha".
 export function haFixed(hectares) {
   if (!Number.isFinite(hectares)) return "–";
+  if (hectares === 0) return "0 ha";
   if (Math.abs(hectares) < 10) return `${hectares.toFixed(1)} ha`;
   return formatHaShort(hectares);
 }

@@ -7,7 +7,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkBox, checkPolygon, parseCoordinates, pointsToGeometry, polygonAreaHa } from "./coords.js";
+import { checkBox, checkPolygon, fromDecimalCommas, labelledCoordinates, parseCoordinates, pointsToGeometry, polygonAreaHa } from "./coords.js";
 
 test("reads the common ways of writing a coordinate", () => {
   const { points, errors } = parseCoordinates(
@@ -74,4 +74,27 @@ test("points become a closed GeoJSON polygon of lon, lat", () => {
   assert.deepEqual(geometry.coordinates[0].at(-1), [37.54, 49.74]);
   assert.deepEqual(bbox, [37.54, 49.74, 37.5499, 49.7464]);
   assert.equal(pointsToGeometry([[1, 2]]), null);
+});
+
+test("named coordinates and decimal commas (the farm setup's Coordinates tab and the area picker)", () => {
+  // Real case (2026-10-19): the place search read these, the Coordinates tab refused them.
+  assert.deepEqual(parseCoordinates("-34,90; -60,95"), { points: [[-34.9, -60.95]], errors: [] });
+  assert.deepEqual(parseCoordinates("-34,6 -60,0").points, [[-34.6, -60]]);
+  assert.deepEqual(parseCoordinates("49,74, 37,54").points, [[49.74, 37.54]]);
+  assert.deepEqual(parseCoordinates("lat -33.9 lon 18.4"), { points: [[-33.9, 18.4]], errors: [] });
+  assert.deepEqual(parseCoordinates("lat: -34.6, lng: -58.4").points, [[-34.6, -58.4]]);
+  assert.deepEqual(parseCoordinates("lon 18.4 lat -33.9").points, [[-33.9, 18.4]]);
+  assert.deepEqual(parseCoordinates("latitude=48,2 longitude=1,6").points, [[48.2, 1.6]]);
+  // A polygon mixing the forms, one point per line.
+  const ring = parseCoordinates("-34,90; -60,95\nlat -34.91 lon -60.95\n-34.91, -60.94");
+  assert.equal(ring.points.length, 3);
+  assert.equal(ring.errors.length, 0);
+  // Still refused: a lone decimal comma (the comma separates lat and lon),
+  // the same axis twice, and out of range.
+  assert.deepEqual(parseCoordinates("49,7").points, [[49, 7]]);
+  assert.equal(parseCoordinates("lat 10 lat 20").errors.length, 1);
+  assert.match(parseCoordinates("lat 95 lon 10").errors[0].message, /latitude must be from -90 to 90/);
+  assert.match(parseCoordinates("lat 45 lon 190").errors[0].message, /longitude must be from -180 to 180/);
+  assert.deepEqual(labelledCoordinates("lng: 30, lat: 50"), { lat: 50, lon: 30 });
+  assert.equal(fromDecimalCommas("49.7, 37.5"), "49.7, 37.5");
 });

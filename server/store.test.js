@@ -30,13 +30,12 @@ test("newId gives safe, different ids", () => {
   assert.notEqual(a, store.newId("run"));
 });
 
-test("a fresh workspace has the defaults and two team members", async () => {
+test("a fresh workspace has the defaults, no made-up team and no budget", async () => {
   const ws = await store.getWorkspace();
   assert.equal(ws.currentAreaId, null);
-  assert.equal(ws.budgetUsd, 10000000);
+  assert.equal(ws.budgetUsd, null);
   assert.deepEqual(ws.settings.weights, { soil: 30, damage: 40, access: 30 });
-  assert.equal(ws.team.length, 2);
-  assert.equal(ws.team[0].role, "admin");
+  assert.deepEqual(ws.team, []);
   assert.ok(fs.existsSync(path.join(dir, "workspace.json")));
 });
 

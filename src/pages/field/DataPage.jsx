@@ -33,7 +33,7 @@ import { PageHeader, Card, Badge, Button, Segmented, ChipSelect } from "../../co
 import { FarmGate, FieldProgress, useFieldData } from "../../state/FieldData.jsx";
 import { exportUrl, getGeotiffUrl } from "../../api/fieldApi.js";
 import { BASELINE } from "../../lib/field/method.js";
-import { farmLine, formatArea, formatDay, formatIndex, stageWord, stressWord, versusWord } from "../../lib/field/format.js";
+import { ANALYSING_LABEL, cropInfo, farmLine, formatArea, formatDay, formatIndex, stageWord, stressWord, versusWord } from "../../lib/field/format.js";
 import "./DataPage.css";
 
 // The two readings the chart can show. One at a time: they have different
@@ -151,7 +151,7 @@ export default function DataPage() {
 }
 
 function FieldDataPage() {
-  const { farm, analyses, provider, job, actions } = useFieldData();
+  const { farm, analyses, provider, job, analysing, conflict: farmWar, actions } = useFieldData();
   const [params, setParams] = useSearchParams();
   const [measureId, setMeasureId] = useState("ndvi");
   const measure = MEASURES.find((item) => item.value === measureId);
@@ -161,7 +161,7 @@ function FieldDataPage() {
   const field = fields.find((item) => item.id === asked) || fields[0];
   const analysis = analyses[field.id] || null;
   // The war covering the farm, if any (every field of a farm shares it).
-  const conflict = analysis?.conflict || Object.values(analyses).find((item) => item?.conflict)?.conflict || null;
+  const conflict = analysis?.conflict || farmWar || null;
   const chooseField = (id) =>
     setParams(
       (prev) => {
@@ -235,6 +235,13 @@ function FieldDataPage() {
           </div>
         )}
 
+        {!analysis && analysing.has(field.id) && (
+          <p className="fdata-analysing" role="status">
+            <Loader2 size={15} className="fd-spin" aria-hidden="true" />
+            {`Analysing ${field.name}… This season and its history since 2019 appear here when done.`}
+          </p>
+        )}
+
         <div className="fdata-stats">
           <BigStat label="Last pass" value={dayText(analysis?.latestPass?.date)} line={isNum(analysis?.latestPass?.clearPct) ? `${analysis.latestPass.clearPct}% clear` : null} />
           <BigStat label="Passes" value={String(season.length)} line={season.length ? `since ${dayText(season[season.length - 1].date)}` : "this season"} />
@@ -268,7 +275,7 @@ function FieldDataPage() {
         </div>
       </div>
 
-      <PrintReport farm={farm} analyses={analyses} provider={provider} field={field} chart={chart} measure={measure} conflict={conflict} />
+      <PrintReport farm={farm} analyses={analyses} analysing={analysing} provider={provider} field={field} chart={chart} measure={measure} conflict={conflict} />
     </div>
   );
 }
@@ -731,7 +738,7 @@ function DownloadsCard({ field, gee, passDate }) {
 // The printable season report (only shown on paper)
 // ---------------------------------------------------------------------------
 
-function PrintReport({ farm, analyses, provider, field, chart, measure, conflict }) {
+function PrintReport({ farm, analyses, analysing, provider, field, chart, measure, conflict }) {
   const today = new Date();
   const todayText = `${SHORT_MONTHS[today.getMonth()]} ${today.getDate()}, ${today.getFullYear()}`;
   const series = chart?.[measure.value];
@@ -763,16 +770,16 @@ function PrintReport({ farm, analyses, provider, field, chart, measure, conflict
             return (
               <tr key={item.id}>
                 <td>{item.name}</td>
-                <td>{item.crop || "–"}</td>
+                <td>{cropInfo(item, a).text || "–"}</td>
                 <td className="num">{formatArea(item.areaHa, farm.units)}</td>
-                <td>{a?.status?.label || "–"}</td>
+                <td>{a?.status?.label || (analysing.has(item.id) ? ANALYSING_LABEL : "–")}</td>
                 <td>
                   <span className="fdata-print-num">{formatIndex(a?.plantHealth?.ndvi)}</span> <span className="fdata-print-soft">{a?.plantHealth?.versus ? versusWord(a.plantHealth.versus) : ""}</span>
                 </td>
                 <td>
                   <span className="fdata-print-num">{formatIndex(a?.water?.ndwi)}</span> <span className="fdata-print-soft">{a?.water?.versus ? versusWord(a.water.versus) : ""}</span>
                 </td>
-                <td>{a?.stress?.level ? stressWord(a.stress.level) : "–"}</td>
+                <td>{a?.stress?.applies === false ? "No crop" : a?.stress?.level ? stressWord(a.stress.level) : "–"}</td>
                 <td>{a ? stageWord(a.harvest) : "–"}</td>
                 <td>{a?.latestPass?.date ? dayText(a.latestPass.date) : "–"}</td>
               </tr>

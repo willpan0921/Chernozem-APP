@@ -13,7 +13,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { componentScores, nearTermShares, powerMean, rampFactor, ranking, scorePlaces } from "./scoring.js";
+import { blackSoilFloor, componentScores, nearTermShares, peaceDamageScore, powerMean, rampFactor, ranking, scorePlaces } from "./scoring.js";
+import { BLACK_SOIL_MIN, NO_BLACK_SOIL_REASON, PEACE_DAMAGE, cellAreaHa } from "./method.js";
 import { makePlaces } from "./testPlaces.js";
 
 const close = (actual, expected, tolerance = 1e-9) =>
@@ -110,7 +111,7 @@ test("fully safe places are never set aside: the cutoff only takes places near f
 });
 
 test("an area at peace keeps every place", () => {
-  const rows = Array.from({ length: 50 }, (_, i) => ({ id: `p${i}`, wrb: 0.3 + i / 100, agOutput: 0.5, firms: 0, chi: 0.05, distance: 1, blackSoilHa: 10 }));
+  const rows = Array.from({ length: 50 }, (_, i) => ({ id: `p${i}`, wrb: 0.3 + i / 100, agOutput: 0.5, firms: 0, chi: 0.05, distance: 1, blackSoilHa: 1000 }));
   const result = scorePlaces(rows, { settings: { gatePercentile: 30 } });
   assert.equal(result.places.filter((p) => p.nearTerm.tier === "setAside").length, 0);
   assert.equal(result.setAsideShare, 0);
@@ -212,4 +213,42 @@ test("a square missing a score is not analyzed and says why", () => {
   const result = scorePlaces([{ id: "r0c0", wrb: 0.5, agOutput: 0.5, firms: null, chi: null, distance: 0.5 }]);
   assert.equal(result.places[0].analyzed, false);
   assert.match(result.places[0].reason, /damage/);
+});
+
+test("a square with (almost) no black-soil cropland is not ranked", () => {
+  // Real case, Kenya at peace (2026-10-19): arid squares with 0 ha of black
+  // soil were ranked 1st to 7th on savanna fires.
+  const cell = (id, lat, blackSoilHa, heavyDamageHa, firms) => ({ id, lat, lon: 36, wrb: 0.5, agOutput: 0.5, firms, radar: 0.3, distance: 1, blackSoilHa, heavyDamageHa });
+  const rows = [cell("r1c1", -1.6, 0, 0, 1), cell("r2c1", -1.4, 200, 25, 1), cell("r3c1", 0.6, 25620, 0, 0), cell("r4c1", -1.4, 6019, 49, 1)];
+  // 0.2° squares near the equator: about 49,500 ha, so the floor is ~250 ha.
+  const { places } = scorePlaces(rows, { conflict: null, cellSizeDeg: 0.2 });
+  const byId = Object.fromEntries(places.map((p) => [p.id, p]));
+  assert.equal(byId.r1c1.reason, NO_BLACK_SOIL_REASON);
+  assert.equal(byId.r1c1.nearTerm.tier, "noBlackSoil");
+  assert.equal(byId.r1c1.nearTerm.rank, null);
+  assert.equal(byId.r2c1.reason, NO_BLACK_SOIL_REASON);
+  assert.equal(byId.r3c1.analyzed, true);
+  assert.deepEqual(ranking(places, "nearTerm").map((p) => p.id).sort(), ["r3c1", "r4c1"]);
+  assert.ok(Math.abs(blackSoilFloor({ lat: 0 }, 0.2) - 0.005 * cellAreaHa(0.2, 0)) < 1e-9);
+  // Without the square's size: BLACK_SOIL_MIN.ha.
+  assert.equal(blackSoilFloor({ lat: 0 }), BLACK_SOIL_MIN.ha);
+  // Rows without blackSoilHa (the research regions) are ranked as before.
+  assert.equal(scorePlaces([{ id: "a", wrb: 1, agOutput: 1, firms: 1, radar: 1, distance: 1 }]).places[0].analyzed, true);
+});
+
+test("at peace the damage score is the heavily damaged share of the black soil, so 0 ha damaged scores 0", () => {
+  const rows = [
+    { id: "a", lat: 0, wrb: 0.6, agOutput: 0.6, firms: 1, radar: 1, distance: 1, blackSoilHa: 20000, heavyDamageHa: 0 },
+    { id: "b", lat: 0, wrb: 0.6, agOutput: 0.6, firms: 0, radar: 0, distance: 1, blackSoilHa: 20000, heavyDamageHa: 2000 },
+  ];
+  const peace = scorePlaces(rows, { conflict: null, cellSizeDeg: 0.2 }).places;
+  assert.equal(peace[0].damage, 0);
+  close(peace[1].damage, 2000 / 20000 / PEACE_DAMAGE.fullShare);
+  assert.equal(peaceDamageScore({ blackSoilHa: 100, heavyDamageHa: 90 }), 1);
+  assert.equal(peaceDamageScore({ blackSoilHa: 0, heavyDamageHa: 0 }), null);
+  // Inside a war (or a run saved before conflict was stored): the indicators.
+  const war = scorePlaces(rows, { conflict: { id: "ukraine-2022" }, cellSizeDeg: 0.2 }).places;
+  assert.equal(war[0].damage, 1);
+  assert.equal(war[1].damage, 0);
+  assert.equal(scorePlaces(rows).places[0].damage, 1);
 });

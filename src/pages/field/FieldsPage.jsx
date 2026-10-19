@@ -14,7 +14,13 @@
 //          big tiles (Water, Plant health, Stress, Harvest readiness: one
 //          big value, at most one status word, at most one short line), a
 //          small "Plant health this season" chart against the normal, and
-//          one button: "Ask AI about <field>".
+//          one button: "Ask AI about <field>", and the small "How it's
+//          measured" link (src/components/field/HowMeasured.jsx, words in
+//          src/config/research.js fieldMethods).
+//          The crop is the farmer's own, else the detected one ("Corn ·
+//          detected", format.js cropInfo). A new field shows "Analysing…"
+//          (on the map too) until its first analysis is saved. The legend
+//          lists only the marks on the map (format.js mapMarks).
 //
 // "?field=<field id>" in the address picks the field (an unknown id is
 // replaced by the first field's); clicking a field on the map (or the
@@ -39,8 +45,10 @@ import { FarmGate, FieldProgress, useFieldData } from "../../state/FieldData.jsx
 import FieldMap, { fieldsBounds } from "../../components/field/FieldMap.jsx";
 import ConditionLegend from "../../components/field/ConditionLegend.jsx";
 import MetricTile from "../../components/field/MetricTile.jsx";
-import { formatArea, formatDay, formatIndex, stageWord, stressWord } from "../../lib/field/format.js";
+import HowMeasured from "../../components/field/HowMeasured.jsx";
+import { ANALYSING_LABEL, cropInfo, fieldTiles, formatArea, formatDay, formatIndex, mapMarks } from "../../lib/field/format.js";
 import { BASELINE } from "../../lib/field/method.js";
+import { fieldMethods } from "../../config/research.js";
 import "./FieldsPage.css";
 
 // The width at which the page stacks (keep in step with FieldsPage.css).
@@ -62,127 +70,10 @@ function useNarrow() {
   return narrow;
 }
 
-// ---------- The four tiles ----------
-
-const isNum = (value) => typeof value === "number" && Number.isFinite(value);
-const round2 = (value) => Math.round(value * 100) / 100;
-
-const VERSUS_TONES = { below: "amber", normal: "green", above: "blue" };
-const STRESS_TONES = { low: "green", medium: "amber", high: "red" };
-const WATER_WORDS = { below: "Drier than usual", normal: "Normal", above: "Wetter than usual" };
-const HEALTH_WORDS = { below: "Below normal", normal: "Normal", above: "Above normal" };
-
-// "Usual 0.26 to 0.29" (one number when both ends print the same).
-function usualRange(normal) {
-  if (!isNum(normal?.low) || !isNum(normal?.high)) return null;
-  const low = formatIndex(normal.low);
-  const high = formatIndex(normal.high);
-  return low === high ? `Usual ${low}` : `Usual ${low} to ${high}`;
-}
-
-// The status word of a reading. The server decides below / normal / above
-// (method.js versusNormal, which allows a small margin); "Normal" is said
-// only when the printed value is inside the printed range, and "Near
-// normal" when it is just outside it.
-function readingStatus(reading, value, words) {
-  if (!isNum(value) || !reading?.versus) return { word: null, tone: null };
-  if (reading.versus === "normal" && isNum(reading.normal?.low) && isNum(reading.normal?.high)) {
-    const v = round2(value);
-    const inside = v >= round2(reading.normal.low) && v <= round2(reading.normal.high);
-    return { word: inside ? "Normal" : "Near normal", tone: "green" };
-  }
-  return { word: words[reading.versus] || null, tone: VERSUS_TONES[reading.versus] || null };
-}
-
-// The highest normal plant health of the year (2019 to 2021), or null.
-function usualPeak(normalCurve) {
-  const values = (normalCurve || []).map((point) => point?.median).filter(isNum);
-  return values.length ? Math.max(...values) : null;
-}
-
-// The four tiles of the selected field: { id, label, value, word, tone, line }.
-// One big value, at most one status word, at most one line, nothing said twice.
-function panelTiles(analysis, { units = "ha", weather = null } = {}) {
-  const a = analysis || {};
-  const water = a.water || {};
-  const health = a.plantHealth || {};
-  const stress = a.stress || {};
-  const harvest = a.harvest || {};
-
-  const waterStatus = readingStatus(water, water.ndwi, WATER_WORDS);
-  const waterTile = { id: "water", label: "Water", value: formatIndex(water.ndwi), ...waterStatus, line: usualRange(water.normal) };
-
-  // A field that never greened up this season is not "Normal", whatever
-  // its bare-soil reading today.
-  let healthTile;
-  if (harvest.stage === "notSown") {
-    const peak = usualPeak(a.normalCurve);
-    healthTile = {
-      id: "plantHealth",
-      label: "Plant health",
-      value: formatIndex(health.ndvi),
-      word: "No crop",
-      tone: "amber",
-      line: isNum(harvest.peak) && isNum(peak) ? `Peak ${formatIndex(harvest.peak)}, usual ${formatIndex(peak)}` : "Did not green up this season",
-    };
-  } else {
-    healthTile = { id: "plantHealth", label: "Plant health", value: formatIndex(health.ndvi), ...readingStatus(health, health.ndvi, HEALTH_WORDS), line: usualRange(health.normal) };
-  }
-
-  const share = isNum(stress.share) ? stress.share : null;
-  const stressedHa = isNum(stress.stressedHa) && stress.stressedHa > 0 ? stress.stressedHa : null;
-  const patches = Array.isArray(stress.patches) ? stress.patches.length : 0;
-  let stressTile;
-  if (share == null) {
-    stressTile = { id: "stress", label: "Stress", value: "–", word: null, tone: null, line: null };
-  } else if (share > 0 || stressedHa) {
-    const pct = share * 100 < 1 ? "Under 1%" : `${Math.round(share * 100)}%`;
-    stressTile = {
-      id: "stress",
-      label: "Stress",
-      value: stressedHa ? formatArea(stressedHa, units) : pct,
-      word: stress.level ? stressWord(stress.level) : null,
-      tone: STRESS_TONES[stress.level] || null,
-      line: [stressedHa ? `${pct} of the field` : null, patches ? `${patches} ${patches === 1 ? "patch" : "patches"}` : null].filter(Boolean).join(" · ") || null,
-    };
-  } else {
-    stressTile = { id: "stress", label: "Stress", value: "None", word: null, tone: null, line: "No weak patches" };
-  }
-
-  const rain = weather?.rain?.likely ? weather.rain : null;
-  const rainNote = harvest.rainBefore && rain?.from ? `Rain ${formatDay(rain.from)} · harvest first` : harvest.rainBefore ? "Rain due · harvest first" : null;
-  let word = null;
-  let tone = null;
-  let line = null;
-  switch (harvest.stage) {
-    case "ready":
-      line = rainNote || (harvest.window?.to ? `Best by ${formatDay(harvest.window.to)}` : null);
-      break;
-    case "ripening":
-      word = "Ripening";
-      tone = "blue";
-      line = rainNote || (harvest.window?.from ? `Ready about ${formatDay(harvest.window.from)}` : null);
-      break;
-    case "harvested":
-      line = harvest.harvestedOn ? `Cut about ${formatDay(harvest.harvestedOn)}` : harvest.lastDate ? `By ${formatDay(harvest.lastDate)}` : null;
-      break;
-    case "growing":
-      line = isNum(harvest.peak) ? `Greenest so far ${formatIndex(harvest.peak)}` : null;
-      break;
-    case "notSown":
-      break;
-    default:
-      line = "Waiting for a clear pass";
-  }
-  const harvestTile = { id: "harvest", label: "Harvest readiness", value: stageWord(harvest), word, tone, line };
-
-  return [waterTile, healthTile, stressTile, harvestTile];
-}
-
 // ---------- The page ----------
 
 function FieldsView() {
-  const { farm, analyses, provider, job, weather, actions } = useFieldData();
+  const { farm, analyses, provider, job, weather, analysing, actions } = useFieldData();
   const [params, setParams] = useSearchParams();
   const narrow = useNarrow();
   const mapApi = useRef(null);
@@ -253,6 +144,8 @@ function FieldsView() {
   const shown = Object.values(analyses).filter(Boolean);
   const sample = shown.length ? shown.some((item) => item.provider !== "gee") : provider?.id === "sample";
   const fitKey = `${farm.id}:${fields.map((field) => field.id).join(",")}`;
+  // The legend lists only what is on the map.
+  const legend = useMemo(() => mapMarks(fields, analyses), [fields, analyses]);
 
   return (
     <div className="page-full fp">
@@ -261,6 +154,7 @@ function FieldsView() {
           ref={mapApi}
           fields={fields}
           analyses={analyses}
+          analysing={analysing}
           selectedId={selectedId}
           onSelect={selectOnMap}
           fitKey={fitKey}
@@ -280,7 +174,7 @@ function FieldsView() {
             )}
           </div>
           <div className="fp-map-legend">
-            <ConditionLegend compact={narrow} />
+            <ConditionLegend compact={narrow} marks={legend.marks} scale={legend.classes} />
           </div>
         </FieldMap>
       </section>
@@ -294,6 +188,7 @@ function FieldsView() {
             units={farm.units}
             weather={weather}
             job={job}
+            analysing={analysing.has(selected.id)}
             count={fields.length}
             onStep={step}
             onAnalyze={() => actions.analyze([selected.id])}
@@ -314,16 +209,19 @@ function damageLine(damage, conflict, units) {
   return Number.isFinite(damage?.damagedHa) && damage.damagedHa > 0 ? `${what} on ${formatArea(damage.damagedHa, units)}` : `${what} found`;
 }
 
-function FieldPanel({ field, analysis, units, weather, job, count, onStep, onAnalyze }) {
+function FieldPanel({ field, analysis, units, weather, job, analysing, count, onStep, onAnalyze }) {
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState(null);
-  const tiles = panelTiles(analysis, { units, weather });
+  const crop = cropInfo(field, analysis);
+  // The harvest note names the crop the numbers were worked out with
+  // (analysis.cropUsed), which can lag a crop the farmer just changed.
+  const tiles = fieldTiles(analysis, { units, weather, crop: analysis?.cropUsed?.label || null });
   const status = analysis?.status;
   const damage = analysis?.damage;
-  const analysing = job?.kind !== "field-detect";
-  const running = job?.status === "running" && analysing;
-  const failed = job?.status === "error" && analysing ? job.error : null;
-  const meta = [field.crop, formatArea(field.areaHa, units)].filter(Boolean).join(" · ");
+  const updating = job?.kind !== "field-detect";
+  const running = job?.status === "running" && updating;
+  const failed = job?.status === "error" && updating ? job.error : null;
+  const cropTitle = crop.source === "detected" ? [crop.confidence === "possible" ? "Possible crop, detected from the season's curve" : "Detected from the season's curve", crop.reason].filter(Boolean).join(": ") : undefined;
 
   const analyse = async () => {
     setStarting(true);
@@ -354,8 +252,16 @@ function FieldPanel({ field, analysis, units, weather, job, count, onStep, onAna
           )}
         </div>
         <div className="fp-meta">
-          {status && <Badge tone={status.tone || "outline"}>{status.label}</Badge>}
-          <span>{meta}</span>
+          {status ? <Badge tone={status.tone || "outline"}>{status.label}</Badge> : analysing ? <Badge tone="outline">{ANALYSING_LABEL}</Badge> : null}
+          <span>
+            {crop.text && (
+              <span className={crop.source === "detected" ? "fp-crop is-detected" : "fp-crop"} title={cropTitle}>
+                {crop.text}
+              </span>
+            )}
+            {crop.text ? " · " : ""}
+            {formatArea(field.areaHa, units)}
+          </span>
         </div>
         {damage?.detected && (
           <p className="fp-damage">
@@ -376,6 +282,8 @@ function FieldPanel({ field, analysis, units, weather, job, count, onStep, onAna
         </>
       ) : running ? (
         <div className="fp-empty">
+          {analysing && <p className="fp-empty-title">{`Analysing ${field.name}…`}</p>}
+          {analysing && <p className="fp-empty-text">Reading this season and the field's history since 2019. It appears here when done.</p>}
           <FieldProgress job={job} compact />
         </div>
       ) : (
@@ -398,6 +306,9 @@ function FieldPanel({ field, analysis, units, weather, job, count, onStep, onAna
       >
         {`Ask AI about ${field.name}`}
       </Button>
+      <div className="fp-how">
+        <HowMeasured methods={fieldMethods} />
+      </div>
     </div>
   );
 }

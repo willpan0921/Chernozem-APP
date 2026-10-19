@@ -101,6 +101,7 @@ export function valueText(place, colorBy, timeframe, total) {
   }
   const entry = place[timeframe] || {};
   if (entry.tier === "setAside") return "Set aside (little safe access)";
+  if (entry.tier === "noBlackSoil") return "Not ranked: no black-soil cropland";
   if (!Number.isFinite(entry.rank)) return "Not ranked";
   return `Rank ${entry.rank.toLocaleString("en-US")} of ${Number(total || 0).toLocaleString("en-US")}`;
 }

@@ -102,19 +102,17 @@ async function listFiles(kind) {
 
 // ---------- Workspace ----------
 
+// A new workspace has no budget (the page asks for one) and no team (the
+// first person added is its admin): nothing made up.
 function defaultWorkspace() {
-  const now = new Date().toISOString();
   return {
     name: "Regional office",
     currentAreaId: null,
     settings: checkSettings(DEFAULT_SETTINGS),
-    budgetUsd: 10000000,
+    budgetUsd: null,
     doneSteps: [],
     schedule: { autoMonthly: true },
-    team: [
-      { id: newId("member"), name: "Oksana H.", email: "", role: "admin", addedAt: now },
-      { id: newId("member"), name: "Taras M.", email: "", role: "analyst", addedAt: now },
-    ],
+    team: [],
   };
 }
 
@@ -126,7 +124,7 @@ function normalizeWorkspace(ws) {
   merged.schedule = { ...base.schedule, ...(merged.schedule || {}) };
   if (!Array.isArray(merged.doneSteps)) merged.doneSteps = [];
   if (!Array.isArray(merged.team)) merged.team = base.team;
-  if (!Number.isFinite(merged.budgetUsd)) merged.budgetUsd = base.budgetUsd;
+  if (!Number.isFinite(merged.budgetUsd)) merged.budgetUsd = null;
   return merged;
 }
 

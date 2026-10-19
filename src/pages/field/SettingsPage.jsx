@@ -7,6 +7,9 @@
 //          again" (detect the fields on the same land and pick again;
 //          saving says how many fields it replaces); and the list of
 //          fields: select (shows it on the map), rename, crop, area, remove.
+//          The crop select shows the detected crop ("Detected: Corn") until
+//          the farmer picks one; choosing that first line again goes back
+//          to the detected crop (PATCH crop: null).
 //   Units  hectares, acres or 亩.
 //   Data   Earth Engine status and the .env lines that connect it,
 //          "Update now" and the "Update automatically" switch.
@@ -42,7 +45,7 @@ import { FarmGate, FieldProgress, useFieldData } from "../../state/FieldData.jsx
 import { API_ROOT, getStatus } from "../../api/atlasApi.js";
 import { checkPolygon, pointsToGeometry } from "../../lib/atlas/coords.js";
 import { STATUS_GROUPS, UNITS } from "../../lib/field/method.js";
-import { candidateTotals, farmAreaHa, formatArea, formatDay, unitShort } from "../../lib/field/format.js";
+import { ANALYSING_LABEL, candidateTotals, cropInfo, detectedChoice, farmAreaHa, formatArea, formatDay, mapLook, unitShort } from "../../lib/field/format.js";
 import { compareNames, matchFields, overlappingFields, planFieldsToSave, redetectBody } from "../../lib/field/geometry.js";
 import "./SettingsPage.css";
 
@@ -285,22 +288,29 @@ function InlineName({ value, label, className = "", maxLength = 60, onSave, onEr
 // ---------- Farm: one field in the list ----------
 
 // What the list shows next to a field's name, matching the map: the
-// red "Needs recovery" tint and pill, or a "Watch" badge.
-function statusMark(analysis) {
+// red "Needs recovery" tint and pill, a "Watch" badge, the straw swatch of
+// a harvested or not-sown field (no condition class), or "Analysing…" for
+// a new field.
+function statusMark(analysis, analysing) {
   const id = analysis?.status?.id;
+  if (!analysis && analysing) return { swatch: null, badge: { tone: "outline", label: ANALYSING_LABEL } };
   if (STATUS_GROUPS.recovery.includes(id)) return { swatch: "is-recovery", badge: { tone: "red", label: "Recovery" } };
   if (id === "watch") return { swatch: null, badge: { tone: "amber", label: "Watch" } };
+  if (mapLook(analysis).bare) return { swatch: "is-bare", badge: null };
   return { swatch: null, badge: null };
 }
 
-function FieldRow({ field, analysis, units, selected, onSelect, busy }) {
+function FieldRow({ field, analysis, analysing, units, selected, onSelect, busy }) {
   const { actions } = useFieldData();
   const [error, setError] = useState(null);
   const [savingCrop, setSavingCrop] = useState(false);
   const conditionClass = analysis?.condition?.class || "nodata";
-  const mark = statusMark(analysis);
+  const mark = statusMark(analysis, analysing);
   const select = () => onSelect(selected ? null : field.id);
-  const crops = field.crop && !CROPS.includes(field.crop) ? [field.crop, ...CROPS] : CROPS;
+  // The farmer's own crop, if any; until then the select shows the
+  // detected one ("Detected: Corn"), and picking it again goes back to it.
+  const own = cropInfo(field, analysis).source === "user" ? field.crop : "";
+  const crops = own && !CROPS.includes(own) ? [own, ...CROPS] : CROPS;
 
   const setCrop = async (crop) => {
     setSavingCrop(true);
@@ -345,11 +355,11 @@ function FieldRow({ field, analysis, units, selected, onSelect, busy }) {
       <select
         className="select fset-crop"
         aria-label={`Crop on ${field.name}`}
-        value={field.crop || ""}
+        value={own || ""}
         disabled={savingCrop || busy}
         onChange={(event) => setCrop(event.target.value)}
       >
-        <option value="">No crop</option>
+        <option value="">{detectedChoice(analysis, { analysing })}</option>
         {crops.map((crop) => (
           <option key={crop} value={crop}>
             {crop}
@@ -370,7 +380,7 @@ function FieldRow({ field, analysis, units, selected, onSelect, busy }) {
 // ---------- Farm ----------
 
 function FarmCard({ onChangeFarm }) {
-  const { farm, analyses, job, provider, actions } = useFieldData();
+  const { farm, analyses, job, provider, analysing: newIds, actions } = useFieldData();
   const [mode, setMode] = useState("view"); // view | draw | find
   const [selectedId, setSelectedId] = useState(null);
   const [nameError, setNameError] = useState(null);
@@ -549,6 +559,7 @@ function FarmCard({ onChangeFarm }) {
     mapProps = {
       fields,
       analyses,
+      analysing: newIds,
       selectedId,
       onSelect: setSelectedId,
       fitKey: `view-${fields.length}`,
@@ -714,6 +725,7 @@ function FarmCard({ onChangeFarm }) {
             key={field.id}
             field={field}
             analysis={analyses[field.id]}
+            analysing={newIds.has(field.id)}
             units={units}
             selected={field.id === selectedId}
             onSelect={setSelectedId}

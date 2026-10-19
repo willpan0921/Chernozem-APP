@@ -12,9 +12,14 @@
 //   status()                                  is Earth Engine set up and signed in?
 //   detectFields({ boundary|null, center|null, radiusM, onProgress })
 //                                             -> { candidates, warnings, center?, radiusM? }
-//   analyzeFields({ fields, today, onProgress })
-//                                             -> { analyses: { [fieldId]: analysis }, warnings }
+//   analyzeFields({ fields, today, onProgress, historyFor, freshHistoryFor })
+//                                             -> { analyses: { [fieldId]: analysis }, warnings, histories }
+//                                             (historyFor: read the whole history too;
+//                                             freshHistoryFor: a fresh history is saved,
+//                                             so the recent months are not read)
 //   fieldHistory({ field, from: "2019-01", to }) -> [{ month, ndvi, ndwi, clearPct }]
+//   fieldHistories({ fields, from, to })      -> { [fieldId]: months } (all fields
+//                                             batched: far fewer requests)
 //   geotiffUrl({ field, latestPassDate? })    -> { url, date, bands, name }
 //                                             (an Earth Engine download link; when the
 //                                             key may not make links, a data: URL of a
@@ -44,7 +49,11 @@
 //      line is soft), in the same request.
 //   6. Touching parcels of the same crop (mean NDVI and NDWI within
 //      DETECT.mergeMaxDiff in every window) are joined into one field: wet
-//      hollows and soil patches draw edges inside one big field too.
+//      hollows and soil patches draw edges inside one big field too. So
+//      are touching parcels with the same phenology (season NDVI curves
+//      correlated >= 0.95, peaks within 10 days) when the line between
+//      them is not a real edge (PHENOLOGY_MERGE: the strip along it is
+//      cropland and its Canny lines come and go between pictures).
 //   7. Around a point, when the fields found cover less than
 //      DETECT.widenBelowCover of the circle (the point is in a town, a
 //      forest or on water), the nearest circle of the same size that is
@@ -52,14 +61,26 @@
 //      and the result says so (its `center` is where it searched).
 //
 // HOW A FIELD IS MEASURED (analyzeFields, all fields of a farm in a few
-// batched requests, never one request per field)
+// batched requests, never one request per field; up to PARALLEL_REQUESTS
+// at once)
 //   passes     every Sentinel-2 pass this season (from season.js
 //              seasonCurveStart; COPERNICUS/S2_SR_HARMONIZED
 //              linked to GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED band cs,
 //              Danny's approach in scripts/fetch-ndvi.js; snow, which Cloud
-//              Score+ calls clear, is removed too): field mean NDVI, NDWI and
-//              clear share; one reading per day; a pass counts when at least
+//              Score+ calls clear, is removed too): field mean NDVI, NDWI,
+//              NDRE (B8A, B5), NDYI (B3, B2: yellow flowers) and clear
+//              share; one reading per day; a pass counts when at least
 //              MIN_CLEAR_SHARE of the field was clear
+//   radar      every Sentinel-1 picture this season (COPERNICUS/S1_GRD, IW,
+//              band VH, both orbit directions): the field's mean
+//              backscatter (averaged as power), cleaned by a 3-day running
+//              median (VH_CLEAN), for method.js
+//              radarHarvest (a tall crop cut down) and the crop type (the
+//              VH peak near the NDVI peak; on real data soybean and canola
+//              read brighter than corn, crops.js)
+//   months     the field mean NDVI / NDWI of each of the last CROP_MONTHS
+//              months (the crop type, method.js classifyCrop), and with
+//              `historyFor` the whole history since 2019, in the same run
 //   latest     median of clear pixels over the last 30 days, or over the 30
 //              days up to the latest clear pass when that is 30-90 days old
 //   normal     the same calendar window in 2019, 2020 and 2021 (season.js
@@ -67,10 +88,22 @@
 //              per pixel the median of the three yearly composites; per field
 //              the lowest / highest / middle of the three yearly field means
 //   pixels     health, water, stress and condition per method.js, written as
-//              Earth Engine image arithmetic
-//   zones      the condition image sampled on a grid of at most 64 x 64 over
-//              the field (sampleRectangle; outside the field = null)
-//   patches    stressed pixels in blobs of 0.3 ha or more, top 3 per field
+//              Earth Engine image arithmetic; stressed = the NDVI rule OR
+//              the red-edge rule (NDRE against the field median and the
+//              2019-2021 normal), and the likely cause from the NDWI
+//              anomaly over the stressed pixels (dry, or not water)
+//   patches    stressed pixels in blobs of 0.3 ha or more, top 3 per
+//              field, each with its own NDWI anomaly and cause
+//   crop       method.js classifyCrop from the months, the passes and the
+//              VH peak (cropDetected); the farmer's own crop (cropSource
+//              "user") wins for the harvest's crop profile
+//   harvest    method.js harvestStage with the crop's ready share, checked
+//              against radar (combineHarvestEstimate: a tall crop cut
+//              shows as a VH drop; low NDVI with no drop = still standing)
+// The zones grid (the condition image sampled per field) is no longer
+// measured (FINAL-SPEC 7.7): nothing draws it, the AI uses the stress
+// patches and downloads use the GeoTIFF. That saved one request per 8
+// fields.
 //   curve      half-month NDVI of 2019-2021 for the "season vs normal" chart
 //   damage     radar change (COPERNICUS/S1_GRD VV, IW, one orbit direction
 //              (gee.js pickPass): the last complete
@@ -110,7 +143,7 @@ import { areaHa as geoAreaHa, bboxAreaKm2, bboxOf, FIELD_SEARCH_MAX_KM2, pointIn
 import { addMonths } from "../runs.js";
 import { conflictAt } from "../conflicts.js";
 import { damageWindow } from "../../src/config/conflicts.js";
-import { baselineWindows, detectionWindows as seasonDetectionWindows, lastCompleteSeason, sameWindowIn, seasonCurveStart } from "../../src/lib/season.js";
+import { addDays, baselineWindows, detectionWindows as seasonDetectionWindows, lastCompleteSeason, sameWindowIn, seasonCurveStart } from "../../src/lib/season.js";
 import {
   BASELINE,
   CLEAR_PIXEL_SCORE,
@@ -119,6 +152,7 @@ import {
   HEALTH_SPAN,
   WATER_SPAN,
   STRESS_RULES,
+  RED_EDGE_RULES,
   RADAR_CHANGE_DB,
   healthScore,
   waterScore,
@@ -126,7 +160,17 @@ import {
   conditionClass,
   versusNormal,
   stressLevel,
+  stressCause,
+  redEdgeFound,
   harvestStage,
+  radarForHarvest,
+  combineHarvestEstimate,
+  classifyCrop,
+  cropProfile,
+  CROP_PROFILES,
+  cleanSeries,
+  NOT_SOWN_PEAK,
+  SEASON_DONE_DROP,
   damageDetected,
   damagedArea,
   soilTypeFor,
@@ -245,6 +289,53 @@ export const DETECT = {
   // Field 7 and its neighbour: 0.15-0.19 NDVI).
   mergeMaxDiff: 0.05,
   mergeMinWindows: 8,
+  // Join touching parcels with the same phenology too (spec 7.14), see
+  // PHENOLOGY_MERGE. Off only to compare before / after.
+  mergeByPhenology: true,
+};
+
+// Joining the pieces of one big field that Canny cut apart (spec 7.14;
+// real data, Mato Grosso, 2026-10-19: median 16 ha where the soy fields
+// are hundreds of hectares). Two touching parcels are one field when
+//   - their season NDVI curves (10-day composites over the last complete
+//     season, `stepDays`) are correlated at minCorrelation or more over at
+//     least minPoints shared composites, and their peaks are at most
+//     maxPeakDays apart (the same crop, sown the same week), AND
+//   - the line between them is not a real edge. The strip of land along
+//     the shared line (each parcel grown by stripM, intersected) is a real
+//     edge when
+//       less than minCropland of it is cropland (ESA WorldCover: a road,
+//       a farmstead, trees), or
+//       the line is straight (stripStraightness maxStraightness or more):
+//       field boundaries are straight; the lines Canny draws inside one
+//       field follow wet hollows, soil and terraces and wind, or
+//       the Canny lines in it are persistent: of the strip pixels that
+//       are an edge in any of the six detection windows, at least
+//       maxPersistentRatio are edges in persistentWindows windows or more.
+// Real data (2026-10-19). Every candidate pair had the same phenology
+// (r 0.95 to 1.00, peaks 0 to 9 days apart), so the edge test decides.
+// The persistent test alone kept almost nothing apart (Canny lines between
+// two wheat fields show in 1 or 2 of the 6 pictures, like noise lines);
+// straightness does the work:
+//   demo farm (Kupiansk; 7 hand-drawn outlines): 8 same-phenology pairs,
+//   real neighbours, straightness 0.78 to 0.99 but one 0.47. Joining all
+//   8: mean IoU 0.81 -> 0.54; with maxStraightness 0.7: 1 joined, IoU
+//   unchanged (0.805), 26 -> 25 fields.
+//   Mato Grosso (soy, 6 km NE of -12.55 -55.72, 1.2 km circle): lines
+//   0.36 to 1.00; 16 -> 8 fields, median 16 -> 49 ha, mean 49 -> 97 ha.
+//   Iowa (42.06 -93.56): 4 pairs, all straight (0.87 to 0.96): 20 fields
+//   either way.
+export const PHENOLOGY_MERGE = {
+  stepDays: 10,
+  minCorrelation: 0.95,
+  maxPeakDays: 10,
+  minPoints: 6,
+  stripM: 10,
+  minCropland: 0.6,
+  maxStraightness: 0.7,
+  persistentWindows: 3,
+  maxPersistentRatio: 0.4,
+  maxPairs: 300,
 };
 
 export const LATEST_DAYS = 30;
@@ -252,13 +343,34 @@ export const LOOKBACK_DAYS = 90;
 export const NORMAL_HALF_WINDOW_DAYS = 15;
 export const PATCH_MIN_HA = 0.3;
 export const MAX_PATCHES = 3;
+// The zones grid is no longer measured (spec 7.7: nothing draws it, the AI
+// uses the stress patches, downloads use the GeoTIFF); zoneGrid still
+// shapes the GeoTIFF fallback.
 export const ZONES_MAX = 64;
-// Fields measured in one request (passes: fields x passes stays far below
-// Earth Engine's 5,000-element answer limit).
+// Fields measured in one stats request.
 export const FIELDS_PER_REQUEST = 8;
+// Fields x pictures in one passes request (Sentinel-2 or Sentinel-1): far
+// below Earth Engine's 5,000-element answer limit. The fields per request
+// follow from the number of pictures this season (passesPerRequest).
+export const PASS_ELEMENTS_PER_REQUEST = 3000;
+export const MAX_FIELDS_PER_PASS_REQUEST = 30;
 export const HISTORY_FROM = "2019-01";
 export const HISTORY_CHUNK_MONTHS = 30;
-export const PARALLEL_REQUESTS = 2;
+// Batched monthly means (fieldHistories, and the 18 months the crop type
+// is read from): at most this many months and fields x months per request.
+export const MONTHS_PER_REQUEST = 24;
+export const MONTH_ELEMENTS_PER_REQUEST = 1500;
+// The months of field history the crop type is read from (classifyCrop).
+export const CROP_MONTHS = 18;
+// Requests that run at once. 2 left a 60-field farm waiting more than 20
+// minutes (real data, Iowa, 2026-10-19); see the timing in the header.
+export const PARALLEL_REQUESTS = 4;
+// Sentinel-1 VH (cross-polarised radar, dB): tall crops give a strong
+// return until they are cut (radarHarvest), corn the strongest
+// (classifyCrop). Pixels below VH_MIN_DB are the dark border of a scene.
+export const VH_BAND = "VH";
+export const VH_SCALE = 20;
+export const VH_MIN_DB = -30;
 const BASELINE_YEARS = Array.from({ length: BASELINE.to - BASELINE.from + 1 }, (_, i) => BASELINE.from + i);
 // Pixel plans: normal, then (after "out of memory" or "timed out") coarser.
 const PLANS = [
@@ -287,6 +399,7 @@ export function createFieldGeeProvider(options = {}) {
     detectFields: (input) => detectFields(deps, input),
     analyzeFields: (input) => analyzeFields(deps, input),
     fieldHistory: (input) => fieldHistory(deps, input),
+    fieldHistories: (input) => fieldHistories(deps, input),
     geotiffUrl: (input) => geotiffUrl(deps, input),
   };
 }
@@ -297,8 +410,9 @@ export default fieldGeeProvider;
 // ---------- Shared image helpers ----------
 
 // Every Sentinel-2 pass over the region in the window, with Cloud Score+
-// attached. Bands: ndvi and ndwi (cloudy pixels masked), clear (1 clear, 0
-// cloudy or outside the picture, never masked).
+// attached. Bands: ndvi, ndwi, ndre (red edge, B8A and B5 at 20 m) and
+// ndyi (yellow flowers, B3 and B2), cloudy pixels masked; clear (1 clear,
+// 0 cloudy or outside the picture, never masked).
 export function clearCollection(ee, region, window) {
   return ee
     .ImageCollection(FIELD_DATASETS.sentinel2)
@@ -313,9 +427,13 @@ export function clearCollection(ee, region, window) {
       const clearPixel = image.select(CLOUD_SCORE_BAND).gte(CLEAR_PIXEL_SCORE).and(notSnow);
       const ndvi = image.normalizedDifference(["B8", "B4"]).rename("ndvi");
       const ndwi = image.normalizedDifference(["B8", "B11"]).rename("ndwi");
+      const ndre = image.normalizedDifference(["B8A", "B5"]).rename("ndre");
+      const ndyi = image.normalizedDifference(["B3", "B2"]).rename("ndyi");
       // toFloat: the same plain type as the padding image, so collections merge.
       return ndvi
         .addBands(ndwi)
+        .addBands(ndre)
+        .addBands(ndyi)
         .toFloat()
         .updateMask(clearPixel)
         .addBands(clearPixel.unmask(0).rename("clear"))
@@ -353,27 +471,46 @@ function fieldCollection(ee, fields) {
   return ee.FeatureCollection(fields.map((field) => ee.Feature(ee.Geometry(field.geometry), { fid: field.id })));
 }
 
+// The bands every composite of the field measures carries.
+const FIELD_BANDS = ["ndvi", "ndwi", "ndre"];
+
 // Pixel health, water, stress and condition (method.js as image arithmetic).
-//   latest  this window's composite (ndvi, ndwi)
-//   normal  the 2019-2021 composite of the same weeks (ndvi, ndwi)
-// The field median NDVI (for "weaker than the rest of the field") is worked
-// out per field inside Earth Engine and painted back as an image.
+//   latest  this window's composite (ndvi, ndwi, ndre)
+//   normal  the 2019-2021 composite of the same weeks (ndvi, ndwi, ndre)
+// The field medians of NDVI and NDRE (for "weaker than the rest of the
+// field") are worked out per field inside Earth Engine and painted back as
+// images. A pixel is stressed (method.js pixelStress) when
+//   byNdvi    = ndvi < fieldMedianNdvi - 0.10 AND ndvi < normalNdvi - 0.08
+//   byRedEdge = ndre < fieldMedianNdre - 0.06 AND ndre < normalNdre - 0.05
+//   stressed  = byNdvi OR byRedEdge
+// (a pixel with no red-edge normal is judged by NDVI alone). Also:
+//   redEdgeOnly  stressed by red edge, not by NDVI (method.js redEdgeFound)
+//   ndwiAnomaly  NDWI minus its normal, over the stressed pixels only
+//                (method.js stressCause: dry, or not water)
 function conditionImages(ee, { latest, normal, fc, crs, plan }) {
   const ndvi = latest.select("ndvi");
   const ndwi = latest.select("ndwi");
+  const ndre = latest.select("ndre");
   const normalNdvi = normal.select("ndvi");
   const normalNdwi = normal.select("ndwi");
-  const fieldMedian = ndvi
-    .reduceRegions({ collection: fc, reducer: ee.Reducer.median().setOutputs(["med"]), scale: plan.scale, crs, tileScale: plan.tileScale })
-    .filter(ee.Filter.notNull(["med"]))
-    .reduceToImage({ properties: ["med"], reducer: ee.Reducer.first() })
-    .rename("fieldMedian");
+  const normalNdre = normal.select("ndre");
+  const medians = latest
+    .select(["ndvi", "ndre"])
+    .rename(["medNdvi", "medNdre"])
+    .reduceRegions({ collection: fc, reducer: ee.Reducer.median(), scale: plan.scale, crs, tileScale: plan.tileScale });
+  const paint = (name) => medians.filter(ee.Filter.notNull([name])).reduceToImage({ properties: [name], reducer: ee.Reducer.first() }).rename(name);
+  const medNdvi = paint("medNdvi");
+  const medNdre = paint("medNdre");
   const health = ndvi.subtract(normalNdvi).divide(HEALTH_SPAN).add(1).clamp(0, 1).rename("health");
   const water = ndwi.subtract(normalNdwi).divide(WATER_SPAN).add(1).clamp(0, 1).rename("water");
-  const stressed = ndvi
-    .lt(fieldMedian.subtract(STRESS_RULES.belowFieldMedian))
-    .and(ndvi.lt(normalNdvi.subtract(STRESS_RULES.belowNormal)))
-    .rename("stressed");
+  const byNdvi = ndvi.lt(medNdvi.subtract(STRESS_RULES.belowFieldMedian)).and(ndvi.lt(normalNdvi.subtract(STRESS_RULES.belowNormal)));
+  const byRedEdge = ndre
+    .lt(medNdre.subtract(RED_EDGE_RULES.belowFieldMedian))
+    .and(ndre.lt(normalNdre.subtract(RED_EDGE_RULES.belowNormal)))
+    .unmask(0);
+  const stressed = byNdvi.or(byRedEdge).rename("stressed");
+  const redEdgeOnly = byRedEdge.and(byNdvi.not()).rename("redEdgeOnly");
+  const ndwiAnomaly = ndwi.subtract(normalNdwi).updateMask(stressed).rename("ndwiAnomaly");
   const w = CONDITION_WEIGHTS;
   const total = w.plantHealth + w.water + w.noStress;
   const condition = health
@@ -382,22 +519,35 @@ function conditionImages(ee, { latest, normal, fc, crs, plan }) {
     .add(ee.Image(1).subtract(stressed).multiply(w.noStress))
     .divide(total)
     .rename("condition");
-  return { health, water, stressed, condition };
+  return { health, water, stressed, redEdgeOnly, ndwiAnomaly, condition };
 }
 
 // Runs one request, once more with coarser pixels if Earth Engine runs out
 // of memory or time, and once more as it is after a pause if the connection
-// dropped (retryTransient; the pause is context.retryDelayMs).
+// dropped (retryTransient; the pause is context.retryDelayMs) or Earth
+// Engine had an internal error (real data, Iowa, 2026-10-19: "An internal
+// error has occurred" once, the same request passed again).
 // `build(plan)` makes the Earth Engine object.
 async function runWithRetry(build, { what, context, timeoutMs = CHUNK_TIMEOUT_MS }) {
+  let internalRetried = false;
   for (let i = 0; ; i += 1) {
     try {
       return await retryTransient(() => evaluate(build(PLANS[i]), { what, context, timeoutMs }), context?.retryDelayMs);
     } catch (error) {
       if (i + 1 < PLANS.length && isTooMuchWorkError(error)) continue;
+      if (!internalRetried && isInternalError(error)) {
+        internalRetried = true;
+        i -= 1;
+        continue;
+      }
       throw error;
     }
   }
+}
+
+export function isInternalError(error) {
+  const text = [error?.message, error?.cause?.message].filter(Boolean).join(" ");
+  return /an internal error has occurred/i.test(text);
 }
 
 // ---------- Finding fields ----------
@@ -405,9 +555,12 @@ async function runWithRetry(build, { what, context, timeoutMs = CHUNK_TIMEOUT_MS
 async function detectFields(deps, input = {}) {
   const { boundary, center, radiusM } = detectInput(input);
   const onProgress = typeof input.onProgress === "function" ? input.onProgress : null;
+  // onMerge(details): what the phenology join looked at (for checks on
+  // real data): [{ a, b, r, peakDays, stripCropland, edgeAny, edgePersistent, joined }]
+  const onMerge = typeof input.onMerge === "function" ? input.onMerge : null;
   const cfg = deps.getConfig();
   const ee = await deps.connect(cfg);
-  const context = { ...contextOf(cfg), retryDelayMs: deps.retryDelayMs };
+  const context = { ...contextOf(cfg), retryDelayMs: deps.retryDelayMs, onMerge };
   const today = isoDay(deps.now());
   const warnings = [];
   onProgress?.(0.05, "Reading satellite images");
@@ -582,20 +735,28 @@ async function traceFields(ee, { region, keepWithin, boundary, crs, anchor, toda
     };
     // Each parcel's mean NDVI and NDWI in each window (its "profile"), to
     // tell whether two touching parcels are one crop (sameCropGroups).
-    const profileImage = ee.Image.cat(pictures.map((picture, i) => picture.select(DETECT.edgeBands, profileKeysOf(i))));
+    const profileImage = ee.Image.cat(pictures.map((picture, i) => picture.select(DETECT.edgeBands).rename(profileKeysOf(i))));
     const keys = pictures.flatMap((_, i) => profileKeysOf(i));
+    // Each parcel's season NDVI curve (10-day composites of the last
+    // complete season), to join the pieces of one field (PHENOLOGY_MERGE).
+    const curveWindows = DETECT.mergeByPhenology ? phenologyWindows(today, anchor.lat, peakMonth) : [];
+    const curveImage = curveWindows.length
+      ? ee.Image.cat(curveWindows.map((window, i) => composite(ee, clearCollection(ee, region, window), ["ndvi"]).rename(curveKey(i))))
+      : null;
     // The area is measured again after the move to longitude/latitude: a
     // broken shape (it came back as the whole globe once, in Kenya) is
     // dropped before anything is measured over it.
-    const finish = (parcels, minHa, max) => {
+    const finish = (parcels, minHa, max, withCurve = false) => {
       const shapes = parcels
         .sort("areaHa", false)
         .limit(max)
         .map((feature) => withArea(feature.transform("EPSG:4326", 1)))
         .filter(ee.Filter.and(ee.Filter.gte("areaHa", minHa), ee.Filter.lte("areaHa", DETECT.maxHa)));
-      return profileImage
+      const image = withCurve && curveImage ? profileImage.addBands(curveImage) : profileImage;
+      const names = withCurve && curveImage ? [...keys, ...curveWindows.map((_, i) => curveKey(i))] : keys;
+      return image
         .reduceRegions({ collection: shapes, reducer: ee.Reducer.mean(), scale: Math.max(20, plan.scale), crs, tileScale: plan.tileScale })
-        .select(["areaHa", ...keys])
+        .select(["areaHa", ...names])
         .toList(max);
     };
     const coarse = trace(DETECT.cannyThreshold, DETECT.minHa);
@@ -603,16 +764,39 @@ async function traceFields(ee, { region, keepWithin, boundary, crs, anchor, toda
     // they are not cut down to the circle.
     const fine = trace(DETECT.fineCannyThreshold, DETECT.splitMinHa);
     return ee.Dictionary({
-      coarse: finish(boundary ? coarse : coarse.filterBounds(keepWithin), DETECT.minHa, DETECT.maxParcels),
+      coarse: finish(boundary ? coarse : coarse.filterBounds(keepWithin), DETECT.minHa, DETECT.maxParcels, true),
       fine: finish(fine, DETECT.splitMinHa, DETECT.maxParcels * 2),
     });
   };
 
   const result = await runWithRetry(build, { what: "Finding fields", context });
   // Touching parcels of the same crop are one field: their outlines are
-  // joined in one more request.
+  // joined in one more request. Parcels with the same phenology are joined
+  // too unless the line between them is a real edge (one more request
+  // looks at the strip along each such line).
   const parcels = parcelShapes(featuresOf(result?.coarse));
-  const groups = sameCropGroups(parcels);
+  let links = [];
+  if (DETECT.mergeByPhenology) {
+    const pairs = phenologyPairs(parcels).slice(0, PHENOLOGY_MERGE.maxPairs);
+    if (pairs.length) {
+      const strips = await runWithRetry((plan) => edgeStripRequest(ee, { region, parcels, pairs, today, anchor, peakMonth, crs, plan }), { what: "Checking the lines between field pieces", context });
+      const byPair = new Map(featuresOf(strips).map((feature) => [feature.properties?.pair, feature.properties]));
+      links = pairs.filter((pair, i) => !isRealEdge(byPair.get(i)));
+      context.onMerge?.(
+        pairs.map(([a, b], i) => ({
+          a: { areaHa: parcels[a].areaHa, centroid: parcels[a].centroid },
+          b: { areaHa: parcels[b].areaHa, centroid: parcels[b].centroid },
+          r: round(curveCorrelation(parcels[a].curve, parcels[b].curve).r, 3),
+          peakDays: round(Math.abs(curvePeakDay(parcels[a].curve) - curvePeakDay(parcels[b].curve)), 1),
+          ...Object.fromEntries(["stripCropland", "edgeAny", "edgePersistent", "perimeterM"].map((key) => [key, round(numberOr(byPair.get(i)?.[key], null), 3)])),
+          profileDiff: round(profileDifference(parcels[a].profile, parcels[b].profile), 3),
+          straightness: stripStraightness(byPair.get(i)),
+          joined: !isRealEdge(byPair.get(i)),
+        })),
+      );
+    }
+  }
+  const groups = sameCropGroups(parcels, { links });
   let coarse = parcels;
   const joined = groups.filter((group) => group.length > 1);
   if (joined.length) {
@@ -627,6 +811,156 @@ async function traceFields(ee, { region, keepWithin, boundary, crs, anchor, toda
 
 // The profile keys of detection window i: n<i> (mean NDVI), w<i> (mean NDWI).
 const profileKeysOf = (i) => [`n${i}`, `w${i}`];
+// The key of phenology composite i: k<i> (mean NDVI).
+const curveKey = (i) => `k${i}`;
+
+// The 10-day windows (PHENOLOGY_MERGE.stepDays) of the last complete
+// growing season at this latitude (season.js), never past today.
+export function phenologyWindows(today, lat, peakMonth = null) {
+  const season = lastCompleteSeason(lat, today, peakMonth);
+  const windows = [];
+  for (let start = season.start; start < season.end && windows.length < 40; start = addDays(start, PHENOLOGY_MERGE.stepDays)) {
+    const end = addDays(start, PHENOLOGY_MERGE.stepDays);
+    windows.push(clampWindow({ start, end: end < season.end ? end : season.end }, today));
+  }
+  return windows.filter((window) => window.start < window.end);
+}
+
+// Pearson correlation of two curves over the composites both have, and
+// how many that is: { r, n } (r null below 3 shared values or with a flat
+// curve).
+export function curveCorrelation(a = {}, b = {}) {
+  const keys = Object.keys(a).filter((key) => Number.isFinite(a[key]) && Number.isFinite(b[key]));
+  const n = keys.length;
+  if (n < 3) return { r: null, n };
+  const xs = keys.map((key) => a[key]);
+  const ys = keys.map((key) => b[key]);
+  const mx = xs.reduce((s, v) => s + v, 0) / n;
+  const my = ys.reduce((s, v) => s + v, 0) / n;
+  let sxy = 0;
+  let sxx = 0;
+  let syy = 0;
+  for (let i = 0; i < n; i += 1) {
+    sxy += (xs[i] - mx) * (ys[i] - my);
+    sxx += (xs[i] - mx) ** 2;
+    syy += (ys[i] - my) ** 2;
+  }
+  return { r: sxx > 0 && syy > 0 ? sxy / Math.sqrt(sxx * syy) : null, n };
+}
+
+// The day (from the season start) of a curve's peak: the greenest
+// composite's middle, moved by a parabola through it and its neighbours.
+// Null without values.
+export function curvePeakDay(curve = {}) {
+  const step = PHENOLOGY_MERGE.stepDays;
+  const points = Object.entries(curve)
+    .map(([key, value]) => [Number(key.slice(1)), value])
+    .filter(([i, value]) => Number.isInteger(i) && Number.isFinite(value))
+    .sort((x, y) => x[0] - y[0]);
+  if (!points.length) return null;
+  let best = 0;
+  points.forEach(([, value], i) => {
+    if (value > points[best][1]) best = i;
+  });
+  const [i, y1] = points[best];
+  let shift = 0;
+  const before = points[best - 1];
+  const after = points[best + 1];
+  if (before && after && before[0] === i - 1 && after[0] === i + 1) {
+    const bend = before[1] - 2 * y1 + after[1];
+    if (bend < 0) shift = Math.max(-0.5, Math.min(0.5, (0.5 * (before[1] - after[1])) / bend));
+  }
+  return (i + 0.5 + shift) * step;
+}
+
+// True when two parcels' curves say one crop sown together
+// (PHENOLOGY_MERGE: correlated, peaks close).
+export function samePhenology(a, b) {
+  const m = PHENOLOGY_MERGE;
+  const { r, n } = curveCorrelation(a?.curve, b?.curve);
+  if (r === null || n < m.minPoints || r < m.minCorrelation) return false;
+  const pa = curvePeakDay(a.curve);
+  const pb = curvePeakDay(b.curve);
+  return pa !== null && pb !== null && Math.abs(pa - pb) <= m.maxPeakDays;
+}
+
+// The touching parcel pairs [i, j] with the same phenology that the
+// profile rule (sameCropGroups) does not already join.
+export function phenologyPairs(parcels) {
+  const pairs = [];
+  for (let i = 0; i < parcels.length; i += 1) {
+    for (let j = i + 1; j < parcels.length; j += 1) {
+      const diff = profileDifference(parcels[i].profile, parcels[j].profile);
+      if (diff !== null && diff <= DETECT.mergeMaxDiff) continue;
+      if (samePhenology(parcels[i], parcels[j]) && parcelsTouch(parcels[i], parcels[j])) pairs.push([i, j]);
+    }
+  }
+  return pairs;
+}
+
+// The strip along the line between each pair of parcels, measured: the
+// share that is cropland (stripCropland), and the shares that are a Canny
+// edge in any detection window (edgeAny) and in PHENOLOGY_MERGE.
+// persistentWindows windows or more (edgePersistent). One feature per pair
+// (property pair = its index).
+function edgeStripRequest(ee, { region, parcels, pairs, today, anchor, peakMonth, crs, plan }) {
+  const m = PHENOLOGY_MERGE;
+  const pictures = detectionWindows(today, anchor.lat, peakMonth).map((window) => composite(ee, clearCollection(ee, region, window), DETECT.edgeBands));
+  const edgeCount = ee
+    .ImageCollection(
+      pictures.map((picture) =>
+        ee.Algorithms.CannyEdgeDetector({ image: picture, threshold: DETECT.cannyThreshold, sigma: DETECT.cannySigma }).neq(0).reduce(ee.Reducer.max()).unmask(0).rename("edge"),
+      ),
+    )
+    .sum();
+  const cropland = ee.ImageCollection(FIELD_DATASETS.worldCover).first().select(BANDS.worldCover).eq(CROPLAND_CLASS).unmask(0);
+  const image = ee.Image.cat([
+    cropland.rename("stripCropland"),
+    edgeCount.gte(1).rename("edgeAny"),
+    edgeCount.gte(m.persistentWindows).rename("edgePersistent"),
+  ]);
+  const strips = ee.FeatureCollection(
+    pairs.map(([i, j], k) =>
+      ee.Feature(
+        ee.Geometry(parcels[i].geometry).buffer(m.stripM, 1).intersection(ee.Geometry(parcels[j].geometry).buffer(m.stripM, 1), 1),
+        { pair: k },
+      ),
+    ),
+  ).map((feature) => feature.set({ perimeterM: feature.geometry().perimeter(1), stripBounds: feature.geometry().bounds(1).coordinates() }));
+  return image
+    .reduceRegions({ collection: strips, reducer: ee.Reducer.mean(), scale: 10, crs, tileScale: plan.tileScale })
+    .select(["pair", "stripCropland", "edgeAny", "edgePersistent", "perimeterM", "stripBounds"], null, false)
+    .toList(pairs.length);
+}
+
+// How straight the line between two parcels is: the diagonal of its strip's
+// bounding box over half the strip's perimeter (about its length). 1 for a
+// straight line, lower for a winding one or a corner. Null when unknown.
+export function stripStraightness(strip) {
+  const perimeter = numberOr(strip?.perimeterM, null);
+  const ring = Array.isArray(strip?.stripBounds?.[0]) ? strip.stripBounds[0] : null;
+  if (!(perimeter > 0) || !ring) return null;
+  const lons = ring.map((p) => p[0]);
+  const lats = ring.map((p) => p[1]);
+  const lat = (Math.min(...lats) + Math.max(...lats)) / 2;
+  const w = (Math.max(...lons) - Math.min(...lons)) * 111320 * Math.cos((lat * Math.PI) / 180);
+  const h = (Math.max(...lats) - Math.min(...lats)) * 110574;
+  return round(Math.min(1, Math.hypot(w, h) / (perimeter / 2)), 3);
+}
+
+// True when the strip between two parcels (edgeStripRequest) is a real
+// field edge, or could not be measured.
+export function isRealEdge(strip) {
+  const m = PHENOLOGY_MERGE;
+  const cropland = numberOr(strip?.stripCropland, null);
+  const any = numberOr(strip?.edgeAny, null);
+  const persistent = numberOr(strip?.edgePersistent, null);
+  if (cropland === null || any === null || persistent === null) return true;
+  if (cropland < m.minCropland) return true;
+  const straightness = stripStraightness(strip);
+  if (straightness === null || straightness >= m.maxStraightness) return true;
+  return any > 0 && persistent / any >= m.maxPersistentRatio;
+}
 
 // Earth Engine features (or shapes already read) -> [{ geometry, areaHa,
 // centroid, profile }]: the largest polygon of each, small holes filled,
@@ -641,7 +975,9 @@ export function parcelShapes(features) {
     if (!(areaHa >= DETECT.minHa) || !(areaHa <= DETECT.maxHa)) continue;
     const props = feature.profile || feature.properties || {};
     const profile = Object.fromEntries(Object.entries(props).filter(([key, value]) => /^[nw]\d+$/.test(key) && Number.isFinite(value)));
-    out.push({ geometry, areaHa, centroid: ringCentroid(geometry.coordinates[0]), profile });
+    const curveProps = feature.curve || feature.properties || {};
+    const curve = Object.fromEntries(Object.entries(curveProps).filter(([key, value]) => /^k\d+$/.test(key) && Number.isFinite(value)));
+    out.push({ geometry, areaHa, centroid: ringCentroid(geometry.coordinates[0]), profile, curve, ...(feature.joined ? { joined: true } : {}) });
   }
   return out;
 }
@@ -666,11 +1002,13 @@ export function parcelsTouch(a, b) {
 }
 
 // Groups of parcel indexes that are one field: touching, and of the same
-// crop (profileDifference <= DETECT.mergeMaxDiff). Every parcel is in
-// exactly one group.
-export function sameCropGroups(parcels, { maxDiff = DETECT.mergeMaxDiff } = {}) {
+// crop (profileDifference <= DETECT.mergeMaxDiff), or joined by `links`
+// ([i, j] pairs: the same phenology and no real edge between them).
+// Every parcel is in exactly one group.
+export function sameCropGroups(parcels, { maxDiff = DETECT.mergeMaxDiff, links = [] } = {}) {
   const parent = parcels.map((_, i) => i);
   const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  for (const [i, j] of links) if (parent[i] !== undefined && parent[j] !== undefined && find(i) !== find(j)) parent[find(j)] = find(i);
   for (let i = 0; i < parcels.length; i += 1) {
     for (let j = i + 1; j < parcels.length; j += 1) {
       const diff = profileDifference(parcels[i].profile, parcels[j].profile);
@@ -708,8 +1046,8 @@ export function joinGroups(parcels, groups, outlines) {
       out.push(...group.map((i) => parcels[i]));
       continue;
     }
-    const profile = parcels[group.reduce((best, i) => (parcels[i].areaHa > parcels[best].areaHa ? i : best), group[0])].profile;
-    out.push({ geometry, areaHa, centroid: ringCentroid(geometry.coordinates[0]), profile });
+    const largest = parcels[group.reduce((best, i) => (parcels[i].areaHa > parcels[best].areaHa ? i : best), group[0])];
+    out.push({ geometry, areaHa, centroid: ringCentroid(geometry.coordinates[0]), profile: largest.profile, curve: largest.curve, joined: true });
   }
   return out;
 }
@@ -724,6 +1062,13 @@ async function analyzeFields(deps, input = {}) {
   const context = { ...contextOf(cfg), retryDelayMs: deps.retryDelayMs };
   const nowDay = isoDay(deps.now());
   const today = isDay(input.today) && input.today < nowDay ? input.today : nowDay;
+  // Fields whose whole monthly history (since HISTORY_FROM) is read too,
+  // in the same batched requests (`histories` in the answer).
+  const historyIds = new Set((Array.isArray(input.historyFor) ? input.historyFor : []).map(String));
+  // Fields whose saved history is fresh (run.js): their recent months are
+  // not read again (server/field/analysis.js reads the crop from the saved
+  // history), which saves one request per few fields on a big farm.
+  const freshIds = new Set((Array.isArray(input.freshHistoryFor) ? input.freshHistoryFor : []).map(String));
   const warnings = [];
   const farmBox = padBbox(unionBbox(fields.map((f) => f.bbox)), 0.002);
   const region = rect(ee, farmBox);
@@ -737,16 +1082,14 @@ async function analyzeFields(deps, input = {}) {
   const fireById = new Map(fields.map((field) => [field.id, fireWindows(conflictAt(bboxCenter(field.bbox).lat, bboxCenter(field.bbox).lon), today)]));
   const fireSets = new Map([...fireById.values()].map((fire) => [fire.key, fire]));
 
-  const passChunks = chunk(fields, FIELDS_PER_REQUEST);
-  const total = 1 + passChunks.length + 2 * passChunks.length + 1;
-  let done = 0;
-  const step = (message) => onProgress?.(Math.min(0.99, done++ / total), message);
-
-  // 1. Which images exist for the damage measures, and can we read the soil map?
-  step("Checking satellite images");
+  // 1. Which images exist for the damage measures, how many pictures this
+  // season, and can we read the soil map?
+  onProgress?.(0.01, "Checking satellite images");
   const counts = ee.Dictionary({
     chiBaseline: windows.chiBaseline.map((w) => sentinel2(ee, region, w)).reduce((all, next) => all.merge(next)).size(),
     chiSeason: sentinel2(ee, region, windows.chiSeason).size(),
+    s2Passes: ee.ImageCollection(FIELD_DATASETS.sentinel2).filterBounds(region).filterDate(windows.passes.start, windows.passes.end).size(),
+    vhPasses: vhCollection(ee, region, windows.passes).size(),
     // Radar per orbit direction: one direction is compared (pickPass), as
     // the same ground looks different from the east and from the west.
     ...Object.fromEntries(
@@ -775,80 +1118,330 @@ async function analyzeFields(deps, input = {}) {
   if (!(have.radarBaselines.length > 0 && have.radarSeason > 0)) warnings.push("No Sentinel-1 radar images for the growing seasons compared; radar damage was not measured.");
   if (!(have.chiBaseline > 0 && have.chiSeason > 0)) warnings.push(`Too few clear Sentinel-2 images for ${BASELINE.label} or the last season; the soil health index was not measured.`);
 
-  // 2. Every satellite pass this season, per field.
+  // 2. Every request, at most PARALLEL_REQUESTS at a time: the passes
+  // (Sentinel-2 and Sentinel-1 VH) and the monthly means first, then the
+  // stats (they need each field's latest clear pass).
+  const run = limiter(PARALLEL_REQUESTS);
+  const s2Chunks = chunk(fields, passesPerRequest(have.s2Passes));
+  const vhChunks = have.vhPasses > 0 ? chunk(fields, passesPerRequest(have.vhPasses)) : [];
+  const recent = monthRange(addMonths(today.slice(0, 7), 1 - CROP_MONTHS), today.slice(0, 7));
+  const monthJobs = [
+    ...monthlyJobs(fields.filter((f) => !historyIds.has(f.id) && !freshIds.has(f.id)), recent),
+    ...monthlyJobs(fields.filter((f) => historyIds.has(f.id)), monthRange(HISTORY_FROM, today.slice(0, 7))),
+  ];
+  const statsCount = Math.ceil(fields.length / FIELDS_PER_REQUEST) + 1;
+  const total = s2Chunks.length + vhChunks.length + monthJobs.length + statsCount;
+  let done = 0;
+  const step = (message) => onProgress?.(Math.min(0.99, 0.02 + (0.97 * ++done) / total), message);
+  const names = (part) => `${part.length} field${part.length === 1 ? "" : "s"}`;
+
   const passesById = new Map(fields.map((f) => [f.id, []]));
-  await mapLimit(passChunks, PARALLEL_REQUESTS, async (part) => {
-    const build = (plan) => {
-      const fc = fieldCollection(ee, part);
-      return clearCollection(ee, region, windows.passes)
-        .map((image) =>
-          image
-            .select(["ndvi", "ndwi", "clear"])
-            .reduceRegions({ collection: fc, reducer: ee.Reducer.mean(), scale: plan.scale, crs, tileScale: plan.tileScale })
-            .map((feature) => feature.set("date", image.date().format("YYYY-MM-dd"))),
-        )
-        .flatten()
-        .filter(ee.Filter.gt("clear", 0))
-        .select([".*"], null, false);
-    };
-    const result = await runWithRetry(build, { what: `Reading satellite passes for ${part.length} field${part.length === 1 ? "" : "s"}`, context });
-    for (const feature of result?.features || []) {
-      const p = feature.properties || {};
-      if (passesById.has(p.fid) && isDay(p.date)) passesById.get(p.fid).push(p);
-    }
-    step("Reading satellite passes");
-  });
+  const s2Done = Promise.all(
+    s2Chunks.map((part) =>
+      run(async () => {
+        const result = await runWithRetry((plan) => passesRequest(ee, { region, window: windows.passes, part, crs, plan }), { what: `Reading satellite passes for ${names(part)}`, context });
+        for (const feature of featuresOf(result)) {
+          const p = feature.properties || {};
+          if (passesById.has(p.fid) && isDay(p.date)) passesById.get(p.fid).push(p);
+        }
+        step("Reading satellite passes");
+      }),
+    ),
+  );
+  const vhById = new Map(fields.map((f) => [f.id, []]));
+  const vhDone = Promise.all(
+    vhChunks.map((part) =>
+      run(async () => {
+        // Radar only adds to the harvest and the crop type: without it the
+        // analysis goes on (and says so).
+        const result = await runWithRetry((plan) => vhRequest(ee, { region, window: windows.passes, part, crs, plan }), { what: `Reading radar passes for ${names(part)}`, context }).catch(
+          (error) => {
+            warnings.push(`Radar passes for ${names(part)} could not be read (${error.message}); harvest is judged from the optical images only.`);
+            return null;
+          },
+        );
+        for (const feature of featuresOf(result)) {
+          const p = feature.properties || {};
+          if (vhById.has(p.fid) && isDay(p.date)) vhById.get(p.fid).push(p);
+        }
+        step("Reading radar passes");
+      }),
+    ),
+  );
+  const monthsById = new Map(fields.map((f) => [f.id, new Map()]));
+  const failedMonths = new Set();
+  const monthsDone = Promise.all(
+    monthJobs.map((job) =>
+      run(async () => {
+        const what = `Reading monthly values ${job.months[0]} to ${job.months[job.months.length - 1]} for ${names(job.part)}`;
+        // The months only add the crop type (and the history): without them
+        // the analysis goes on (and says so).
+        const result = await runWithRetry((plan) => monthlyRequest(ee, { region, ...job, crs, plan, today }), { what, context }).catch((error) => {
+          warnings.push(`${what} failed (${error.message}).`);
+          for (const field of job.part) failedMonths.add(field.id);
+          return null;
+        });
+        for (const p of readMonthly(result, job.months)) monthsById.get(p.fid)?.set(p.month, p);
+        step("Reading monthly values");
+      }),
+    ),
+  );
 
   // Per field: one reading per day, its clear passes and its latest window.
-  const plans = fields.map((field) => ({ ...fieldPlan(field, passesById.get(field.id), { today, windows }), fire: fireById.get(field.id) }));
-
-  // 3. Measure, per group of fields that share a latest window and a damage window.
-  const groups = new Map();
-  for (const plan of plans) {
-    const key = `${plan.latestWindow.start}|${plan.latestWindow.end}|${plan.fire.key}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(plan);
-  }
-  const jobs = [];
-  for (const group of groups.values()) for (const part of chunk(group, FIELDS_PER_REQUEST)) jobs.push(part);
   const measured = new Map();
-  const zonesById = new Map();
   const shared = { ee, region, crs, windows, have, assetId: asset.assetId };
-  const tasks = jobs.flatMap((part) => [
-    { kind: "stats", part },
-    { kind: "zones", part },
-  ]);
-  await mapLimit(tasks, PARALLEL_REQUESTS, async ({ kind, part }) => {
-    const names = `${part.length} field${part.length === 1 ? "" : "s"}`;
-    if (kind === "stats") {
-      const result = await runWithRetry((plan) => statsRequest(shared, part, plan), { what: `Measuring ${names}`, context });
-      for (const [id, value] of Object.entries(readStats(result, part))) measured.set(id, value);
-      step("Measuring fields");
-    } else {
-      const result = await runWithRetry((plan) => zonesRequest(shared, part, plan), { what: `Mapping the condition of ${names}`, context });
-      for (const field of part) zonesById.set(field.id, readZones(result?.[field.id], field.grid));
-      step("Mapping field condition");
+  const statsDone = s2Done.then(async () => {
+    const plans = fields.map((field) => ({ ...fieldPlan(field, passesById.get(field.id), { today, windows }), fire: fireById.get(field.id) }));
+    // Measured per group of fields that share a latest window and a damage window.
+    const groups = new Map();
+    for (const plan of plans) {
+      const key = `${plan.latestWindow.start}|${plan.latestWindow.end}|${plan.fire.key}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(plan);
     }
+    const jobs = [];
+    for (const group of groups.values()) for (const part of chunk(group, FIELDS_PER_REQUEST)) jobs.push(part);
+    await Promise.all(
+      jobs.map((part) =>
+        run(async () => {
+          const result = await runWithRetry((plan) => statsRequest(shared, part, plan), { what: `Measuring ${names(part)}`, context });
+          for (const [id, value] of Object.entries(readStats(result, part))) measured.set(id, value);
+          step("Measuring fields");
+        }),
+      ),
+    );
+    return plans;
   });
+  const [plans] = await Promise.all([statsDone, vhDone, monthsDone]);
 
-  // 4. The analyses.
+  // 3. The analyses.
   const updatedAt = new Date(deps.now()).toISOString();
   const analyses = {};
+  const histories = {};
   for (const plan of plans) {
-    analyses[plan.id] = buildAnalysis(plan, measured.get(plan.id) || {}, zonesById.get(plan.id) || emptyZones(plan.grid), { today, updatedAt });
+    const months = monthsById.get(plan.id);
+    const extra = {
+      vh: vhSeriesOf(vhById.get(plan.id)),
+      months: recent.map((month) => monthValue(month, months.get(month))),
+      peakMonth,
+    };
+    analyses[plan.id] = buildAnalysis(plan, measured.get(plan.id) || {}, null, { today, updatedAt, ...extra });
+    // A history with a failed part is left out (run.js reads it again later).
+    if (historyIds.has(plan.id) && !failedMonths.has(plan.id)) histories[plan.id] = monthRange(HISTORY_FROM, today.slice(0, 7)).map((month) => monthValue(month, months.get(month)));
   }
   onProgress?.(1, "Done");
-  return { analyses, warnings };
+  return historyIds.size ? { analyses, histories, warnings } : { analyses, warnings };
 }
+
+// Runs async tasks at most `limit` at a time, in the order they are given.
+//   const run = limiter(4); await run(() => work());
+function limiter(limit) {
+  let active = 0;
+  const queue = [];
+  const next = () => {
+    if (active >= limit || !queue.length) return;
+    active += 1;
+    const { task, resolve, reject } = queue.shift();
+    Promise.resolve()
+      .then(task)
+      .then(resolve, reject)
+      .finally(() => {
+        active -= 1;
+        next();
+      });
+  };
+  return (task) =>
+    new Promise((resolve, reject) => {
+      queue.push({ task, resolve, reject });
+      next();
+    });
+}
+
+// How many fields go in one passes request when the season has `pictures`
+// pictures: fields x pictures stays at or under PASS_ELEMENTS_PER_REQUEST.
+export function passesPerRequest(pictures) {
+  const n = Math.max(1, Number(pictures) || 0);
+  return Math.max(1, Math.min(MAX_FIELDS_PER_PASS_REQUEST, Math.floor(PASS_ELEMENTS_PER_REQUEST / n)));
+}
+
+// The monthly-means requests for these fields and months: months in runs
+// of MONTHS_PER_REQUEST, fields so that fields x months stays at or under
+// MONTH_ELEMENTS_PER_REQUEST. -> [{ part, months }]
+export function monthlyJobs(fields, months) {
+  if (!fields.length || !months.length) return [];
+  const jobs = [];
+  for (const monthPart of chunk(months, MONTHS_PER_REQUEST)) {
+    const perRequest = Math.max(1, Math.floor(MONTH_ELEMENTS_PER_REQUEST / monthPart.length));
+    for (const part of chunk(fields, perRequest)) jobs.push({ part, months: monthPart });
+  }
+  return jobs;
+}
+
+// The Sentinel-2 passes request: each picture's field means (ndvi, ndwi,
+// ndre, ndyi, clear share) and date, for the pictures that saw some of the
+// field clearly.
+function passesRequest(ee, { region, window, part, crs, plan }) {
+  const fc = fieldCollection(ee, part);
+  return clearCollection(ee, region, window)
+    .map((image) =>
+      image
+        .select(["ndvi", "ndwi", "ndre", "ndyi", "clear"])
+        .reduceRegions({ collection: fc, reducer: ee.Reducer.mean(), scale: plan.scale, crs, tileScale: plan.tileScale })
+        .map((feature) => feature.set("date", image.date().format("YYYY-MM-dd"))),
+    )
+    .flatten()
+    .filter(ee.Filter.gt("clear", 0))
+    .select([".*"], null, false);
+}
+
+// Sentinel-1 VH pictures (IW mode, both orbit directions) over the region.
+export function vhCollection(ee, region, window) {
+  return ee
+    .ImageCollection(FIELD_DATASETS.sentinel1)
+    .filterBounds(region)
+    .filterDate(window.start, window.end)
+    .filter(ee.Filter.eq("instrumentMode", "IW"))
+    .filter(ee.Filter.listContains("transmitterReceiverPolarisation", VH_BAND))
+    .select(VH_BAND);
+}
+
+// The Sentinel-1 VH request: each radar picture's field mean backscatter,
+// averaged as power (linear), not as dB, then sent as vhPower; with the
+// date and the orbit direction.
+function vhRequest(ee, { region, window, part, crs, plan }) {
+  const fc = fieldCollection(ee, part);
+  return vhCollection(ee, region, window)
+    .map((image) =>
+      // dB -> power: 10^(dB / 10) = exp(dB x ln(10) / 10).
+      image
+        .updateMask(image.gt(VH_MIN_DB))
+        .multiply(Math.LN10 / 10)
+        .exp()
+        .rename("vhPower")
+        .reduceRegions({ collection: fc, reducer: ee.Reducer.mean().setOutputs(["vhPower"]), scale: Math.max(VH_SCALE, plan.scale), crs, tileScale: plan.tileScale })
+        .map((feature) => feature.set({ date: image.date().format("YYYY-MM-dd"), orbit: image.get("orbitProperties_pass"), relOrbit: image.get("relativeOrbitNumber_start") })),
+    )
+    .flatten()
+    .filter(ee.Filter.notNull(["vhPower"]))
+    .select([".*"], null, false);
+}
+
+// Field means of each month (clear NDVI and NDWI median composite, and the
+// share of the field seen clearly at least once), as ONE image with three
+// bands per month (m<i>_ndvi, m<i>_ndwi, m<i>_clear) reduced once over the
+// fields. (A collection of one reduceRegions per month failed on real
+// Earth Engine with "An internal error has occurred" for 16 Iowa fields,
+// and once ran past the time limit for 2 demo fields; one image: 2 to 3 s.)
+// Read the answer with readMonthly.
+export function monthlyRequest(ee, { region, part, months, crs, plan, today }) {
+  const fc = fieldCollection(ee, part);
+  const scale = Math.max(plan.scale, monthlyScale(part));
+  const bands = months.map((month, i) => {
+    const window = clampWindow({ start: `${month}-01`, end: `${addMonths(month, 1)}-01` }, today);
+    const passes = clearCollection(ee, region, window);
+    const seen = passes.select(["ndvi"]).merge(ee.ImageCollection([blankImage(ee, ["ndvi"])])).count().gt(0).unmask(0);
+    return ee.Image.cat([composite(ee, passes), seen]).rename(monthKeys(i));
+  });
+  return ee.Image.cat(bands)
+    .reduceRegions({ collection: fc, reducer: ee.Reducer.mean(), scale, crs, tileScale: plan.tileScale })
+    .select([".*"], null, false);
+}
+const monthKeys = (i) => [`m${i}_ndvi`, `m${i}_ndwi`, `m${i}_clear`];
+
+// A monthlyRequest answer -> [{ fid, month, ndvi, ndwi, clear }].
+export function readMonthly(result, months) {
+  const out = [];
+  for (const feature of featuresOf(result)) {
+    const p = feature.properties || {};
+    months.forEach((month, i) => {
+      const [ndvi, ndwi, clear] = monthKeys(i);
+      out.push({ fid: p.fid, month, ndvi: p[ndvi], ndwi: p[ndwi], clear: p[clear] });
+    });
+  }
+  return out;
+}
+
+// The pixel size (m) for batched monthly means: the history scale of the
+// median field of the batch, at least 20 m (a field mean needs no more).
+export function monthlyScale(fields) {
+  const areas = (fields || []).map((f) => Number(f.areaHa) || 0).sort((a, b) => a - b);
+  return Math.max(20, historyScale(areas.length ? areas[Math.floor(areas.length / 2)] : 0));
+}
+
+// One month's answer -> { month, ndvi, ndwi, clearPct } (values only when
+// at least MIN_CLEAR_SHARE of the field was seen clearly, like a pass).
+export function monthValue(month, p = {}) {
+  const clear = clamp01(numberOr(p?.clear, 0));
+  const seen = clear >= MIN_CLEAR_SHARE;
+  return { month, ndvi: seen ? round(numberOr(p?.ndvi, null), 3) : null, ndwi: seen ? round(numberOr(p?.ndwi, null), 3) : null, clearPct: Math.round(clear * 100) };
+}
+
+// Radar answers for one field -> { passes, series }:
+//   passes  every picture: [{ date, vh (dB), orbit, relOrbit }] by date
+//           (the raw reading; vh from the mean backscatter power)
+//   series  the cleaned VH series method.js radarHarvest reads, one value
+//           per day: [{ date, vh }]
+// Real VH over one field jumps 3 to 5 dB from one picture to the next with
+// rain or dew (real data, demo farm, September 2026, stubble: -24.0, -16.1,
+// -20.3, -23.0 dB in 6 days), which a plain "3 dB drop" rule reads as a
+// harvest. Cleaning: same-day pictures (overlapping scenes, both orbit
+// directions) are averaged, then a running median of VH_CLEAN.window days
+// (at the two ends, of the days there are): one odd picture goes, a real
+// step (a crop cut down) stays on its day, because a median keeps steps.
+// Real data, Iowa, 2026-10-19: corn and soybean fields cut between 27
+// September and 9 October fell 5 to 8 dB and stayed down; standing ones
+// moved less than 1.5 dB. Removing each relative orbit's own offset (its
+// season median) was tried and dropped: the orbits see different weeks,
+// so the offsets were biased and added 2 dB steps to clean series.
+export const VH_CLEAN = { window: 3 };
+
+export function vhSeriesOf(features) {
+  const passes = (features || [])
+    .map((p) => {
+      const power = numberOr(p?.vhPower, null);
+      if (!(power > 0) || !isDay(p.date)) return null;
+      const relOrbit = numberOr(p.relOrbit, null);
+      return { date: p.date, vh: round(10 * Math.log10(power), 2), orbit: typeof p.orbit === "string" ? p.orbit : null, relOrbit: Number.isInteger(relOrbit) ? relOrbit : null };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.date.localeCompare(b.date) || String(a.orbit).localeCompare(String(b.orbit)) || (a.relOrbit ?? 0) - (b.relOrbit ?? 0));
+  return { passes, series: cleanVh(passes) };
+}
+
+// The cleaning above: [{ date, vh }] -> [{ date, vh }], one per day.
+export function cleanVh(passes) {
+  const byDay = new Map();
+  for (const p of passes || []) if (isDay(p?.date) && Number.isFinite(p.vh)) byDay.set(p.date, [...(byDay.get(p.date) || []), p.vh]);
+  const days = [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([date, values]) => ({ date, vh: values.reduce((s, v) => s + v, 0) / values.length }));
+  const half = Math.floor(VH_CLEAN.window / 2);
+  return days.map((day, i) => ({ date: day.date, vh: round(median(days.slice(Math.max(0, i - half), i + half + 1).map((d) => d.vh)), 2) }));
+}
+
+// The season's radar peak, for the crop type: the highest value of the
+// cleaned series within VH_PEAK_DAYS of the NDVI peak (a crop gives its
+// strongest return when it is fullest; frozen or snowy ground in winter
+// can read brighter still). { vhPeak, vhPeakDate } (null with fewer than
+// 3 days in that span, or no NDVI peak).
+export const VH_PEAK_DAYS = 30;
+export function vhPeakOf(series, peakDate = null) {
+  if (!isDay(peakDate)) return { vhPeak: null, vhPeakDate: null };
+  const from = shiftDays(peakDate, -VH_PEAK_DAYS);
+  const to = shiftDays(peakDate, VH_PEAK_DAYS);
+  const near = (series || []).filter((p) => p.date >= from && p.date <= to && Number.isFinite(p.vh));
+  if (near.length < 3) return { vhPeak: null, vhPeakDate: null };
+  const best = near.reduce((top, p) => (p.vh > top.vh ? p : top));
+  return { vhPeak: round(best.vh, 2), vhPeakDate: best.date };
+}
+
 
 // The stats request for one group of fields: per-field numbers, stress
 // patches and the normal curve, as one ee.Dictionary.
 function statsRequest({ ee, region, crs, windows, have, assetId }, part, plan) {
   const fc = fieldCollection(ee, part);
   const latestWindow = part[0].latestWindow;
-  const latest = composite(ee, clearCollection(ee, region, latestWindow));
+  const latest = composite(ee, clearCollection(ee, region, latestWindow), FIELD_BANDS);
   const yearlyCollections = normalWindows(latestWindow).map((window) => clearCollection(ee, region, window));
-  const yearly = yearlyCollections.map((collection) => composite(ee, collection));
+  const yearly = yearlyCollections.map((collection) => composite(ee, collection, FIELD_BANDS));
   const normal = normalOfYears(ee, yearly);
   const images = conditionImages(ee, { latest, normal, fc, crs, plan });
 
@@ -872,8 +1465,10 @@ function statsRequest({ ee, region, crs, windows, have, assetId }, part, plan) {
   const firesBase = have[`firesBase_${fire.key}`] > 0 ? fireDays(fire.baselines, "firesBase") : ee.Image.constant(0).rename("firesBase");
 
   const meanBands = [
-    ...yearly.flatMap((image, i) => [image.select("ndvi").rename(`n${BASELINE_YEARS[i]}_ndvi`), image.select("ndwi").rename(`n${BASELINE_YEARS[i]}_ndwi`)]),
+    ...yearly.flatMap((image, i) => FIELD_BANDS.map((band) => image.select(band).rename(`n${BASELINE_YEARS[i]}_${band}`))),
     images.stressed,
+    images.redEdgeOnly,
+    images.ndwiAnomaly,
     radarChanged,
     chiDrop,
     chernozemImage(ee, assetId).rename("chernozem"),
@@ -891,7 +1486,8 @@ function statsRequest({ ee, region, crs, windows, have, assetId }, part, plan) {
     CURVE_DAYS.map((day, i) => composite(ee, clearCollection(ee, region, curveWindow(year, day)), ["ndvi"]).rename(curveBand(year, i))),
   );
 
-  // Stressed blobs of PATCH_MIN_HA or more, outlined.
+  // Stressed blobs of PATCH_MIN_HA or more, outlined, each with the mean
+  // NDWI anomaly of its pixels (method.js stressCause).
   const minPixels = Math.max(2, Math.ceil((PATCH_MIN_HA * 1e4) / (plan.scale * plan.scale)));
   const stressedOnly = images.stressed.selfMask();
   const patches = stressedOnly
@@ -909,13 +1505,16 @@ function statsRequest({ ee, region, crs, windows, have, assetId }, part, plan) {
       bestEffort: true,
       tileScale: plan.tileScale,
     })
-    .map((feature) => {
-      const shape = feature.geometry();
-      return ee.Feature(null, { areaHa: shape.area(1).divide(1e4), centroid: shape.centroid(1).coordinates(), bounds: shape.bounds(1).coordinates() });
-    })
+    .map((feature) => feature.set("areaHa", feature.geometry().area(1).divide(1e4)))
     .filter(ee.Filter.gte("areaHa", PATCH_MIN_HA))
     .sort("areaHa", false)
     .limit(MAX_PATCHES * part.length * 3);
+  const patchesMeasured = images.ndwiAnomaly
+    .reduceRegions({ collection: patches, reducer: ee.Reducer.mean().setOutputs(["ndwiAnomaly"]), scale: plan.scale, crs, tileScale: plan.tileScale })
+    .map((feature) => {
+      const shape = feature.geometry();
+      return ee.Feature(null, { areaHa: feature.get("areaHa"), ndwiAnomaly: feature.get("ndwiAnomaly"), centroid: shape.centroid(1).coordinates(), bounds: shape.bounds(1).coordinates() });
+    });
 
   // .toList: a FeatureCollection nested inside an ee.Dictionary comes back
   // from real Earth Engine WITHOUT its features (only a description), so
@@ -931,7 +1530,7 @@ function statsRequest({ ee, region, crs, windows, have, assetId }, part, plan) {
     // 100 m pixel centre and came back with no fire count at all.
     fires: asList(reduce(ee.Image.cat([firesNow, firesBase]), ee.Reducer.max())),
     curve: asList(reduce(ee.Image.cat(curveBands), ee.Reducer.mean(), Math.max(20, plan.scale))),
-    patches: asList(patches, MAX_PATCHES * part.length * 3),
+    patches: asList(patchesMeasured, MAX_PATCHES * part.length * 3),
   });
 }
 
@@ -952,27 +1551,6 @@ function radarChangeImage(ee, { region, windows, baselines, pass = null, fc, crs
     .filter(ee.Filter.notNull(["shift"]))
     .reduceToImage({ properties: ["shift"], reducer: ee.Reducer.first() });
   return change.subtract(fieldShift).abs().gte(RADAR_CHANGE_DB).rename("radarChanged");
-}
-
-// The zones request: the condition image on each field's grid.
-function zonesRequest({ ee, region, crs }, part, plan) {
-  const fc = fieldCollection(ee, part);
-  const latestWindow = part[0].latestWindow;
-  const latest = composite(ee, clearCollection(ee, region, latestWindow));
-  const normal = normalOfYears(ee, normalWindows(latestWindow).map((w) => composite(ee, clearCollection(ee, region, w))));
-  const { condition } = conditionImages(ee, { latest, normal, fc, crs, plan });
-  const grids = {};
-  for (const field of part) {
-    const grid = field.grid;
-    grids[field.id] = condition
-      .clip(ee.Geometry(field.geometry))
-      .reproject({ crs, scale: plan.scale })
-      .reduceResolution({ reducer: ee.Reducer.mean(), bestEffort: true, maxPixels: 1024 })
-      .reproject({ crs: "EPSG:4326", crsTransform: grid.transform })
-      .toFloat() // a plain float band accepts the -1 "outside" value
-      .sampleRectangle({ region: ee.Geometry.Rectangle(grid.inner, "EPSG:4326", false), defaultValue: NONE });
-  }
-  return ee.Dictionary(grids);
 }
 
 // ---------- History ----------
@@ -1028,6 +1606,41 @@ async function fieldHistory(deps, { field, from = HISTORY_FROM, to } = {}) {
   });
 }
 
+// The monthly history of several fields at once (batched: every month's
+// composite is made once for the farm and read over all the fields), the
+// same answer as fieldHistory per field.
+//   fields      the fields; from / to: "YYYY-MM" (from HISTORY_FROM, to
+//               this month)
+// -> { [fieldId]: [{ month, ndvi, ndwi, clearPct }] }
+async function fieldHistories(deps, { fields, from = HISTORY_FROM, to, onProgress } = {}) {
+  const list = fieldsInput(fields);
+  const cfg = deps.getConfig();
+  const ee = await deps.connect(cfg);
+  const context = { ...contextOf(cfg), retryDelayMs: deps.retryDelayMs };
+  const today = isoDay(deps.now());
+  const thisMonth = today.slice(0, 7);
+  const first = isMonth(from) ? (from < HISTORY_FROM ? HISTORY_FROM : from) : HISTORY_FROM;
+  const last = isMonth(to) && to < thisMonth ? to : thisMonth;
+  const months = monthRange(first, last);
+  if (!months.length) return Object.fromEntries(list.map((f) => [f.id, []]));
+  const box = padBbox(unionBbox(list.map((f) => f.bbox)), 0.001);
+  const center = bboxCenter(box);
+  const crs = utmCrs(center.lon, center.lat);
+  const region = rect(ee, box);
+  const jobs = monthlyJobs(list, months);
+  const byId = new Map(list.map((f) => [f.id, new Map()]));
+  let done = 0;
+  await mapLimit(jobs, PARALLEL_REQUESTS, async (job) => {
+    const result = await runWithRetry((plan) => monthlyRequest(ee, { region, ...job, crs, plan, today }), {
+      what: `Reading the history ${job.months[0]} to ${job.months[job.months.length - 1]}`,
+      context,
+    });
+    for (const p of readMonthly(result, job.months)) byId.get(p.fid)?.set(p.month, p);
+    onProgress?.(++done / jobs.length, "Reading the field history");
+  });
+  return Object.fromEntries(list.map((f) => [f.id, months.map((month) => monthValue(month, byId.get(f.id).get(month)))]));
+}
+
 // The pixel size (m) a field's monthly history is read at: about
 // HISTORY_PIXELS pixels over the field, 10 to 100 m. A field mean needs no
 // more, and 10 m pixels over a 600 ha field for 30 months ran past Earth
@@ -1053,8 +1666,8 @@ async function geotiffUrl(deps, { field, latestPassDate = null, analysis = null 
   const region = rect(ee, padBbox(one.bbox, 0.001));
   const shape = ee.Geometry(one.geometry);
   const fc = fieldCollection(ee, [one]);
-  const latest = composite(ee, clearCollection(ee, region, window));
-  const normal = normalOfYears(ee, normalWindows(window).map((w) => composite(ee, clearCollection(ee, region, w))));
+  const latest = composite(ee, clearCollection(ee, region, window), FIELD_BANDS);
+  const normal = normalOfYears(ee, normalWindows(window).map((w) => composite(ee, clearCollection(ee, region, w), FIELD_BANDS)));
   const { condition } = conditionImages(ee, { latest, normal, fc, crs, plan: PLANS[0] });
   const image = ee.Image.cat([latest.select("ndvi"), latest.select("ndwi"), condition]).toFloat().clip(shape);
   const date = shiftDays(window.end, -1);
@@ -1256,7 +1869,9 @@ function validLonLat([lon, lat]) {
   return Number.isFinite(lon) && Number.isFinite(lat) && lon >= -180 && lon <= 180 && lat >= -90 && lat <= 90;
 }
 
-// The fields to measure, checked: [{ id, name, geometry, areaHa, bbox, grid }].
+// The fields to measure, checked: [{ id, name, geometry, areaHa, bbox, grid,
+// crop }]. crop: the farmer's own choice (cropSource "user"), else null
+// (a placeholder or a detected crop is not the farmer's word).
 export function fieldsInput(fields) {
   if (!Array.isArray(fields) || !fields.length) throw new GeeError("bad_request", "No fields to measure.");
   return fields.map((field) => {
@@ -1264,7 +1879,8 @@ export function fieldsInput(fields) {
     if (!field?.id || !geometry) throw new GeeError("bad_request", `Field ${field?.name || field?.id || "?"} has no valid outline.`);
     const bbox = bboxOf(geometry);
     const areaHa = Number.isFinite(field.areaHa) && field.areaHa > 0 ? field.areaHa : geoAreaHa(geometry);
-    return { id: String(field.id), name: field.name || null, geometry, areaHa, bbox, grid: zoneGrid(bbox) };
+    const crop = field.cropSource === "user" && typeof field.crop === "string" && field.crop.trim() ? field.crop : null;
+    return { id: String(field.id), name: field.name || null, geometry, areaHa, bbox, grid: zoneGrid(bbox), crop };
   });
 }
 
@@ -1444,7 +2060,14 @@ export function fieldPlan(field, passes, { today, windows = analysisWindows(toda
   const inLookback = latest && latest.date >= shiftDays(today, -LOOKBACK_DAYS);
   const season = clear
     .filter((p) => p.date >= windows.seasonStart)
-    .map((p) => ({ date: p.date, ndvi: round(numberOr(p.ndvi, null), 3), ndwi: round(numberOr(p.ndwi, null), 3), clearPct: Math.round(clamp01(numberOr(p.clear, 0)) * 100) }));
+    .map((p) => ({
+      date: p.date,
+      ndvi: round(numberOr(p.ndvi, null), 3),
+      ndwi: round(numberOr(p.ndwi, null), 3),
+      ndre: round(numberOr(p.ndre, null), 3),
+      ndyi: round(numberOr(p.ndyi, null), 3),
+      clearPct: Math.round(clamp01(numberOr(p.clear, 0)) * 100),
+    }));
   return {
     ...field,
     passCount: daily.length,
@@ -1474,14 +2097,16 @@ export function readStats(result, part) {
     const [lon, lat] = Array.isArray(p.centroid) ? p.centroid : [];
     if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
     const owner = part.find((field) => pointInGeometry(lon, lat, field.geometry));
-    if (owner) out[owner.id].patches.push({ lat, lon, ha: numberOr(p.areaHa, 0), bounds: p.bounds });
+    if (owner) out[owner.id].patches.push({ lat, lon, ha: numberOr(p.areaHa, 0), bounds: p.bounds, ndwiAnomaly: numberOr(p.ndwiAnomaly, null) });
   }
   return out;
 }
 
-// A stress patch -> { lat, lon, radiusM, ha }: a circle around it (half the
-// diagonal of its bounding box, at least 15 m).
-export function patchCircle({ lat, lon, ha, bounds }) {
+// A stress patch -> { lat, lon, radiusM, ha, ndwiAnomaly, cause }: a circle
+// around it (half the diagonal of its bounding box, at least 15 m), the
+// mean NDWI anomaly of its pixels and the likely cause (method.js
+// stressCause: "dry" or "other").
+export function patchCircle({ lat, lon, ha, bounds, ndwiAnomaly = null }) {
   const ring = Array.isArray(bounds?.[0]) ? bounds[0] : [];
   const lons = ring.map((p) => p[0]).filter(Number.isFinite);
   const lats = ring.map((p) => p[1]).filter(Number.isFinite);
@@ -1491,7 +2116,8 @@ export function patchCircle({ lat, lon, ha, bounds }) {
     const h = (Math.max(...lats) - Math.min(...lats)) * 110574;
     radiusM = Math.max(radiusM, Math.hypot(w, h) / 2);
   }
-  return { lat: round(lat, 6), lon: round(lon, 6), radiusM: Math.max(15, Math.round(radiusM)), ha: round(ha, 2) };
+  const anomaly = round(numberOr(ndwiAnomaly, null), 3);
+  return { lat: round(lat, 6), lon: round(lon, 6), radiusM: Math.max(15, Math.round(radiusM)), ha: round(ha, 2), ndwiAnomaly: anomaly, cause: stressCause(anomaly) };
 }
 
 const median = (values) => {
@@ -1505,24 +2131,50 @@ function range(values) {
   return { low: round(Math.min(...list), 3), high: round(Math.max(...list), 3), median: round(median(list), 3) };
 }
 
-// Everything measured for one field -> its analysis (spec section 3, without
-// `status` and the harvest window, which the route layer adds).
-export function buildAnalysis(plan, measured, zones, { today, updatedAt }) {
+// Everything measured for one field -> its analysis (spec section 3 and
+// FINAL-SPEC section 8, without `status` and the harvest window, which the
+// route layer adds; it may work the harvest, stress and crop out again
+// with the weather and the farmer's crop).
+//   plan      fieldPlan() result (+ fire)
+//   measured  readStats() result for the field
+//   zones     null (no longer measured, spec 7.7) or a zones grid
+//   extra     { today, updatedAt, vhSeries, months, peakMonth }:
+//             vh         vhSeriesOf() result { passes, series }
+//             months     the last CROP_MONTHS months [{ month, ndvi, ndwi, clearPct }]
+//             peakMonth  the farm's greenest month in 2019-2021 (or null)
+// Raw readings added for the route layer and the crop type:
+//   redEdge.ndre / redEdge.normal  field median NDRE and its normal range
+//   stress.ndwiAnomaly             mean NDWI anomaly over the stressed pixels
+//   stress.redEdgeOnlyShare        share stressed by red edge only
+//   stress.cause / stress.redEdge  method.js stressCause / redEdgeFound
+//   stress.patches[].ndwiAnomaly, .cause
+//   season[].ndre, season[].ndyi   per pass
+//   radar                          { vhSeries (cleaned, per day), vhPasses (raw, per
+//                                  picture), vhPeak, vhPeakDate, harvestedOn, dropDb }
+//   cropInputs                     { months: [{ month, ndvi }], peakMonth, lat, vhPeak }
+//                                  (with passes = season: classifyCrop's input)
+//   cropDetected                   classifyCrop(cropInputs + season)
+//   harvest.basis / gdd / radarHarvestOn / standingDry
+//                                  (combineHarvestEstimate without heat units)
+export function buildAnalysis(plan, measured, zones, { today, updatedAt, vh = { passes: [], series: [] }, months = [], peakMonth = null }) {
+  const vhSeries = vh?.series || [];
   const warnings = [];
   const med = measured.medians || {};
   const means = measured.means || {};
   const hasLatest = Boolean(plan.latestPass);
   const ndvi = hasLatest ? round(numberOr(med.ndvi, null), 3) : null;
   const ndwi = hasLatest ? round(numberOr(med.ndwi, null), 3) : null;
+  const ndre = hasLatest ? round(numberOr(med.ndre, null), 3) : null;
   const normalNdvi = range(BASELINE_YEARS.map((y) => numberOr(means[`n${y}_ndvi`], null)));
   const normalNdwi = range(BASELINE_YEARS.map((y) => numberOr(means[`n${y}_ndwi`], null)));
+  const normalNdre = range(BASELINE_YEARS.map((y) => numberOr(means[`n${y}_ndre`], null)));
   if (!plan.latestPass) warnings.push(`No clear satellite view of this field in the last ${LOOKBACK_DAYS} days.`);
   else if (plan.latestPass.date < shiftDays(today, -LATEST_DAYS)) warnings.push(`The latest clear view is from ${plan.latestPass.date}.`);
   if (normalNdvi.median === null) warnings.push(`No clear images of these weeks in ${BASELINE.label}, so there is no normal to compare with.`);
 
   // Scores: the median of the per-pixel scores over the field (what the
-  // zone map shows, and what the sample data does); worked out from the
-  // field medians only when Earth Engine gave no pixel score.
+  // sample data does too); worked out from the field medians only when
+  // Earth Engine gave no pixel score.
   const pixelScore = (name) => (hasLatest ? round(clamp01(numberOr(med[name], NaN)), 3) : null);
   const known = (value) => (Number.isFinite(value) ? value : null);
   const healthValue = known(pixelScore("health")) ?? healthScore(ndvi, normalNdvi.median);
@@ -1531,12 +2183,36 @@ export function buildAnalysis(plan, measured, zones, { today, updatedAt }) {
   const stressShare = Number.isFinite(share) ? share : null;
   const conditionValue = hasLatest ? known(pixelScore("condition")) ?? conditionScore({ health: healthValue, water: waterValue, stress: stressShare }) : null;
   const patches = hasLatest ? (measured.patches || []).sort((a, b) => b.ha - a.ha).slice(0, MAX_PATCHES).map(patchCircle) : [];
+  const anyStress = stressShare !== null && stressShare > 0;
+  const ndwiAnomaly = hasLatest && anyStress ? round(numberOr(means.ndwiAnomaly, null), 3) : null;
+  const redEdgeOnlyShare = hasLatest ? round(clamp01(numberOr(means.redEdgeOnly, NaN)), 3) : null;
 
-  const stage = harvestStage(plan.season, today);
   const radarChangedShare = round(numberOr(means.radarChanged, null), 3);
   const { fires, firesNormal, excessFires } = excessFiresOf(numberOr(measured.fires?.fires, null), numberOr(measured.fires?.firesBase, null), plan.fire);
   const chiDrop = round(numberOr(means.chiDrop, null), 3);
   const chernozem = round(numberOr(means.chernozem, null), 3);
+
+  // Crop type (method.js classifyCrop) from the last months, this season's
+  // passes and the radar peak; the farmer's own crop wins for the harvest.
+  // The VH peak is read around the season's NDVI peak (harvestStage).
+  const firstLook = harvestStage(plan.season, today);
+  const { vhPeak, vhPeakDate } = vhPeakOf(vhSeries, firstLook.peakDate);
+  const lat = Array.isArray(plan.bbox) ? round(bboxCenter(plan.bbox).lat, 4) : null;
+  const cropInputs = { months: months.map((m) => ({ month: m.month, ndvi: m.ndvi })), peakMonth: peakMonth ?? null, lat, vhPeak };
+  const cropDetected = classifyCrop({ ...cropInputs, passes: plan.season });
+  // A detected crop is used for this season's harvest only when it was
+  // read from this season (its curve has peaked and come down); otherwise
+  // it is last season's crop (real data, Pampas, 2026-10-19: last summer's
+  // soybean on a field now in winter wheat).
+  // Fallow or grass has no crop profile: no crop rules for it.
+  const crop = plan.crop || (CROP_PROFILES[cropDetected.id] && cropDetected.season === "this" && seasonDone(plan.season) ? cropDetected.id : null);
+
+  // Harvest: the dry-down curve with the crop's own ready share, checked
+  // against radar (a tall crop cut shows as a VH drop through cloud; a
+  // tall crop low on NDVI with no drop is still standing).
+  const stage = crop ? harvestStage(plan.season, today, { readyShare: cropProfile(crop).readyShare }) : firstLook;
+  const { radar, leavesDownOn } = radarForHarvest({ vhSeries, season: plan.season, peakDate: stage.peakDate, crop });
+  const harvest = combineHarvestEstimate({ ndvi: stage, gdd: null, radar, crop, today, leavesDownOn });
 
   return {
     fieldId: plan.id,
@@ -1545,21 +2221,31 @@ export function buildAnalysis(plan, measured, zones, { today, updatedAt }) {
     latestPass: plan.latestPass,
     water: { ndwi, normal: normalNdwi, versus: versusNormal(ndwi, normalNdwi.low, normalNdwi.high), score: waterValue },
     plantHealth: { ndvi, normal: normalNdvi, versus: versusNormal(ndvi, normalNdvi.low, normalNdvi.high), score: healthValue },
+    redEdge: { ndre, normal: normalNdre },
     stress: {
       share: stressShare,
       level: stressLevel(stressShare),
       stressedHa: stressShare === null ? null : round(stressShare * plan.areaHa, 1),
       patches,
+      ndwiAnomaly,
+      redEdgeOnlyShare,
+      cause: anyStress ? stressCause(ndwiAnomaly) : null,
+      redEdge: anyStress && redEdgeFound(redEdgeOnlyShare),
     },
     harvest: {
-      stage: stage.stage,
-      daysToReady: stage.daysToReady ?? null,
+      stage: harvest.stage,
+      daysToReady: harvest.daysToReady ?? null,
       window: null,
       rainBefore: null,
       peak: round(stage.peak, 3),
       peakDate: stage.peakDate ?? null,
       lastDate: stage.lastDate ?? null,
-      harvestedOn: stage.harvestedOn ?? null,
+      harvestedOn: harvest.harvestedOn ?? null,
+      basis: harvest.basis ?? null,
+      gdd: harvest.gdd ?? null,
+      radarHarvestOn: harvest.radarHarvestOn ?? null,
+      standingDry: Boolean(harvest.standingDry),
+      leafDrop: Boolean(harvest.leafDrop),
     },
     condition: { score: conditionValue, class: conditionClass(conditionValue)?.id ?? null },
     damage: {
@@ -1576,9 +2262,22 @@ export function buildAnalysis(plan, measured, zones, { today, updatedAt }) {
     soil: { chernozemProbability: chernozem, soilTypeId: soilTypeFor(chernozem) },
     season: plan.season,
     normalCurve: normalCurve(measured.curve || {}),
-    zones,
+    radar: { vhSeries, vhPasses: vh?.passes || [], vhPeak, vhPeakDate, harvestedOn: radar.harvestedOn, dropDb: radar.dropDb },
+    cropInputs,
+    cropDetected,
+    zones: zones ?? null,
     warnings,
   };
+}
+
+// True when this season's curve has peaked and come down (the crop type is
+// then read from this season; method.js classifyCrop does the same).
+export function seasonDone(season) {
+  const series = cleanSeries(season || []);
+  if (series.length < 5) return false;
+  const i = series.reduce((best, p, k) => (p.ndvi > series[best].ndvi ? k : best), 0);
+  const peak = series[i].ndvi;
+  return peak >= NOT_SOWN_PEAK && series.slice(i + 1).some((p) => p.ndvi <= peak - SEASON_DONE_DROP);
 }
 
 // The curve answer (bands c2019_00 .. c2021_23) -> [{ day, low, high, median }]
@@ -1601,7 +2300,7 @@ export function normalCurve(curve) {
 export function toCandidates(features, fineFeatures = []) {
   const list = withoutOverlaps(splitByFinerEdges(parcelShapes(features), parcelShapes(fineFeatures))).slice(0, DETECT.maxFields);
   list.sort((a, b) => order(a.centroid) - order(b.centroid));
-  return list.map(({ profile, ...item }, i) => ({ id: `cand-${i + 1}`, ...item }));
+  return list.map(({ profile, curve, joined, ...item }, i) => ({ id: `cand-${i + 1}`, ...item }));
 }
 const order = ([lat, lon]) => lon * Math.cos((lat * Math.PI) / 180) - lat;
 
@@ -1616,6 +2315,11 @@ export function splitByFinerEdges(parcels, pieces, { minHa = DETECT.splitMinHa, 
   const out = [];
   const used = new Set();
   for (const parcel of parcels) {
+    // A field joined from parts of one crop is not cut up again.
+    if (parcel.joined) {
+      out.push(parcel);
+      continue;
+    }
     // A piece larger than the parcel is not a part of it (a broken shape).
     const inside = pieces.filter(
       (piece) => !used.has(piece) && piece.areaHa >= minHa && piece.areaHa <= parcel.areaHa * 1.05 && pointInGeometry(piece.centroid[1], piece.centroid[0], parcel.geometry),

@@ -1,7 +1,7 @@
 // WHAT THIS FILE DOES
 // The left sidebar: the Chernozem logo, the Field / Atlas switch, the "My
 // farm" box or (in the Atlas) the current area, the page list, and the
-// language and account rows at the bottom. It draws itself from
+// account row at the bottom. It draws itself from
 // src/config/navigation.js and highlights whichever page is open.
 //
 // In the Atlas the area box is live: the current area's name and its
@@ -17,7 +17,7 @@
 // src/config/navigation.js instead.
 
 import { NavLink, Link, useLocation } from "react-router-dom";
-import { Sprout, ChevronDown, Lock, Globe } from "lucide-react";
+import { Sprout, ChevronDown, Lock } from "lucide-react";
 import { products, productForPath } from "../config/navigation.js";
 import { useFieldData } from "../state/FieldData.jsx";
 import { farmLine } from "../lib/field/format.js";
@@ -141,11 +141,6 @@ export default function Sidebar() {
             {product.privacyNote}
           </p>
         )}
-        <button type="button" className="sidebar-language">
-          <Globe size={14} />
-          <span>English</span>
-          <ChevronDown size={14} />
-        </button>
         <Link to={`${product.basePath}/settings`} className="sidebar-account">
           <span className={`avatar avatar-${product.account.tone}`}>
             {product.account.initials}

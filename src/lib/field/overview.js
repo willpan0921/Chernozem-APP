@@ -3,7 +3,8 @@
 // its analyses, the weather and the latest update job. No React here, so
 // it is tested in overview.test.js:
 //
-//   statusSentence(farm, analyses)  -> { text: "1 field needs recovery · 1 to watch", tone: "red" }
+//   statusSentence(farm, analyses, job)  -> { text: "1 field needs recovery · 1 to watch", tone: "red" }
+//   showRecoveryTile(counts, conflict)   -> false on a peaceful farm with nothing to recover
 //   needsDoing({ farm, analyses, weather, job })  -> the "What needs doing" items, most urgent first
 //   latestPass(farm, analyses)      -> "2026-10-16" (the newest clear Sentinel-2 pass) or null
 //   likelyRain(weather)             -> { from, to, mm } or null
@@ -16,32 +17,54 @@
 // WHO EDITS IT
 // Whoever changes what the Field overview says.
 
-import { recoveryCost } from "./method.js";
-import { formatArea, formatDay, formatDayRange, statusCounts } from "./format.js";
+import { COST_NOTE, recoveryCost } from "./method.js";
+import { analysingIds, causeText, formatArea, formatDay, formatDayRange, riskNote, statusCounts } from "./format.js";
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
-// "1 field needs recovery · 1 to watch · 2 ready to harvest", or
-// "All 7 fields healthy". tone: "green" | "amber" | "red".
-export function statusSentence(farm, analyses = {}) {
+// "1 field needs recovery · 1 to watch · 2 ready to harvest", "All 7
+// fields healthy", or "4 healthy · 5 harvested · 1 ready to harvest" (a
+// harvested or not-sown field has no crop, so it is never "healthy").
+// tone: "green" | "amber" | "red". With the running update (job), new
+// fields read "1 being analysed".
+export function statusSentence(farm, analyses = {}, job = null) {
   const counts = statusCounts(farm, analyses);
   const ready = (farm?.fields || []).filter((field) => analyses[field.id]?.status?.id === "ready").length;
-  const analysed = counts.healthy + counts.watch + counts.recovery;
-  const waiting = counts.total - analysed;
+  const analysed = counts.healthy + counts.noCrop + counts.watch + counts.recovery;
+  const analysing = analysingIds(farm, analyses, job).size;
+  const waiting = counts.total - analysed - analysing;
+  const noCrop = [];
+  if (counts.harvested) noCrop.push(`${counts.harvested} harvested`);
+  if (counts.notSown) noCrop.push(`${counts.notSown} not sown`);
 
   const parts = [];
   let tone = "green";
   if (!counts.recovery && !counts.watch) {
-    if (analysed === 0) parts.push(counts.total === 1 ? "Your field is waiting for analysis" : `${counts.total} fields waiting for analysis`);
-    else parts.push(analysed === 1 && counts.total === 1 ? "Your field is healthy" : `All ${plural(analysed, "field", "fields")} healthy`);
+    if (analysed === 0 && analysing) parts.push(counts.total === 1 ? "Your field is being analysed" : `${counts.total} fields being analysed`);
+    else if (analysed === 0) parts.push(counts.total === 1 ? "Your field is waiting for analysis" : `${counts.total} fields waiting for analysis`);
+    else if (!counts.noCrop) parts.push(analysed === 1 && counts.total === 1 ? "Your field is healthy" : `All ${plural(analysed, "field", "fields")} healthy`);
+    else if (!counts.healthy && noCrop.length === 1) parts.push(analysed === 1 && counts.total === 1 ? `Your field is ${noCrop[0].replace(/^\d+ /, "")}` : `All ${plural(analysed, "field", "fields")} ${noCrop[0].replace(/^\d+ /, "")}`);
+    else {
+      if (counts.healthy) parts.push(`${counts.healthy} healthy`);
+      parts.push(...noCrop);
+    }
   } else {
     if (counts.recovery) parts.push(plural(counts.recovery, "field needs recovery", "fields need recovery"));
     if (counts.watch) parts.push(parts.length ? `${counts.watch} to watch` : plural(counts.watch, "field to watch", "fields to watch"));
+    parts.push(...noCrop);
     tone = counts.recovery ? "red" : "amber";
   }
   if (ready) parts.push(`${ready} ready to harvest`);
-  if (waiting && analysed) parts.push(`${waiting} waiting for analysis`);
+  if (analysing && analysed) parts.push(`${analysing} being analysed`);
+  if (waiting > 0 && analysed) parts.push(`${waiting} waiting for analysis`);
   return { text: parts.join(" · "), tone };
+}
+
+// The "Needs recovery" tile shows when a field needs recovery or a known
+// war covers the farm (conflict: format.js farmConflict). On a peaceful
+// farm a "0" there only worries people.
+export function showRecoveryTile(counts, conflict) {
+  return Boolean(counts?.recovery) || Boolean(conflict);
 }
 
 // $1,948 -> "$1.9k", $12,710 -> "$12.7k", $640 -> "$640", $1.2M.
@@ -137,6 +160,8 @@ export function needsDoing({ farm, analyses = {}, weather = null, job = null }) 
         { id: "fast", label: "Quick fix", value: usdRange(cost.fast.total) },
         { id: "full", label: "Full restore", value: usdRange(cost.full.total) },
       ],
+      // The per-hectare costs are planning assumptions, not measurements.
+      costNote: COST_NOTE,
       line: damaged.some((field) => analyses[field.id]?.conflict) ? "Have it checked for explosives first" : "Check it on the ground first",
       action: { label: "Plan recovery", to: aiLink(damaged[0]) },
     });
@@ -174,9 +199,24 @@ export function needsDoing({ farm, analyses = {}, weather = null, job = null }) 
       icon: "stress",
       fieldId: field.id,
       title: Number.isFinite(a.stress.stressedHa) && a.stress.stressedHa > 0 ? `Stress on ${formatArea(a.stress.stressedHa, units)} in ${field.name}` : `Stress in ${field.name}`,
+      line: causeText(a.stress.cause),
       action: { label: "View", to: mapLink(field) },
     });
     listed.add(field.id);
+  }
+  // Pest and disease risk from the weather (high only: a forecast for the
+  // whole farm, one item naming the fields with a crop growing).
+  const atRisk = fields.filter((field) => riskNote(analyses[field.id].pestRisk)?.tone === "red");
+  if (atRisk.length) {
+    items.push({
+      id: "pest-risk",
+      tone: "amber",
+      icon: "stress",
+      fieldId: atRisk.length === 1 ? atRisk[0].id : undefined,
+      title: riskNote(analyses[atRisk[0].id].pestRisk).text,
+      line: `${fieldNames(atRisk)} · from the weather, check on the ground`,
+      action: { label: "View", to: mapLink(atRisk[0]) },
+    });
   }
   for (const field of on("watch").concat(on("unknown"))) {
     if (listed.has(field.id)) continue;

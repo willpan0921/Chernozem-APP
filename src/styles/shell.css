@@ -192,26 +192,6 @@
   margin-top: 1px;
 }
 
-.sidebar-language {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 8px 10px;
-  border-radius: var(--r-sm);
-  font-size: 13px;
-  color: var(--c-text-2);
-  text-align: left;
-}
-
-.sidebar-language:hover {
-  background: var(--c-surface-3);
-}
-
-.sidebar-language span {
-  flex: 1;
-}
-
 .sidebar-account {
   display: flex;
   align-items: center;

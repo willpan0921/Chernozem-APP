@@ -24,11 +24,19 @@ const realFetch = globalThis.fetch;
 const outside = [];
 globalThis.fetch = async (url, options) => {
   const text = String(url);
+  if (text.startsWith("https://archive-api.open-meteo.com/")) {
+    outside.push(text);
+    const q = new URL(text).searchParams;
+    const days = [];
+    for (let d = Date.parse(`${q.get("start_date")}T00:00:00Z`); d <= Date.parse(`${q.get("end_date")}T00:00:00Z`); d += 86400000) days.push(new Date(d).toISOString().slice(0, 10));
+    return new Response(JSON.stringify({ daily: { time: days, temperature_2m_max: days.map(() => 22), temperature_2m_min: days.map(() => 10) } }), { headers: { "content-type": "application/json" } });
+  }
   if (text.startsWith("https://api.open-meteo.com/")) {
     outside.push(text);
     return new Response(
       JSON.stringify({
         current: { temperature_2m: 12.4, weather_code: 3 },
+        hourly: { time: ["2026-10-18T00:00", "2026-10-18T01:00"], temperature_2m: [12, 12], relative_humidity_2m: [95, 95] },
         daily: {
           time: ["2026-10-18", "2026-10-19", "2026-10-20"],
           precipitation_sum: [0, 8, 3],
@@ -108,12 +116,26 @@ test("the demo farm loads, is analysed, and shows 7 statuses", async () => {
   assert.equal(demo.json.farm.fields.length, 7);
   assert.equal(demo.json.farm.demo, true);
   assert.deepEqual(demo.json.farm.fields.map((f) => f.name), ["Field 1", "Field 2", "Field 3", "Field 4", "Field 5", "Field 6", "Field 7"]);
+  // Placeholder crops until the analysis detects the real ones.
   assert.equal(demo.json.farm.fields[2].crop, "Corn");
+  assert.equal(demo.json.farm.fields[2].cropSource, "demo");
+  assert.equal(demo.json.farm.conflict.id, "ukraine-2022");
   const job = await waitForJob(demo.json.job.id);
   assert.equal(job.kind, "field-analyze");
   assert.equal(job.status, "done", job.error);
   const { json } = await call("GET", "/api/farm");
   assert.equal(Object.keys(json.analyses).length, 7);
+  // Every crop is now the detected one (or none), with its source.
+  for (const f of json.farm.fields) {
+    const detected = json.analyses[f.id].cropDetected;
+    assert.ok(detected && detected.id, f.name);
+    assert.ok(["winterCereal", "springCereal", "rapeseed", "sunflower", "corn", "soybean", "unknown"].includes(detected.id), detected.id);
+    if (detected.id === "unknown") assert.deepEqual([f.crop, f.cropSource], [null, null]);
+    else assert.deepEqual([f.crop, f.cropSource], [detected.label, "detected"]);
+  }
+  assert.ok(json.farm.fields.filter((f) => f.cropSource === "detected").length >= 5, "most demo fields show a detected crop");
+  // The temperatures for heat units were read once for the farm.
+  assert.ok(outside.some((u) => u.startsWith("https://archive-api.open-meteo.com/v1/archive?")));
   const byName = Object.fromEntries(json.farm.fields.map((f) => [f.name, json.analyses[f.id]]));
   assert.equal(byName["Field 7"].status.id, "recovery");
   for (const a of Object.values(json.analyses)) {
@@ -193,6 +215,12 @@ test("finding fields inside a typed boundary and around a point, then saving som
   const far = { type: "Polygon", coordinates: [[[30.5, 50.4], [30.51, 50.4], [30.51, 50.405], [30.5, 50.405], [30.5, 50.4]]] };
   const moved = await call("PUT", "/api/farm", { fields: [{ geometry: far }] });
   assert.ok(moved.json.farm.location.label.includes("°"), moved.json.farm.location.label);
+  assert.equal(moved.json.farm.conflict.id, "ukraine-2022");
+  const iowa = { type: "Polygon", coordinates: [[[-93.62, 42.03], [-93.61, 42.03], [-93.61, 42.035], [-93.62, 42.035], [-93.62, 42.03]]] };
+  const peaceful = await call("PUT", "/api/farm", { fields: [{ geometry: iowa, crop: "Corn" }] });
+  assert.equal(peaceful.json.farm.conflict, null, "a farm at peace: no war words before any analysis");
+  assert.equal(peaceful.json.farm.fields[0].cropSource, "user");
+  await waitForJob(peaceful.json.job.id);
   await waitForJob(moved.json.job.id);
   const back = await call("PUT", "/api/farm", { fields: again.json.farm.fields.map((f) => ({ geometry: f.geometry, name: f.name })) });
   await waitForJob(back.json.job.id);
@@ -214,6 +242,26 @@ test("farm and field edits", async () => {
   const renamed = await call("PATCH", `/api/farm/fields/${field.id}`, { name: "By the river", crop: "Sunflower" });
   assert.equal(renamed.json.field.name, "By the river");
   assert.equal(renamed.json.field.crop, "Sunflower");
+  assert.equal(renamed.json.field.cropSource, "user");
+  // A changed crop changes the harvest rules: the field is analysed again
+  // with it, and its analysis says which crop it used.
+  assert.equal(renamed.json.job.kind, "field-analyze");
+  assert.deepEqual(renamed.json.job.fieldIds, [field.id]);
+  await waitForJob(renamed.json.job.id);
+  assert.deepEqual((await call("GET", `/api/farm/fields/${field.id}/analysis`)).json.analysis.cropUsed, { id: "sunflower", label: "Sunflower", source: "user" });
+  assert.equal((await call("PATCH", `/api/farm/fields/${field.id}`, { name: "By the river" })).json.job, null);
+  // Clearing the crop goes back to the detected one.
+  const detected = (await call("GET", `/api/farm/fields/${field.id}/analysis`)).json.analysis.cropDetected;
+  const cleared = await call("PATCH", `/api/farm/fields/${field.id}`, { crop: null });
+  if (detected.id === "unknown") assert.deepEqual([cleared.json.field.crop, cleared.json.field.cropSource], [null, null]);
+  else assert.deepEqual([cleared.json.field.crop, cleared.json.field.cropSource], detected.season === "last" ? [null, null] : [detected.label, "detected"]);
+  if (cleared.json.job) await waitForJob(cleared.json.job.id);
+  // Sending the farm back unchanged keeps a detected crop detected.
+  const sameFarm = (await call("GET", "/api/farm")).json.farm;
+  const resent = await call("PUT", "/api/farm", { fields: sameFarm.fields.map((f) => ({ geometry: f.geometry, name: f.name, crop: f.crop })) });
+  assert.deepEqual(resent.json.farm.fields.map((f) => f.cropSource), sameFarm.fields.map((f) => f.cropSource));
+  await waitForJob(resent.json.job.id);
+  assert.equal((await call("PATCH", `/api/farm/fields/${field.id}`, { crop: "Sunflower" })).json.field.cropSource, "user");
   assert.equal((await call("PATCH", `/api/farm/fields/${field.id}`, { name: "  " })).status, 400);
   assert.equal((await call("PATCH", "/api/farm/fields/fld-nothere", { name: "x" })).status, 404);
 
@@ -222,7 +270,15 @@ test("farm and field edits", async () => {
   assert.equal(added.status, 201);
   assert.equal(added.json.field.source, "drawn");
   assert.equal(added.json.field.name, "Field 1");
+  assert.equal(added.json.field.cropSource, null);
   assert.equal((await waitForJob(added.json.job.id)).status, "done");
+  // A new field is analysed WITH its history and gets a detected crop, like the others.
+  const fresh = await call("GET", `/api/farm/fields/${added.json.field.id}/analysis`);
+  assert.equal(fresh.json.history.months[0].month, "2019-01");
+  assert.ok(fresh.json.analysis.cropDetected.id);
+  assert.ok(Array.isArray(fresh.json.analysis.radar.vhSeries));
+  const listed = (await call("GET", "/api/farm")).json.farm.fields.find((f) => f.id === added.json.field.id);
+  if (fresh.json.analysis.cropDetected.id !== "unknown") assert.deepEqual([listed.crop, listed.cropSource], [fresh.json.analysis.cropDetected.label, "detected"]);
   // An error about a new field calls it by the name it would get.
   const tinyField = { type: "Polygon", coordinates: [[[37.5, 49.76], [37.5001, 49.76], [37.5001, 49.7601], [37.5, 49.76]]] };
   const tooSmall = await call("POST", "/api/farm/fields", { geometry: tinyField });
@@ -247,6 +303,8 @@ test("weather and place search", async () => {
   assert.equal(weather.json.current.label, "Cloudy");
   assert.deepEqual(weather.json.rain, { likely: true, from: "2026-10-19", to: "2026-10-20", mm: 11 });
   assert.equal(weather.json.daily.length, 3);
+  // The pest-risk inputs, worked out on the server.
+  assert.deepEqual(weather.json.hourly, { wetHours14: 2, gdd14: null });
 
   const before = outside.length;
   const coords = await call("GET", "/api/geocode?q=49.74%2C%2037.54");

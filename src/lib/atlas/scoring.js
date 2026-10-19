@@ -25,7 +25,7 @@
 // Whoever changes the research method. The fixed choices (which indicators,
 // the defaults, the scales) are in method.js.
 
-import { COMPONENTS, checkSettings } from "./method.js";
+import { BLACK_SOIL_MIN, COMPONENTS, NO_BLACK_SOIL_REASON, PEACE_DAMAGE, cellAreaHa, checkSettings } from "./method.js";
 
 // The names of the three scores, in the order the pages show them.
 export const SCORE_KEYS = ["soil", "damage", "access"];
@@ -170,38 +170,63 @@ function rankAndTier(entries) {
   });
 }
 
+// The least black-soil cropland a place needs to be ranked
+// (method.js BLACK_SOIL_MIN), in hectares.
+export function blackSoilFloor(place, cellSizeDeg) {
+  const areaHa = cellAreaHa(cellSizeDeg, place?.lat);
+  return Number.isFinite(areaHa) ? BLACK_SOIL_MIN.share * areaHa : BLACK_SOIL_MIN.ha;
+}
+
+// The damage score at peace (method.js PEACE_DAMAGE): the heavily damaged
+// share of the place's black soil. Null when the place lacks either number.
+export function peaceDamageScore(place) {
+  if (!Number.isFinite(place?.heavyDamageHa) || !(place?.blackSoilHa > 0)) return null;
+  return Math.min(1, Math.max(0, place.heavyDamageHa / place.blackSoilHa / PEACE_DAMAGE.fullShare));
+}
+
 // Scores every place, for both time frames.
 //   rows     - the places, each with an "id" and indicator columns
-//   options  - { settings, components, excluded }
+//   options  - { settings, components, excluded, conflict, cellSizeDeg }
 //              settings:   { weights: {soil, damage, access}, gatePercentile,
 //                            rampWidth, r } (cleaned by checkSettings)
 //              components: which columns make each score (method.js default)
 //              excluded:   ids that are not analyzed
+//              conflict:   the run's war (run.conflict); null = at peace:
+//                          the damage score is then peaceDamageScore.
+//                          Left out (undefined): the indicators, as before
+//              cellSizeDeg the map squares' size, for blackSoilFloor
+// A place with a blackSoilHa under blackSoilFloor is not ranked (reason
+// NO_BLACK_SOIL_REASON, tier "noBlackSoil"). Places without blackSoilHa
+// (the research regions) are ranked as they are.
 //
 // Gives back { places, gate, setAsideShare, settings } where every place
 // has its three scores plus
 //   nearTerm: { score, rank, tier, share, ramp }  (tier "setAside" when gated)
 //   postwar:  { score, rank, tier, share }
 // share = score as a share of the leader's (for bars). Places that cannot be
-// scored have tier "notAnalyzed" and a "reason".
+// scored have tier "notAnalyzed" (or "noBlackSoil") and a "reason".
 export function scorePlaces(rows, options = {}) {
   const settings = checkSettings(options.settings);
   const components = options.components || COMPONENTS;
   const excludedSet = new Set(options.excluded || []);
 
+  const atPeace = options.conflict === null;
   const places = rows.map((row) => {
     const scores = componentScores(row, components);
+    if (atPeace) scores.damage = peaceDamageScore(row) ?? scores.damage;
     const missing = SCORE_KEYS.filter((key) => scores[key] === null);
     let reason = null;
     if (excludedSet.has(row.id)) reason = "Not analyzed in this run";
+    else if (Number.isFinite(row.blackSoilHa) && row.blackSoilHa < blackSoilFloor(row, options.cellSizeDeg)) reason = NO_BLACK_SOIL_REASON;
     else if (missing.length) reason = `Missing data for ${missing.join(", ")}`;
+    const tier = reason === NO_BLACK_SOIL_REASON ? "noBlackSoil" : "notAnalyzed";
     return {
       ...row,
       ...scores,
       analyzed: reason === null,
       reason,
-      nearTerm: { score: null, rank: null, tier: "notAnalyzed", share: 0, ramp: 0 },
-      postwar: { score: null, rank: null, tier: "notAnalyzed", share: 0 },
+      nearTerm: { score: null, rank: null, tier, share: 0, ramp: 0 },
+      postwar: { score: null, rank: null, tier, share: 0 },
     };
   });
 

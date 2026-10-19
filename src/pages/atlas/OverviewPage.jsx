@@ -28,7 +28,8 @@ import { AnalysisProgress, AtlasGate, useAtlasData, useTimeframe } from "../../s
 import AtlasMap from "../../components/atlas/AtlasMap.jsx";
 import MapLegend from "../../components/atlas/MapLegend.jsx";
 import RunPicker from "../../components/atlas/RunPicker.jsx";
-import { describeAlert, kpis, springPlan, summarize, timeframeOptions } from "../../lib/atlas/overview.js";
+import { describeAlert, kpis, shownNewDamage, springPlan, summarize, timeframeOptions } from "../../lib/atlas/overview.js";
+import { COST_NOTE } from "../../lib/atlas/method.js";
 import { dueLabel, formatHaShort, formatUsd, listNames, toDay } from "../../lib/format.js";
 import { areaOfAlert, atlasLink, haFixed, nameAreas, planSteps, useMonthInUrl, warNote, weightItems } from "./overviewHelpers.js";
 import "./OverviewPage.css";
@@ -132,7 +133,7 @@ function Overview() {
             value={item.value}
             // Red only when there is damage to show: a red "0 ha" reads like an alarm.
             tone={item.id === "heavy-damage" && item.value === "0 ha" ? undefined : item.tone}
-            note={item.id === "heavy-damage" && run.newHeavyDamageHa > 0 ? `+${formatHaShort(run.newHeavyDamageHa)} this month` : undefined}
+            note={item.id === "heavy-damage" && shownNewDamage(run, runs) > 0 ? `+${formatHaShort(run.newHeavyDamageHa)} this month` : undefined}
           />
         ))}
       </div>
@@ -366,7 +367,7 @@ function Budget({ hotspots, blackSoilHa }) {
   }, [editing]);
 
   const startEditing = () => {
-    setDraft(budget.toLocaleString("en-US"));
+    setDraft(budget > 0 ? budget.toLocaleString("en-US") : "");
     setError(null);
     closing.current = false;
     setEditing(true);
@@ -426,8 +427,8 @@ function Budget({ hotspots, blackSoilHa }) {
           />
         </form>
       ) : (
-        <button type="button" className="ao-budget-amount" onClick={startEditing} aria-label={`Budget ${formatUsd(budget)}. Change`}>
-          <span>{formatUsd(budget)}</span>
+        <button type="button" className="ao-budget-amount" onClick={startEditing} aria-label={budget > 0 ? `Budget ${formatUsd(budget)}. Change` : "Set a budget"}>
+          <span>{budget > 0 ? formatUsd(budget) : "Set a budget"}</span>
           <Pencil size={14} aria-hidden="true" />
         </button>
       )}
@@ -445,6 +446,7 @@ function Budget({ hotspots, blackSoilHa }) {
               : `Covers ${haRange(plan.fewestHa, Math.min(plan.mostHa, blackSoilHa))}`}
           </span>
           {plan.start.length > 0 && <span className="ao-budget-start">Start with {listNames(plan.start)}</span>}
+          <span className="ao-budget-start">Costs per hectare: {COST_NOTE.toLowerCase()}</span>
         </>
       ) : (
         <span className="ao-budget-start">Set a budget to see the land it covers.</span>

@@ -4,6 +4,7 @@
 // or "Line 2: latitude must be from -90 to 90" while the person types.
 //
 //   parseCoordinates(text)  one "lat, lon" per line -> { points, errors }
+//                           (also "lat -33.9 lon 18.4" and "-34,90; -60,95")
 //   polygonAreaHa(points)   the area inside the points, in hectares
 //   checkPolygon(points)    { ok, areaHa, message } (same limits as the server)
 //   checkBox(box)           the same for a north / south / east / west box
@@ -26,9 +27,41 @@ const EARTH_RADIUS_M = 6378137;
 const rad = (degrees) => (degrees * Math.PI) / 180;
 
 // One number with an optional ° and an optional N/S/E/W letter:
-// "49.7", "-37.5", "49.7°", "49.7°N", "37.5 E", "49,7" is NOT accepted
-// (the comma separates latitude from longitude).
+// "49.7", "-37.5", "49.7°", "49.7°N", "37.5 E". A lone "49,7" is NOT a
+// decimal comma (the comma separates latitude from longitude); two numbers
+// that BOTH have one are (DECIMAL_COMMAS).
 const PART = /^([+-]?\d+(?:\.\d+)?)\s*°?\s*([NSEWnsew])?$/;
+
+// Coordinates with their names: "lat -33.9 lon 18.4", "lat: -34.6, lng:
+// -58.4", "latitude=48.2 longitude=1.6", "lon 18.4 lat -33.9" (either order;
+// "lon", "lng", "long" or "longitude"). Decimal commas are allowed here.
+// Shared with the place search (server/field/geocode.js).
+const NUMBER = "[-+]?\\d+(?:[.,]\\d+)?";
+const AXIS = "lat(?:itude)?|lon(?:gitude)?|lng|long";
+const LABELLED = new RegExp(`^(${AXIS})\\s*[:=]?\\s*(${NUMBER})\\s*[,;/]?\\s*(${AXIS})\\s*[:=]?\\s*(${NUMBER})$`, "i");
+
+// { lat, lon } from a labelled line, or null (not labelled, or both
+// numbers named for the same axis).
+export function labelledCoordinates(text) {
+  const m = String(text || "").trim().replace(/\s+/g, " ").match(LABELLED);
+  if (!m) return null;
+  const isLat = (word) => /^lat/i.test(word);
+  if (isLat(m[1]) === isLat(m[3])) return null;
+  const a = Number(m[2].replace(",", "."));
+  const b = Number(m[4].replace(",", "."));
+  return isLat(m[1]) ? { lat: a, lon: b } : { lat: b, lon: a };
+}
+
+// Two numbers written with decimal commas, as much of Europe and South
+// America writes them: "-34,6; -60,0", "-34,6 -60,0", "49,74, 37,54".
+export const DECIMAL_COMMAS = /^([-+]?\d+,\d+)\s*(?:;|\s|,\s+)\s*([-+]?\d+,\d+)$/;
+
+// The line with decimal commas turned into points ("-34,90; -60,95" ->
+// "-34.90, -60.95"), or the line as it was.
+export function fromDecimalCommas(text) {
+  const m = String(text || "").trim().replace(/\s+/g, " ").match(DECIMAL_COMMAS);
+  return m ? `${m[1].replace(",", ".")}, ${m[2].replace(",", ".")}` : text;
+}
 
 // Splits one line into its two halves: "49.7, 37.5", "49.7 37.5",
 // "49.7°N 37.5°E", "49.7N,37.5E", "49.7;37.5" or a tab between them.
@@ -52,7 +85,8 @@ function readPart(text) {
   return { value, letter };
 }
 
-// Reads one "lat, lon" per line. Blank lines are skipped. Gives back
+// Reads one "lat, lon" per line (also "lat X lon Y", "lat: X, lng: Y" and
+// decimal commas "-34,90; -60,95"). Blank lines are skipped. Gives back
 //   { points: [[lat, lon], ...], errors: [{ line, message }] }
 export function parseCoordinates(text) {
   const points = [];
@@ -62,7 +96,15 @@ export function parseCoordinates(text) {
     .forEach((raw, index) => {
       const line = index + 1;
       if (!raw.trim()) return;
-      const parts = splitLine(raw);
+      // "lat -33.9 lon 18.4", "lat: -34.6, lng: -58.4".
+      const named = labelledCoordinates(raw);
+      if (named) {
+        if (!(named.lat >= -90 && named.lat <= 90)) errors.push({ line, message: `Line ${line}: latitude must be from -90 to 90.` });
+        else if (!(named.lon >= -180 && named.lon <= 180)) errors.push({ line, message: `Line ${line}: longitude must be from -180 to 180.` });
+        else points.push([named.lat, named.lon]);
+        return;
+      }
+      const parts = splitLine(fromDecimalCommas(raw));
       if (parts.length !== 2) {
         errors.push({ line, message: `Line ${line}: write latitude, longitude (like 49.74, 37.54).` });
         return;

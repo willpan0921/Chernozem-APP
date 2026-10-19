@@ -41,8 +41,9 @@ function gridCells() {
   return cells;
 }
 
-function fakeStore(cells) {
+function fakeStore(cells, more = {}) {
   const run = (id, month, extra = 0) => ({
+    ...more,
     id,
     areaId: "area-grid",
     month,
@@ -175,6 +176,26 @@ test("context text and tools over a run", async () => {
   assert.equal(aug.run.id, "run-aug");
   assert.equal(aug.settings.weights.soil, 100);
   assert.ok((await aug.runTool("unknown_tool", {})).error);
+});
+
+test("costs say 'before demining' only where a war is listed (7.1)", async () => {
+  const war = await buildAtlasContext({ store: fakeStore(gridCells(), { conflict: { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" } }), context: { selectedCellId: "r0c0" } });
+  assert.equal((await war.runTool("get_place", { cellId: "r0c0" })).place.recoveryCostUsd.note, "before demining; planning assumption (not sourced)");
+  assert.match((await war.runTool("budget_coverage", { usd: 1e6 })).note, /exclude demining/);
+  assert.match(war.text, /"note":"before demining; planning assumption \(not sourced\)"/);
+  // Every cost is labelled a planning assumption, war or peace.
+  assert.match((await war.runTool("budget_coverage", { usd: 1e6 })).note, /planning assumptions \(not sourced\)/);
+
+  const peace = await buildAtlasContext({ store: fakeStore(gridCells(), { conflict: null }), context: { selectedCellId: "r0c0" } });
+  const place = (await peace.runTool("get_place", { cellId: "r0c0" })).place;
+  assert.doesNotMatch(place.recoveryCostUsd.note, /demin/);
+  const budget = await peace.runTool("budget_coverage", { usd: 1e6 });
+  assert.doesNotMatch(budget.note, /demin/);
+  assert.match(budget.note, /does not say the land is safe/);
+  assert.match(place.recoveryCostUsd.note, /planning assumption \(not sourced\)/);
+  assert.doesNotMatch(peace.text, /demining"/);
+  // The tool's description (sent every time) only mentions demining for a war.
+  assert.match(ATLAS_TOOLS.find((t) => t.name === "budget_coverage").description, /where a war is listed, before demining/);
 });
 
 test("no area yet gives a clear note, and tools explain there is no run", async () => {

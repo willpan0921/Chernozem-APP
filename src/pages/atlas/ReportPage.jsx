@@ -3,7 +3,8 @@
 // overview. For the current area and month it shows where the data came
 // from, the four totals, the top 10 places for Near term and for Postwar,
 // the settings used, this month's alerts, the method in one line and the
-// disclaimer. Everything is worked out from the selected run and the team's
+// disclaimer (mine risk and deminers only inside a known war, run.conflict;
+// at peace a plain "check the land on the ground"). Everything is worked out from the selected run and the team's
 // current weights, so it always matches what the map shows. The month is
 // kept in the address (?month=2026-09), so a shared link opens the same
 // month. Top areas get the same names as on the overview and the map
@@ -23,7 +24,7 @@ import { ArrowLeft, Download, Printer } from "lucide-react";
 import { Button, Badge } from "../../components/ui/index.js";
 import { AtlasGate, useAtlasData, useTimeframe } from "../../state/AtlasData.jsx";
 import { placeLabel } from "../../lib/atlas/hotspots.js";
-import { atPeace, describeAlert, imageryText, kpis, summarize, timeframeLabel } from "../../lib/atlas/overview.js";
+import { atPeace, describeAlert, imageryText, kpis, shownNewDamage, summarize, timeframeLabel } from "../../lib/atlas/overview.js";
 import { formatHaShort, listNames } from "../../lib/format.js";
 import { toCsv } from "../../lib/csv.js";
 import { atlasLink, haFixed, nameAreas, priorityIndex, useMonthInUrl, warNote, weightItems } from "./overviewHelpers.js";
@@ -121,7 +122,7 @@ function downloadCsv(text, fileName) {
 }
 
 function Report() {
-  const { area, run, scored, hotspots, settings } = useAtlasData();
+  const { area, run, runs, scored, hotspots, settings } = useAtlasData();
   const [timeframe] = useTimeframe();
   const summary = useMemo(() => summarize(scored.places), [scored]);
   const nearTerm = useMemo(() => nameAreas(hotspots.nearTerm), [hotspots]);
@@ -179,7 +180,7 @@ function Report() {
             </div>
           ))}
         </section>
-        {run.newHeavyDamageHa > 0 && (
+        {shownNewDamage(run, runs) > 0 && (
           <p className="rp-line">
             New heavy damage this month: <strong className="rp-red">+{formatHaShort(run.newHeavyDamageHa)}</strong>
           </p>
@@ -252,10 +253,17 @@ function Report() {
             tables, soil value, damage and safe access are shown 0–100, and priority is each area's score as a share of the best square
             in that time frame (100 = the best). The exact scores are in the CSV.
           </p>
-          <p className="rp-disclaimer">
-            Scores show model priority, not proven restoration results. They do not replace field sampling, mine-risk assessment or local
-            consultation. Only certified deminers can decide whether land is safe.
-          </p>
+          {atPeace(run) ? (
+            <p className="rp-disclaimer">
+              Scores show model priority from satellite data, not proven restoration results. They do not replace field sampling or local
+              advice: check the land on the ground before you act on it.
+            </p>
+          ) : (
+            <p className="rp-disclaimer">
+              Scores show model priority, not proven restoration results. They do not replace field sampling, mine-risk assessment or local
+              consultation. Only certified deminers can decide whether land is safe.
+            </p>
+          )}
         </section>
       </article>
     </div>

@@ -3,7 +3,9 @@
 // and /api/geocode request here (after the access-code check).
 //
 //   GET    /api/farm                       the farm, each field's latest analysis (?full=1: with
-//                                          season and normal curve; zones stay in downloads), the data source, the running job
+//                                          season and normal curve; zones stay in downloads), the data source, the running job.
+//                                          The farm comes with farm.conflict (the known war at its place, or null)
+//                                          and every field with cropSource ("user" | "detected" | "demo" | null)
 //   POST   /api/farm/demo                  load the demo farm (7 real fields near Kupiansk) and analyse it
 //   POST   /api/farm/detect                find fields: { source: "boundary", points: [[lat, lon], ...] }
 //                                          or { source: "point", lat, lon, radiusM? } -> { job }
@@ -12,12 +14,14 @@
 //   PATCH  /api/farm                       { name?, units?, autoUpdate?, location? }
 //   DELETE /api/farm                       start over (removes fields, analyses, reports, photos)
 //   POST   /api/farm/fields                add one drawn field
-//   PATCH  /api/farm/fields/:id            { name?, crop? }
+//   PATCH  /api/farm/fields/:id            { name?, crop? } -> { field, job } (a crop is the farmer's own,
+//                                          cropSource "user"; crop null or "" goes back to the detected
+//                                          crop; a changed crop starts a new analysis of the field: job)
 //   DELETE /api/farm/fields/:id            remove a field (and its analysis and history)
 //   POST   /api/farm/analyze               { fieldIds? } update the analysis now
 //   GET    /api/farm/fields/:id/analysis   { analysis, history }
 //   GET    /api/farm/fields/:id/geotiff    { url } (Earth Engine only)
-//   GET    /api/farm/weather               now, 10 days, next rain
+//   GET    /api/farm/weather               now, 10 days, next rain, hourly pest-risk inputs { wetHours14, gdd14 }
 //   POST   /api/farm/reports               "Tell us what happened" (up to 4 photos of 3.75 MB; 24 MB limit)
 //   GET    /api/farm/reports               newest first
 //   GET    /api/farm/uploads/:photoId      a report photo
@@ -50,7 +54,8 @@ import { createHash } from "node:crypto";
 import { areaHa as sphericalAreaHa, bboxAreaKm2, bboxOf, FIELD_SEARCH_MAX_KM2, formatCoord } from "../geo.js";
 import { fieldProviderStatus, getFieldProvider } from "../providers/index.js";
 import { UNITS } from "../../src/lib/field/method.js";
-import { stripForList } from "./analysis.js";
+import { CROP_SOURCES, cropSourceOf, stripForList } from "./analysis.js";
+import { conflictAt } from "../conflicts.js";
 import { demoFarmParts } from "./demo.js";
 import { fieldsGeoJson, historyCsv, readingsCsv } from "./exports.js";
 import { geocode } from "./geocode.js";
@@ -193,6 +198,22 @@ function centroidOf(geometry) {
   return [ring.reduce((s, p) => s + p[1], 0) / ring.length, ring.reduce((s, p) => s + p[0], 0) / ring.length];
 }
 
+// A field's crop and where it came from, from what was sent:
+//   - no crop sent: the old field's (same outline), else none;
+//   - the same crop the old field already had: its old cropSource (a page
+//     sending the farm back unchanged does not turn a detected crop into
+//     the farmer's own);
+//   - a crop with a cropSource ("demo" from the demo farm, "detected"):
+//     that; any other crop sent is the farmer's own ("user").
+function cropOf(item, old) {
+  if (item?.crop === undefined) return old ? { crop: old.crop ?? null, cropSource: cropSourceOf(old) } : { crop: null, cropSource: null };
+  const crop = cleanCrop(item.crop);
+  if (!crop) return { crop: null, cropSource: null };
+  if (CROP_SOURCES.includes(item.cropSource)) return { crop, cropSource: item.cropSource };
+  if (old && old.crop === crop) return { crop, cropSource: cropSourceOf(old) || "user" };
+  return { crop, cropSource: "user" };
+}
+
 // Makes the farm's field list from what was sent. Fields with the same
 // outline as an old field keep that field's id (and so its analysis).
 //   labelFor(i) - what to call an unnamed field in error messages
@@ -214,12 +235,14 @@ function buildFields(list, oldFields = [], defaultSource = "detected", labelFor 
     const id = keepOld ? old.id : newId("fld");
     usedIds.add(id);
     const source = SOURCES.includes(item?.source) ? item.source : keepOld ? old.source : defaultSource;
+    const { crop, cropSource } = cropOf(item, keepOld ? old : null);
     return {
       id,
       name: cleanText(item?.name, 60) || (keepOld ? old.name : null),
       geometry,
       areaHa: round2(ha),
-      crop: item?.crop !== undefined ? cleanCrop(item.crop) : keepOld ? old.crop : null,
+      crop,
+      cropSource,
       source,
       createdAt: keepOld ? old.createdAt : now,
     };
@@ -258,6 +281,23 @@ function locationFor(farm) {
 }
 
 // ---------- Farm ----------
+
+const withCropSource = (field) => ({ ...field, cropSource: cropSourceOf(field) });
+
+// The farm as the pages get it: every field with its cropSource (older
+// farms have none saved) and farm.conflict, the known war at the farm's
+// place (src/config/conflicts.js) or null, so a page can choose its words
+// before any analysis exists.
+export function presentFarm(farm) {
+  if (!farm) return null;
+  const centre = Number.isFinite(farm.location?.lat) && Number.isFinite(farm.location?.lon) ? { lat: farm.location.lat, lon: farm.location.lon } : farmCentre(farm);
+  const war = centre ? conflictAt(centre.lat, centre.lon) : null;
+  return {
+    ...farm,
+    fields: (farm.fields || []).map(withCropSource),
+    conflict: war ? { id: war.id, name: war.name, since: war.since } : null,
+  };
+}
 
 // full: each analysis with its season and normal curves; zones too only
 // with zones: true (the downloads). The pages show the satellite map only,
@@ -353,8 +393,14 @@ async function addField(body) {
   return { field, job };
 }
 
+// A changed crop changes the harvest rules (ready share, heat units, the
+// standing-dry radar rule), so the field is analysed again with it
+// (trigger "crop"); until then its analysis says which crop it used
+// (analysis.cropUsed). Gives back { field, job }.
 async function changeField(id, body) {
   let field;
+  let cropChanged = false;
+  const detected = body.crop !== undefined && isSafeId(id) ? (await getFieldAnalysis(id).catch(() => null))?.cropDetected : null;
   await updateFarm((farm) => {
     const found = farm?.fields?.find((f) => f.id === id);
     if (!found) throw notFound("That field is not on the farm.");
@@ -363,12 +409,23 @@ async function changeField(id, body) {
       if (!name) throw bad("The field name cannot be empty.");
       found.name = name;
     }
-    if (body.crop !== undefined) found.crop = cleanCrop(body.crop);
+    if (body.crop !== undefined) {
+      const before = `${found.crop ?? ""}|${cropSourceOf(found) ?? ""}`;
+      const crop = cleanCrop(body.crop);
+      if (crop) Object.assign(found, { crop, cropSource: "user" });
+      else {
+        // Back to what the satellite found this season (or nothing yet).
+        const known = detected && detected.id !== "unknown" && detected.season !== "last" ? detected.label : null;
+        Object.assign(found, { crop: known, cropSource: known ? "detected" : null });
+      }
+      cropChanged = before !== `${found.crop ?? ""}|${found.cropSource ?? ""}`;
+    }
     farm.updatedAt = new Date().toISOString();
-    field = { ...found };
+    field = withCropSource({ ...found });
     return farm;
   });
-  return field;
+  const job = cropChanged ? await startFieldAnalysis({ fieldIds: [id], trigger: "crop" }).catch(() => null) : null;
+  return { field, job };
 }
 
 async function removeField(id) {
@@ -526,10 +583,13 @@ export async function handleFieldRoutes(req, res, url) {
   if (!second) {
     if (method === "GET") {
       const [farm, analyses, provider] = await Promise.all([getFarm(), analysesMap({ full: q.get("full") === "1" }), fieldProviderStatus()]);
-      return sendJson(res, 200, { farm, analyses, provider, job: runningFieldAnalysis() }), true;
+      return sendJson(res, 200, { farm: presentFarm(farm), analyses, provider, job: runningFieldAnalysis() }), true;
     }
-    if (method === "PUT") return sendJson(res, 200, await replaceFarm(await readJson(req))), true;
-    if (method === "PATCH") return sendJson(res, 200, { farm: await patchFarm(await readJson(req)) }), true;
+    if (method === "PUT") {
+      const { farm, job } = await replaceFarm(await readJson(req));
+      return sendJson(res, 200, { farm: presentFarm(farm), job }), true;
+    }
+    if (method === "PATCH") return sendJson(res, 200, { farm: presentFarm(await patchFarm(await readJson(req))) }), true;
     if (method === "DELETE") {
       await startOver();
       return sendJson(res, 200, { ok: true }), true;
@@ -539,7 +599,7 @@ export async function handleFieldRoutes(req, res, url) {
   if (second === "demo" && !third && method === "POST") {
     const parts2 = await demoFarmParts();
     const { farm, job } = await replaceFarm(parts2, { demo: true });
-    return sendJson(res, 201, { farm, job }), true;
+    return sendJson(res, 201, { farm: presentFarm(farm), job }), true;
   }
 
   if (second === "detect" && !third && method === "POST") {
@@ -557,8 +617,11 @@ export async function handleFieldRoutes(req, res, url) {
   }
 
   if (second === "fields") {
-    if (!third && method === "POST") return sendJson(res, 201, await addField(await readJson(req))), true;
-    if (third && !fourth && method === "PATCH") return sendJson(res, 200, { field: await changeField(third, await readJson(req)) }), true;
+    if (!third && method === "POST") {
+      const { field, job } = await addField(await readJson(req));
+      return sendJson(res, 201, { field: withCropSource(field), job }), true;
+    }
+    if (third && !fourth && method === "PATCH") return sendJson(res, 200, await changeField(third, await readJson(req))), true;
     if (third && !fourth && method === "DELETE") {
       await removeField(third);
       return sendJson(res, 200, { ok: true }), true;
@@ -583,8 +646,8 @@ export async function handleFieldRoutes(req, res, url) {
     const farm = await getFarm();
     const centre = farmCentre(farm);
     if (!centre) throw notFound("Add your farm first.", "no_farm");
-    const { current, rain, daily, at, stale } = await getWeather(centre);
-    return sendJson(res, 200, { current, rain, daily, at, stale: Boolean(stale) }), true;
+    const { current, rain, daily, hourly, today, at, stale } = await getWeather(centre);
+    return sendJson(res, 200, { current, rain, daily, hourly: hourly ?? null, today: today ?? null, at, stale: Boolean(stale) }), true;
   }
 
   if (second === "reports" && !third) {

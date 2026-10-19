@@ -17,7 +17,8 @@
 // cache working).
 
 import { scorePlaces, ranking } from "../../src/lib/atlas/scoring.js";
-import { COSTS, DEFAULT_SETTINGS, checkSettings } from "../../src/lib/atlas/method.js";
+import { COSTS, DEFAULT_SETTINGS, checkSettings, runsComparable } from "../../src/lib/atlas/method.js";
+import { shownNewDamage } from "../../src/lib/atlas/overview.js";
 
 // ---------- Tool definitions (sent to Claude) ----------
 // strict: true makes Claude's tool inputs always match these shapes.
@@ -72,7 +73,7 @@ export const ATLAS_TOOLS = [
   {
     name: "budget_coverage",
     description:
-      "How many hectares a budget in US dollars can restore (fast path and full recovery, before demining) and which top near-term places it covers first. Call this when the user mentions money, a budget, funding or cost.",
+      "How many hectares a budget in US dollars can restore (fast path and full recovery; where a war is listed, before demining) and which top near-term places it covers first. Call this when the user mentions money, a budget, funding or cost.",
     strict: true,
     input_schema: {
       type: "object",
@@ -223,7 +224,7 @@ export async function buildAtlasContext({ store, runs, context = {} }) {
   if (!run && summaries.length) run = await safe(() => store.getRun(summaries[0].id));
 
   const cells = Array.isArray(run?.cells) ? run.cells : [];
-  const scored = scorePlaces(cells, { settings });
+  const scored = scorePlaces(cells, { settings, conflict: run?.conflict, cellSizeDeg: run?.cellSizeDeg });
   const groupHotspots = await loadGroupHotspots();
   const hotspotsFor = (tf, count) =>
     cells.length ? groupHotspots(scored.places, tf, { count, cellSizeDeg: run.cellSizeDeg }) : [];
@@ -265,7 +266,7 @@ export function conflictLine(conflict, accessSource = null) {
     accessSource === "acled"
       ? "Safe access is the distance to battles in the ACLED file."
       : "Distance to fighting is not measured here, so nothing is set aside for it. That does NOT mean the land is safe: never call land safe, and point to local authorities for unexploded ordnance or security questions.";
-  return `War: none in the app's list covers this area (wars are matched by country only). ${damage} ${access} Do not talk about a war, a front line or demining for this area unless the user raises it.`;
+  return `War: none in the app's list covers this area (wars are matched by country and, where listed, by area, e.g. the Gaza Strip only). ${damage} ${access} Do not talk about a war, a front line or demining for this area unless the user raises it.`;
 }
 
 function hotspotLine(h, index) {
@@ -297,7 +298,7 @@ export function contextText({ workspace, area, run, summaries, scored, settings,
   const t = run.totals || {};
   lines.push(
     `Totals: cropland ${ha(t.croplandHa)}, black-soil cropland ${ha(t.blackSoilHa)}, heavily damaged ${ha(t.heavyDamageHa)}, people on damaged land ${people(t.peopleOnDamagedSoil)}.` +
-      (Number.isFinite(run.newHeavyDamageHa) ? ` New heavy damage since the previous month: ${ha(run.newHeavyDamageHa)}.` : "")
+      (Number.isFinite(shownNewDamage(run, summaries)) ? ` New heavy damage since the previous month: ${ha(run.newHeavyDamageHa)}.` : "")
   );
   if (run.checks?.warnings?.length) lines.push(`Data warnings: ${run.checks.warnings.map((w) => String(w).replace(/[.\s]+$/, "")).join("; ")}.`);
 
@@ -322,27 +323,42 @@ export function contextText({ workspace, area, run, summaries, scored, settings,
 
   if (summaries.length) {
     lines.push("", "History by month (newest first):");
+    lines.push("(Months from different data sources or method versions are not comparable: never subtract them.)");
     for (const s of summaries.slice(0, 24)) {
       lines.push(
-        `- ${s.month}: heavily damaged ${ha(s.totals?.heavyDamageHa)}, new ${Number.isFinite(s.newHeavyDamageHa) ? ha(s.newHeavyDamageHa) : "n/a"}, black-soil ${ha(s.totals?.blackSoilHa)}, people on damaged land ${people(s.totals?.peopleOnDamagedSoil)}, ${s.provider === "gee" ? "Earth Engine" : "sample"}`
+        `- ${s.month}: heavily damaged ${ha(s.totals?.heavyDamageHa)}, new ${Number.isFinite(shownNewDamage(s, summaries)) ? ha(s.newHeavyDamageHa) : "n/a"}, black-soil ${ha(s.totals?.blackSoilHa)}, people on damaged land ${people(s.totals?.peopleOnDamagedSoil)}, ${s.provider === "gee" ? "Earth Engine" : "sample"}`
       );
     }
   }
 
-  if (selected) lines.push("", `The user has this cell selected on the map: ${JSON.stringify(placeDetail(selected))}`);
+  if (selected) lines.push("", `The user has this cell selected on the map: ${JSON.stringify(placeDetail(selected, atWar(run)))}`);
   if (workspace?.budgetUsd) lines.push("", `Workspace budget: $${Math.round(workspace.budgetUsd).toLocaleString("en-US")}.`);
   return lines.join("\n");
 }
 
 // ---------- Tools ----------
 
-function placeDetail(p) {
+// True when a known war covers the run's area (run.conflict). Older runs
+// have no conflict field: they were all made inside Ukraine.
+export function atWar(run) {
+  return run?.conflict === undefined ? true : Boolean(run.conflict);
+}
+
+// What the recovery cost leaves out: demining only where a war is listed.
+// Every cost the AI sees says it is a planning assumption: the per-hectare
+// ranges are not measured and not tied to a published source.
+export function costNote(war) {
+  return war ? "before demining; planning assumption (not sourced)" : "rough ranges for restoring the soil; planning assumption (not sourced)";
+}
+
+function placeDetail(p, war = true) {
   return {
     cellId: p.id,
     label: placeLabel(p),
     lat: round(p.lat, 4),
     lon: round(p.lon, 4),
     scores: { soil: score100(p.soil), damage: score100(p.damage), access: score100(p.access) },
+    ...(p.reason ? { notRanked: p.reason } : {}),
     nearTerm: { score: score100(p.nearTerm.score), rank: p.nearTerm.rank, tier: p.nearTerm.tier },
     postwar: { score: score100(p.postwar.score), rank: p.postwar.rank, tier: p.postwar.tier },
     croplandHa: round(p.croplandHa),
@@ -350,17 +366,19 @@ function placeDetail(p) {
     heavyDamageHa: round(p.heavyDamageHa),
     people: round(p.people),
     peopleOnDamagedSoil: round(p.peopleOnDamagedSoil),
-    recoveryCostUsd: recoveryCost(p.heavyDamageHa),
+    recoveryCostUsd: recoveryCost(p.heavyDamageHa, war),
   };
 }
 
 // The cost to restore some hectares, as [low, high] US dollars.
-function recoveryCost(hectares) {
+//   war  true when a known war covers the area (the note then says the
+//        costs are before demining; at peace there is nothing to demine)
+function recoveryCost(hectares, war = true) {
   const h = Number.isFinite(hectares) ? hectares : 0;
   return {
     fastPath: COSTS.fastPathPerHa.map((perHa) => Math.round(perHa * h)),
     fullRecovery: COSTS.fullRecoveryPerHa.map((perHa) => Math.round(perHa * h)),
-    note: "before demining",
+    note: costNote(war),
   };
 }
 
@@ -425,7 +443,7 @@ export async function runAtlasTool(name, input = {}, data) {
       } else {
         return { error: "Give a cellId, or both lat and lon." };
       }
-      return { month: run.month, dataSource: run.provider, place: placeDetail(place) };
+      return { month: run.month, dataSource: run.provider, place: placeDetail(place, atWar(run)) };
     }
     case "compare_months": {
       if (!run) return NO_RUN;
@@ -437,6 +455,11 @@ export async function runAtlasTool(name, input = {}, data) {
       if (!data.runs?.compareRuns) return { error: "Comparison is not available on this server." };
       const runA = await data.store.getRun(byMonth(a).id);
       const runB = await data.store.getRun(byMonth(b).id);
+      // Another data source, method or grid: no differences (method.js runsComparable).
+      const check = runsComparable(runA, runB);
+      if (!check.comparable) {
+        return { a: { month: a, dataSource: runA.provider }, b: { month: b, dataSource: runB.provider }, comparable: false, note: `${check.text}: these two months cannot be subtracted. Say so; do not compare their totals.` };
+      }
       const result = data.runs.compareRuns(runA, runB);
       const roundObject = (o) => Object.fromEntries(Object.entries(o || {}).map(([k, v]) => [k, round(v)]));
       return {
@@ -480,7 +503,9 @@ export async function runAtlasTool(name, input = {}, data) {
         costPerHaUsd: { fastPath: COSTS.fastPathPerHa, fullRecovery: COSTS.fullRecoveryPerHa },
         coversHa: coverage,
         coversFirst,
-        note: "Costs exclude demining. Only certified deminers can declare land safe.",
+        note: atWar(run)
+          ? "Costs exclude demining. Only certified deminers can declare land safe. The per-hectare costs are planning assumptions (not sourced), not measurements: say so."
+          : "Rough ranges for restoring damaged soil. No war is recorded in this area; this does not say the land is safe. The per-hectare costs are planning assumptions (not sourced), not measurements: say so.",
       };
     }
     case "get_history": {
@@ -491,7 +516,7 @@ export async function runAtlasTool(name, input = {}, data) {
           month: s.month,
           dataSource: s.provider,
           heavyDamageHa: round(s.totals?.heavyDamageHa),
-          newHeavyDamageHa: round(s.newHeavyDamageHa),
+          newHeavyDamageHa: round(shownNewDamage(s, summaries)),
           blackSoilHa: round(s.totals?.blackSoilHa),
           croplandHa: round(s.totals?.croplandHa),
           peopleOnDamagedSoil: round(s.totals?.peopleOnDamagedSoil),

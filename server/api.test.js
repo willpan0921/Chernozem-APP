@@ -167,7 +167,13 @@ test("workspace settings are cleaned", async () => {
 });
 
 test("team: add, change role, remove, last admin stays", async () => {
-  const ws = (await call("GET", "/api/workspace")).json.workspace;
+  // A new workspace has no team; the first person added is its admin.
+  let ws = (await call("GET", "/api/workspace")).json.workspace;
+  if (!ws.team.length) {
+    const first = await call("POST", "/api/team", { name: "Olena P.", email: "", role: "viewer" });
+    assert.equal(first.json.member.role, "admin");
+    ws = (await call("GET", "/api/workspace")).json.workspace;
+  }
   const admin = ws.team.find((m) => m.role === "admin");
   const added = await call("POST", "/api/team", { name: "Ivan K.", email: "ivan@example.org", role: "viewer" });
   assert.equal(added.status, 201);

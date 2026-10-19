@@ -5,7 +5,9 @@
 //     satellite pass, with the "Open map" button,
 //   - one status sentence ("1 field needs recovery · 1 to watch"),
 //   - five tiles: healthy / to watch / needs recovery / farm area / weather
-//     (press one of the first three to pick out its fields in the list),
+//     (press one of the first three to pick out its fields in the list).
+//     On a peaceful farm (no known war) with nothing to recover, the
+//     "Needs recovery" tile is left out,
 //   - "What needs doing": only things worked out from the analyses
 //     (recovery of damaged fields with its cost, fields ready to harvest
 //     before the rain, stress patches...), or "Nothing urgent",
@@ -13,7 +15,9 @@
 //     and opens the AI chat about it (/field/ai?report=<id>). "Shelling" is
 //     offered only where a known war covers the farm (analysis.conflict),
 //   - on the right, "Your fields": a small satellite map and the list of
-//     fields (click one to open it on the Fields map).
+//     fields with their crop (the farmer's, else "Corn · detected") and
+//     status; a new field says "Analysing…" until its analysis is saved
+//     (click one to open it on the Fields map).
 //
 // Everything comes from the farm and its analyses (useFieldData). The rules
 // (what counts as damaged, ready, stressed...) are in
@@ -53,8 +57,8 @@ import {
 import { PageHeader, Badge, Button } from "../../components/ui/index.js";
 import { FarmGate, FieldProgress, useFieldData } from "../../state/FieldData.jsx";
 import { STATUS_GROUPS } from "../../lib/field/method.js";
-import { farmAreaHa, formatArea, formatDay, formatDayRange, statusCounts } from "../../lib/field/format.js";
-import { latestPass, likelyRain, needsDoing, statusSentence } from "../../lib/field/overview.js";
+import { ANALYSING_LABEL, cropInfo, farmAreaHa, formatArea, formatDay, formatDayRange, mapLook, statusCounts } from "../../lib/field/format.js";
+import { latestPass, likelyRain, needsDoing, showRecoveryTile, statusSentence } from "../../lib/field/overview.js";
 import { REPORT_KINDS } from "../../data/chats.js";
 import { PHOTO_TYPES } from "../../api/fieldApi.js";
 import "./OverviewPage.css";
@@ -94,15 +98,17 @@ function WeatherIcon({ code, size = 26 }) {
 
 function Overview() {
   const navigate = useNavigate();
-  const { farm, analyses, provider, job, weather, weatherError, actions } = useFieldData();
+  const { farm, analyses, provider, job, weather, weatherError, analysing, conflict, actions } = useFieldData();
   const [hoveredId, setHoveredId] = useState(null);
   // A group tile that is pressed: its fields stand out in "Your fields".
   const [group, setGroup] = useState(null);
   const toggleGroup = (id) => setGroup((now) => (now === id ? null : id));
   const inGroup = (statusId) => !group || STATUS_GROUPS[group].includes(statusId);
 
-  const status = statusSentence(farm, analyses);
+  const status = statusSentence(farm, analyses, job);
   const counts = statusCounts(farm, analyses);
+  // A peaceful farm with nothing to recover has no "Needs recovery 0" tile.
+  const recoveryTile = showRecoveryTile(counts, conflict);
   const items = useMemo(() => needsDoing({ farm, analyses, weather, job }), [farm, analyses, weather, job]);
   const pass = latestPass(farm, analyses);
   const running = job?.status === "running";
@@ -144,10 +150,12 @@ function Overview() {
         </div>
       )}
 
-      <div className="fo-stats">
+      <div className={recoveryTile ? "fo-stats" : "fo-stats is-peace"}>
         <StatTile id="healthy" label="Healthy" value={counts.healthy} tone="green" pressed={group === "healthy"} onPress={toggleGroup} />
         <StatTile id="watch" label="To watch" value={counts.watch} tone={counts.watch ? "amber" : null} pressed={group === "watch"} onPress={toggleGroup} />
-        <StatTile id="recovery" label="Needs recovery" value={counts.recovery} tone={counts.recovery ? "red" : null} pressed={group === "recovery"} onPress={toggleGroup} />
+        {recoveryTile && (
+          <StatTile id="recovery" label="Needs recovery" value={counts.recovery} tone={counts.recovery ? "red" : null} pressed={group === "recovery"} onPress={toggleGroup} />
+        )}
         <StatTile id="area" label="Farm area" value={formatArea(farmAreaHa(farm), farm.units)} />
         <WeatherTile weather={weather} error={weatherError} onRetry={actions.reloadWeather} />
       </div>
@@ -155,7 +163,7 @@ function Overview() {
       <div className="fo-grid">
         <div className="fo-main">
           <NeedsDoing items={items} onAnalyze={actions.analyze} />
-          <TellUs farm={farm} inWar={Object.values(analyses || {}).some((item) => item?.conflict)} onSent={(report) => navigate(`/field/ai?report=${encodeURIComponent(report.id)}`)} />
+          <TellUs farm={farm} inWar={Boolean(conflict)} onSent={(report) => navigate(`/field/ai?report=${encodeURIComponent(report.id)}`)} />
         </div>
 
         <section className="card fo-fields" aria-labelledby="fo-fields-title">
@@ -170,6 +178,7 @@ function Overview() {
               <FieldMap
                 fields={farm.fields}
                 analyses={analyses}
+                analysing={analysing}
                 selectedId={hoveredId}
                 onSelect={(id) => id && navigate(`/field/fields?field=${encodeURIComponent(id)}`)}
                 height="100%"
@@ -184,7 +193,11 @@ function Overview() {
             {farm.fields.map((field) => {
               const a = analyses[field.id];
               const statusId = a?.status?.id;
-              const cls = a?.condition?.class || "nodata";
+              // A harvested or not-sown field has no condition class: the
+              // straw swatch of the map, and its status word.
+              const look = mapLook(a);
+              const cls = look.bare ? "bare" : a?.condition?.class || "nodata";
+              const crop = cropInfo(field, a).text;
               return (
                 <li key={field.id} className={inGroup(statusId) ? "is-in" : "is-out"}>
                   <Link
@@ -198,9 +211,15 @@ function Overview() {
                     <span className={`fo-swatch fo-swatch-${cls}${statusId === "recovery" ? " is-recovery" : ""}`} aria-hidden="true" />
                     <span className="fo-field-text">
                       <span className="fo-field-name">{field.name}</span>
-                      <span className="fo-field-sub">{[field.crop, formatArea(field.areaHa, farm.units)].filter(Boolean).join(" · ")}</span>
+                      <span className="fo-field-sub">{[crop, formatArea(field.areaHa, farm.units)].filter(Boolean).join(" · ")}</span>
                     </span>
-                    {a ? <Badge tone={a.status?.tone || undefined}>{a.status?.label}</Badge> : <Badge>Not analysed</Badge>}
+                    {a ? (
+                      <Badge tone={a.status?.tone || undefined}>{a.status?.label}</Badge>
+                    ) : analysing.has(field.id) ? (
+                      <Badge tone="outline">{ANALYSING_LABEL}</Badge>
+                    ) : (
+                      <Badge>Not analysed</Badge>
+                    )}
                   </Link>
                 </li>
               );
@@ -344,6 +363,7 @@ function TodoItem({ item, onRun, retry }) {
                 <span className="fo-cost-value">{cost.value}</span>
               </span>
             ))}
+            {item.costNote && <span className="fo-cost-note">{item.costNote}</span>}
           </span>
         )}
         {line && (

@@ -57,7 +57,8 @@ export const SCALES = {
   // Drop in the Chernozem Health Index from the baseline years (diagnostic,
   // not in the score).
   chi: { unit: "index drop", full: 0.2 },
-  // Distance to the nearest recorded fighting. 100 km or more counts as safe.
+  // Distance to the nearest recorded fighting. 100 km or more scores full
+  // access (1.0), which does not make the land safe.
   distance: { unit: "km", full: 100 },
   // People per km² and night-light radiance, on a log scale.
   population: { unit: "people per km²", full: 1000, log: true },
@@ -88,15 +89,72 @@ export function scaleIndicator(name, raw) {
 // damage (src/lib/field/method.js damageDetected).
 export const HEAVY_DAMAGE = { radarDb: 3, radarWithFireDb: 2, fireNearM: 1000 };
 
+// A place is ranked only when at least `share` of its own area is
+// black-soil cropland (a map square of a country, ~50,000 ha: 250 ha; a
+// square of a farm, a fraction of a hectare: its share), or `ha` when the
+// square's size is not known. Below that it has next to nothing for the
+// method to restore: it gets the reason NO_BLACK_SOIL_REASON and is left
+// out of the ranking, the top areas, the next steps and the budget.
+// (Real data, Kenya, 2026-10-19: the top 7 places were arid squares with
+// 0 ha of black soil, ranked first by savanna fires.)
+export const BLACK_SOIL_MIN = { ha: 100, share: 0.005 };
+export const NO_BLACK_SOIL_REASON = "No black-soil cropland";
+
+// The damage score where no known war covers the area (run.conflict null):
+// the share of the place's black-soil cropland that is heavily damaged
+// (HEAVY_DAMAGE, which at peace needs radar change AND unusual fire), as a
+// 0-to-1 score that is full at `fullShare`. The raw indicators (fires
+// above the normal rate, radar change) have everyday causes at peace:
+// savanna burning and seasonal radar change in arid land gave a damage
+// score of 100 to squares with 0 ha damaged (Kenya, 2026-10-19).
+export const PEACE_DAMAGE = { unit: "share of black-soil cropland heavily damaged", fullShare: 0.2 };
+
+// Whether two runs of an area can be compared number for number: the same
+// data source (Earth Engine or sample), the same method (its components
+// and scales, saved on every run) and the same squares. Gives back
+// { comparable: true } or { comparable: false, reason, text } with reason
+//   "source"  one month is Earth Engine and the other sample data
+//   "method"  the method changed between them (e.g. damage from the health
+//             index before 2026-10-19, from radar and fire since)
+//   "grid"    different square sizes
+// Runs saved before a field existed count as matching on it.
+//   why   "different data source" / "different method version" /
+//         "different squares"; text "Not comparable: " + why
+export const NOT_COMPARABLE_WHY = {
+  source: "different data source",
+  method: "different method version",
+  grid: "different squares",
+};
+export function runsComparable(a, b) {
+  const no = (reason) => ({ comparable: false, reason, why: NOT_COMPARABLE_WHY[reason], text: `Not comparable: ${NOT_COMPARABLE_WHY[reason]}` });
+  if (!a || !b) return { comparable: true };
+  if ((a.provider || null) !== (b.provider || null)) return no("source");
+  if (a.method && b.method && JSON.stringify(a.method) !== JSON.stringify(b.method)) return no("method");
+  if (Number.isFinite(a.cellSizeKm) && Number.isFinite(b.cellSizeKm) && Math.abs(a.cellSizeKm - b.cellSizeKm) > 0.001 * Math.max(a.cellSizeKm, b.cellSizeKm)) return no("grid");
+  return { comparable: true };
+}
+
+// The area of one map square in hectares, from its size in degrees and
+// its latitude.
+export function cellAreaHa(sizeDeg, lat) {
+  if (!(sizeDeg > 0) || !Number.isFinite(lat)) return null;
+  const km = sizeDeg * 111.32;
+  return km * km * Math.cos((lat * Math.PI) / 180) * 100;
+}
+
 // The old health-index rule, kept only for the sample data's made-up
 // damage field (server/providers/sample.js).
 export const HEAVY_DAMAGE_CHI_DROP = 0.1;
 
-// Recovery costs in US dollars per hectare, before demining.
+// Recovery costs in US dollars per hectare, before demining. PLANNING
+// ASSUMPTIONS carried over from the product design, not measured and not
+// tied to a published source: every place that shows them (pages and AI)
+// says so with COST_NOTE.
 export const COSTS = {
   fastPathPerHa: [95, 290],
   fullRecoveryPerHa: [260, 620],
 };
+export const COST_NOTE = "Planning assumption (not sourced)";
 
 // Cleans up settings a person typed in: fills gaps from the defaults, keeps
 // numbers in range, and makes the weights whole numbers that add up to 100.

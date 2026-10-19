@@ -37,6 +37,7 @@ import WeightsPanel from "../../components/atlas/WeightsPanel.jsx";
 import { cellBounds, compassName, coordDigits, findFocus, labelParts, placesExtent } from "../../lib/atlas/hotspots.js";
 import { rankedCount } from "../../lib/atlas/mapColors.js";
 import { recoveryCost } from "../../lib/atlas/overview.js";
+import { COST_NOTE } from "../../lib/atlas/method.js";
 import { formatAreaSize, formatCoord, formatCount, formatHaShort } from "../../lib/format.js";
 import { haFixed } from "./overviewHelpers.js";
 import "./MapPage.css";
@@ -53,6 +54,7 @@ const TIERS = {
   lower: { label: "Lower priority", tone: "outline" },
   setAside: { label: "Set aside", tone: "ink" },
   notAnalyzed: { label: "No data", tone: "outline" },
+  noBlackSoil: { label: "No black soil", tone: "outline" },
 };
 
 // Dollars in short form: 4800000 -> "$4.8M", 52000 -> "$52k".
@@ -185,6 +187,7 @@ function PlaceDetail({ detail, titleRef, onBack, onZoom, onAsk }) {
 
       <div className="mp-cost">
         <h3>Recovery cost</h3>
+        <p className="mp-cost-note">{COST_NOTE}</p>
         <div className="mp-cost-row">
           <span>Fast path</span>
           <span className="mp-cost-value">{usdRange(cost.fast)}</span>

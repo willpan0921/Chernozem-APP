@@ -888,7 +888,10 @@ ol.chat-md-list li.is-sub {
 
   .chat-thread-title {
     display: block;
+    max-width: 100%;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .chat-thread-meta,

@@ -289,3 +289,60 @@ test("a report's photos come back as images: real types only, at most 4", async 
   const unsafe = await buildFieldContext({ store, reportId: "../etc/passwd", getWeather: async () => null, today: "2026-10-18" });
   assert.doesNotMatch(unsafe.text, /This chat is about|no longer exists/);
 });
+
+test("the new readings in words: detected crop, No crop, likely cause, pest risk, harvest basis", async () => {
+  const farm = {
+    id: "farm-3",
+    name: "Story County",
+    location: { label: "Ames, Iowa", lat: 42.03, lon: -93.62 },
+    units: "ha",
+    demo: false,
+    fields: [
+      { id: "fld-aaaa1111", name: "Field 1", areaHa: 40, crop: "Corn", cropSource: "detected", source: "detected" },
+      { id: "fld-bbbb2222", name: "Field 2", areaHa: 30, crop: "Soybean", cropSource: "user", source: "detected" },
+      { id: "fld-cccc3333", name: "Field 3", areaHa: 20, crop: null, cropSource: null, source: "drawn" },
+    ],
+  };
+  const growing = analysis("fld-aaaa1111", {
+    conflict: null,
+    cropDetected: { id: "corn", label: "Corn", confidence: "likely", reason: "Greenest in early August" },
+    stress: { applies: true, share: 0.08, level: "medium", stressedHa: 3.2, cause: "other", redEdge: true, patches: [{ lat: 42.03, lon: -93.62, radiusM: 60, ha: 1.2, cause: "other" }] },
+    pestRisk: { disease: "high", insects: "medium", basis: { wetHours: 30, gdd14: 45 } },
+    harvest: { stage: "growing", daysToReady: 25, basis: "heat units", gdd: { accumulated: 1100, needed: 1450, base: 10 }, window: { from: "2026-09-10", to: "2026-09-20" }, rainBefore: false, standingDry: false },
+    status: { id: "healthy", label: "Healthy", tone: "green" },
+  });
+  const harvested = analysis("fld-bbbb2222", {
+    conflict: null,
+    stress: { applies: false, share: null, level: null, stressedHa: null, cause: null, redEdge: false, patches: [] },
+    pestRisk: null,
+    condition: { score: null, class: null },
+    harvest: { stage: "harvested", radarHarvestOn: "2026-10-02", harvestedOn: "2026-10-02", basis: "radar" },
+    status: { id: "harvested", label: "Harvested", tone: null },
+  });
+  const standing = analysis("fld-cccc3333", {
+    conflict: null,
+    cropDetected: { id: "soybean", label: "Soybean", confidence: "possible", reason: "" },
+    harvest: { stage: "ready", daysToReady: 0, basis: "radar", standingDry: true },
+    status: { id: "ready", label: "Ready to harvest", tone: "ink" },
+  });
+  const store = fieldStore({ farm, analyses: { "fld-aaaa1111": growing, "fld-bbbb2222": harvested, "fld-cccc3333": standing } });
+  const ctx = await buildFieldContext({ store, getWeather: async () => null, today: "2026-08-15" });
+  const text = ctx.text;
+  assert.match(text, /Field 1 \(id fld-aaaa1111\): Corn \(detected from the satellite record, likely; not confirmed by the farmer\)/);
+  assert.match(text, /Field 2 \(id fld-bbbb2222\): Soybean, 30 ha/);
+  assert.match(text, /Field 3 \(id fld-cccc3333\): Soybean \(detected from the satellite record, possible/);
+  assert.match(text, /Stress medium, 8% of the field \(3\.2 ha\); likely cause: Not water: check for pests or disease; the red edge/);
+  assert.match(text, /Pest and disease risk from the weather \(a forecast, not a detection\): Disease risk high this week \(30 wet hours/);
+  assert.match(text, /still growing, ready in about 25 days \(from heat units \(growing degree-days\) since green-up\); 1100 of about 1450 degree-days \(base 10 °C\)/);
+  assert.match(text, /Field 2 .*Condition: none \(harvested, no crop to score\)\. .*Stress: No crop/);
+  assert.match(text, /harvested \(the radar saw the crop cut on 2026-10-02\)/);
+  assert.match(text, /dried down but still standing: the radar shows no cut/);
+  assert.doesNotMatch(text, /\(Poor\)/);
+  const detail = await ctx.runTool("get_field", { name_or_id: "Field 1" });
+  assert.equal(detail.field.cropSource, "detected");
+  assert.equal(detail.cropDetected.id, "corn");
+  assert.equal(detail.pestRisk.line, "Disease risk high this week");
+  assert.equal(detail.stress.causeLabel, "Not water: check for pests or disease");
+  const two = await ctx.runTool("get_field", { name_or_id: "Field 2" });
+  assert.match(two.stress.note, /No crop/);
+});

@@ -143,3 +143,23 @@ test("the baseline comes from the data source, else 2019 to 2021", () => {
   const unlabeled = buildRun({ area, month: "2026-09", provider: "gee", readings: [], cells: [], cellSizeDeg: 0.5, baseline: { from: 2021, to: 2021 } });
   assert.equal(unlabeled.baseline.label, "2021");
 });
+
+test("months from another data source or method are not compared", () => {
+  // Real case, Kenya (2026-10-19): one Earth Engine month against sample
+  // months read "Cropland −27,371,469 ha" and "−1.93M ha vs Aug 2026".
+  const a = { ...makeRun("2026-08", 0.1), provider: "sample" };
+  const b = { ...makeRun("2026-09", 0.35), provider: "gee" };
+  const result = compareRuns(a, b);
+  assert.equal(result.comparable, false);
+  assert.equal(result.notComparable, "source");
+  assert.equal(result.notComparableText, "Not comparable: different data source");
+  assert.equal(result.deltas.heavyDamageHa, null);
+  assert.deepEqual(result.changedCells, []);
+  linkNewDamage([a, b]);
+  assert.equal(b.newHeavyDamageHa, null);
+  // A different method version (damage from the health index, then radar).
+  const older = { ...makeRun("2026-08", 0.1), method: { components: { damage: ["firms", "chi"] } } };
+  const newer = { ...makeRun("2026-09", 0.35), method: { components: { damage: ["firms", "radar"] } } };
+  assert.equal(compareRuns(older, newer).notComparable, "method");
+  assert.equal(compareRuns(makeRun("2026-08", 0.1), makeRun("2026-09", 0.35)).comparable, true);
+});

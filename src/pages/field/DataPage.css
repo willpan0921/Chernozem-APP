@@ -543,3 +543,16 @@
     color: #555;
   }
 }
+
+/* A new field being analysed for the first time. */
+.fdata-analysing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 12px 16px;
+  border-radius: 14px;
+  background: var(--c-surface-2);
+  font-size: 14px;
+  color: var(--c-text-2);
+}

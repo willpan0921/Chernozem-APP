@@ -12,7 +12,7 @@
 //   saveFarm(body)                    replace the farm with the chosen fields -> { farm, job }
 //   patchFarm(body)                   { name?, units?, autoUpdate?, location? } -> farm
 //   deleteFarm()                      start over
-//   addField(body) / updateField(id, body) / removeField(id)
+//   addField(body) / updateField(id, body) -> { field, job } / removeField(id)
 //   analyze(fieldIds?)                update the analysis now -> the job
 //   getFieldAnalysis(id)              { analysis, history }
 //   getGeotiffUrl(id)                 { url } (Earth Engine only)
@@ -78,9 +78,21 @@ const enc = (value) => encodeURIComponent(value);
 // ---------- The farm ----------
 
 // -> { farm | null, analyses: { [fieldId]: analysis }, provider: { id, label, ... }, job | null }
-// full: true adds each analysis's season curve and normal curve (the zones
-// grid stays on the server, for downloads and the AI)
-// (the season charts need the curves; the grid is kept for downloads and the AI).
+// farm.conflict is the known war at the farm's place ({ id, name, since })
+// or null at peace; each field has cropSource "user" | "detected" | "demo" | null.
+// An analysis (server/field/analysis.js) has water, plantHealth, condition
+// { score, class } (null when harvested or not sown), stress { share, level,
+// stressedHa, patches: [{ lat, lon, radiusM, ha, cause }], cause, redEdge,
+// applies, reason ("noCrop" | "driedDown" | null) }, pestRisk { disease,
+// insects, basis } | null, harvest { stage, daysToReady, window,
+// harvestedOn, basis ("dry-down" | "heat units" | "both" | "radar" |
+// "images" | null), gdd, radarHarvestOn, standingDry, leafDrop,
+// cropUnknown, dryDown ("fading" | "dry" | null), fallow }, cropDetected
+// { id (a crop, "fallow" or "unknown"), label, confidence, reason },
+// damage, status, conflict.
+// full: true adds each analysis's season curve and normal curve (the
+// season charts need them; the zones grid stays on the server, for
+// downloads and the AI).
 export const getFarm = ({ full = true, signal } = {}) => request("GET", `/farm${full ? "?full=1" : ""}`, undefined, { signal });
 
 // -> { farm, job }
@@ -105,10 +117,12 @@ export async function deleteFarm() {
 // body: { geometry, name?, crop? } -> { field, job }
 export const addField = (body) => request("POST", "/farm/fields", body);
 
-// body: { name?, crop? } -> field
+// body: { name?, crop? } -> { field, job }. crop: the farmer's crop, or
+// null to go back to the detected crop; a changed crop starts a new
+// analysis of the field (job, else null).
 export async function updateField(fieldId, body) {
-  const { field } = await request("PATCH", `/farm/fields/${enc(fieldId)}`, body);
-  return field;
+  const { field, job = null } = await request("PATCH", `/farm/fields/${enc(fieldId)}`, body);
+  return { field, job };
 }
 
 export async function removeField(fieldId) {
@@ -148,7 +162,8 @@ export async function analyze(fieldIds) {
 // ---------- Weather ----------
 
 // -> { current: { tempC, code, label }, rain: { likely, from, to, mm } | null,
-//      daily: [{ date, tempMax, tempMin, rainMm, rainChance }], at, stale }
+//      daily: [{ date, tempMax, tempMin, rainMm, rainChance }],
+//      hourly: { wetHours14, gdd14 } (the pest and disease risk inputs), at, stale }
 export const getWeather = (options) => request("GET", "/farm/weather", undefined, options);
 
 // ---------- Reports ("Tell us what happened") ----------

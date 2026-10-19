@@ -43,6 +43,25 @@ test("custom areas: the war covering any of its land, not just its middle", () =
   assert.equal(conflictForArea({ bbox: [0, -31, 1, -30] }), null); // open sea
 });
 
+test("wars by area: the Gaza war covers the Gaza Strip only, not the West Bank or Israel", async () => {
+  const { conflictCovers, conflictForCountry } = await import("../src/config/conflicts.js");
+  assert.equal(conflictAt(31.5, 34.45)?.id, "gaza-2023"); // Gaza City
+  assert.equal(conflictAt(31.35, 34.3)?.id, "gaza-2023"); // Khan Younis
+  assert.equal(conflictAt(31.9, 35.2), null); // Ramallah, West Bank
+  assert.equal(conflictAt(32.2, 35.25), null); // Nablus, West Bank
+  assert.equal(countryAt(31.5, 34.58)?.name, "Israel");
+  assert.equal(conflictAt(31.5, 34.58), null); // Sderot area: in the box but in Israel
+  assert.equal(conflictForArea({ bbox: [34.9, 31.3, 35.6, 32.5] }), null); // a West Bank box
+  assert.equal(conflictForArea({ bbox: [34.2, 31.2, 34.6, 31.6] })?.id, "gaza-2023");
+  // The whole country still holds the war zone.
+  assert.equal(conflictForCountry("275")?.id, "gaza-2023");
+  // A war given by boxes only covers them whatever the country (or at sea).
+  const boxOnly = { id: "x", areas: [[10, 10, 11, 11]] };
+  assert.equal(conflictCovers(boxOnly, null, 10.5, 10.5), true);
+  assert.equal(conflictCovers(boxOnly, "123", 12, 10.5), false);
+  assert.equal(conflictCovers({ id: "y" }, "804", 49, 37), false);
+});
+
 test("damage window: from the war start, else the last two years", () => {
   assert.deepEqual(damageWindow({ since: "2022-02-24" }, "2026-10-18"), { start: "2022-02-24", end: "2026-10-19", conflict: { since: "2022-02-24" } });
   assert.deepEqual(damageWindow(null, "2026-10-18"), { start: "2024-10-18", end: "2026-10-19", conflict: null });

@@ -11,6 +11,8 @@
 //   imageryText(run)             "Imagery from April to September 2026, ..."
 //   weightsText(settings)        "Soil 30 · Damage 40 · Access 30"
 //   atPeace(run)                 true when no war in the app's list covers the run
+//   shownNewDamage(run, runs)    new heavy damage, or null when the month before is not comparable
+//   sourceBadge(runs)            the Data page's "Earth Engine · 11 earlier months are sample data"
 //   timeframeLabel(tf, run)      "Near term", and "Postwar" (a war) or "Long term"
 //   timeframeOptions(run)        the two time frames for a Near term | ... switch
 //   ruleText(tf, settings, run)  the one-line rule of a time frame
@@ -22,7 +24,7 @@
 // Whoever changes the rules behind the overview. For example, to add a new
 // kind of next step, add a block to nextSteps() below.
 
-import { COSTS } from "./method.js";
+import { COSTS, runsComparable } from "./method.js";
 import { addDays, addMonths, formatHaShort, formatCount, formatMonthYear, formatShortDate, listNames, monthName, roundThousands, toDay } from "../format.js";
 
 // ---------- Totals and the four big numbers ----------
@@ -60,6 +62,42 @@ export function kpis(summary, run = null) {
 // "From 31.2M ha of cropland in 1,176 squares."
 export function kpiFootnote(summary) {
   return `From ${formatHaShort(summary.croplandHa)} of cropland in ${summary.cellCount.toLocaleString("en-US")} squares.`;
+}
+
+// ---------- Month to month ----------
+
+// The run of the month before `run` among `runs` (summaries), or null.
+export function previousMonthRun(run, runs) {
+  if (!run?.month) return null;
+  const before = addMonths(`${run.month}-01`, -1).slice(0, 7);
+  return (runs || []).find((item) => item?.month === before && item.areaId === run.areaId) || null;
+}
+
+// The run's new heavy damage as the pages may show it: null when the
+// month before is from another data source, method or grid (method.js
+// runsComparable), because the difference then says nothing about the
+// land. Runs saved before that check kept their old number; it is hidden
+// here too.
+export function shownNewDamage(run, runs) {
+  if (!Number.isFinite(run?.newHeavyDamageHa)) return null;
+  const before = previousMonthRun(run, runs);
+  if (before && !runsComparable(before, run).comparable) return null;
+  return run.newHeavyDamageHa;
+}
+
+// The Data page's source badge: the latest month's source, and how many
+// earlier months came from the other one.
+//   -> { text: "Earth Engine · 11 earlier months are sample data", tone: "amber" | null }
+export function sourceBadge(runs) {
+  const list = runs || [];
+  if (!list.length) return null;
+  const latest = list.reduce((best, item) => (String(item.month) > String(best.month) ? item : best));
+  const real = latest.provider === "gee";
+  const others = list.filter((item) => item !== latest && (item.provider === "gee") !== real).length;
+  const name = real ? "Earth Engine" : "Sample data";
+  if (!others) return { text: name, tone: real ? null : "amber" };
+  const otherName = real ? "sample data" : "Earth Engine";
+  return { text: `${name} · ${others} earlier ${others === 1 ? "month is" : "months are"} ${otherName}`, tone: "amber" };
 }
 
 // ---------- Run description ----------

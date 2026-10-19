@@ -9,7 +9,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { scorePlaces } from "./scoring.js";
 import { groupHotspots } from "./hotspots.js";
-import { atPeace, describeAlert, imageryText, kpis, nextSteps, recoveryCost, ruleText, springPlan, summarize, timeframeLabel, timeframeOptions, weightsText } from "./overview.js";
+import { atPeace, describeAlert, imageryText, kpis, nextSteps, recoveryCost, ruleText, shownNewDamage, sourceBadge, springPlan, summarize, timeframeLabel, timeframeOptions, weightsText } from "./overview.js";
+import { runsComparable } from "./method.js";
 import { makePlaces } from "./testPlaces.js";
 
 const { places, settings } = scorePlaces(makePlaces(12, 12));
@@ -122,4 +123,18 @@ test("run description lines", () => {
   const mixed = { ...run, imagery: { from: "2025-04", to: "2025-09", label: "April to September 2025 (80% of the area); May to October 2025 (20% of the area)" } };
   assert.equal(imageryText(mixed), "Imagery from April to September 2025 (80% of the area); May to October 2025 (20% of the area), compared with 2019 to 2021");
   assert.equal(weightsText(settings), "Soil 30 · Damage 40 · Access 30");
+});
+
+test("month to month: no new damage or comparison across data sources; the source badge", () => {
+  const aug = { id: "a", areaId: "k", month: "2026-08", provider: "sample", newHeavyDamageHa: 5 };
+  const sep = { id: "b", areaId: "k", month: "2026-09", provider: "gee", newHeavyDamageHa: 0, cellSizeKm: 22.263 };
+  assert.equal(shownNewDamage(sep, [sep, aug]), null);
+  assert.equal(shownNewDamage({ ...sep, provider: "sample", newHeavyDamageHa: 3 }, [aug]), 3);
+  assert.equal(runsComparable(aug, sep).text, "Not comparable: different data source");
+  assert.equal(runsComparable({ provider: "gee", cellSizeKm: 10 }, { provider: "gee", cellSizeKm: 20 }).reason, "grid");
+  const months = Array.from({ length: 11 }, (_, i) => ({ month: `2025-${String(i + 1).padStart(2, "0")}`, provider: "sample" }));
+  assert.deepEqual(sourceBadge([sep, ...months]), { text: "Earth Engine · 11 earlier months are sample data", tone: "amber" });
+  assert.deepEqual(sourceBadge([sep]), { text: "Earth Engine", tone: null });
+  assert.deepEqual(sourceBadge(months), { text: "Sample data", tone: "amber" });
+  assert.equal(sourceBadge([]), null);
 });

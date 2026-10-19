@@ -21,6 +21,21 @@ test("typed coordinates in the usual forms", () => {
   for (const text of ["Kupiansk", "91, 10", "10, 200", "49.74N 37.54N", "", "2024 harvest"]) assert.equal(parseCoordinates(text), null, text);
 });
 
+test("coordinates with their names, and decimal commas (7.9)", () => {
+  assert.deepEqual(parseCoordinates("lat -33.9 lon 18.4"), { lat: -33.9, lon: 18.4 });
+  assert.deepEqual(parseCoordinates("lat: -34.6, lng: -58.4"), { lat: -34.6, lon: -58.4 });
+  assert.deepEqual(parseCoordinates("Lat: 42.03, Lng: -93.62"), { lat: 42.03, lon: -93.62 });
+  assert.deepEqual(parseCoordinates("latitude=48.2 longitude=1.6"), { lat: 48.2, lon: 1.6 });
+  assert.deepEqual(parseCoordinates("lon 18.4 lat -33.9"), { lat: -33.9, lon: 18.4 });
+  assert.deepEqual(parseCoordinates("lat: -34,6; lon: -60,0"), { lat: -34.6, lon: -60 });
+  assert.deepEqual(parseCoordinates("-34,6; -60,0"), { lat: -34.6, lon: -60 });
+  assert.deepEqual(parseCoordinates("-34,6 -60,0"), { lat: -34.6, lon: -60 });
+  assert.deepEqual(parseCoordinates("49,74, 37,54"), { lat: 49.74, lon: 37.54 });
+  // The plain forms still read the same.
+  assert.deepEqual(parseCoordinates("49, 37"), { lat: 49, lon: 37 });
+  for (const text of ["lat 10 lat 20", "lat 95 lon 10", "lng 10", "lat -34,6; lon 200"]) assert.equal(parseCoordinates(text), null, text);
+});
+
 test("coordinates never call Nominatim", async () => {
   let calls = 0;
   const results = await geocode("49.74, 37.54", { fetchImpl: async () => (calls += 1) });

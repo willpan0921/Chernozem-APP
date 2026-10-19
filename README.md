@@ -1,146 +1,135 @@
 # Chernozem
 
-A satellite tool that assesses war-damaged black-soil farmland in Ukraine. The
-app has two products that share one codebase and one sidebar:
+Chernozem turns free satellite data into decisions about farmland, for any place on Earth. It has two products that share one codebase, one server and one sidebar:
 
-- **Field** — what a farmer sees: their own farm. Overview, Fields (map),
-  Notes, AI, Data, Settings.
-- **Atlas** — what a regional office sees: the whole country. Overview, Atlas
-  (map), AI, Data, Settings.
+- **Field**, for a farmer. Type a place, paste coordinates or draw your land, and the app **finds your fields** in the satellite images. Every field is then measured from real data: plant health, water in the plants, stress with its likely cause, pest and disease risk from the weather, harvest readiness, the crop it grows, damage and soil. Pages: Overview, Fields (map), AI, Data, Settings.
+- **Atlas**, for a regional office, a ministry or a funder. Pick a region or a country, and the app scores every map square on **soil value**, **damage** and **safe access**, then ranks where restoration should start, now and after the war. Pages: Overview, Atlas (map), AI, Data, Settings, and a printable report.
 
-**This is the foundation.** Every screen from the design mockups is built and
-works with placeholder data. There is no real satellite data, no real map
-tiles and no real AI yet. The structure is in place so each teammate can plug
-their part in without touching anyone else's files.
+The data comes from Google Earth Engine (Sentinel-2, Sentinel-1, NASA FIRMS, ESA WorldCover and more) and Open-Meteo weather. The AI pages use Claude and answer from the app's own data. The method follows the owner's research on war-damaged black soil in Ukraine ([Harvard Dataverse, doi:10.7910/DVN/IYXPVS](https://doi.org/10.7910/DVN/IYXPVS)). Ukraine is the case study, not a limit: seasons follow each place's own calendar, and war rules apply only where a known war covers the land.
+
+**How every number is measured, with its dataset, formula, update frequency and limits: [docs/METHODS.md](docs/METHODS.md).**
 
 ## How to run it
 
-You need [Node.js](https://nodejs.org) installed (the LTS version).
-
-Open a terminal in this folder and run:
+You need [Node.js](https://nodejs.org) (the LTS version). On this Mac Node lives in a private folder, so first run this once per Terminal window:
 
 ```
-npm install
-npm run dev
+export PATH=~/.local/node/bin:$PATH
 ```
 
-- `npm install` downloads the libraries the app needs. Run it once, and again
-  whenever `package.json` changes.
-- `npm run dev` starts the app. It prints an address, usually
-  `http://localhost:5173`. Open that address in your browser.
+Then, in the project folder:
 
-The page refreshes by itself whenever you save a file. To stop the app, press
-`Ctrl + C` in the terminal.
+```
+npm install      # once, and again whenever package.json changes
+npm run dev      # starts the app at http://localhost:5173
+```
 
-`npm run build` makes the finished version in a `dist` folder, ready to put on
-a web server. You do not need it while working.
+Open **http://localhost:5173**. The Field product opens first; the Atlas is at **/atlas**. The page refreshes by itself when a file is saved. To stop, press **Control + C** in the Terminal.
+
+Without any settings the app runs on **sample data** (pages show a "Sample data" badge), so it can be tried straight away. In Field, **Try the demo farm** loads 7 real field outlines near Kupiansk, Ukraine.
+
+To run it for other people:
+
+```
+npm run build    # makes the finished app in dist/
+npm start        # serves dist/ and the API at http://localhost:8787
+```
+
+Set an access code first (see below).
+
+## Connect Earth Engine and Claude
+
+Everything goes into one private settings file, `.env` (copy it from `.env.example`). The step-by-step guide, with every error message and its fix, is **[docs/CONNECT-DATA.md](docs/CONNECT-DATA.md)**. In short:
+
+| To turn on | Add to `.env` | Check |
+| --- | --- | --- |
+| Real satellite data | `GEE_PROJECT_ID=`, `GOOGLE_APPLICATION_CREDENTIALS=` (full path to the service-account key, kept outside the project folder), `GEE_CHERNOZEM_ASSET=none` | `npm run gee:check` ends with "Earth Engine is ready." |
+| The AI | `ANTHROPIC_API_KEY=` (from console.anthropic.com) | Settings > AI says Connected |
+| Real front lines (optional) | `ACLED_CSV_PATH=` | `npm run gee:check` shows the battles found |
+| An access code (before sharing) | `ATLAS_ACCESS_CODE=` | A sign-in card appears |
+
+Weather (Open-Meteo) and place search (OpenStreetMap) need no key. `GEE_DISABLED=1` switches back to sample data. Restart `npm run dev` after changing `.env`.
+
+## Where the data lives
+
+The server keeps everything in `server/.data/` (never uploaded to GitHub): the farm and its fields, each field's latest analysis and monthly history, the farmer's reports and photos, the Atlas areas and monthly runs, the team and the AI chats. `CHERNOZEM_DATA_DIR` points the server elsewhere (used for testing on a copy, see CONNECT-DATA section 8). Deleting the folder starts the app fresh.
+
+## How the code is organised
+
+```
+src/                      the app in the browser (React + Vite, plain CSS)
+├── App.jsx               the pages and their web addresses
+├── config/               navigation, the known wars (conflicts.js), the research results
+├── lib/
+│   ├── field/            the Field method (method.js, crops.js), formatting, map geometry
+│   ├── atlas/            the Atlas method (method.js, scoring.js), hotspots, overview steps
+│   ├── season.js         growing seasons for any place on Earth
+│   └── chat/             chat helpers
+├── state/                FieldData.jsx and AtlasData.jsx: the data every page shares
+├── api/                  calls to the server (fieldApi.js, atlasApi.js, chatApi.js)
+├── components/           field/, atlas/, chat/ and ui/ building blocks
+├── pages/field/, pages/atlas/   one .jsx and one .css per page
+├── data/                 fixed wording: chat text (chats.js) and soil types (soilTypes.js)
+└── styles/               tokens.css (every colour, font and spacing), base, shell, components
+server/                   the Node server: API, jobs, scheduler, store
+├── field/                Field routes, analysis, weather, place search, exports, demo farm
+├── providers/            data sources: gee.js and field-gee.js (Earth Engine),
+│                         sample.js and field-sample.js (sample data), fake-ee.js (test stand-in)
+└── ai/                   the Claude chat and what it knows (context.js, field-context.js)
+scripts/                  gee-check.js, the demo farm outlines (fields.geojson), Danny's Firestore scripts
+docs/                     METHODS.md, CONNECT-DATA.md
+```
+
+| Address | Page |
+| --- | --- |
+| `/field` | Field Overview: status, what needs doing, your fields, "Tell us what happened" |
+| `/field/fields` | Fields map with the four tiles per field (`?field=<id>` selects one) |
+| `/field/ai` | Field AI chat |
+| `/field/data` | History since 2019, satellite passes, downloads |
+| `/field/settings` | Farm, fields and crops, units, Earth Engine, AI |
+| `/atlas` | Atlas Overview: totals, top areas, next steps, budget |
+| `/atlas/map` | The map with priority, damage and access layers, and the weights |
+| `/atlas/ai` | Atlas AI chat |
+| `/atlas/data` | Month-by-month history, comparisons, downloads, research checks |
+| `/atlas/settings` | Area, data source, schedule, team, AI |
+| `/atlas/report` | Printable report |
+
+### The rules the code follows
+
+- **Every rule in one place.** Thresholds and formulas live in `src/lib/field/method.js`, `src/lib/field/crops.js`, `src/lib/atlas/method.js` and `src/lib/atlas/scoring.js`, with tests. The server, the pages and the Earth Engine code all use them, so they can never disagree.
+- **No invented numbers.** A page shows only what the server measured (Earth Engine, Open-Meteo) or what the user typed. Sample data is always labelled.
+- **Plain-English headers.** Every file starts with `WHAT THIS FILE DOES` and `WHO EDITS IT`. Read it before changing a file.
+- **Colours come from `src/styles/tokens.css`.** Each page owns its own `.css` file, and its class names start with a short prefix (for example `.fo-` on the Field Overview).
+- **No new libraries** without the team agreeing; never commit `.env`, keys or `server/.data`.
 
 ## Who edits which file
 
 | File or folder | Who | What it is |
 | --- | --- | --- |
-| `src/components/chat/` | Danny | The chat: thread list, bubbles, cards, input box. Used by both AI pages. |
-| `src/api/chatApi.js` | Danny | Where the chat gets its reply. A fake for now; connect the real AI here. |
-| `src/data/soilTypes.js` | Shirley | The list of soil types. Instructions are at the top of the file. Shown in Field → Settings. |
-| `src/data/farm.js` | Anyone | Every number and sentence on the Field pages. Replace with real data here. |
-| `src/data/atlas.js` | Anyone | Every number and sentence on the Atlas pages. |
-| `src/data/chats.js` | Danny | The example chat conversations. |
-| `src/pages/field/*` | Page owners | One file per Field page, with its own `.css` next to it. |
-| `src/pages/atlas/*` | Page owners | One file per Atlas page, with its own `.css` next to it. |
-| `src/styles/tokens.css` | Design | Every colour, font and spacing, defined once. |
+| `src/components/chat/`, `src/api/chatApi.js` | Danny | The chat screens used by both AI pages |
+| `scripts/fetch-ndvi.js`, `scripts/seed-fields.js` | Danny | Firestore NDVI scripts (the app itself no longer uses Firestore) |
+| `scripts/fields.geojson` | Danny | The demo farm's 7 real field outlines |
+| `src/data/soilTypes.js` | Shirley | Soil type names and descriptions |
+| `src/data/chats.js` | Danny, or whoever changes the chat wording | Starter questions, report kinds, the "Connect Claude" card |
+| `src/lib/field/method.js`, `src/lib/field/crops.js` | Whoever changes the Field method | Every Field rule; a change applies to every analysis from then on |
+| `src/lib/atlas/method.js`, `src/lib/atlas/scoring.js` | Whoever changes the research method | Every Atlas rule; saved runs keep their numbers |
+| `src/lib/season.js`, `src/config/conflicts.js` | Whoever changes seasons or adds a war | Seasons by place; the known wars and their areas |
+| `src/config/research.js` | Whoever publishes new validation results | "How we know it works" |
+| `server/providers/gee.js`, `server/providers/field-gee.js` | Whoever changes how satellite data is measured | Earth Engine code; keep it in step with the method files |
+| `src/pages/field/*`, `src/pages/atlas/*` | Page owners | One page each, with its own `.css` |
+| `src/styles/tokens.css` | Design | Colours, fonts, spacing |
+| `docs/METHODS.md` | Whoever changes a method file | Must describe the same rules as the code |
+| Everything else in `server/` | Nobody, normally | Routes, jobs, store, scheduler, auth |
 
-Every file starts with a plain-English note saying what it does and who edits
-it. Read that note before changing a file.
-
-## How the app is put together
+## Testing
 
 ```
-src/
-├── main.jsx                 Starts the app and switches on page routing
-├── App.jsx                  The list of pages and their web addresses
-├── styles.css               Loads the shared stylesheets below
-├── styles/
-│   ├── tokens.css           Colours, fonts, spacing, corner radii (change here first)
-│   ├── base.css             Page reset and typography
-│   ├── shell.css            The sidebar and page frame
-│   └── components.css       Styling for the shared building blocks
-├── layout/
-│   ├── AppShell.jsx         Sidebar on the left, the current page on the right
-│   └── Sidebar.jsx          Logo, Field/Atlas switch, page list, account
-├── config/
-│   └── navigation.js        The two products and their pages (add a page here)
-├── components/
-│   ├── ui/                  Shared blocks: Card, Stat, Badge, Button, Tabs, Toggle...
-│   └── chat/                Danny's chat blocks, used by both AI pages
-├── api/
-│   └── chatApi.js           Danny's file: where the chat gets its reply
-├── data/
-│   ├── farm.js              Placeholder data for the Field product
-│   ├── atlas.js             Placeholder data for the Atlas product
-│   ├── chats.js             Placeholder chat conversations
-│   └── soilTypes.js         Shirley's file
-└── pages/
-    ├── field/               OverviewPage, FieldsPage, NotesPage, AiPage, DataPage, SettingsPage
-    └── atlas/               OverviewPage, MapPage, AiPage, DataPage, SettingsPage
+npm test           # every *.test.js in src/lib and server (node:test), no network needed
+npm run build      # checks the app builds
+npm run gee:check  # real Earth Engine: settings, sign-in and a small analysis
+npm run gee:check -- --area=42.03,-93.62,40   # any place on Earth (lat, lon, km)
 ```
 
-### Pages and their addresses
-
-| Address | Page |
-| --- | --- |
-| `/field` | Field: Overview (My farm) |
-| `/field/fields` | Field: Fields map and field detail |
-| `/field/notes` | Field: Notes |
-| `/field/ai` | Field: AI chat |
-| `/field/data` | Field: Data (satellite readings) |
-| `/field/settings` | Field: Settings |
-| `/atlas` | Atlas: Recovery overview |
-| `/atlas/map` | Atlas: the map (Kupiansk cluster) |
-| `/atlas/ai` | Atlas: AI chat |
-| `/atlas/data` | Atlas: Data archive |
-| `/atlas/settings` | Atlas: Settings |
-
-Opening `/` goes to `/field`. The browser's Back button works, and every page
-can be linked to directly.
-
-### The rules the code follows
-
-- **Data lives in `src/data`, not in pages.** A page reads from the data file
-  and draws it. To change a number or a sentence, change the data file. To
-  connect real data later, replace the data file and the pages keep working.
-- **Colours come from `src/styles/tokens.css`.** Pages never type a raw colour
-  except inside hand-drawn pictures (the maps and chart illustrations).
-- **Each page owns its own `.css` file**, and its class names start with a
-  short prefix (for example `.fo-` on the Field Overview) so two pages never
-  clash.
-- **Shared blocks live in `src/components/ui`.** Before drawing a new card,
-  button or badge, check whether one already exists there.
-
-## Adding a page
-
-1. Add it to the product's `pages` list in `src/config/navigation.js`. The
-   sidebar updates by itself.
-2. Create `src/pages/<product>/<Name>Page.jsx` and `<Name>Page.css`. Copy an
-   existing page to start.
-3. Add a `<Route>` for it in `src/App.jsx`.
-
-## What is placeholder and what is real
-
-Real and working: navigation, every layout, switching tabs and filters,
-selecting fields and notes, the Near term / Postwar switch, the weight sliders,
-the unit switch, sending a chat message (it gets a fake reply).
-
-Placeholder: all numbers and text (from the mockups), the maps (drawn by hand
-in SVG, not map tiles), the charts' data, the AI replies, and every Download,
-Export, Save, Invite and Share button (they do nothing yet and say
-"Not connected yet" when you hover).
-
-A few pages keep small bits of data in a `const` at the top of the file,
-marked `// TODO move to src/data/...`. Those are fine to leave until the real
-data arrives.
-
-## Background photos
-
-`public/images` holds photos from an earlier version of the app. Nothing uses
-them now. Several come from news sites, so delete them or replace them with
-pictures the team has the rights to use before the site goes live.
+- The tests run the whole Earth Engine code against a stand-in (`server/providers/fake-ee.js`), the AI against a mock client, and the method files as plain functions. Keep `npm test` green before every commit.
+- To try a change on **real** Earth Engine without touching the live data, run a second server on a copy of `server/.data` with `GEE_DISABLED=` empty: see [CONNECT-DATA section 8](docs/CONNECT-DATA.md#8-for-developers-testing-earth-engine-without-touching-the-live-data).
+- Check pages at 1280 px and 420 px wide with no console errors.

@@ -23,7 +23,7 @@
 import { getArea, getRun, listRuns, newId, saveRun } from "./store.js";
 import { planGrid } from "./geo.js";
 import { buildRun, latestCompleteMonth, linkNewDamage, monthLabel, monthsBack } from "./runs.js";
-import { getProvider } from "./providers/index.js";
+import { getProvider, unavailableError } from "./providers/index.js";
 import { conflictForArea } from "./conflicts.js";
 
 // Kept on globalThis so the dev server, which reloads files after edits,
@@ -92,6 +92,7 @@ export async function startAnalysis({ areaId, months = 12, rerun = false, trigge
   runJob(job, area, count, Boolean(rerun)).catch((error) => {
     job.status = "error";
     job.error = error.message || String(error);
+    job.errorCode = error.code || null;
     job.message = `Analysis stopped: ${job.error}`;
     job.finishedAt = new Date().toISOString();
     console.error(`[chernozem] Analysis of ${area.name} failed:`, error);
@@ -102,6 +103,10 @@ export async function startAnalysis({ areaId, months = 12, rerun = false, trigge
 async function runJob(job, area, count, rerun) {
   await pause();
   const provider = await getProvider();
+  // Earth Engine set up but unreachable: stop (retryable), never save
+  // sample months for a real area.
+  const down = unavailableError(provider);
+  if (down) throw down;
   job.provider = provider.id;
   const grid = planGrid(area.geometry);
   // The known war covering the area (by its country, or its cells),

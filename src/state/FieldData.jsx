@@ -8,7 +8,7 @@
 // data), and loads the first time a Field page opens.
 //
 // HOW A PAGE USES IT
-//   const { status, error, farm, analyses, provider, job, weather, actions } = useFieldData();
+//   const { status, error, farm, analyses, provider, job, weather, analysing, conflict, actions } = useFieldData();
 //   <FarmGate> ...page... </FarmGate>
 //
 //   status    "loading" | "ready" | "error"
@@ -17,6 +17,11 @@
 //   provider  { id: "sample" | "gee", label, ok, detail, ... }
 //   job       the running (or last) analysis job { id, kind, status, done, total, message, error } | null
 //   weather   { current, rain, daily, at, stale } | null  (weatherError when it failed)
+//   analysing a Set of the field ids the running update is analysing for
+//             the first time: they show "Analysing…" everywhere until done
+//   conflict  the known war covering the farm { id, name, since }, null at
+//             peace, undefined while nothing says (from the analyses, else
+//             farm.conflict, the server's answer for the farm's place)
 //   actions:
 //     reload()
 //     loadDemo()                     -> { farm, job, finished }
@@ -46,6 +51,7 @@ import { Suspense, createContext, lazy, useCallback, useContext, useEffect, useM
 import { useLocation } from "react-router-dom";
 import { Loader2, RefreshCw, TriangleAlert } from "lucide-react";
 import * as api from "../api/fieldApi.js";
+import { analysingIds, farmConflict } from "../lib/field/format.js";
 import { Button } from "../components/ui/index.js";
 import "../components/field/field.css";
 
@@ -213,11 +219,16 @@ export function FieldDataProvider({ children }) {
     [load, startFollowing]
   );
 
-  const updateField = useCallback(async (fieldId, body) => {
-    const field = await api.updateField(fieldId, body);
-    setBase((prev) => (prev.farm ? { ...prev, farm: { ...prev.farm, fields: prev.farm.fields.map((f) => (f.id === fieldId ? { ...f, ...field } : f)) } } : prev));
-    return field;
-  }, []);
+  const updateField = useCallback(
+    async (fieldId, body) => {
+      const { field, job: started } = await api.updateField(fieldId, body);
+      setBase((prev) => (prev.farm ? { ...prev, farm: { ...prev.farm, fields: prev.farm.fields.map((f) => (f.id === fieldId ? { ...f, ...field } : f)) } } : prev));
+      // A changed crop: the field is analysed again with it.
+      if (started) startFollowing(started);
+      return field;
+    },
+    [startFollowing]
+  );
 
   const removeField = useCallback(
     async (fieldId) => {
@@ -268,6 +279,9 @@ export function FieldDataProvider({ children }) {
     [reload, loadDemo, detect, saveFarm, addField, updateField, removeField, updateFarm, deleteFarm, analyze, report, fieldDetail, reloadWeather]
   );
 
+  const analysing = useMemo(() => analysingIds(base.farm, base.analyses, job), [base.farm, base.analyses, job]);
+  const conflict = useMemo(() => farmConflict(base.farm, base.analyses), [base.farm, base.analyses]);
+
   const value = useMemo(
     () => ({
       status: base.status === "idle" ? "loading" : base.status,
@@ -276,11 +290,13 @@ export function FieldDataProvider({ children }) {
       analyses: base.analyses,
       provider: base.provider,
       job,
+      analysing,
+      conflict,
       weather: weather.farmKey === farmKey ? weather.data : null,
       weatherError: weather.farmKey === farmKey ? weather.error : null,
       actions,
     }),
-    [base, job, weather, farmKey, actions]
+    [base, job, analysing, conflict, weather, farmKey, actions]
   );
 
   return <FieldDataContext.Provider value={value}>{children}</FieldDataContext.Provider>;

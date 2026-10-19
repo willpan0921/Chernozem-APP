@@ -17,7 +17,7 @@
 // WHO EDITS IT
 // Whoever changes what a run contains. Saved runs keep their numbers.
 
-import { COMPONENTS, SCALES, scaleIndicator } from "../src/lib/atlas/method.js";
+import { COMPONENTS, SCALES, runsComparable, scaleIndicator } from "../src/lib/atlas/method.js";
 import { cellSizeKm } from "./geo.js";
 import { imageryMonths } from "../src/lib/season.js";
 import { newId } from "./store.js";
@@ -245,7 +245,10 @@ export function summarizeRun(run) {
 // Hectares newly heavily damaged from run a (earlier) to run b: how much
 // the heavily damaged total grew. It is never below 0, and it always matches
 // the change people see in the totals (a falling total means no new damage).
+// Null when the two runs cannot be compared (method.js runsComparable:
+// another data source, method or grid).
 export function newDamageBetween(a, b) {
+  if (!runsComparable(a, b).comparable) return null;
   const sum = (run) =>
     Number.isFinite(run.totals?.heavyDamageHa) ? run.totals.heavyDamageHa : (run.cells || []).reduce((total, cell) => total + (cell.heavyDamageHa || 0), 0);
   return Math.max(0, Math.round(sum(b) - sum(a)));
@@ -286,5 +289,11 @@ export function compareRuns(a, b) {
     changedCells.push(item);
   }
   changedCells.sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta));
-  return { a: summarizeRun(a), b: summarizeRun(b), deltas, changedCells: changedCells.slice(0, 20) };
+  // Runs from another data source, method or grid: the differences say
+  // nothing about the land, so none are given.
+  const check = runsComparable(a, b);
+  if (!check.comparable) {
+    return { a: summarizeRun(a), b: summarizeRun(b), comparable: false, notComparable: check.reason, notComparableText: check.text, deltas: Object.fromEntries(TOTAL_KEYS.map((key) => [key, null])), changedCells: [] };
+  }
+  return { a: summarizeRun(a), b: summarizeRun(b), comparable: true, deltas, changedCells: changedCells.slice(0, 20) };
 }

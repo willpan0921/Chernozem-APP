@@ -9,7 +9,9 @@
 //   2. Compare  pick two months: what changed, and the squares that changed
 //               most (click one to see it on the map). The two months are
 //               kept in the address (?from=&to=) so a link can be shared.
-//   3. How we know it works   the research checks (src/config/research.js).
+//   3. How we know it works   the research checks (src/config/research.js):
+//                             results of the published research in Ukraine,
+//                             labelled as research, not as this area.
 //
 // Everything comes from the server through useAtlasData() and
 // compareRuns() in src/api/atlasApi.js, so it works the same on sample data
@@ -28,6 +30,8 @@ import { compareRuns } from "../../api/atlasApi.js";
 import { placeLabel } from "../../lib/atlas/hotspots.js";
 import { validation, citation } from "../../config/research.js";
 import { formatCount, formatHaShort, formatSigned } from "../../lib/format.js";
+import { runsComparable } from "../../lib/atlas/method.js";
+import { shownNewDamage, sourceBadge } from "../../lib/atlas/overview.js";
 import "./DataPage.css";
 
 // The measures the chart can show. "get" reads the number from a month.
@@ -103,6 +107,8 @@ function DataArchive() {
   const { area, runs, job } = useAtlasData();
   const running = job?.status === "running" && job.areaId === area.id;
   const months = runs.length;
+  // The latest month's source, and how many earlier months came from the other.
+  const badge = sourceBadge(runs);
 
   return (
     <div className="page dp">
@@ -111,7 +117,7 @@ function DataArchive() {
         subtitle={
           <span className="dp-meta">
             Data · {months} {months === 1 ? "month" : "months"}
-            {runs.some((item) => item.provider !== "gee") && <Badge tone="amber">Sample data</Badge>}
+            {badge && <Badge tone={badge.tone || undefined}>{badge.text}</Badge>}
           </span>
         }
       />
@@ -162,9 +168,12 @@ function TrendsCard() {
     }
   };
 
-  const enough = runs.length >= 2;
+  // New damage is hidden for a month whose month before is not comparable
+  // (another data source, method or grid: method.js runsComparable).
+  const shown = useMemo(() => runs.map((run) => (shownNewDamage(run, runs) === run.newHeavyDamageHa ? run : { ...run, newHeavyDamageHa: null })), [runs]);
+  const enough = shown.length >= 2;
   // Oldest month on the left.
-  const chronological = useMemo(() => [...runs].reverse(), [runs]);
+  const chronological = useMemo(() => [...shown].reverse(), [shown]);
   const active = MEASURES.find((item) => item.value === measure);
 
   return (
@@ -187,7 +196,7 @@ function TrendsCard() {
         </div>
       )}
 
-      <MonthTable runs={runs} onOpen={openMonth} />
+      <MonthTable runs={shown} onOpen={openMonth} />
     </Card>
   );
 }
@@ -196,15 +205,23 @@ function TrendsCard() {
 // "Sep 2026  1.03M ha  ↓ −20.5k ha vs Aug 2026". A rise is red, a fall green.
 // Shows the latest month, or the month tapped on a phone (with an
 // "Open month" button).
+// Months from another data source, method or grid are not compared:
+// "Not comparable with Aug 2026: different data source".
 function MonthChange({ run, previous, measure, onOpen }) {
   const now = measure.get(run);
-  const before = previous ? measure.get(previous) : undefined;
+  const check = previous ? runsComparable(previous, run) : { comparable: true };
+  const before = previous && check.comparable ? measure.get(previous) : undefined;
   const change = Number.isFinite(now) && Number.isFinite(before) ? now - before : null;
   const tone = change == null || Math.abs(change) < 0.005 ? "flat" : change > 0 ? "worse" : "better";
   return (
     <div className="dp-latest">
       <span className="dp-latest-month">{shortLabel(run)}</span>
       <span className="dp-latest-value">{Number.isFinite(now) ? measure.text(now) : "–"}</span>
+      {!check.comparable && (
+        <span className="dp-latest-change is-flat">
+          Not comparable with {shortLabel(previous)}: {check.why}
+        </span>
+      )}
       {change != null && (
         <span className={`dp-latest-change is-${tone}`}>
           {tone === "worse" ? <ArrowUpRight size={14} aria-hidden="true" /> : tone === "better" ? <ArrowDownRight size={14} aria-hidden="true" /> : null}
@@ -535,6 +552,13 @@ const DELTAS = [
   { key: "croplandHa", label: "Cropland", text: signedHa, short: haText, worseUp: false },
 ];
 
+// Why two months cannot be compared, after "Sep 2026 and Aug 2026 ...".
+const NOT_COMPARABLE_NOTES = {
+  source: "come from different data sources (Earth Engine and sample data), so their difference says nothing about the land. Analyze both months with the same source.",
+  method: "were analyzed with different versions of the method, so their difference says nothing about the land. Analyze the older month again to compare.",
+  grid: "were analyzed on different squares, so they cannot be compared square by square.",
+};
+
 const CHANGE_LIMIT = 8;
 // Squares that moved by less than this are left out of "Biggest changes",
 // so the list never shows changes the totals above round away.
@@ -567,7 +591,9 @@ function CompareCard() {
   const from = runs.find((item) => item.id === picked.from) || runs[1] || null;
   const to = runs.find((item) => item.id === picked.to) || runs[0] || null;
   const same = from && to && from.id === to.id;
-  const key = enough && !same ? `${from.id}@${from.createdAt}|${to.id}@${to.createdAt}` : null;
+  // Months from another data source, method or grid: no differences.
+  const check = from && to && !same ? runsComparable(from, to) : { comparable: true };
+  const key = enough && !same && check.comparable ? `${from.id}@${from.createdAt}|${to.id}@${to.createdAt}` : null;
 
   useEffect(() => {
     if (!key) return undefined;
@@ -642,6 +668,11 @@ function CompareCard() {
 
       {!enough && <p className="dp-note">Compare needs at least two analyzed months.</p>}
       {enough && same && <p className="dp-note">Pick two different months.</p>}
+      {enough && !same && !check.comparable && (
+        <p className="dp-note dp-not-comparable" role="status">
+          <strong>{check.text}.</strong> {shortLabel(from)} and {shortLabel(to)} {NOT_COMPARABLE_NOTES[check.reason]}
+        </p>
+      )}
       {error && (
         <p className="dp-error" role="alert">
           {error.message}
@@ -652,17 +683,21 @@ function CompareCard() {
         <div className={loading ? "dp-compare-body is-loading" : "dp-compare-body"} aria-busy={loading || undefined}>
           <div className="dp-deltas">
             {DELTAS.map((item) => {
-              const delta = data.deltas?.[item.key] ?? 0;
-              const tone = delta === 0 ? "flat" : delta > 0 === item.worseUp ? "worse" : "better";
+              // A missing comparison (a total one of the months lacks) is
+              // shown as "–", never as "No change".
+              const raw = data.deltas?.[item.key];
+              const missing = !Number.isFinite(raw);
+              const delta = missing ? null : raw;
+              const tone = missing || delta === 0 ? "flat" : delta > 0 === item.worseUp ? "worse" : "better";
               // Totals come rounded to whole hectares; on a small farm a real
               // change can round to 0 while single squares still moved.
               const tiny = delta === 0 && item.key === "heavyDamageHa" && changes.length > 0;
               return (
                 <div key={item.key} className={`dp-delta is-${tone}`}>
                   <span className="dp-delta-label">{item.label}</span>
-                  <span className="dp-delta-value">{tiny ? "Under 1 ha" : delta === 0 ? "No change" : item.text(delta)}</span>
+                  <span className="dp-delta-value">{missing ? "–" : tiny ? "Under 1 ha" : delta === 0 ? "No change" : item.text(delta)}</span>
                   <span className="dp-delta-range">
-                    {delta === 0
+                    {missing || delta === 0
                       ? item.short(data.b?.totals?.[item.key])
                       : `${item.short(data.a?.totals?.[item.key])} → ${item.short(data.b?.totals?.[item.key])}`}
                   </span>
@@ -722,8 +757,9 @@ function ValidationCard() {
     <Card
       title={validation.title}
       className="dp-validation"
-      actions={<Badge tone="outline">{validation.scope || "Tested in Ukraine"}</Badge>}
+      actions={<Badge tone="outline">{validation.scope}</Badge>}
     >
+      {validation.intro && <p className="dp-validation-intro">{validation.intro}</p>}
       <ul className="dp-checks">
         {validation.checks.map((check) => (
           <li key={check.text}>

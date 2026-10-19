@@ -20,12 +20,23 @@
 //   - fires: some fields burn their stubble every year (a few fire
 //     detections a year, in the normal years too); only fires ABOVE that
 //     usual rate count as damage (method.js excessFires)
-//   - war damage, only inside a known war (src/config/conflicts.js): for
-//     Ukraine, shell-impact clusters scattered near the real eastern front
-//     (the same line as the Atlas sample, providers/sample.js), thicker the
-//     closer to the front. Fields hit are cratered (radar change), burned
-//     (fire detections) and left unsown. Everywhere else there is no front
-//     and no war damage.
+//   - war damage, only inside a known war (src/config/conflicts.js), from
+//     shell-impact clusters scattered near a front line, thicker the closer
+//     to it: in Ukraine the real eastern front (the same line as the Atlas
+//     sample, providers/sample.js); in any other known war a made-up
+//     curved line about three quarters of the way east across the war's
+//     area (its box, or its country's box), like the Atlas sample. Fields
+//     hit are cratered (radar change), burned (fire detections) and left
+//     unsown. Everywhere else there is no front and no war damage.
+//   - stress v2: a red-edge index (NDRE) per cell that dips 1-2 weeks
+//     before NDVI does (some patches show only in the red edge), and per
+//     patch a likely cause: a dry patch dips in water (NDWI) too, a pest or
+//     disease patch does not (method.js pixelStress, stressCause)
+//   - the yellow-flower index (NDYI) on every pass: rapeseed flowers in
+//     spring (crop days 120-140)
+//   - Sentinel-1 radar (VH, dB) every 6 days: it follows the crop's bulk
+//     (corn highest), stays up while a tall crop stands dry and drops when
+//     the crop is cut
 //
 //   fieldSampleProvider.detectFields({ boundary, center, radiusM })
 //   fieldSampleProvider.analyzeFields({ fields, today })
@@ -40,18 +51,21 @@ import {
   conditionScore,
   damagedArea,
   healthScore,
-  isStressed,
+  pixelStress,
+  vhPeakNear,
   waterScore,
 } from "../../src/lib/field/method.js";
 import { areaHa as sphericalAreaHa, bboxOf, pointInGeometry, polygonsOf } from "../geo.js";
 import { conflictAt } from "../conflicts.js";
-import { damageWindow } from "../../src/config/conflicts.js";
+import { getCountry } from "../countries.js";
+import { CONFLICTS, damageWindow } from "../../src/config/conflicts.js";
 import { climateBand, seasonCurveStart } from "../../src/lib/season.js";
 import { hashText, parcelsAround, seeded, splitBoundary } from "../field/detect-sample.js";
 import { fbm, insideUkraineBox, UKRAINE_FRONT } from "./sample.js";
 
 const DAY_MS = 86400000;
-// The war the sample's front line belongs to (src/config/conflicts.js).
+// The war whose front line is the real one (UKRAINE_FRONT); every other
+// known war gets a made-up line (warFront).
 const SAMPLE_FRONT_WAR = "ukraine-2022";
 // Days the crop calendar is moved in the southern seasons (half a year).
 const SOUTH_SHIFT_DAYS = 182;
@@ -85,22 +99,28 @@ const unit = (text) => hashText(text) / 4294967296;
 // it greens up / dries down (days), on the crop calendar (cropDay). Winter
 // crops are already green when the season starts and are sown again in
 // autumn (sowAgain).
+// vh = the crop's Sentinel-1 VH at full bulk (dB); tall crops keep most of
+// it while they stand dry until cut. flowers = yellow flowers in spring.
 const CROPS = {
-  "winter wheat": { base: 0.32, peak: 0.84, ripe: 0.28, greenUp: 98, k1: 9, senesce: 168, k2: 8, harvest: 198, sowAgain: 262 },
-  rapeseed: { base: 0.34, peak: 0.8, ripe: 0.3, greenUp: 88, k1: 9, senesce: 152, k2: 8, harvest: 186, sowAgain: 238 },
-  barley: { base: 0.2, peak: 0.78, ripe: 0.28, greenUp: 128, k1: 8, senesce: 176, k2: 7, harvest: 200 },
-  "spring wheat": { base: 0.2, peak: 0.8, ripe: 0.28, greenUp: 135, k1: 8, senesce: 190, k2: 7, harvest: 216 },
-  sunflower: { base: 0.2, peak: 0.78, ripe: 0.3, greenUp: 168, k1: 10, senesce: 262, k2: 11, harvest: 298 },
-  corn: { base: 0.2, peak: 0.86, ripe: 0.32, greenUp: 176, k1: 10, senesce: 284, k2: 13, harvest: 318 },
-  soybean: { base: 0.2, peak: 0.86, ripe: 0.3, greenUp: 172, k1: 8, senesce: 262, k2: 8, harvest: 300 },
+  "winter wheat": { base: 0.4, peak: 0.84, ripe: 0.28, greenUp: 98, k1: 9, senesce: 174, k2: 8, harvest: 202, sowAgain: 262, vh: -16.5 },
+  rapeseed: { base: 0.42, peak: 0.8, ripe: 0.3, greenUp: 88, k1: 9, senesce: 152, k2: 8, harvest: 186, sowAgain: 238, vh: -14.5, flowers: true },
+  barley: { base: 0.2, peak: 0.78, ripe: 0.28, greenUp: 128, k1: 8, senesce: 176, k2: 7, harvest: 200, vh: -17 },
+  "spring wheat": { base: 0.2, peak: 0.8, ripe: 0.28, greenUp: 135, k1: 8, senesce: 190, k2: 7, harvest: 216, vh: -17 },
+  sunflower: { base: 0.2, peak: 0.78, ripe: 0.3, greenUp: 145, k1: 9, senesce: 224, k2: 7, harvest: 262, vh: -16, tall: true },
+  corn: { base: 0.2, peak: 0.86, ripe: 0.32, greenUp: 176, k1: 10, senesce: 284, k2: 13, harvest: 318, vh: -12, tall: true },
+  soybean: { base: 0.2, peak: 0.86, ripe: 0.3, greenUp: 172, k1: 8, senesce: 262, k2: 8, harvest: 300, vh: -15.8, tall: true },
   // A field left unsown: weeds green up a little and dry out.
-  fallow: { base: 0.22, peak: 0.46, ripe: 0.3, greenUp: 130, k1: 12, senesce: 215, k2: 18, harvest: null },
+  fallow: { base: 0.22, peak: 0.46, ripe: 0.3, greenUp: 130, k1: 12, senesce: 215, k2: 18, harvest: null, vh: -19 },
 };
 const MAIN_CROPS = ["winter wheat", "sunflower", "corn", "barley", "soybean", "rapeseed"];
 
+// The sample's crop for a field's crop name (the farmer's, or the crop the
+// analysis detected: "Winter cereal", "Spring cereal"...); a field with no
+// crop gets one from its outline, always the same.
 export function cropKey(name, seedText) {
   const text = String(name || "").toLowerCase();
-  if (text.includes("winter wheat") || text === "wheat") return "winter wheat";
+  if (text.includes("winter wheat") || text === "wheat" || text.includes("winter cereal") || text === "wintercereal") return "winter wheat";
+  if (text.includes("spring cereal") || text === "springcereal") return "barley";
   if (text.includes("spring wheat")) return "spring wheat";
   if (text.includes("wheat")) return "winter wheat";
   if (text.includes("barley")) return "barley";
@@ -140,7 +160,8 @@ function cropNdvi(p, doy) {
   if (p.harvest != null && doy >= p.harvest) {
     // Stubble, then (winter crops) the new crop coming up in autumn.
     const stubble = 0.22 + 0.03 * clamp((doy - p.harvest) / 60, 0, 1);
-    if (p.sowAgain != null && doy > p.sowAgain) return stubble + 0.04 * logistic((doy - p.sowAgain - 22) / 6);
+    // A winter crop sown again comes up green before the winter.
+    if (p.sowAgain != null && doy > p.sowAgain) return stubble + 0.2 * logistic((doy - p.sowAgain - 30) / 8);
     return stubble;
   }
   const up = logistic((doy - p.greenUp) / p.k1);
@@ -154,6 +175,31 @@ function cropNdwi(ndvi, doy, year, placeSeed) {
   const dry = (unit(`dry:${placeSeed}:${year}`) - 0.35) * 0.08;
   const summer = Math.exp(-(((doy - 215) / 35) ** 2));
   return 0.95 * ndvi - 0.42 - dry * summer;
+}
+
+// Yellowness (NDYI) of the field: rapeseed's yellow flowers about six
+// weeks after green-up, a little yellowing as any crop dries.
+function cropNdyi(p, doy) {
+  const flower = p.flowers ? 0.13 * Math.exp(-(((doy - (p.greenUp + 42)) / 10) ** 2)) : 0;
+  const cut = p.harvest != null && doy >= p.harvest;
+  const drying = cut ? 0 : 0.03 * logistic((doy - p.senesce) / p.k2);
+  return -0.04 + flower + drying;
+}
+
+// Radar (Sentinel-1 VH, dB): bare soil about -21 dB, rising with the
+// crop's bulk to its own peak (corn highest); a tall crop drying in the
+// field keeps most of it until the combine cuts it.
+const BARE_VH = -21;
+const STUBBLE_VH = -20.8;
+function cropVh(p, doy) {
+  if (p.harvest != null && doy >= p.harvest) {
+    if (p.sowAgain != null && doy > p.sowAgain) return STUBBLE_VH + 2 * logistic((doy - p.sowAgain - 30) / 8);
+    return STUBBLE_VH;
+  }
+  const up = logistic((doy - p.greenUp) / p.k1);
+  const down = logistic((doy - p.senesce) / p.k2);
+  const kept = p.tall ? 0.85 : 0.4;
+  return BARE_VH + (p.vh - BARE_VH) * up * (1 - (1 - kept) * down);
 }
 
 // ---------- Satellite passes and clouds ----------
@@ -183,21 +229,49 @@ function clearShare(day, lat, lon, fieldSeed, frame) {
 }
 
 // ---------- War damage ----------
-// The eastern front: the Atlas sample's line (UKRAINE_FRONT in providers/sample.js).
-const FRONT = UKRAINE_FRONT;
 
-// Distance (km) from a point to the front line; Infinity outside the war
-// it belongs to (Moldova and Poland are inside Ukraine's box, but at peace).
+// The front line of a known war, as [lat, lon] points: the real eastern
+// front in Ukraine (UKRAINE_FRONT, the Atlas sample's line); elsewhere a
+// made-up curved line from south to north, about three quarters of the way
+// east across the war's area (its first box, else its country's box), the
+// way the Atlas sample draws one. Null when the war has no area to draw in.
+const fronts = new Map();
+export function warFront(conflict) {
+  if (!conflict?.id) return null;
+  if (conflict.id === SAMPLE_FRONT_WAR) return UKRAINE_FRONT;
+  if (fronts.has(conflict.id)) return fronts.get(conflict.id);
+  const known = CONFLICTS.find((c) => c.id === conflict.id) || conflict;
+  const box = Array.isArray(known.areas) && known.areas.length ? known.areas[0] : known.countries?.length ? getCountry(known.countries[0])?.bbox : null;
+  let line = null;
+  if (box && box.every(Number.isFinite)) {
+    const [west, south, east, north] = box;
+    const phase = unit(`front:${known.id}`) * Math.PI * 2;
+    line = Array.from({ length: 13 }, (_, i) => {
+      const v = i / 12;
+      const u = 0.75 + 0.08 * Math.sin(v * Math.PI * 2 + phase);
+      return [south + v * (north - south), west + u * (east - west)];
+    });
+  }
+  fronts.set(conflict.id, line);
+  return line;
+}
+
+// Distance (km) from a point to the front line of the known war covering
+// it; Infinity at peace (Moldova and Poland are inside Ukraine's box, but
+// at peace).
 export function frontDistanceKm(lat, lon) {
-  if (!insideUkraineBox(lat, lon) || conflictAt(lat, lon)?.id !== SAMPLE_FRONT_WAR) return Infinity;
+  const conflict = conflictAt(lat, lon);
+  if (!conflict || (conflict.id === SAMPLE_FRONT_WAR && !insideUkraineBox(lat, lon))) return Infinity;
+  const line = warFront(conflict);
+  if (!line || line.length < 2) return Infinity;
   const kx = 111.32 * Math.cos((lat * Math.PI) / 180);
   const ky = 110.57;
   let best = Infinity;
-  for (let i = 1; i < FRONT.length; i += 1) {
-    const ax = (FRONT[i - 1][1] - lon) * kx;
-    const ay = (FRONT[i - 1][0] - lat) * ky;
-    const bx = (FRONT[i][1] - lon) * kx;
-    const by = (FRONT[i][0] - lat) * ky;
+  for (let i = 1; i < line.length; i += 1) {
+    const ax = (line[i - 1][1] - lon) * kx;
+    const ay = (line[i - 1][0] - lat) * ky;
+    const bx = (line[i][1] - lon) * kx;
+    const by = (line[i][0] - lat) * ky;
     const dx = bx - ax;
     const dy = by - ay;
     const t = clamp(-(ax * dx + ay * dy) / (dx * dx + dy * dy || 1), 0, 1);
@@ -287,7 +361,7 @@ function fieldFrame(field) {
     seed,
     conflict: conflict ? { id: conflict.id, name: conflict.name, since: conflict.since } : null,
     shiftDays: band === "south" || (band === "tropics" && lat < 0) ? SOUTH_SHIFT_DAYS : 0,
-    frontKm: conflict?.id === SAMPLE_FRONT_WAR ? frontDistanceKm(lat, lon) : Infinity,
+    frontKm: conflict ? frontDistanceKm(lat, lon) : Infinity,
     areaHa: Number.isFinite(field.areaHa) ? field.areaHa : sphericalAreaHa(field.geometry),
   };
 }
@@ -363,7 +437,24 @@ function passReading(day, crop, frame, damage) {
   // Cratered ground reads as bare soil once it was hit.
   if (damage.share > 0 && damage.firstHit && iso.slice(0, 7) >= damage.firstHit) ndvi = (1 - damage.share) * ndvi + damage.share * 0.18;
   const ndwi = cropNdwi(ndvi, doy, year, `${Math.floor(frame.lat)}:${Math.floor(frame.lon)}`) + (unit(`wnoise:${frame.seed}:${iso}`) - 0.5) * 0.03;
-  return { date: iso, ndvi: round(ndvi), ndwi: round(ndwi), clear };
+  const ndyi = cropNdyi(p, doy) + (unit(`ynoise:${frame.seed}:${iso}`) - 0.5) * 0.02;
+  return { date: iso, ndvi: round(ndvi), ndwi: round(ndwi), ndyi: round(ndyi), clear };
+}
+
+// Sentinel-1 passes every 6 days (radar sees through cloud): the field's
+// mean VH in dB. Cratered ground reads like bare soil.
+function radarSeries(fromDay, toDay, crop, frame, damage) {
+  const offset = Math.floor((((frame.lon + 180) / 360) * 61) % 6);
+  const first = fromDay + ((((offset - fromDay) % 6) + 6) % 6);
+  const out = [];
+  for (let day = first; day <= toDay; day += 6) {
+    const iso = isoOf(day);
+    const { year, doy } = cropDay(iso, frame);
+    let vh = cropVh(paramsFor(crop, frame, damage, year), doy) + (unit(`vh:${frame.seed}:${iso}`) - 0.5);
+    if (damage.share > 0 && damage.firstHit && iso.slice(0, 7) >= damage.firstHit) vh = (1 - damage.share) * vh + damage.share * BARE_VH;
+    out.push({ date: iso, vh: round(vh, 2) });
+  }
+  return out;
 }
 
 function clearPasses(fromDay, toDay, crop, frame, damage) {
@@ -460,18 +551,24 @@ function analyzeOne(field, today) {
   const normalNdvi = normalFor(centreDoy, crop, frame, damage, (pass) => pass.ndvi);
   const normalNdwi = normalFor(centreDoy, crop, frame, damage, (pass) => pass.ndwi);
 
-  // Stress patches (0-2), only in a field with plants on it.
+  // Stress patches (0-2), only in a field with plants on it. Each has a
+  // cause: a dry patch is low in water (NDWI) too, a pest or disease patch
+  // is not; and some are still "early": they show in the red edge (NDRE)
+  // before plant health (NDVI) drops much.
   const patchCount = [0, 0, 1, 1, 1, 2][hashText(`patches:${SALT.patch}:${frame.seed}`) % 6];
   const random = seeded(hashText(`patchpos:${SALT.patch}:${frame.seed}`));
+  const kindOf = seeded(hashText(`patchkind:${SALT.patch}:${frame.seed}`));
   const sown = Number.isFinite(fieldNdvi) && fieldNdvi > 0.3 && !damage.abandoned;
   const patches = sown
     ? Array.from({ length: patchCount }, () => {
         const cell = inside[Math.floor(random() * inside.length)];
-        return { lat: cell.lat, lon: cell.lon, radiusM: 45 + random() * 80 };
+        return { lat: cell.lat, lon: cell.lon, radiusM: 45 + random() * 80, dry: kindOf() < 0.5, early: kindOf() < 0.3 };
       })
     : [];
 
-  // Every cell: NDVI and NDWI with smooth variation, then the method's scores.
+  // Every cell: NDVI, NDWI and NDRE with smooth variation, then the
+  // method's scores (method.js pixelStress: NDVI rule OR red-edge rule).
+  const ndreOf = (value) => (Number.isFinite(value) ? 0.62 * value - 0.1 : null);
   const kmX = 111.32 * Math.cos((frame.lat * Math.PI) / 180);
   const cells = inside.map((cell) => {
     const x = (cell.lon * kmX) / 0.18; // patterns about 180 m across
@@ -479,27 +576,35 @@ function analyzeOne(field, today) {
     const vary = (fbm(x, y, hashText(`soil:${frame.seed}`) % 100000, 3) - 0.5) * 0.14;
     let ndvi = Number.isFinite(fieldNdvi) ? fieldNdvi + vary * clamp((fieldNdvi - 0.15) / 0.5, 0.2, 1) : null;
     let ndwi = Number.isFinite(fieldNdwi) ? fieldNdwi + vary * 0.8 : null;
+    let ndre = ndreOf(ndvi);
     for (const patch of patches) {
       const d = metresBetween(cell, patch) / patch.radiusM;
       if (d < 1.4 && ndvi != null) {
         const dip = Math.max(0.16, 0.45 * (fieldNdvi - 0.12)) * Math.exp(-(d * d) * 1.1);
-        ndvi -= dip;
-        ndwi -= dip * 0.8;
+        // An early patch: the red edge has dropped, plant health barely.
+        const ndviDip = patch.early ? dip * 0.3 : dip;
+        ndvi -= ndviDip;
+        ndre -= patch.early ? dip * 0.75 : ndviDip * 0.8;
+        ndwi -= patch.dry ? dip * 0.8 : dip * 0.1;
       }
     }
     if (damage.hitCells.has(cell.index) && ndvi != null) {
       ndvi = Math.min(ndvi, 0.17 + 0.04 * unit(`crater:${cell.index}:${frame.seed}`));
       ndwi = Math.min(ndwi, -0.2);
+      ndre = ndreOf(ndvi);
     }
-    return { ...cell, ndvi, ndwi };
+    return { ...cell, ndvi, ndwi, ndre };
   });
   const medianNdvi = median(cells.map((cell) => cell.ndvi));
   const medianNdwi = median(cells.map((cell) => cell.ndwi));
+  const medianNdre = median(cells.map((cell) => cell.ndre));
+  const normalNdre = ndreOf(normalNdvi.median);
   const scored = cells.map((cell) => {
     const health = healthScore(cell.ndvi, normalNdvi.median);
     const water = waterScore(cell.ndwi, normalNdwi.median);
-    const stressed = isStressed(cell.ndvi, medianNdvi, normalNdvi.median);
-    return { ...cell, health, water, stressed, condition: conditionScore({ health, water, stress: Number.isFinite(health) ? (stressed ? 1 : 0) : null }) };
+    const rule = pixelStress({ ndvi: cell.ndvi, fieldMedianNdvi: medianNdvi, normalNdvi: normalNdvi.median, ndre: cell.ndre, fieldMedianNdre: medianNdre, normalNdre });
+    const ndwiAnomaly = Number.isFinite(cell.ndwi) && Number.isFinite(normalNdwi.median) ? cell.ndwi - normalNdwi.median : null;
+    return { ...cell, health, water, stressed: rule.stressed, redEdgeOnly: rule.redEdgeOnly, ndwiAnomaly, condition: conditionScore({ health, water, stress: Number.isFinite(health) ? (rule.stressed ? 1 : 0) : null }) };
   });
   const values = new Array(grid.cols * grid.rows).fill(null);
   scored.forEach((cell) => {
@@ -507,11 +612,12 @@ function analyzeOne(field, today) {
   });
   const stressedCells = scored.filter((cell) => cell.stressed);
   const share = Number.isFinite(medianNdvi) ? stressedCells.length / scored.length : null;
+  const redEdgeOnlyShare = Number.isFinite(medianNdvi) ? scored.filter((cell) => cell.redEdgeOnly).length / scored.length : null;
   const outPatches = patches
     .map((patch) => {
-      const count = stressedCells.filter((cell) => metresBetween(cell, patch) <= patch.radiusM * 1.4).length;
-      const ha = count * grid.cellHa;
-      return { lat: round(patch.lat, 6), lon: round(patch.lon, 6), radiusM: Math.round(Math.sqrt((ha * 1e4) / Math.PI)), ha: round(ha, 2) };
+      const near = stressedCells.filter((cell) => metresBetween(cell, patch) <= patch.radiusM * 1.4);
+      const ha = near.length * grid.cellHa;
+      return { lat: round(patch.lat, 6), lon: round(patch.lon, 6), radiusM: Math.round(Math.sqrt((ha * 1e4) / Math.PI)), ha: round(ha, 2), ndwiAnomaly: round(mean(near.map((cell) => cell.ndwiAnomaly))) };
     })
     .filter((patch) => patch.ha >= 0.3)
     .sort((a, b) => b.ha - a.ha)
@@ -522,8 +628,10 @@ function analyzeOne(field, today) {
     date: pass.date,
     ndvi: pass.ndvi,
     ndwi: pass.ndwi,
+    ndyi: pass.ndyi,
     clearPct: Math.round(pass.clear * 100),
   }));
+  const vhSeries = radarSeries(seasonFrom, todayDay, crop, frame, damage);
   const radarChangedShare = round(damage.share, 3);
   const fires = firesOf(frame, damage, today);
   return {
@@ -533,7 +641,16 @@ function analyzeOne(field, today) {
     latestPass: lastClear ? { date: lastClear.date, clearPct: Math.round(lastClear.clear * 100) } : null,
     water: { ndwi: round(medianNdwi), normal: normalNdwi, score: round(median(scored.map((cell) => cell.water))) },
     plantHealth: { ndvi: round(medianNdvi), normal: normalNdvi, score: round(median(scored.map((cell) => cell.health))) },
-    stress: { share: round(share), stressedHa: Number.isFinite(share) ? round(share * frame.areaHa, 2) : null, patches: outPatches },
+    stress: {
+      share: round(share),
+      stressedHa: Number.isFinite(share) ? round(share * frame.areaHa, 2) : null,
+      patches: outPatches,
+      ndwiAnomaly: round(mean(stressedCells.map((cell) => cell.ndwiAnomaly))),
+      redEdgeOnlyShare: round(redEdgeOnlyShare),
+    },
+    // The radar peak near the NDVI peak (method.js vhPeakNear), as
+    // field-gee.js reads it: never the series' maximum.
+    radar: { vhSeries, ...vhPeakNear(vhSeries, ndviPeakOf(season)) },
     condition: { score: round(median(scored.map((cell) => cell.condition))) },
     damage: {
       radarChangedShare,
@@ -543,12 +660,23 @@ function analyzeOne(field, today) {
     },
     conflict: frame.conflict,
     soil: { chernozemProbability: chernozemChance(frame.lat, frame.lon) },
+    // The red-edge reading (field median NDRE and its normal), and the crop
+    // classifier's monthly record (the last 18 months), as field-gee.js
+    // sends them.
+    redEdge: Number.isFinite(medianNdre) ? { ndre: round(medianNdre), normal: { low: round(ndreOf(normalNdvi.low)), high: round(ndreOf(normalNdvi.high)), median: round(normalNdre) } } : null,
+    cropInputs: { months: historyOf(field, monthPlus(today.slice(0, 7), -17), today.slice(0, 7)).map(({ month, ndvi }) => ({ month, ndvi })), peakMonth: null, lat: frame.lat },
     season,
     normalCurve: normalCurveFor(crop, frame, damage),
     zones: { west: grid.west, south: grid.south, east: grid.east, north: grid.north, cols: grid.cols, rows: grid.rows, values },
     warnings,
     crop,
   };
+}
+
+// The date of the greenest pass of the season, or null.
+function ndviPeakOf(season) {
+  const clear = season.filter((pass) => Number.isFinite(pass.ndvi));
+  return clear.length ? clear.reduce((best, pass) => (pass.ndvi > best.ndvi ? pass : best)).date : null;
 }
 
 // Monthly field means since `from` ("2019-01") up to `to` ("YYYY-MM").

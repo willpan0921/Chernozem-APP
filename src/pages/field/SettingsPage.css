@@ -414,6 +414,12 @@
   background: var(--fmap-great);
 }
 
+/* Harvested or not sown: the map's straw tint, no condition colour. */
+.fset-field-swatch.is-bare {
+  background: color-mix(in srgb, var(--fmap-harvested) 60%, var(--c-surface-2));
+  box-shadow: inset 0 0 0 1.5px var(--c-muted);
+}
+
 /* "Needs recovery": the red tint and outline it has on the map. */
 .fset-field-swatch.is-recovery {
   background: color-mix(in srgb, var(--c-red) 40%, transparent);
@@ -436,7 +442,7 @@
 }
 
 .select.fset-crop {
-  width: 150px;
+  width: 216px;
   flex: 0 0 auto;
 }
 

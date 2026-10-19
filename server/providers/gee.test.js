@@ -53,6 +53,8 @@ import {
   chunkSizeFor,
   tileScaleFor,
   coarserScale,
+  fixedScaleFor,
+  SPLIT_MIN_CELLS,
   populationPlan,
   isTooMuchWorkError,
   isTransientError,
@@ -604,6 +606,13 @@ test("chunk size shrinks for big cells; tileScale grows", () => {
   assert.equal(tileScaleFor(0.25, 49), 16);
   assert.equal(coarserScale(913), 1826);
   assert.equal(coarserScale(1500), 2000);
+  // Fixed pixel sizes for one reduction (no bestEffort): small areas keep
+  // the minimum, a country-size area gets a coarser, still fixed, size.
+  assert.equal(fixedScaleFor([[37, 49, 38, 50]], 500, 1e7), 500);
+  assert.equal(fixedScaleFor([[22, 44, 40.5, 52.5]], 500, 1e7), 500);
+  const ukraine = fixedScaleFor([[22, 44, 40.5, 52.5]], 500, 1e6);
+  assert.ok(ukraine > 500 && ukraine % 100 === 0, String(ukraine));
+  assert.equal(fixedScaleFor([[22, 44, 40.5, 52.5]], 500, 1e6), ukraine);
 });
 
 test("population: WorldPop's own pixels for small cells, density x area for big ones", () => {
@@ -791,7 +800,7 @@ test("600 big (country-size) cells: smaller chunks, tileScale 16, population fro
   assert.ok(ee.stats.peakActive <= 2);
 });
 
-test("a chunk that runs out of memory is tried once more with coarser pixels", async () => {
+test("a chunk that runs out of memory is split in two with the SAME pixels (the totals do not change)", async () => {
   let failed = 0;
   const { ee, provider } = fakeProvider({
     fail: (request) => {
@@ -807,10 +816,34 @@ test("a chunk that runs out of memory is tried once more with coarser pixels", a
   const result = await provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.05 });
   assert.equal(failed, 1);
   assert.equal(result.readings.length, 9);
-  const scales = ee.callsNamed("Image.reduceRegions").filter((c) => c.args[0].crs === "EPSG:4326" && c.args[0].reducer).map((c) => [c.args[0].scale, c.args[0].tileScale]);
   const base = reduceScale(0.05, (area.bbox[1] + area.bbox[3]) / 2);
-  assert.ok(scales.some(([scale, tile]) => scale === coarserScale(base) && tile === 16), JSON.stringify(scales));
-  assert.ok(result.warnings.some((w) => /coarser pixels/.test(w)));
+  const scales = ee.callsNamed("Image.reduceRegions").map((c) => c.args[0].scale);
+  assert.ok(scales.includes(base) && !scales.includes(coarserScale(base)), JSON.stringify(scales));
+  assert.ok(!result.warnings.some((w) => /coarser pixels/.test(w)));
+  // The same readings as a run that never failed.
+  const clean = await fakeProvider().provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.05 });
+  const byId = (list) => Object.fromEntries(list.map((r) => [r.id, r]));
+  assert.deepEqual(byId(result.readings), byId(clean.readings));
+});
+
+test("only a small piece that keeps failing is measured with coarser pixels, and the run says so", async () => {
+  // Every chunk request at the normal pixel size runs out of memory: the
+  // chunk is split down to SPLIT_MIN_CELLS cells, and those pieces go
+  // through with coarser pixels.
+  const { area, cells } = gridArea(3, 3, 0.05);
+  const base = reduceScale(0.05, (area.bbox[1] + area.bbox[3]) / 2);
+  const sizes = [];
+  const { provider } = fakeProvider({
+    fail: (request) => {
+      if (!(request.find("reduceRegions").length > 0 && request.has("Dictionary"))) return null;
+      sizes.push(Math.max(...request.find("toList").map((n) => Number(n.args?.[0]) || 0)));
+      return request.find("reduceRegions").some((n) => n.args?.[0]?.scale === base) ? "User memory limit exceeded." : null;
+    },
+  });
+  const result = await provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.05 });
+  assert.equal(result.readings.length, 9);
+  assert.ok(Math.max(...sizes.slice(-4)) <= SPLIT_MIN_CELLS, JSON.stringify(sizes));
+  assert.ok(result.warnings.some((w) => /9 of 9 cells were measured with coarser pixels/.test(w)), JSON.stringify(result.warnings));
 });
 
 test("a chunk whose connection drops is tried once more as it is", async () => {

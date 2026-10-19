@@ -161,7 +161,7 @@ export function AtlasDataProvider({ children }) {
   // Scoring a big area takes a few milliseconds; deferring keeps the
   // sliders smooth while the map catches up.
   const deferredSettings = useDeferredValue(settings);
-  const scored = useMemo(() => (run ? scorePlaces(run.cells || [], { settings: deferredSettings }) : null), [run, deferredSettings]);
+  const scored = useMemo(() => (run ? scorePlaces(run.cells || [], { settings: deferredSettings, conflict: run.conflict, cellSizeDeg: run.cellSizeDeg }) : null), [run, deferredSettings]);
   const hotspots = useMemo(() => {
     if (!scored || !run) return EMPTY_HOTSPOTS;
     const options = { count: HOTSPOT_COUNT, cellSizeDeg: run.cellSizeDeg };

@@ -67,6 +67,11 @@
   gap: var(--s-3);
 }
 
+/* A peaceful farm: no "Needs recovery" tile. */
+.fo-stats.is-peace {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.35fr);
+}
+
 .fo-stat {
   gap: var(--s-2);
 }
@@ -335,6 +340,13 @@
   color: var(--c-text);
 }
 
+/* The per-hectare costs are planning assumptions, not measurements. */
+.fo-cost-note {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--c-muted);
+}
+
 .fo-calm {
   display: flex;
   align-items: center;
@@ -540,6 +552,11 @@
 .fo-swatch-good { background: var(--fmap-good); }
 .fo-swatch-great { background: var(--fmap-great); }
 .fo-swatch-nodata { background: var(--fmap-nodata); }
+/* Harvested or not sown: the map's straw tint, no condition colour. */
+.fo-swatch-bare {
+  background: color-mix(in srgb, var(--fmap-harvested) 60%, var(--c-surface-2));
+  box-shadow: inset 0 0 0 1.5px var(--c-muted);
+}
 
 /* "Needs recovery": the red tint and outline it has on the map. */
 .fo-swatch.is-recovery {
@@ -614,6 +631,10 @@
   .fo-weather {
     grid-column: span 3;
   }
+
+  .fo-stats.is-peace .fo-stat {
+    grid-column: span 3;
+  }
 }
 
 @media (max-width: 640px) {
@@ -626,8 +647,13 @@
   }
 
   .fo-stat,
-  .fo-stat-area {
+  .fo-stat-area,
+  .fo-stats.is-peace .fo-stat {
     grid-column: auto;
+  }
+
+  .fo-stats.is-peace .fo-stat-area {
+    grid-column: 1 / -1;
   }
 
   .fo-stat-value {

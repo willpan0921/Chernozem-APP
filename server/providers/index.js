@@ -3,8 +3,11 @@
 //   - Google Earth Engine (gee.js) when GEE_PROJECT_ID and a service-account
 //     key are in .env (and GEE_DISABLED is not 1)
 //   - otherwise the sample data source (sample.js)
-// If Earth Engine is set up but cannot connect, the sample source is used
-// and /api/status says why. It tries Earth Engine again every 5 minutes.
+// If Earth Engine is set up but cannot connect, the status pages show the
+// sample source and say why, and it tries Earth Engine again every 5
+// minutes. Analyses do NOT quietly run on sample data then (that would save
+// made-up numbers for real places): they stop with a retryable "Earth
+// Engine unavailable" error (unavailableError / fieldUnavailableError).
 //
 //   getProvider()     the data source to use now
 //   providerStatus()  { id, label, ok, detail, missing } for the Settings page
@@ -12,6 +15,9 @@
 //   getFieldProvider() / fieldProviderStatus()
 //                     the same for the Field product (field-gee.js or
 //                     field-sample.js); see the end of this file
+//   unavailableError(provider) / fieldUnavailableError(provider)
+//                     an Error to stop a job with when Earth Engine is set
+//                     up but could not connect (null otherwise)
 //
 // WHO EDITS IT
 // Nobody, normally. Connecting Earth Engine only needs the .env settings.
@@ -86,6 +92,24 @@ export async function getProvider() {
   } finally {
     state.pending = null;
   }
+}
+
+// The error a job stops with when Earth Engine is set up but could not
+// connect (the provider handed back is the sample one): code
+// "gee_unavailable", status 503, retryable. Null when the provider is the
+// one that was asked for.
+function outage(provider, saved) {
+  if (!provider || provider.id !== "sample" || !saved.fallback) return null;
+  const error = new Error("Earth Engine is set up but cannot be reached right now, so nothing was analysed (sample numbers are never saved for a real place). Try again in a few minutes.");
+  error.code = "gee_unavailable";
+  error.status = 503;
+  error.retryable = true;
+  error.detail = saved.detail;
+  return error;
+}
+
+export function unavailableError(provider) {
+  return outage(provider, state);
 }
 
 // Waits at most ms for promise; gives back `fallback` if it takes longer.
@@ -227,6 +251,10 @@ export async function fieldProviderStatus() {
     credentialsError: env.geeCredentialsError || null,
     checkedAt: fieldState.checkedAt ? new Date(fieldState.checkedAt).toISOString() : null,
   };
+}
+
+export function fieldUnavailableError(provider) {
+  return outage(provider, fieldState);
 }
 
 export function resetFieldProvider() {

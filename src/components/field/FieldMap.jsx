@@ -7,9 +7,11 @@
 // Each field is tinted by its condition class and outlined in white
 // (thick, with a soft halo, for the selected field). A field ready to
 // harvest, or due within two weeks, has a gold outline; a field that needs
-// recovery is red; a harvested field is a plain straw tint with a dashed
-// edge (bare ground after harvest is not "Very good"). Stress patches get
-// a dashed white circle. Name pills sit in each field's top-left corner
+// recovery is red; a harvested or not-sown field is a plain straw tint
+// with a dashed edge (bare ground has no condition class: method.js
+// fieldCondition). Stress patches get a dashed white circle (none in a
+// field with no crop). How each field is drawn is format.js mapLook(), so
+// the legend can list only the marks on the map (mapMarks). Name pills sit in each field's top-left corner
 // when they fit, shrink or hide when they do not, never overlap, and the
 // stress circles are drawn above them.
 //
@@ -34,6 +36,9 @@
 //   drawMode     true: clicks add corners (onDrawPoint([lat, lon])); drawPoints are drawn as a shape
 //   onMapClick   called with [lat, lon] for a click on the map outside drawing (e.g. to move the pin)
 //   focusBounds  [[south, west], [north, east]]: the map flies there whenever this changes
+//   analysing    a Set of field ids being analysed for the first time
+//                (useFieldData().analysing): their pill says "Analysing…"
+//                and their outline is dashed
 //   showLabels   false hides the name pills
 //   interactive  false turns off dragging, zooming and the buttons, and takes
 //                the map out of the Tab order (nothing to do there by keyboard)
@@ -59,7 +64,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { Maximize, Minus, Plus } from "lucide-react";
 import { conditionClass } from "../../lib/field/method.js";
-import { formatDay } from "../../lib/field/format.js";
+import { ANALYSING_LABEL, formatDay, mapLook } from "../../lib/field/format.js";
 import "./field.css";
 
 // Satellite pictures: Esri World Imagery, free with no key. The short
@@ -251,6 +256,7 @@ export default function FieldMap({
   onDrawPoint,
   onMapClick,
   focusBounds,
+  analysing = null,
   showLabels = true,
   interactive = true,
   fitPadding = FIT_PADDING,
@@ -349,7 +355,7 @@ export default function FieldMap({
 
   // ---------- The fields ----------
   const fieldsKey = fields.map((f) => `${f.id}:${f.name}:${f.geometry?.coordinates?.[0]?.length}`).join("|");
-  const analysesKey = fields.map((f) => `${analyses[f.id]?.updatedAt || ""}:${analyses[f.id]?.status?.id || ""}`).join("|");
+  const analysesKey = fields.map((f) => `${analyses[f.id]?.updatedAt || ""}:${analyses[f.id]?.status?.id || ""}:${analysing?.has?.(f.id) ? "a" : ""}`).join("|");
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -363,13 +369,14 @@ export default function FieldMap({
       if (!field?.geometry) continue;
       const analysis = analyses[field.id];
       const rings = toLatLngs(field.geometry);
-      const recovery = analysis?.status?.id === "recovery" || analysis?.damage?.detected;
-      const harvested = analysis?.status?.id === "harvested";
       // Harvest readiness is part of the one layer: a field that is ready,
       // or due within two weeks, gets a gold outline and says so on its pill.
-      const ready = !recovery && (analysis?.status?.id === "ready" || analysis?.status?.id === "harvestSoon");
-      const cls = conditionClass(analysis?.condition?.score)?.id;
-      const entry = { field, recovery, harvested, ready, cls, parts: {} };
+      const look = mapLook(analysis);
+      const { recovery, ready } = look;
+      const harvested = look.bare;
+      const waiting = !analysis && Boolean(analysing?.has?.(field.id));
+      const cls = harvested ? null : conditionClass(analysis?.condition?.score)?.id;
+      const entry = { field, recovery, harvested, ready, waiting, cls, parts: {} };
 
       entry.parts.halo = L.polygon(rings, {
         renderer: renderers.current.shapes,
@@ -387,7 +394,7 @@ export default function FieldMap({
         bubblingMouseEvents: false,
         lineJoin: "round",
         className: "fm-shape",
-        ...shapeStyle({ recovery, harvested, ready, cls, selected: false, t }),
+        ...shapeStyle({ recovery, harvested, ready, waiting, cls, selected: false, t }),
       });
       shape.on("click", (event) => {
         const now = latest.current;
@@ -403,8 +410,7 @@ export default function FieldMap({
       // Dashed circles round the stress patches (never smaller than a
       // fingertip on screen, so they stay visible when zoomed out).
       entry.parts.stress = [];
-      for (const patch of analysis?.stress?.patches || []) {
-        if (![patch?.lat, patch?.lon].every(Number.isFinite)) continue;
+      for (const patch of look.patches) {
         const radiusM = Math.max(25, (Number(patch.radiusM) || 30) * 1.35);
         const circle = L.circle([patch.lat, patch.lon], {
           renderer: renderers.current.stress,
@@ -425,7 +431,9 @@ export default function FieldMap({
         const info = labelSpots(field.geometry);
         if (info) {
           const days = analysis?.harvest?.daysToReady;
-          const text = recovery
+          const text = waiting
+            ? `${field.name} · ${ANALYSING_LABEL}`
+            : recovery
             ? `${field.name} · Recovery`
             : analysis?.status?.id === "ready"
               ? `${field.name} · Ready`
@@ -482,7 +490,7 @@ export default function FieldMap({
     const t = tokensRef.current;
     for (const [id, entry] of layers.current.fieldIndex) {
       const selected = id === latest.current.selectedId;
-      entry.parts.shape?.setStyle(shapeStyle({ recovery: entry.recovery, harvested: entry.harvested, ready: entry.ready, cls: entry.cls, selected, t }));
+      entry.parts.shape?.setStyle(shapeStyle({ recovery: entry.recovery, harvested: entry.harvested, ready: entry.ready, waiting: entry.waiting, cls: entry.cls, selected, t }));
       entry.parts.halo?.setStyle({ opacity: selected ? 0.38 : 0 });
       if (selected) entry.parts.shape?.bringToFront();
       const el = entry.parts.label?.getElement();
@@ -771,14 +779,16 @@ export default function FieldMap({
 }
 
 // How a field's outline and tint are drawn in each state.
-function shapeStyle({ recovery, harvested, ready, cls, selected, t }) {
+function shapeStyle({ recovery, harvested, ready, waiting = false, cls, selected, t }) {
   if (recovery) return { fillColor: t["--c-red"], fillOpacity: 0.38, color: selected ? "#ffffff" : t["--c-red"], weight: selected ? 5 : 3, opacity: 1, dashArray: null };
   // Harvested: a neutral straw tint, not a condition colour.
   if (harvested) return { fillColor: t["--fmap-harvested"], fillOpacity: selected ? 0.4 : 0.3, color: "#ffffff", weight: selected ? 5 : 2, opacity: selected ? 1 : 0.92, dashArray: selected ? null : "6 5" };
   // Ready to harvest (or due soon): the same tint, a gold outline.
   const readyEdge = ready ? { color: t["--fmap-ready"], weight: selected ? 6 : 4, opacity: 1, dashArray: null } : null;
   const fill = cls ? t[CLASS_TOKEN[cls]] : t["--fmap-nodata"];
-  return { fillColor: fill, fillOpacity: selected ? 0.5 : 0.42, color: "#ffffff", weight: selected ? 5 : 2, opacity: selected ? 1 : 0.92, dashArray: null, ...readyEdge };
+  // Being analysed: no colour yet, a dashed white edge.
+  const dash = waiting && !selected ? "4 6" : null;
+  return { fillColor: fill, fillOpacity: selected ? 0.5 : 0.42, color: "#ffffff", weight: selected ? 5 : 2, opacity: selected ? 1 : 0.92, dashArray: dash, ...readyEdge };
 }
 
 function metresPerPixel(map) {

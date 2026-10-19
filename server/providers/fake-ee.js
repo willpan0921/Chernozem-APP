@@ -50,6 +50,15 @@
 //              answers for some reduced values (e.g. { fires: 8 }), used
 //              before the made-up ones
 //
+// Field bands added for stress v2 and the crop type: ndre, ndyi, vhPower
+// (Sentinel-1 VH as power, a tall crop in July), the phenology composites
+// k0..k17 and the edge strip (stripCropland, edgeAny, edgePersistent; a
+// persistent line by default; Geometry.perimeter, or values.perimeterM
+// for every outline). Image.get answers a picture's orbit
+// direction and relative orbit; a feature carrying `month` is valued for
+// that month. Batched monthly bands m<i>_ndvi / _ndwi / _clear are valued
+// like ndvi / ndwi / clear.
+//
 // Field NDVI follows the hemisphere of the feature reduced: a crop season
 // peaking at the end of June in the north (and the tropics), at the end of
 // December south of 23.5° S.
@@ -112,7 +121,7 @@ const RESULT_KIND = {
   },
   FeatureCollection: { size: "Number", aggregate_max: "Number", aggregate_array: "List", first: "Feature", geometry: "Geometry", distance: "Image", reduceToImage: "Image", toList: "List" },
   Feature: { get: "Object", geometry: "Geometry", area: "Number" },
-  Geometry: { area: "Number", coordinates: "List" },
+  Geometry: { area: "Number", perimeter: "Number", coordinates: "List" },
   Date: { get: "Number", millis: "Number", format: "String" },
   Dictionary: { get: "Object" },
   List: { get: "Object", size: "Number" },
@@ -198,6 +207,28 @@ function fieldValue(name, u, { date, lat } = {}) {
   if (name === "clear") return u < 0.25 ? u : 0.6 + 0.4 * u;
   if (/^n20\d\d_ndvi$/.test(name)) return 0.3 + 0.5 * u;
   if (/^n20\d\d_ndwi$/.test(name)) return -0.1 + 0.4 * u;
+  if (/^n20\d\d_ndre$/.test(name)) return 0.2 + 0.3 * u;
+  if (name === "ndre") return Number.isFinite(date) ? seasonalNdvi(dayOfYear(date), u, lat) * 0.6 - 0.05 : 0.15 + 0.35 * u;
+  if (name === "ndyi") return Number.isFinite(date) ? -0.12 + 0.06 * u : -0.1 + 0.05 * u;
+  // Sentinel-1 VH as power: about -17 dB bare, -12 dB under a tall crop
+  // at the end of July (north), with up to 0.6 dB of speckle.
+  if (name === "vhPower") {
+    const crop = Number.isFinite(date) ? Math.exp(-(((dayOfYear(date) - 205) / 45) ** 2)) : 0.5;
+    return 10 ** ((-17 + 5 * crop + 0.6 * (u - 0.5)) / 10);
+  }
+  // Batched monthly means (bands m<i>_ndvi, m<i>_ndwi, m<i>_clear).
+  const monthly = name.match(/^m\d+_(ndvi|ndwi|clear)$/);
+  if (monthly) return fieldValue(monthly[1], u, { lat });
+  if (name === "ndwiAnomaly") return -0.12 + 0.2 * u;
+  if (name === "redEdgeOnly") return 0.03 * u;
+  if (name === "medNdvi" || name === "medNdre") return 0.5 * u;
+  // Detection: the phenology curve composites (one crop season, peak at k9)
+  // and the strip between two parcels (a real edge unless a test says not).
+  const phenology = name.match(/^k(\d+)$/);
+  if (phenology) return 0.2 + 0.6 * Math.exp(-(((Number(phenology[1]) - 9) / 4) ** 2)) + 0.01 * (u - 0.5);
+  if (name === "stripCropland") return 0.9;
+  if (name === "edgeAny") return 0.3;
+  if (name === "edgePersistent") return 0.25;
   const curve = name.match(/^c20\d\d_(\d\d)$/);
   if (curve) return seasonalNdvi(Number(curve[1]) * 15.2 + 1, u, lat);
   if (name === "stressed") return 0.2 * u;
@@ -691,6 +722,16 @@ export function createFakeEe(options = {}) {
     }
     if (kind === "Geometry") return geometryMethod(parent(), method, node, scope);
     if (kind === "Image" && method === "date") return resolve(node.parent, scope)?.date ?? 0;
+    if (kind === "Image" && method === "get") {
+      // A picture's own properties: its date, and the orbit direction
+      // (ascending and descending pictures take turns).
+      const picture = imageContext(node.parent, scope);
+      const key = arg(0);
+      if (key === "orbitProperties_pass") return picture ? (picture.index % 2 ? "DESCENDING" : "ASCENDING") : null;
+      if (key === "relativeOrbitNumber_start") return picture ? 14 + (picture.index % 4) * 30 : null;
+      if (key === "system:time_start") return picture?.date ?? null;
+      return null;
+    }
     if (kind === "Date") {
       const ms = parent();
       if (method === "format") return new Date(ms).toISOString().slice(0, 10);
@@ -722,6 +763,17 @@ export function createFakeEe(options = {}) {
     switch (method) {
       case "area":
         return roughAreaKm2(g) * 1e6;
+      case "perimeter": {
+        // values.perimeterM (a number) stands in for any outline's perimeter.
+        if (values && Number.isFinite(values.perimeterM)) return values.perimeterM;
+        const ring = outerRings(g)[0] || [];
+        let m = 0;
+        for (let i = 1; i < ring.length; i += 1) {
+          const lat = (ring[i][1] + ring[i - 1][1]) / 2;
+          m += Math.hypot((ring[i][0] - ring[i - 1][0]) * 111320 * Math.cos((lat * Math.PI) / 180), (ring[i][1] - ring[i - 1][1]) * 110574);
+        }
+        return m;
+      }
       case "centroid": {
         const ring = outerRings(g)[0];
         if (!ring) return g?.type === "Point" ? g : { type: "Point", coordinates: [0, 0] };
@@ -846,6 +898,8 @@ export function createFakeEe(options = {}) {
         const box = [Math.min(...boxes.map((b) => b[0])), Math.min(...boxes.map((b) => b[1])), Math.max(...boxes.map((b) => b[2])), Math.max(...boxes.map((b) => b[3]))];
         return { type: "FeatureCollection", features: [feature(boxPolygon(box), {})] };
       }
+      case "flatten":
+        return { ...fc, features: fc.features.flatMap((f) => (f?.type === "FeatureCollection" ? f.features : [f])) };
       case "aggregate_array":
         return fc.features.map((f) => f.properties[arg(0)]).filter((v) => v !== undefined);
       case "geometry": {
@@ -880,7 +934,10 @@ export function createFakeEe(options = {}) {
     }
     const bands = imageNode.bands || [];
     const image = imageContext(imageNode, scope);
-    const id = String(f.properties?.id ?? f.properties?.fid ?? f.properties?.aid ?? JSON.stringify(f.geometry?.coordinates)) + (image ? `|${image.date}` : "");
+    // A monthly request marks its features with the month: values follow the season.
+    const monthDate = !image && /^\d{4}-\d{2}$/.test(String(f.properties?.month || "")) ? Date.parse(`${f.properties.month}-15T00:00:00Z`) : undefined;
+    const date = image?.date ?? monthDate;
+    const id = String(f.properties?.id ?? f.properties?.fid ?? f.properties?.aid ?? JSON.stringify(f.geometry?.coordinates)) + (Number.isFinite(date) ? `|${date}` : "");
     const areaKm2 = roughAreaKm2(f.geometry);
     const ring = outerRings(f.geometry)[0];
     const lat = ring ? (ringBox(ring)[1] + ringBox(ring)[3]) / 2 : f.geometry?.type === "Point" ? f.geometry.coordinates[1] : undefined;
@@ -888,7 +945,7 @@ export function createFakeEe(options = {}) {
     bands.forEach((band, i) => {
       const name = outputs ? outputs[i] : bands.length === 1 && reducerName !== "first" ? reducerName : band.name;
       if (!name || band.empty) return; // no pixels: Earth Engine leaves the value out
-      out[name] = fakeValue(outputs ? name : band.name, unitHash(`${id}|${band.name}|${name}`), areaKm2, { date: image?.date, lat, values, id: f.properties?.id });
+      out[name] = fakeValue(outputs ? name : band.name, unitHash(`${id}|${band.name}|${name}`), areaKm2, { date, lat, values, id: f.properties?.id ?? f.properties?.fid });
     });
     return out;
   }

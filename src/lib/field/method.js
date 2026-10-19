@@ -15,9 +15,22 @@
 // 2019 to 2021. "Normal" is a range: the lowest and highest of those three
 // years.
 //
+//   NDRE  red edge       (B8A - B5) / (B8A + B5)    20 m, reacts to chlorophyll
+//                        loss 1 to 2 weeks before NDVI does
+//   NDYI  yellow flowers (B3 - B2) / (B3 + B2)      used to spot rapeseed
+//
+// Crop profiles, heat units (growing degree-days) and the crop-type
+// classifier are in crops.js and are re-exported from here, so every rule
+// can be imported from this one file.
+//
 // WHO EDITS IT
 // Whoever changes the Field method. A change here changes every analysis
 // made from then on.
+
+import { addDays } from "../season.js";
+import { cropProfile, harvestPlausible } from "./crops.js";
+
+export * from "./crops.js";
 
 // The years used as "normal".
 export const BASELINE = { from: 2019, to: 2021, label: "2019 to 2021" };
@@ -120,6 +133,244 @@ export function stressLevel(stressedShare) {
 }
 
 // ---------------------------------------------------------------------------
+// Stress v2: red-edge early warning, the likely cause, no crop
+// ---------------------------------------------------------------------------
+
+// A normalized difference (a - b) / (a + b); null when it cannot be worked out.
+export function normalizedDifference(a, b) {
+  if (!Number.isFinite(a) || !Number.isFinite(b) || a + b === 0) return null;
+  return (a - b) / (a + b);
+}
+
+// Red-edge index from Sentinel-2 B8A and B5 (20 m).
+export const ndre = (b8a, b5) => normalizedDifference(b8a, b5);
+// Yellowness index from Sentinel-2 B3 and B2 (rapeseed flowers).
+export const ndyi = (b3, b2) => normalizedDifference(b3, b2);
+
+// The red-edge rule, the same idea as STRESS_RULES: clearly weaker than the
+// rest of the field AND weaker than normal (normal NDRE from the same
+// 2019-2021 windows as NDVI).
+export const RED_EDGE_RULES = { belowFieldMedian: 0.06, belowNormal: 0.05 };
+
+export function isStressedRedEdge(ndreValue, fieldMedianNdre, normalNdre) {
+  if (![ndreValue, fieldMedianNdre, normalNdre].every(Number.isFinite)) return false;
+  return ndreValue < fieldMedianNdre - RED_EDGE_RULES.belowFieldMedian && ndreValue < normalNdre - RED_EDGE_RULES.belowNormal;
+}
+
+// The pixel rule the providers mirror as ee.Image arithmetic:
+//   stressed = NDVI rule (isStressed) OR red-edge rule (isStressedRedEdge)
+// Gives back { stressed, byNdvi, byRedEdge, redEdgeOnly } (redEdgeOnly:
+// the red-edge rule caught a pixel the NDVI rule missed).
+// In Earth Engine terms, with ndvi/ndre this pass, med* the field medians
+// (reduceRegion median) and norm* the 2019-2021 normal:
+//   byNdvi    = ndvi.lt(medNdvi - 0.1).and(ndvi.lt(normNdvi - 0.08))
+//   byRedEdge = ndre.lt(medNdre - 0.06).and(ndre.lt(normNdre - 0.05))
+//   stressed  = byNdvi.or(byRedEdge)
+export function pixelStress({ ndvi, fieldMedianNdvi, normalNdvi, ndre: ndreValue, fieldMedianNdre, normalNdre } = {}) {
+  const byNdvi = isStressed(ndvi, fieldMedianNdvi, normalNdvi);
+  const byRedEdge = isStressedRedEdge(ndreValue, fieldMedianNdre, normalNdre);
+  return { stressed: byNdvi || byRedEdge, byNdvi, byRedEdge, redEdgeOnly: byRedEdge && !byNdvi };
+}
+
+// stress.redEdge is true when the red-edge rule found stress the NDVI rule
+// missed over at least this share of the field (one stray pixel is noise).
+export const RED_EDGE_ONLY_MIN_SHARE = 0.01;
+
+export function redEdgeFound(redEdgeOnlyShare) {
+  return Number.isFinite(redEdgeOnlyShare) && redEdgeOnlyShare >= RED_EDGE_ONLY_MIN_SHARE;
+}
+
+// The likely cause of stress, from the mean NDWI anomaly (NDWI minus its
+// normal) over the stressed pixels of the field or of one patch: drier
+// than normal by this much or more -> "dry"; otherwise "other" (not water:
+// a satellite cannot name a pest or a disease, so check on the ground).
+export const DRY_NDWI_ANOMALY = -0.05;
+
+export const STRESS_CAUSES = {
+  dry: { id: "dry", label: "Dry patch" },
+  other: { id: "other", label: "Not water: check for pests or disease" },
+};
+
+export function stressCause(ndwiAnomaly) {
+  if (!Number.isFinite(ndwiAnomaly)) return null;
+  return ndwiAnomaly <= DRY_NDWI_ANOMALY ? "dry" : "other";
+}
+
+// Stages with no crop in the field: no stress, no condition, no pest risk.
+export const NO_CROP_STAGES = ["harvested", "notSown"];
+// What the Stress tile says then (not "None", which would mean "no stress").
+export const NO_CROP_LABEL = "No crop";
+// A crop dried down for harvest: its leaves are dying back on purpose, so
+// the stress rules (weaker than the rest of the field and than normal, on
+// NDVI or red edge) would read the uneven senescence as stress (real data,
+// Iowa, 2026-10-19: a dried-down field read "Stress high · Dry patch" while
+// its water was normal and its condition "Very good"). Stress is not read
+// then; the tile says this instead.
+export const DRIED_DOWN_LABEL = "Dried down";
+
+const stageId = (stage) => (typeof stage === "string" ? stage : stage?.stage) ?? null;
+
+// False when the field has no crop (harvested or not sown).
+export function hasCrop(stage) {
+  return !NO_CROP_STAGES.includes(stageId(stage));
+}
+
+// Why stress is not read for a field, or null when it is:
+//   "noCrop"     harvested or not sown
+//   "driedDown"  stage "ready" (a crop dried down, standing dry or with
+//                its leaves down), or a field of an unknown crop dried down
+//                to the ready level (harvest.dryDown "dry", unknownCropHarvest)
+//   harvest  the harvest stage id, or the harvest object { stage, dryDown }
+//   A field read as fallow or grass (harvest.fallow, unknownCropHarvest)
+//   has no crop either: "noCrop".
+export function stressExemption(harvest) {
+  const stage = stageId(harvest);
+  if (NO_CROP_STAGES.includes(stage) || (harvest && typeof harvest === "object" && harvest.fallow)) return "noCrop";
+  if (stage === "ready" || (harvest && typeof harvest === "object" && harvest.dryDown === "dry")) return "driedDown";
+  return null;
+}
+
+// True when stress is read for the field (stressExemption is null).
+export function stressApplies(harvest) {
+  return stressExemption(harvest) === null;
+}
+
+// The field's stress in one object (the FieldAnalysis "stress" fields
+// besides patches and hectares).
+//   stage            harvest stage id (or the harvest / harvestStage result)
+//   dryDown, fallow  harvest.dryDown / harvest.fallow (unknownCropHarvest),
+//                    when stage is an id
+//   share            stressed share of the field (NDVI OR red-edge rule)
+//   ndwiAnomaly      mean NDWI anomaly over the stressed pixels
+//   redEdgeOnlyShare share stressed by the red-edge rule only
+// Gives back { applies, reason, share, level, cause, redEdge }. With no
+// crop, or a crop dried down: applies false, reason "noCrop" or
+// "driedDown" (stressExemption) and everything else empty.
+export function stressSummary({ stage, dryDown = null, fallow = false, share, ndwiAnomaly, redEdgeOnlyShare } = {}) {
+  const reason = stressExemption(typeof stage === "object" && stage ? stage : { stage, dryDown, fallow });
+  if (reason) return { applies: false, reason, share: null, level: null, cause: null, redEdge: false };
+  const level = stressLevel(share);
+  const any = Number.isFinite(share) && share > 0;
+  return { applies: true, reason: null, share: Number.isFinite(share) ? share : null, level, cause: any ? stressCause(ndwiAnomaly) : null, redEdge: any && redEdgeFound(redEdgeOnlyShare) };
+}
+
+// A field with high stress (stressLevel "high": 15 % or more of it) is
+// never shown as "Very good": its condition is held just under that class.
+export const STRESSED_CONDITION_MAX = 0.84;
+
+// The field condition { score, class } with the "no crop" rule: a
+// harvested or not-sown field has no condition (null, never "Poor"), and
+// its stress never counts as "no stress".
+//   health, water   scores 0..1; stress the stressed share
+//   damage          { detected } (a damaged field is never above "Fair")
+// High stress caps the score at STRESSED_CONDITION_MAX.
+export function fieldCondition({ stage, health, water, stress, damage } = {}) {
+  if (!hasCrop(stage)) return { score: null, class: null };
+  let score = conditionForDamage(conditionScore({ health, water, stress }), damage);
+  if (Number.isFinite(score) && stressLevel(stress) === "high") score = Math.min(score, STRESSED_CONDITION_MAX);
+  return { score: Number.isFinite(score) ? score : null, class: conditionClass(score)?.id ?? null };
+}
+
+// ---------------------------------------------------------------------------
+// Pest and disease RISK from the weather (a forecast, not a detection)
+// ---------------------------------------------------------------------------
+// From Open-Meteo hourly temperature_2m and relative_humidity_2m, asked
+// with past_days=7 and forecast_days=7 (14 days in all):
+//   fungal disease: hours with humidity >= 90 % and 10 to 25 °C
+//   insects:        growing degree-days base 10 °C (daily mean - 10, never
+//                   below 0), summed over the same 14 days
+
+export const DISEASE_RISK = { minHumidity: 90, minTemp: 10, maxTemp: 25, highHours: 24, mediumHours: 8 };
+export const INSECT_RISK = { base: 10, highGdd: 70, mediumGdd: 30 };
+export const RISK_DAYS = 14;
+// A day's mean temperature counts only with at least this many hours.
+export const RISK_MIN_HOURS_PER_DAY = 18;
+// Risk is given only while a crop is growing or ripening.
+export const PEST_RISK_STAGES = ["growing", "ripening"];
+
+export function diseaseRisk(wetHours) {
+  if (!Number.isFinite(wetHours)) return null;
+  if (wetHours >= DISEASE_RISK.highHours) return "high";
+  if (wetHours >= DISEASE_RISK.mediumHours) return "medium";
+  return "low";
+}
+
+export function insectRisk(gdd14) {
+  if (!Number.isFinite(gdd14)) return null;
+  if (gdd14 >= INSECT_RISK.highGdd) return "high";
+  if (gdd14 >= INSECT_RISK.mediumGdd) return "medium";
+  return "low";
+}
+
+// Hourly rows from Open-Meteo's { time, temperature_2m,
+// relative_humidity_2m } arrays, or from [{ time, temperature, humidity }].
+function hourlyRows(hourly) {
+  if (Array.isArray(hourly)) {
+    return hourly.map((h) => ({ time: String(h?.time || ""), t: h?.temperature ?? h?.temperature_2m, rh: h?.humidity ?? h?.relative_humidity_2m }));
+  }
+  const times = Array.isArray(hourly?.time) ? hourly.time : [];
+  return times.map((time, i) => ({ time: String(time), t: hourly.temperature_2m?.[i], rh: hourly.relative_humidity_2m?.[i] }));
+}
+
+// The two inputs of the risk: { wetHours14, gdd14, hours, days }.
+//   today  "YYYY-MM-DD": the 14 days are the 7 before today and the 7 from
+//          today; left out, the first 14 days of the data.
+// Null when there is no usable hour.
+export function hourlyRiskInputs(hourly, today = null) {
+  const rows = hourlyRows(hourly).filter((r) => /^\d{4}-\d{2}-\d{2}/.test(r.time));
+  if (!rows.length) return null;
+  const first = today ? addDays(today, -7) : rows.map((r) => r.time.slice(0, 10)).sort()[0];
+  const end = addDays(first, RISK_DAYS);
+  const inside = rows.filter((r) => r.time.slice(0, 10) >= first && r.time.slice(0, 10) < end);
+  const usable = inside.filter((r) => Number.isFinite(r.t));
+  if (!usable.length) return null;
+  const d = DISEASE_RISK;
+  const withHumidity = usable.filter((r) => Number.isFinite(r.rh));
+  const wetHours14 = withHumidity.length ? withHumidity.filter((r) => r.rh >= d.minHumidity && r.t >= d.minTemp && r.t <= d.maxTemp).length : null;
+  const byDay = new Map();
+  for (const r of usable) {
+    const day = r.time.slice(0, 10);
+    byDay.set(day, [...(byDay.get(day) || []), r.t]);
+  }
+  let gdd = 0;
+  let days = 0;
+  for (const temps of byDay.values()) {
+    if (temps.length < RISK_MIN_HOURS_PER_DAY) continue;
+    gdd += Math.max(0, temps.reduce((a, b) => a + b, 0) / temps.length - INSECT_RISK.base);
+    days += 1;
+  }
+  return { wetHours14, gdd14: days ? Math.round(gdd * 10) / 10 : null, hours: usable.length, days };
+}
+
+// The weather-based pest and disease risk.
+//   hourly  Open-Meteo hourly block (see hourlyRiskInputs)
+//   stage   harvest stage id or harvestStage result; when given, risk is
+//           only worked out while the crop is growing or ripening
+//   today   "YYYY-MM-DD" (optional, see hourlyRiskInputs)
+// Gives back { disease, insects, basis: { wetHours, gdd14 } } or null (no
+// crop growing, or no weather).
+export function pestRisk({ hourly, stage, today = null } = {}) {
+  if (stage !== undefined && !PEST_RISK_STAGES.includes(stageId(stage))) return null;
+  const inputs = hourlyRiskInputs(hourly, today);
+  if (!inputs) return null;
+  return { disease: diseaseRisk(inputs.wetHours14), insects: insectRisk(inputs.gdd14), basis: { wetHours: inputs.wetHours14, gdd14: inputs.gdd14 } };
+}
+
+// One short line for the Stress tile and the AI: the higher of the two
+// risks ("Disease risk high this week", "Insect activity medium this
+// week", "Disease risk and insect activity high this week"). Null without
+// a risk.
+export function pestRiskLine(risk) {
+  if (!risk) return null;
+  const rank = { low: 0, medium: 1, high: 2 };
+  const d = rank[risk.disease] ?? -1;
+  const i = rank[risk.insects] ?? -1;
+  if (d < 0 && i < 0) return null;
+  if (d === i) return `Disease risk and insect activity ${risk.disease} this week`;
+  return d > i ? `Disease risk ${risk.disease} this week` : `Insect activity ${risk.insects} this week`;
+}
+
+// ---------------------------------------------------------------------------
 // Harvest readiness, from this season's plant-health curve
 // ---------------------------------------------------------------------------
 
@@ -156,6 +407,16 @@ export const RIPENING_MAX_DAYS = 45;
 // and Kenya fields that peaked 4-9 months earlier and sat flat at NDVI
 // 0.30-0.45 read "Ready to harvest".
 export const READY_MAX_DAYS = 30;
+// Long after the peak: a field whose peak is more than LONG_AFTER_PEAK.days
+// back and that has since fallen below LONG_AFTER_PEAK.share of that peak,
+// with no new season growing after (weak regrowth does not count), is not
+// "growing" any more even when it never got
+// quite down to the ready level: it is ready (when it got that low within
+// READY_MAX_DAYS) or it was harvested (or left) when it got that low. Real
+// data, Kupiansk demo farm, 2026-10-19: fields that peaked at 0.66-0.84 in
+// late June, dried down slowly to 0.30-0.37 by mid September and stayed
+// flat read "Growing" with a pest risk four months after their peak.
+export const LONG_AFTER_PEAK = { days: 60, share: 0.6 };
 
 const DAY_MS = 86400000;
 const dayNumber = (iso) => Math.round(Date.parse(`${iso.slice(0, 10)}T00:00:00Z`) / DAY_MS);
@@ -191,17 +452,20 @@ function slopePerDay(points) {
 }
 
 // Reads the stage of the crop from this season's curve.
-//   points - this season's clear passes, { date, ndvi }
-//   today  - "YYYY-MM-DD"
+//   points  - this season's clear passes, { date, ndvi }
+//   today   - "YYYY-MM-DD"
+//   options - { readyShare } (crop profile, crops.js), READY_SHARE when left out
 // Gives back { stage, daysToReady, peak, peakDate, current, lastDate, slope }
-// where stage is one of
+// (and cycleStart when a new crop has grown after a harvest: the stage is
+// then that crop's, read from cycleStart on) where stage is one of
 //   "unknown"   too few clear passes
 //   "notSown"   the field never greened up this season
 //   "growing"   still green, no steady dry-down yet
 //   "ripening"  drying down; daysToReady estimates when it will be ready
 //   "ready"     dried down to harvest level
 //   "harvested" a sharp drop to bare soil after the peak
-export function harvestStage(points, today) {
+export function harvestStage(points, today, { readyShare = READY_SHARE } = {}) {
+  const share = Number.isFinite(readyShare) ? readyShare : READY_SHARE;
   const series = cleanSeries(points);
   const empty = { stage: "unknown", daysToReady: null, peak: null, peakDate: null, current: null, lastDate: null, slope: null };
   if (series.length < 3) return empty;
@@ -231,8 +495,10 @@ export function harvestStage(points, today) {
     const regrowthPeak = Math.max(...regrowth.map((p) => p.ndvi));
     const regrowthDays = dayNumber(last.date) - dayNumber(harvestedOn);
     if (regrowthPeak < NEW_SEASON_PEAK || regrowthDays < NEW_SEASON_DAYS) return harvested;
-    const next = harvestStage(regrowth, today);
-    return next.stage === "unknown" || next.stage === "notSown" ? harvested : next;
+    const next = harvestStage(regrowth, today, { readyShare: share });
+    // cycleStart: where the crop now in the field starts (the passes before
+    // it belong to the crop harvested then).
+    return next.stage === "unknown" || next.stage === "notSown" ? harvested : { cycleStart: harvestedOn, ...next };
   };
   for (let i = 1; i < series.length; i++) {
     const before = series[i - 1];
@@ -254,8 +520,27 @@ export function harvestStage(points, today) {
 
   const recent = series.filter((p) => dayNumber(last.date) - dayNumber(p.date) <= 30).slice(-4);
   const slope = slopePerDay(recent);
-  const readyLevel = BARE_NDVI + READY_SHARE * (peak - BARE_NDVI);
+  const readyLevel = BARE_NDVI + share * (peak - BARE_NDVI);
   const withSlope = { ...base, slope, readyLevel };
+
+  // "Growing", unless the peak is long past and the field has stayed far
+  // below it with no new season (LONG_AFTER_PEAK).
+  const growing = () => {
+    const sincePeak = dayNumber(today || last.date) - dayNumber(series[peakIndex].date);
+    const low = LONG_AFTER_PEAK.share * peak;
+    if (sincePeak <= LONG_AFTER_PEAK.days) return { ...withSlope, stage: "growing" };
+    // Regrowth after the low (weeds, volunteers, a new sowing) that has not
+    // become a new season (NEW_SEASON_PEAK) does not make the old crop
+    // "growing" again. Real data, Kupiansk, 2026-10-19: a field drawn next
+    // to the demo farm peaked at 0.72 in June, faded to 0.28-0.35 in
+    // September and came back to 0.45 in October: it read "Growing" with a
+    // high disease risk.
+    const firstLow = series.findIndex((p, i) => i > peakIndex && p.ndvi <= low);
+    if (firstLow < 0) return { ...withSlope, stage: "growing" };
+    if (Math.max(...series.slice(firstLow).map((p) => p.ndvi)) >= NEW_SEASON_PEAK) return { ...withSlope, stage: "growing" };
+    if (dayNumber(last.date) - dayNumber(series[firstLow].date) <= READY_MAX_DAYS) return { ...withSlope, stage: "ready", daysToReady: 0 };
+    return afterHarvest(firstLow);
+  };
 
   if (peakIndex === series.length - 1 || current > 0.85 * peak) return { ...withSlope, stage: "growing" };
   if (current <= readyLevel) {
@@ -265,12 +550,274 @@ export function harvestStage(points, today) {
   }
   if (slope < -0.001) {
     const fromLastPass = Math.ceil((current - readyLevel) / -slope);
-    if (fromLastPass > RIPENING_MAX_DAYS) return { ...withSlope, stage: "growing" };
+    if (fromLastPass > RIPENING_MAX_DAYS) return growing();
     const sinceLastPass = today ? Math.max(0, dayNumber(today) - dayNumber(last.date)) : 0;
     const days = Math.max(0, Math.min(90, fromLastPass - sinceLastPass));
     return days === 0 ? { ...withSlope, stage: "ready", daysToReady: 0 } : { ...withSlope, stage: "ripening", daysToReady: days };
   }
-  return { ...withSlope, stage: "growing" };
+  return growing();
+}
+
+// ---------------------------------------------------------------------------
+// Harvest readiness v2: green-up, heat units, radar through cloud
+// ---------------------------------------------------------------------------
+
+// Green-up: the first date the cleaned curve passes
+//   base + GREEN_UP_SHARE x (peak - base)
+// where base is the lowest point before the peak (so a winter crop's
+// green-up is its spring regrowth after the winter low). Straight line
+// between the two passes either side. Null when the curve has no clear
+// green-up: fewer than 3 passes, a peak under NOT_SOWN_PEAK, or a curve
+// that is already green at its start (base above maxBase; a winter crop
+// whose curve starts in spring can pass a higher maxBase).
+export const GREEN_UP_SHARE = 0.25;
+
+export function greenUpDate(points, { maxBase = NOT_SOWN_PEAK } = {}) {
+  const series = cleanSeries(Array.isArray(points) ? points : []);
+  if (series.length < 3) return null;
+  let peakIndex = 0;
+  series.forEach((p, i) => {
+    if (p.ndvi > series[peakIndex].ndvi) peakIndex = i;
+  });
+  const peak = series[peakIndex].ndvi;
+  if (peak < NOT_SOWN_PEAK || peakIndex === 0) return null;
+  let baseIndex = 0;
+  for (let i = 0; i <= peakIndex; i++) if (series[i].ndvi < series[baseIndex].ndvi) baseIndex = i;
+  const base = series[baseIndex].ndvi;
+  if (base > maxBase || baseIndex === peakIndex) return null;
+  const level = base + GREEN_UP_SHARE * (peak - base);
+  for (let i = baseIndex + 1; i <= peakIndex; i++) {
+    if (series[i].ndvi < level) continue;
+    const a = series[i - 1];
+    const b = series[i];
+    const t = b.ndvi === a.ndvi ? 1 : (level - a.ndvi) / (b.ndvi - a.ndvi);
+    return addDays(a.date, Math.round(t * (dayNumber(b.date) - dayNumber(a.date))));
+  }
+  return null;
+}
+
+// Radar harvest (Sentinel-1 VH, through cloud): after the NDVI peak, a
+// fall of RADAR_HARVEST.dropDb or more between two passes at most
+// maxGapDays apart (a tall crop cut to stubble). The fall must not be
+// undone: when the next pass is within maxGapDays it must still be at
+// least keepDb below the pass before the fall (a frost or a wet day comes
+// back; a harvest does not). Ascending and descending passes may be
+// mixed; passes on the same day are averaged. Sentinel-1 passes over one
+// place are usually 6 to 12 days apart; maxGapDays allows one missed
+// acquisition (real data, Iowa, 2026: passes exactly 12 days apart, 27 Sep
+// to 9 Oct), since keepDb already guards against a wet day.
+export const RADAR_HARVEST = { dropDb: 3, maxGapDays: 24, keepDb: 2 };
+
+//   vhSeries  [{ date: "YYYY-MM-DD", vh }] field-mean VH per pass, dB
+//   peakDate  the NDVI peak date ("YYYY-MM-DD")
+//   notBefore a drop counts only when the pass before it is on or after
+//             this date (radarForHarvest: a soybean's leaves falling)
+// Gives back { harvestedOn, dropDb, passesAfterPeak, lastPass }
+// (harvestedOn null: no harvest seen on radar).
+export function radarHarvest(vhSeries, peakDate, { notBefore = null } = {}) {
+  const byDay = new Map();
+  for (const p of Array.isArray(vhSeries) ? vhSeries : []) {
+    if (!p || typeof p.date !== "string" || !Number.isFinite(p.vh)) continue;
+    const day = p.date.slice(0, 10);
+    byDay.set(day, [...(byDay.get(day) || []), p.vh]);
+  }
+  const passes = [...byDay.entries()]
+    .map(([date, values]) => ({ date, vh: values.reduce((a, b) => a + b, 0) / values.length }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const after = peakDate ? passes.filter((p) => p.date >= peakDate.slice(0, 10)) : [];
+  const result = { harvestedOn: null, dropDb: null, passesAfterPeak: after.length, lastPass: after.length ? after[after.length - 1].date : null };
+  const r = RADAR_HARVEST;
+  for (let i = 1; i < after.length; i++) {
+    const a = after[i - 1];
+    const b = after[i];
+    if (dayNumber(b.date) - dayNumber(a.date) > r.maxGapDays) continue;
+    if (notBefore && a.date < notBefore) continue;
+    const drop = a.vh - b.vh;
+    if (drop < r.dropDb) continue;
+    const next = after[i + 1];
+    if (next && dayNumber(next.date) - dayNumber(b.date) <= r.maxGapDays && a.vh - next.vh < r.keepDb) continue;
+    return { ...result, harvestedOn: b.date, dropDb: Math.round(drop * 100) / 100 };
+  }
+  return result;
+}
+
+// The first clear pass after the peak at or below the ready level
+// (BARE_NDVI + readyShare x (peak - BARE_NDVI)): the day the satellite
+// SAW the crop dried down (no guess across a cloudy gap). Null when none.
+export function readyReachedOn(points, { readyShare = READY_SHARE } = {}) {
+  const series = cleanSeries(Array.isArray(points) ? points : []);
+  if (series.length < 3) return null;
+  const peakAt = series.reduce((best, p, i) => (p.ndvi > series[best].ndvi ? i : best), 0);
+  const level = BARE_NDVI + readyShare * (series[peakAt].ndvi - BARE_NDVI);
+  const seen = series.find((p, i) => i > peakAt && p.ndvi <= level);
+  return seen ? seen.date : null;
+}
+
+// A crop that drops its leaves when it matures (soybean, crops.js
+// shedsLeaves) loses most of its radar return then, a week or more before
+// the combine comes, so a VH drop that spans the dry-down may be the leaves
+// falling, not a cut. Real data, 60 fields near Ames, Iowa, 2026-10-19:
+// 20 of the 23 fields that were soybean by the corn-soybean rotation (CDL
+// 2024 and 2025) fell 4 to 8 dB between the 27 September and 9 October
+// passes, to the level of cut corn, while USDA had only 31 % of Iowa's
+// soybeans harvested on 11 October (94 % dropping leaves). For such a crop
+// the leaves are taken as down LEAF_FALL_DAYS after the first clear pass
+// at the ready level (readyReachedOn: yellow, the leaves start to fall),
+// and a drop counts as the cut only when the pass before it is on or after
+// that day; with no such pass, no drop counts. A field low on NDVI with no
+// drop that counts stays "ready" (leafDrop: the leaves are down, the radar
+// cannot tell whether it has been cut) for LEAF_DROP_MAX_DAYS after the
+// leaves came down, then is taken as harvested (soybean is cut within
+// weeks of maturity: the pods split open when it waits).
+export const LEAF_FALL_DAYS = 7;
+export const LEAF_DROP_MAX_DAYS = 30;
+const NEVER = "9999-12-31";
+
+// The radar reading for the harvest, for the crop.
+//   vhSeries  field-mean VH per pass; season this season's passes
+//   peakDate  the NDVI peak (harvestStage); crop crop id or name
+// Gives back { radar (radarHarvest result), leavesDownOn (a leaf-shedding
+// crop: LEAF_FALL_DAYS after its first clear pass at the ready level, or
+// null) }.
+export function radarForHarvest({ vhSeries, season, peakDate, crop } = {}) {
+  const profile = crop ? cropProfile(crop) : null;
+  const yellowOn = profile?.shedsLeaves ? readyReachedOn(season, { readyShare: profile.readyShare }) : null;
+  const leavesDownOn = yellowOn ? addDays(yellowOn, LEAF_FALL_DAYS) : null;
+  const notBefore = profile?.shedsLeaves ? leavesDownOn || NEVER : null;
+  return { radar: radarHarvest(Array.isArray(vhSeries) ? vhSeries : [], peakDate || null, { notBefore }), leavesDownOn };
+}
+
+// Optical images count as "cloudy" when the last clear pass is older than this.
+export const OPTICAL_STALE_DAYS = 15;
+// The dry-down and heat-unit estimates "agree" within this many days.
+export const HARVEST_AGREE_DAYS = 10;
+// A tall crop stands dry in the field for weeks, rarely longer: a field
+// low for longer than this with no radar harvest is left "harvested".
+export const STANDING_DRY_MAX_DAYS = 60;
+
+// Radar looked at the field after the peak (two passes or more) and up to
+// `since` (the date optical imagery called it harvested).
+function radarLooked(radar, since) {
+  return Boolean(radar) && radar.passesAfterPeak >= 2 && Boolean(radar.lastPass) && (!since || radar.lastPass >= since);
+}
+
+// Standing dry crop (section 3c / 7.11): a TALL crop (corn, soybean,
+// sunflower) whose NDVI is down at the ready level or below (bare-soil
+// low, at or under HARVESTED_NDVI) but with NO radar harvest after the
+// peak is still standing: ready, not harvested.
+//   ndvi   harvestStage() result; radar radarHarvest() result; crop id or name
+export function isStandingDry({ ndvi, radar, crop, today = null } = {}) {
+  if (!ndvi || !isTallCropId(crop) || !radar || radar.harvestedOn) return false;
+  // Leaves down: no radar return left to tell standing from cut.
+  if (cropProfile(crop).shedsLeaves) return false;
+  if (ndvi.stage !== "harvested" && ndvi.stage !== "ready") return false;
+  if (!radarLooked(radar, ndvi.stage === "harvested" ? ndvi.harvestedOn : null)) return false;
+  if (!Number.isFinite(ndvi.current) || !Number.isFinite(ndvi.peak)) return false;
+  const readyLevel = BARE_NDVI + cropProfile(crop).readyShare * (ndvi.peak - BARE_NDVI);
+  if (ndvi.current > Math.max(HARVESTED_NDVI, readyLevel)) return false;
+  if (ndvi.stage === "harvested" && today && ndvi.harvestedOn && dayNumber(today) - dayNumber(ndvi.harvestedOn) > STANDING_DRY_MAX_DAYS) return false;
+  return true;
+}
+
+const isTallCropId = (crop) => Boolean(crop) && cropProfile(crop).tall;
+
+// The harvest estimate from all three sources.
+//   ndvi   harvestStage() result (the dry-down estimate)
+//   gdd    gddEstimate() result (crops.js) or null
+//   radar  radarHarvest() result or null
+//   crop   crop id or name (null: unknown)
+//   today  "YYYY-MM-DD"
+// Rules:
+//   1. Radar harvest (tall or unknown crop): a VH drop after the peak marks
+//      the field harvested when optical already says ready / harvested
+//      (confirmation), or when optical is cloudy (no clear pass for
+//      OPTICAL_STALE_DAYS) and the drop came after the last clear pass.
+//   2. Standing dry (tall crop): optical "harvested" with no radar drop ->
+//      "ready" (isStandingDry).
+//   3. Ripening (visibly drying down): the dry-down days; basis "both" when
+//      the heat-unit estimate agrees within HARVEST_AGREE_DAYS, else
+//      "dry-down". Ready: "dry-down".
+//   4. Growing (not drying down yet): the heat-unit days, basis "heat
+//      units" (at least 1 day: the crop is still green). A heat-unit date
+//      outside the crop's usual months after the peak is not used.
+//   5. A ripening or ready date outside the crop's usual months after the
+//      peak (harvestPlausible) sets cropMismatch: true.
+//   6. Leaves down (a leaf-shedding crop, radarForHarvest): optical
+//      "harvested" with no radar drop that counts, within
+//      LEAF_DROP_MAX_DAYS of leavesDownOn -> "ready" with leafDrop: true.
+// Gives back the harvestStage fields plus { basis, gdd: { accumulated,
+// needed, base } | null, radarHarvestOn, standingDry, leafDrop }.
+export function combineHarvestEstimate({ ndvi, gdd = null, radar = null, crop = null, today = null, leavesDownOn = null } = {}) {
+  const n = ndvi || { stage: "unknown" };
+  const gddInfo = gdd && [gdd.accumulated, gdd.needed, gdd.base].every(Number.isFinite) ? { accumulated: gdd.accumulated, needed: gdd.needed, base: gdd.base } : null;
+  const out = { ...n, daysToReady: n.daysToReady ?? null, harvestedOn: n.harvestedOn ?? null, basis: null, gdd: gddInfo, radarHarvestOn: null, standingDry: false, leafDrop: false };
+
+  const drop = radar?.harvestedOn || null;
+  if (drop && (!crop || cropProfile(crop).id === "other" || isTallCropId(crop))) {
+    const stale = !n.lastDate || (today && dayNumber(today) - dayNumber(n.lastDate) > OPTICAL_STALE_DAYS);
+    const confirms = n.stage === "ready" || n.stage === "harvested";
+    const unseen = (n.stage === "growing" || n.stage === "ripening") && stale && (!n.lastDate || drop > n.lastDate);
+    if (confirms || unseen) return { ...out, stage: "harvested", daysToReady: null, harvestedOn: drop, radarHarvestOn: drop, basis: "radar" };
+  }
+
+  const leavesDown = Boolean(crop && cropProfile(crop).shedsLeaves && leavesDownOn && !drop && (n.stage === "harvested" || n.stage === "ready"));
+  if (leavesDown && (!today || dayNumber(today) - dayNumber(leavesDownOn) <= LEAF_DROP_MAX_DAYS)) {
+    return { ...out, stage: "ready", daysToReady: 0, harvestedOn: null, leafDrop: true, basis: "dry-down" };
+  }
+
+  if (isStandingDry({ ndvi: n, radar, crop, today })) {
+    return n.stage === "harvested"
+      ? { ...out, stage: "ready", daysToReady: 0, harvestedOn: null, standingDry: true, basis: "radar" }
+      : { ...out, standingDry: true, basis: "dry-down" };
+  }
+
+  let gddDays = Number.isFinite(gdd?.daysToReady) ? gdd.daysToReady : null;
+  if (gddDays !== null && today && crop && !harvestPlausible(crop, n.peakDate, addDays(today, gddDays))) gddDays = null;
+  // A dry-down that ends outside the crop's usual harvest months after its
+  // peak (a spring cereal "ripening" four months after its peak) does not
+  // fit the crop: cropMismatch, so the caller can drop the crop-specific
+  // rules and treat the crop as uncertain.
+  const knownCrop = crop && cropProfile(crop).id !== "other";
+  const readyOn = n.stage === "ready" ? today || n.lastDate : n.stage === "ripening" && today && Number.isFinite(n.daysToReady) ? addDays(today, n.daysToReady) : null;
+  const cropMismatch = Boolean(knownCrop && readyOn && n.peakDate && !harvestPlausible(crop, n.peakDate, readyOn));
+  if (n.stage === "ripening") {
+    const agree = gddDays !== null && Number.isFinite(n.daysToReady) && Math.abs(gddDays - n.daysToReady) <= HARVEST_AGREE_DAYS;
+    return { ...out, basis: agree ? "both" : "dry-down", ...(cropMismatch ? { cropMismatch } : {}) };
+  }
+  if (n.stage === "ready") return { ...out, basis: "dry-down", ...(cropMismatch ? { cropMismatch } : {}) };
+  if (n.stage === "growing" && gddDays !== null) return { ...out, daysToReady: Math.max(1, gddDays), basis: "heat units" };
+  // Harvested by the optical record: plant health fell to bare-soil level
+  // (a sharp drop, two low passes in a row, or a long stay at that level).
+  if (n.stage === "harvested") return { ...out, basis: "images" };
+  return out;
+}
+
+// Harvest readiness for a field whose crop is not known (no crop set by
+// the farmer, none detected for this season, or a detection that did not
+// fit its harvest months): a date can only be estimated for a known crop,
+// so only what was measured is said.
+//   h  combineHarvestEstimate() result made with no crop
+// "ripening" and "ready" become "growing" with no days, no window and no
+// basis, and dryDown says what was seen: "dry" (plant health down to the
+// ready level: BARE_NDVI + READY_SHARE x (peak - BARE_NDVI)) or "fading"
+// (past the peak and falling, not that low yet). "harvested" (the optical
+// drop, or the radar), "notSown" and "unknown" are measurements and stay.
+// Every result has cropUnknown: true. (Real data, 2026-10-19: a field of
+// unknown crop near Kupiansk, probably grass, read "ready about Oct 22";
+// unknown Iowa fields read "Ready to harvest · Best by Oct 29".)
+//   options.fallow  the field reads as fallow or grass (crops.js FALLOW):
+//                   never bare after green-up, so a "harvest" seen in the
+//                   optical record is its slow fade to dry grass, not a
+//                   cut: it is read as "dry" (a radar drop, a mowing, stays
+//                   "harvested"). The result has fallow: true.
+export function unknownCropHarvest(h, { fallow = false } = {}) {
+  const out = { ...(h || { stage: "unknown" }), cropUnknown: true, dryDown: null, ...(fallow ? { fallow: true } : {}) };
+  if (fallow && out.stage === "harvested" && out.basis !== "radar") return { ...out, stage: "growing", harvestedOn: null, daysToReady: null, basis: null, dryDown: "dry" };
+  if (out.stage === "growing") return { ...out, daysToReady: null, basis: null };
+  if (out.stage !== "ripening" && out.stage !== "ready") return out;
+  const level = Number.isFinite(out.readyLevel) ? out.readyLevel : Number.isFinite(out.peak) ? BARE_NDVI + READY_SHARE * (out.peak - BARE_NDVI) : null;
+  const dry = Number.isFinite(out.current) && Number.isFinite(level) ? out.current <= level : out.stage === "ready";
+  return { ...out, stage: "growing", daysToReady: null, basis: null, standingDry: false, leafDrop: false, dryDown: dry ? "dry" : "fading" };
 }
 
 // ---------------------------------------------------------------------------
@@ -382,6 +929,13 @@ export const FIELD_STATUSES = {
   unknown: { label: "No clear image yet", tone: null },
 };
 
+// Harvest within HARVEST_SOON_DAYS: a crop drying down, or a green crop
+// whose heat units say so (combineHarvestEstimate, basis "heat units").
+function harvestDue(harvest) {
+  if (!Number.isFinite(harvest?.daysToReady) || harvest.daysToReady > HARVEST_SOON_DAYS) return false;
+  return harvest.stage === "ripening" || (harvest.stage === "growing" && harvest.basis === "heat units");
+}
+
 // The field's one status, most urgent first.
 //   damage    - { detected }
 //   harvest   - the result of harvestStage()
@@ -392,7 +946,7 @@ export function fieldStatus({ damage, harvest, condition, stress, health }) {
   let id = "healthy";
   if (damage?.detected) id = "recovery";
   else if (harvest?.stage === "ready") id = "ready";
-  else if (harvest?.stage === "ripening" && harvest.daysToReady <= HARVEST_SOON_DAYS) id = "harvestSoon";
+  else if (harvestDue(harvest)) id = "harvestSoon";
   else if (harvest?.stage === "harvested") id = "harvested";
   else if (harvest?.stage === "notSown") id = "notSown";
   else if (!Number.isFinite(condition)) id = "unknown";
@@ -400,9 +954,12 @@ export function fieldStatus({ damage, harvest, condition, stress, health }) {
   return { id, ...FIELD_STATUSES[id] };
 }
 
-// Which statuses count in the overview's three groups.
+// Which statuses count in the overview's groups. A harvested or not-sown
+// field has no crop and no condition, so it is not "healthy": it has a
+// group of its own (noCrop).
 export const STATUS_GROUPS = {
-  healthy: ["healthy", "harvestSoon", "ready", "harvested", "notSown"],
+  healthy: ["healthy", "harvestSoon", "ready"],
+  noCrop: ["harvested", "notSown"],
   watch: ["watch", "unknown"],
   recovery: ["recovery"],
 };
@@ -412,6 +969,9 @@ export const STATUS_GROUPS = {
 // ---------------------------------------------------------------------------
 
 // US dollars per hectare before demining, the same numbers as the Atlas.
+// PLANNING ASSUMPTIONS from the product design, not measured and not tied
+// to a published source: shown everywhere with COST_NOTE.
+export const COST_NOTE = "Planning assumption (not sourced)";
 export const RECOVERY_COSTS = {
   fast: { label: "Fast path", perHa: [95, 290] },
   full: { label: "Full recovery", perHa: [260, 620] },

@@ -262,12 +262,13 @@ async function addMember(body) {
   const name = cleanName(body.name, "");
   if (!name) throw bad("Enter the person's name.");
   const email = cleanEmail(body.email);
-  const role = cleanRole(body.role, "viewer");
   let member;
   await updateWorkspace((ws) => {
     if (email && ws.team.some((other) => other.email && other.email.toLowerCase() === email.toLowerCase())) {
       throw new HttpError(409, "duplicate", "Someone with that email is already on the team.");
     }
+    // The first person on an empty team is its admin (a team needs one).
+    const role = ws.team.length ? cleanRole(body.role, "viewer") : "admin";
     member = { id: newId("member"), name, email, role, addedAt: new Date().toISOString() };
     ws.team.push(member);
     return ws;

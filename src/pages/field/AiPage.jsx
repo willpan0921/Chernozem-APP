@@ -21,6 +21,9 @@
 //   - /field/ai?about=<fieldId> (from "Ask AI about <field>" on the Fields
 //     page) puts "Tell me about <field>" in the message box.
 //   - No AI key yet: the shared "Connect Claude" card.
+//   - The disclaimer under the box talks about explosives only where a
+//     known war covers the farm (useFieldData().conflict: the analyses,
+//     else the farm's place), so a new farm in Iowa never sees it.
 //
 // WHO EDITS IT
 // Danny owns the chat building blocks in src/components/chat. The starter
@@ -38,7 +41,7 @@ import { reportFirstQuestion, reportLine, reportRow, sourceRow, starterFields, w
 import { composer, fieldSuggestions } from "../../data/chats.js";
 
 function FieldAi() {
-  const { farm, analyses, provider, weather } = useFieldData();
+  const { farm, analyses, provider, weather, conflict } = useFieldData();
   const [params, setParams] = useSearchParams();
   const reportId = params.get("report");
   const aboutId = params.get("about");
@@ -126,9 +129,11 @@ function FieldAi() {
   ];
 
   const suggestions = useMemo(() => fieldSuggestions(starterFields(farm, analyses)), [farm, analyses]);
-  // Every analysed field says no known war covers it: no talk of deminers.
-  const analysed = Object.values(analyses || {}).filter((a) => a && a.conflict !== undefined);
-  const peace = analysed.length > 0 && analysed.every((a) => a.conflict === null);
+  // No known war covers the farm: no talk of deminers. The analyses say
+  // so; before any analysis, the farm's place does (farm.conflict from the
+  // server, format.js farmConflict). Only when nothing says either way is
+  // the careful war wording kept.
+  const peace = conflict === null;
   const text = {
     placeholder: composer.field.placeholder,
     disclaimer: peace ? composer.field.disclaimerPeace : composer.field.disclaimer,

@@ -14,16 +14,17 @@
 //                                     box), so a box whose middle is at sea or
 //                                     across a border still finds the war
 //
-// Wars are matched by COUNTRY only (src/config/conflicts.js): fighting
-// across a border (Russia's Kursk and Belgorod, Lebanon) or a war that is
-// not in the list counts as peace there.
+// Wars are matched by COUNTRY, and where a war lists boxes (areas) only
+// inside them (the Gaza war covers the Gaza Strip, not the West Bank):
+// src/config/conflicts.js. Fighting across a border (Russia's Kursk and
+// Belgorod, Lebanon) or a war that is not in the list counts as peace there.
 //
 // WHO EDITS IT
 // Nobody, normally. To add a war, edit src/config/conflicts.js.
 
 import { getCountry, listCountries } from "./countries.js";
 import { pointInGeometry } from "./geo.js";
-import { conflictForCountry } from "../src/config/conflicts.js";
+import { conflictForCountry, conflictForPoint } from "../src/config/conflicts.js";
 
 let boxes = null;
 
@@ -51,7 +52,8 @@ export function countryAt(lat, lon) {
 }
 
 export function conflictAt(lat, lon) {
-  return conflictForCountry(countryAt(lat, lon)?.id);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  return conflictForPoint(countryAt(lat, lon)?.id ?? null, lat, lon);
 }
 
 // At most this many cells are looked at (evenly spread), so a big area

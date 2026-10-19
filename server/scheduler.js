@@ -22,7 +22,7 @@
 import { acquireLock, getFarm, getWorkspace, listFieldAnalyses, listRuns, releaseLock } from "./store.js";
 import { latestCompleteMonth } from "./runs.js";
 import { getJob, startAnalysis } from "./jobs.js";
-import { getFieldProvider, getProvider } from "./providers/index.js";
+import { fieldUnavailableError, getFieldProvider, getProvider, unavailableError } from "./providers/index.js";
 import { needsRefresh, sampleWhileEarthEngine, startFieldAnalysis } from "./field/run.js";
 
 const EVERY_MS = 6 * 60 * 60 * 1000;
@@ -58,6 +58,10 @@ async function checkFields() {
       return null;
     }
     const provider = await getFieldProvider();
+    if (fieldUnavailableError(provider)) {
+      state.fieldsLastResult = "Earth Engine unavailable; trying again later";
+      return null;
+    }
     const analyses = Object.fromEntries((await listFieldAnalyses()).map((analysis) => [analysis.fieldId, analysis]));
     const stale = farm.autoUpdate === false ? sampleWhileEarthEngine(farm, analyses, provider.id) : needsRefresh(farm, analyses, provider.id);
     if (!stale.length) {
@@ -96,6 +100,10 @@ async function check() {
     const month = latestCompleteMonth();
     const runs = await listRuns(ws.currentAreaId);
     const provider = await getProvider();
+    if (unavailableError(provider)) {
+      state.lastResult = "Earth Engine unavailable; trying again later";
+      return null;
+    }
     // A month made from sample data counts as missing once Earth Engine is
     // connected, so the real data replaces it without anyone clicking.
     const latest = runs.find((run) => run.month === month);

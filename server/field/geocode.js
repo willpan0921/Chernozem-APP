@@ -1,6 +1,7 @@
 // WHAT THIS FILE DOES
 // Finds a place for the farm setup: typed coordinates are read right here
-// ("49.74, 37.54", "49.74N 37.54E", "49°44'N 37°32'E"); place names are
+// ("49.74, 37.54", "49.74N 37.54E", "49°44'N 37°32'E", "lat -33.9 lon 18.4",
+// "lat: -34.6, lng: -58.4", decimal commas "-34,6; -60,0"); place names are
 // looked up with OpenStreetMap Nominatim (server-side, at most one request
 // a second as its rules ask, answers kept for 24 hours).
 //
@@ -13,6 +14,7 @@
 // Nobody, normally.
 
 import { formatCoord } from "../geo.js";
+import { DECIMAL_COMMAS, labelledCoordinates } from "../../src/lib/atlas/coords.js";
 
 const NOMINATIM = "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&q=";
 const USER_AGENT = "Chernozem/1.0 (farm setup)";
@@ -35,13 +37,26 @@ function readAngle(text) {
   return NaN;
 }
 
+// Coordinates with their names ("lat -33.9 lon 18.4", "lat: -34.6, lng:
+// -58.4") and two numbers with decimal commas ("-34,6; -60,0"): the same
+// readers as the farm setup and the Atlas area picker
+// (src/lib/atlas/coords.js).
+
+const inRange = ({ lat, lon }) => Number.isFinite(lat) && Number.isFinite(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180;
+const rounded = ({ lat, lon }) => ({ lat: Math.round(lat * 1e6) / 1e6, lon: Math.round(lon * 1e6) / 1e6 });
+
 // "49.74, 37.54" / "49.74 37.54" / "49.74N 37.54E" / "37.54E, 49.74N" /
-// "N 49.74 E 37.54" / "49°44'24\"N 37°32'E" -> { lat, lon }. Without letters
-// the order is latitude, longitude (as Google Maps copies it).
+// "N 49.74 E 37.54" / "49°44'24\"N 37°32'E" / "lat -33.9 lon 18.4" /
+// "-34,6; -60,0" -> { lat, lon }. Without letters the order is latitude,
+// longitude (as Google Maps copies it).
 export function parseCoordinates(input) {
   if (typeof input !== "string") return null;
-  const text = input.trim().replace(/\s+/g, " ");
+  let text = input.trim().replace(/\s+/g, " ");
   if (!text || text.length > 80) return null;
+  const named = labelledCoordinates(text);
+  if (named) return inRange(named) ? rounded(named) : null;
+  const commas = text.match(DECIMAL_COMMAS);
+  if (commas) text = `${commas[1].replace(",", ".").replace(/^\+/, "")}, ${commas[2].replace(",", ".").replace(/^\+/, "")}`;
   const parts = text.match(/^([NSns]?\s*-?[\d.°º'′"″\s]+?\s*[NSEWnsew]?)\s*(?:[,;/]|\s)\s*([NSEWnsew]?\s*-?[\d.°º'′"″\s]+?\s*[NSEWnsew]?)$/);
   if (!parts) return null;
   const read = (piece) => {
@@ -67,8 +82,8 @@ export function parseCoordinates(input) {
     lat = a.value;
     lon = b.value;
   }
-  if (!(lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180)) return null;
-  return { lat: Math.round(lat * 1e6) / 1e6, lon: Math.round(lon * 1e6) / 1e6 };
+  if (!inRange({ lat, lon })) return null;
+  return rounded({ lat, lon });
 }
 
 function unavailable(message) {

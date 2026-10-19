@@ -60,8 +60,10 @@
 //     "nothing found" is sent as -1 and turned back into null here
 //   - cells are measured in chunks; big cells mean fewer cells per chunk
 //     (see chunkSizeFor), at most 2 chunks at once, each with a time limit
-//   - a chunk that runs out of memory or time is tried once more with
-//     coarser pixels (see coarserScale) before giving up
+//   - a chunk that runs out of memory or time is
+//     split in halves with the same pixels (SPLIT_MIN_CELLS), and only a
+//     small piece that still fails with coarser pixels (coarserScale),
+//     before giving up
 //   - population is never re-projected over a whole country (see
 //     populationPlan)
 //   - date windows stop at today, so nothing asks for future images
@@ -162,7 +164,7 @@ export const RADAR_CHANGE_DB = 2;
 export const WATER_VV_DB = -18;
 // Radar alerts: the median change within this many km of the cells (at
 // this pixel size, m) is the neighbourhood's own shift.
-export const RADAR_SHIFT = { aroundKm: 20, scale: 500 };
+export const RADAR_SHIFT = { aroundKm: 20, scale: 500, maxPixels: 1e7 };
 // Radar alerts in a large area: a cell must have changed this many times as
 // much as the area's median cell (with at least minCells cells to judge).
 // An alert joins touching cells up to `reach` cells from its strongest one
@@ -188,6 +190,10 @@ export const MIN_CHUNK_SIZE = 10;
 export const CHUNK_AREA_KM2 = 50000;
 // At most this many requests run at the same time.
 export const MAX_PARALLEL_CHUNKS = 2;
+// A chunk that runs out of memory or time is split in two (same pixels)
+// until its pieces have this many cells or fewer; only such a piece that
+// still fails is measured with coarser pixels.
+export const SPLIT_MIN_CELLS = 4;
 // How long one request may take before it is given up (or retried).
 export const CHUNK_TIMEOUT_MS = 5 * 60 * 1000;
 // Earth Engine splits work into smaller tiles when tileScale is higher:
@@ -724,6 +730,8 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conf
       classBand: "fire",
       region: bufferRegion,
       scale: 1000,
+      // A fixed seed: the same fires give the same sample points every run.
+      seed: 0,
       geometries: true,
       tileScale,
     });
@@ -760,9 +768,12 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conf
       .median()
       .subtract(mergedSentinel1(ee, region, shared.radarBefore, monthPass).median())
       .rename("change");
-    const around = boxesGeometry(ee, cellBoxes(cells, cellSizeDeg, RADAR_SHIFT.aroundKm));
+    const aroundBoxes = cellBoxes(cells, cellSizeDeg, RADAR_SHIFT.aroundKm);
+    const around = boxesGeometry(ee, aroundBoxes);
+    // A pixel size fixed from the area (no "bestEffort", which picks its
+    // own): the same area always gives the same shift.
     const shift = ee.Number(
-      change.reduceRegion({ reducer: ee.Reducer.median(), geometry: around, scale: RADAR_SHIFT.scale, bestEffort: true, maxPixels: 1e7, tileScale }).get("change", 0),
+      change.reduceRegion({ reducer: ee.Reducer.median(), geometry: around, scale: fixedScaleFor(aroundBoxes, RADAR_SHIFT.scale, RADAR_SHIFT.maxPixels), maxPixels: RADAR_SHIFT.maxPixels * 2, tileScale }).get("change", 0),
     );
     radarShare = change.subtract(shift).abs().gt(RADAR_CHANGE_DB).rename("radarShare");
   } else {
@@ -832,11 +843,17 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conf
   }
 
   // 4. Reduce over the cells, group by group and chunk by chunk, two
-  // requests at once. A chunk that runs out of memory or time is tried once
-  // more, coarser.
+  // requests at once. A chunk that runs out of memory or time is SPLIT in
+  // two and each half measured again with the same pixels: a cell's reading
+  // does not depend on which cells share its request, so the totals stay
+  // the same. (Real data, Ukraine September 2026: the old coarser retry of
+  // one group of 97 cells moved heavy damage by 61,517 ha, 4.7 %, between
+  // two runs of the same code, and cropland by 113,000 ha.) Only a piece of
+  // SPLIT_MIN_CELLS cells or fewer that still fails is measured with
+  // coarser pixels, and the run says so.
   const means = new Map();
   const sums = new Map();
-  let coarserChunks = 0;
+  let coarserCells = 0;
   let chunkCount = 0;
   const measure = (part, meanImage, plan) => {
     const squares = cellCollection(ee, part, cellSizeDeg);
@@ -858,42 +875,56 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conf
     }
     return ee.Dictionary(answer);
   };
-  const work = groups.flatMap((group) => chunk(group.cells, chunkSize).map((part) => ({ part, meanImage: group.meanImage })));
-  chunkCount = work.length;
-  let measured = 0;
-  await mapLimit(work, MAX_PARALLEL_CHUNKS, async ({ part, meanImage }) => {
+  const featuresOf = (value) => (Array.isArray(value) ? value : value?.features || []);
+  const keep = (result) => {
+    for (const feature of featuresOf(result?.means)) if (feature?.properties) means.set(feature.properties.id, feature.properties);
+    for (const feature of featuresOf(result?.sums)) if (feature?.properties) sums.set(feature.properties.id, feature.properties);
+  };
+  // One request for `part` with `plan`; a dropped connection is tried once
+  // more as it is (retryTransient).
+  const attempt = async (part, meanImage, plan) => {
     const label = `Measuring ${part.length} cells (${part[0].id} to ${part[part.length - 1].id}) of ${cells.length}`;
-    let plan = { scale, tileScale };
-    let retried = false;
-    let result;
     for (;;) {
       try {
-        // A dropped connection is tried once more as it is (retryTransient).
-        result = await retryTransient(() => evaluate(measure(part, meanImage, plan), { what: label, context }), deps.retryDelayMs);
-        break;
+        return await retryTransient(() => evaluate(measure(part, meanImage, plan), { what: label, context }), deps.retryDelayMs);
       } catch (error) {
         // An older Earth Engine without maxPixelsPerRegion: drop it, try again.
         if (!deps.state.noMaxPixelsArg && isUnknownArgumentError(error, "maxPixelsPerRegion")) {
           deps.state.noMaxPixelsArg = true;
           continue;
         }
-        if (!retried && isTooMuchWorkError(error)) {
-          retried = true;
-          plan = { scale: coarserScale(plan.scale), tileScale: 16 };
-          continue;
-        }
         throw error;
       }
     }
-    if (retried) coarserChunks += 1;
-    const featuresOf = (value) => (Array.isArray(value) ? value : value?.features || []);
-    for (const feature of featuresOf(result?.means)) if (feature?.properties) means.set(feature.properties.id, feature.properties);
-    for (const feature of featuresOf(result?.sums)) if (feature?.properties) sums.set(feature.properties.id, feature.properties);
+  };
+  const measureSplitting = async (part, meanImage, plan) => {
+    try {
+      keep(await attempt(part, meanImage, plan));
+    } catch (error) {
+      if (!isTooMuchWorkError(error)) throw error;
+      if (part.length > SPLIT_MIN_CELLS) {
+        const half = Math.ceil(part.length / 2);
+        const split = { scale: plan.scale, tileScale: 16 };
+        await measureSplitting(part.slice(0, half), meanImage, split);
+        await measureSplitting(part.slice(half), meanImage, split);
+        return;
+      }
+      // The smallest piece still fails: coarser pixels (a second failure
+      // stops the analysis).
+      keep(await attempt(part, meanImage, { scale: coarserScale(plan.scale), tileScale: 16 }));
+      coarserCells += part.length;
+    }
+  };
+  const work = groups.flatMap((group) => chunk(group.cells, chunkSize).map((part) => ({ part, meanImage: group.meanImage })));
+  chunkCount = work.length;
+  let measured = 0;
+  await mapLimit(work, MAX_PARALLEL_CHUNKS, async ({ part, meanImage }) => {
+    await measureSplitting(part, meanImage, { scale, tileScale });
     measured += part.length;
     step(`Measured ${measured} of ${cells.length} cells`);
   });
-  if (coarserChunks) {
-    warnings.push(`${coarserChunks} of ${chunkCount} groups of cells were measured with coarser pixels (${coarserScale(scale)} m) because Earth Engine ran short of memory or time.`);
+  if (coarserCells) {
+    warnings.push(`${coarserCells} of ${cells.length} cells were measured with coarser pixels (${coarserScale(scale)} m) because Earth Engine ran short of memory or time; totals can differ slightly from a run without this.`);
   }
 
   // 5. Place names (best effort: a failure only costs the names).
@@ -1072,7 +1103,7 @@ export function ndviClimatology(ee) {
 export async function peakMonthAt(ee, region, { context = {} } = {}) {
   try {
     const values = await evaluate(
-      ndviClimatology(ee).reduceRegion({ reducer: ee.Reducer.mean(), geometry: region, scale: 500, bestEffort: true, maxPixels: MAX_PIXELS_PER_CELL }),
+      ndviClimatology(ee).reduceRegion({ reducer: ee.Reducer.mean(), geometry: region, scale: 500, maxPixels: MAX_PIXELS_PER_CELL }),
       { timeoutMs: 60 * 1000, what: "Finding the growing season", context },
     );
     return peakMonthFrom(Array.from({ length: 12 }, (_, i) => numberOr(values?.[`ndvi${pad(i + 1)}`], null)));
@@ -1223,7 +1254,7 @@ async function readPoint(deps, { lat, lon }) {
   ];
   if (assetId) bands.push(ee.Image(assetId).select(BANDS.chernozemAsset).rename("assetRaw"));
   const values = await evaluate(
-    ee.Image.cat(bands).reduceRegion({ reducer: ee.Reducer.first(), geometry: point, scale: 250, bestEffort: true, maxPixels: MAX_PIXELS_PER_CELL }),
+    ee.Image.cat(bands).reduceRegion({ reducer: ee.Reducer.first(), geometry: point, scale: 250, maxPixels: MAX_PIXELS_PER_CELL }),
     { timeoutMs: 60 * 1000, what: "Reading soil values at the test point", context: contextOf(cfg) },
   );
   return { ...values, assetId, assetWarning: warning, soilSource: source };
@@ -1343,6 +1374,16 @@ export function cellBoxes(cells, cellSizeDeg, padKm = 0) {
     const [west, south, east, north] = padKm > 0 ? expandBbox(box, padKm) : box;
     return [clampLon(west), clampLat(south), clampLon(east), clampLat(north)].map((v) => Number(v.toFixed(7)));
   });
+}
+
+// A pixel size (m) for one reduction over some boxes: `minScale`, or
+// coarser in steps of 100 m when the boxes hold more than `maxPixels`
+// pixels at that size. Worked out here, not by Earth Engine's "bestEffort",
+// so the same area always uses the same pixels.
+export function fixedScaleFor(boxes, minScale, maxPixels) {
+  const m2 = (boxes || []).reduce((sum, [w, south, e, n]) => sum + (e - w) * 111320 * Math.cos((((south + n) / 2) * Math.PI) / 180) * (n - south) * 110574, 0);
+  if (!(m2 > 0) || !(maxPixels > 0)) return minScale;
+  return Math.max(minScale, Math.ceil(Math.sqrt(m2 / maxPixels) / 100) * 100);
 }
 
 // Boxes as one Earth Engine geometry (planar, like the cells).

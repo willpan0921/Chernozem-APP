@@ -9,11 +9,16 @@
 //   name       how the app writes it
 //   since      the day it started ("YYYY-MM-DD")
 //   countries  numeric ISO 3166 codes (as text) of the countries it covers
+//   areas      optional boxes [west, south, east, north] (degrees): when
+//              given, the war covers only the parts of its countries inside
+//              one of these boxes (the Gaza war covers the Gaza Strip, not
+//              the West Bank). A war with areas and no countries covers
+//              the boxes whatever the country.
 //
 // The normal years (2019 to 2021) must be BEFORE the war started, so only
 // wars that began in 2022 or later belong here.
 //
-// LIMITS: a war is matched by COUNTRY only. Fighting that spills across a
+// LIMITS: a war is matched by COUNTRY (and its boxes) only. Fighting that spills across a
 // border (Russia's Kursk and Belgorod regions, northern Israel and south
 // Lebanon) and wars not listed here (for example in Myanmar, the Sahel,
 // eastern DR Congo or Yemen) count as peace: damage there is still found
@@ -26,14 +31,36 @@
 export const CONFLICTS = [
   { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24", countries: ["804"] },
   { id: "sudan-2023", name: "War in Sudan", since: "2023-04-15", countries: ["729"] },
-  { id: "gaza-2023", name: "Gaza war", since: "2023-10-07", countries: ["275"] },
+  { id: "gaza-2023", name: "Gaza war", since: "2023-10-07", countries: ["275"], areas: [[34.2, 31.2, 34.6, 31.6]] },
 ];
+
+// True when a box [west, south, east, north] holds the point.
+const inBox = ([west, south, east, north], lat, lon) => lat >= south && lat <= north && lon >= west && lon <= east;
+
+// True when the war covers a point in a country (countryId may be null at
+// sea or outside every outline).
+export function conflictCovers(conflict, countryId, lat, lon) {
+  if (!conflict) return false;
+  const countries = Array.isArray(conflict.countries) ? conflict.countries : [];
+  const areas = Array.isArray(conflict.areas) ? conflict.areas : [];
+  if (!countries.length && !areas.length) return false;
+  if (countries.length && !countries.includes(String(countryId))) return false;
+  if (areas.length && !(Number.isFinite(lat) && Number.isFinite(lon) && areas.some((box) => inBox(box, lat, lon)))) return false;
+  return true;
+}
+
+// The war covering a point in a country, or null.
+export function conflictForPoint(countryId, lat, lon) {
+  return CONFLICTS.find((conflict) => conflictCovers(conflict, countryId, lat, lon)) || null;
+}
 
 // Without a known war, damage is looked for over this many years before
 // today (still compared with the normal years).
 export const DEFAULT_DAMAGE_YEARS = 2;
 
-// The war that covers a country, or null.
+// The war that covers a country, or null. A war limited to boxes (areas)
+// counts for its whole country here: an Atlas area that is the whole of
+// that country holds the war zone. For one place use conflictForPoint.
 export function conflictForCountry(countryId) {
   if (!countryId) return null;
   return CONFLICTS.find((conflict) => conflict.countries.includes(String(countryId))) || null;

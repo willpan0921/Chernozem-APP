@@ -10,7 +10,19 @@
 //   startFieldAnalysis({ fieldIds, trigger })   analyse the farm's fields
 //                         (all, or some), save each analysis, and refresh
 //                         a field's monthly history when it is missing,
-//                         older than 30 days or from another data source
+//                         older than 30 days or from another data source.
+//                         A new field (no history yet) gets its history
+//                         in the same job: Earth Engine reads it with the
+//                         analysis (historyFor); the sample reads it after
+//                         and the field is finished again with it. Either
+//                         way its crop is detected from the last 18 months
+//                         like every other field's. The detected
+//                         crops are then written to the farm (field.crop
+//                         with cropSource "detected"), except where the
+//                         farmer chose the crop (cropSource "user"); the
+//                         demo farm's placeholder crops are replaced too
+//   cropUpdate(field, cropDetected)  the { crop, cropSource } change a new
+//                         detection makes to a field, or null
 //   farmCentre(farm)      { lat, lon } of the farm, for the weather
 //   orderNorthWestFirst(items, centroidOf)   sorts north-west -> south-east
 //   needsRefresh(farm, analyses, providerId) fields whose analysis is
@@ -25,16 +37,22 @@
 // Whoever changes how fields are found or analysed.
 
 import { startJob, listJobs } from "../jobs.js";
-import { getFarm, getFieldHistory, saveFieldAnalysis, saveFieldHistory, whileFarmLocked } from "../store.js";
-import { getFieldProvider, withTimeout } from "../providers/index.js";
+import { getFarm, getFieldHistory, saveFieldAnalysis, saveFieldHistory, updateFarm, whileFarmLocked } from "../store.js";
+import { fieldUnavailableError, getFieldProvider, withTimeout } from "../providers/index.js";
 import { areaHa as sphericalAreaHa, bboxOf } from "../geo.js";
-import { finishAnalysis, localToday } from "./analysis.js";
-import { getWeather } from "./weather.js";
+import { addDays } from "../../src/lib/season.js";
+import { cropSourceOf, finishAnalysis, localToday } from "./analysis.js";
+import { dailyTemperatures, FORECAST_AHEAD_MAX, getWeather } from "./weather.js";
 
 const DAY_MS = 86400000;
 const HISTORY_MAX_AGE_MS = 30 * DAY_MS;
 export const ANALYSIS_MAX_AGE_MS = DAY_MS;
 const WEATHER_WAIT_MS = 9000; // the weather request itself gives up after 8 s
+const TEMPERATURE_WAIT_MS = 26000; // two requests of at most 12 s each
+// Daily temperatures are read from this many days back (any season curve's
+// start: src/lib/season.js seasonCurveStart is at most about 9 months back)
+// to the end of the forecast, once per farm, for the heat-unit estimate.
+export const TEMPERATURE_DAYS_BACK = 300;
 // Fields whose monthly history is read at the same time. One at a time,
 // a farm of 60 detected fields took 25 minutes on real Earth Engine
 // (Iowa, 2026-10-19), most of it waiting.
@@ -106,6 +124,10 @@ export async function startFieldDetection({ boundary = null, center = null, radi
     info: { source: boundary ? "boundary" : "point" },
     run: async (job) => {
       const provider = await getFieldProvider();
+      // Earth Engine set up but unreachable: stop (retryable) rather than
+      // offer made-up outlines for a real place.
+      const down = fieldUnavailableError(provider);
+      if (down) throw down;
       job.provider = provider.id;
       const result = await provider.detectFields({
         boundary,
@@ -216,27 +238,95 @@ export async function startFieldAnalysis({ fieldIds = null, trigger = "manual" }
   });
 }
 
-async function runAnalysis(job, farm, fields) {
+// The { crop, cropSource } a new crop detection gives a field, or null to
+// leave it as it is. The farmer's own crop is never replaced; a detected
+// or demo crop follows the latest detection ("Unknown" clears it). A crop
+// read from LAST season (this season has not peaked yet) is not this
+// season's crop, so it is not written either (the analysis keeps it as
+// "Last season: ...").
+export function cropUpdate(field, cropDetected) {
+  const source = cropSourceOf(field);
+  if (source === "user" || !cropDetected) return null;
+  const known = cropDetected.id && cropDetected.id !== "unknown" && cropDetected.season !== "last" ? cropDetected.label : null;
+  const next = known ? { crop: known, cropSource: "detected" } : { crop: null, cropSource: null };
+  return field.crop === next.crop && field.cropSource === next.cropSource ? null : next;
+}
+
+// Writes the detected crops to the farm, field by field, as the farm is
+// now (a crop the farmer set meanwhile is kept).
+async function saveDetectedCrops(detections) {
+  if (!detections.size) return;
+  await updateFarm((farm) => {
+    if (!farm?.fields) return farm;
+    for (const field of farm.fields) {
+      const change = detections.has(field.id) ? cropUpdate(field, detections.get(field.id)) : null;
+      if (change) Object.assign(field, change);
+    }
+    return farm;
+  });
+}
+
+async function runAnalysis(job, farm, farmFields) {
   const provider = await getFieldProvider();
+  // Earth Engine set up but unreachable: stop (retryable). Sample numbers
+  // (and sample-detected crops) are never saved for real fields.
+  const down = fieldUnavailableError(provider);
+  if (down) throw down;
   job.provider = provider.id;
   const day = today();
+  // Every field with its cropSource (older farms have none saved), so the
+  // data source knows which crops are the farmer's own.
+  const fields = farmFields.map((field) => ({ ...field, cropSource: cropSourceOf(field) }));
   const centre = farmCentre(farm);
   const weatherAttempt = centre ? getWeather(centre).catch(() => null) : Promise.resolve(null);
+  const temperatureAttempt = centre
+    ? dailyTemperatures(centre.lat, centre.lon, addDays(day, -TEMPERATURE_DAYS_BACK), addDays(day, FORECAST_AHEAD_MAX - 1), { today: day }).catch((error) => {
+        console.warn(`[chernozem] Field temperatures: ${error.message}`);
+        return null;
+      })
+    : Promise.resolve(null);
+  // Fields whose monthly history is missing or old: Earth Engine reads it
+  // in the same batched requests as the analysis (historyFor); a data
+  // source that does not (the sample) is asked field by field below.
+  const histories = new Map();
+  for (const field of fields) histories.set(field.id, await getFieldHistory(field.id));
+  const stale = fields.filter((field) => historyIsStale(histories.get(field.id), provider.id));
   const result = await provider.analyzeFields({
     fields,
     today: day,
+    historyFor: stale.map((field) => field.id),
+    // A fresh saved history is used as it is: Earth Engine need not read
+    // these fields' recent months again.
+    freshHistoryFor: fields.filter((field) => !stale.includes(field)).map((field) => field.id),
     onProgress: (share) => {
       job.done = Math.floor(Math.max(0, Math.min(1, Number(share) || 0)) * fields.length * 0.999);
     },
   });
   const weather = await withTimeout(weatherAttempt, WEATHER_WAIT_MS, null);
+  const temperatures = await withTimeout(temperatureAttempt, TEMPERATURE_WAIT_MS, null);
   const warnings = [...(result?.warnings || [])];
+  if (!temperatures) warnings.push("Daily temperatures could not be read: harvest dates come from the satellite curve only this time.");
 
   // The farm may have changed while the data source worked: only save
   // analyses for fields that are still on it.
   const current = await getFarm();
   const stillThere = new Set((current?.fields || []).map((field) => field.id));
+  const newHistory = (months) => ({ provider: provider.id, updatedAt: new Date().toISOString(), months: Array.isArray(months) ? months : [] });
+  for (const field of stale) {
+    const months = result?.histories?.[field.id];
+    if (!stillThere.has(field.id) || !Array.isArray(months)) continue;
+    const history = { fieldId: field.id, ...newHistory(months) };
+    if (await saveWhileOnFarm(field.id, () => saveFieldHistory(history))) histories.set(field.id, history);
+  }
+
   const saved = [];
+  const detections = new Map();
+  const finishAndSave = async (field, raw, history) => {
+    const analysis = finishAnalysis({ field, raw, weather, today: day, provider: provider.id, history, temperatures });
+    if (!(await saveWhileOnFarm(field.id, () => saveFieldAnalysis(analysis)))) return false;
+    detections.set(field.id, analysis.cropDetected);
+    return true;
+  };
   for (const field of fields) {
     if (!stillThere.has(field.id)) continue;
     const raw = result?.analyses?.[field.id];
@@ -244,25 +334,25 @@ async function runAnalysis(job, farm, fields) {
       warnings.push(`${field.name}: no reading came back.`);
       continue;
     }
-    const analysis = finishAnalysis({ field, raw, weather, today: day, provider: provider.id });
-    if (await saveWhileOnFarm(field.id, () => saveFieldAnalysis(analysis))) saved.push(field.id);
+    if (await finishAndSave(field, raw, histories.get(field.id))) saved.push(field.id);
   }
+  await saveDetectedCrops(detections);
 
-  // Monthly history (2019 to now), only where it is missing or old.
-  const needHistory = [];
-  for (const field of fields) {
-    if (stillThere.has(field.id) && historyIsStale(await getFieldHistory(field.id), provider.id)) needHistory.push(field);
-  }
+  // Monthly history (2019 to now) the data source did not send with the
+  // analysis, field by field. Each field whose history is read is
+  // finished again with it (crop detection reads the last 18 months).
+  const needHistory = stale.filter((field) => stillThere.has(field.id) && historyIsStale(histories.get(field.id), provider.id));
   job.total = fields.length + needHistory.length;
   job.done = fields.length;
   const queue = [...needHistory];
+  const redo = new Map();
   const readHistories = async () => {
     for (let field = queue.shift(); field; field = queue.shift()) {
       job.message = `Reading the history of ${field.name} since 2019…`;
       try {
         const months = await provider.fieldHistory({ field, from: "2019-01", to: thisMonth() });
-        const history = { fieldId: field.id, provider: provider.id, updatedAt: new Date().toISOString(), months: Array.isArray(months) ? months : [] };
-        await saveWhileOnFarm(field.id, () => saveFieldHistory(history));
+        const history = { fieldId: field.id, ...newHistory(months) };
+        if (await saveWhileOnFarm(field.id, () => saveFieldHistory(history))) redo.set(field.id, history);
       } catch (error) {
         warnings.push(`${field.name}: the history could not be read (${error.message}).`);
         console.warn(`[chernozem] Field history of ${field.name} failed: ${error.message}`);
@@ -271,6 +361,14 @@ async function runAnalysis(job, farm, fields) {
     }
   };
   await Promise.all(Array.from({ length: Math.min(HISTORY_PARALLEL, queue.length) }, readHistories));
+  if (redo.size) {
+    detections.clear();
+    for (const field of fields) {
+      const raw = result?.analyses?.[field.id];
+      if (raw && redo.has(field.id)) await finishAndSave(field, raw, redo.get(field.id));
+    }
+    await saveDetectedCrops(detections);
+  }
   job.message = saved.length === 1 ? "1 field analysed" : `${saved.length} fields analysed`;
   return { fieldIds: saved, provider: provider.id, warnings };
 }

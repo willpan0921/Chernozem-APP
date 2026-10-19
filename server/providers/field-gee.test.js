@@ -29,6 +29,27 @@ import {
   FIELD_DATASETS,
   CLOUD_SCORE_BAND,
   FIELDS_PER_REQUEST,
+  MAX_FIELDS_PER_PASS_REQUEST,
+  MONTHS_PER_REQUEST,
+  MONTH_ELEMENTS_PER_REQUEST,
+  PARALLEL_REQUESTS,
+  PHENOLOGY_MERGE,
+  passesPerRequest,
+  monthlyJobs,
+  monthlyScale,
+  monthValue,
+  vhSeriesOf,
+  vhPeakOf,
+  cleanVh,
+  VH_PEAK_DAYS,
+  phenologyWindows,
+  curveCorrelation,
+  curvePeakDay,
+  samePhenology,
+  phenologyPairs,
+  isRealEdge,
+  stripStraightness,
+  seasonDone,
   HISTORY_CHUNK_MONTHS,
   ZONES_MAX,
   GEOTIFF_NODATA,
@@ -73,7 +94,8 @@ import {
 } from "./field-gee.js";
 import { createFakeEe } from "./fake-ee.js";
 import { areaHa } from "../geo.js";
-import { CONDITION_CLASSES, MIN_CLEAR_SHARE, conditionScore, healthScore, waterScore } from "../../src/lib/field/method.js";
+import { shiftDays } from "./gee.js";
+import { CONDITION_CLASSES, MIN_CLEAR_SHARE, RED_EDGE_RULES, STRESS_RULES, classifyCrop, radarHarvest, conditionScore, healthScore, waterScore } from "../../src/lib/field/method.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const DEMO = JSON.parse(fs.readFileSync(path.join(ROOT, "scripts/fields.geojson"), "utf8")).features.map((f) => ({
@@ -413,6 +435,96 @@ test("touching parcels of the same crop are joined into one field; different cro
   assert.equal(splitByFinerEdges(whole, parcelShapes([west, { ...middle, properties: profile(0.3) }]), { minHa: 1 }).length, 2);
 });
 
+test("pieces of one big field with the same phenology are joined unless a real edge lies between them (7.14)", () => {
+  const box = (w, s, e, n) => ({ type: "Polygon", coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] });
+  // Different profiles (a wet hollow made one piece darker in one window)...
+  const profile = (ndvi) => Object.fromEntries([0, 1, 2, 3, 4, 5].flatMap((i) => [[`n${i}`, ndvi + (i === 2 ? 0.1 : 0)], [`w${i}`, 0.1]]));
+  // ...but one season curve (soy sown the same week): peak at composite 9.
+  const season = (scale, shift = 0) => Object.fromEntries(Array.from({ length: 18 }, (_, i) => [`k${i}`, 0.2 + scale * Math.exp(-(((i - 9 - shift) / 4) ** 2))]));
+  const a = { geometry: box(-55.73, -12.56, -55.7199, -12.55), properties: { ...profile(0.5), ...season(0.6) } };
+  const b = { geometry: box(-55.7201, -12.56, -55.71, -12.55), properties: { ...profile(0.6), ...season(0.55) } };
+  const c = { geometry: box(-55.7101, -12.56, -55.70, -12.55), properties: { ...profile(0.3), ...season(0.6, 3) } }; // sown a month later
+  const parcels = parcelShapes([a, b, c]);
+  assert.equal(Object.keys(parcels[0].curve).length, 18);
+  assert.ok(profileDifference(parcels[0].profile, parcels[1].profile) > DETECT.mergeMaxDiff, "the profile rule alone would not join them");
+  assert.equal(sameCropGroups(parcels).length, 3);
+  // The phenology test.
+  assert.ok(curveCorrelation(parcels[0].curve, parcels[1].curve).r > 0.99);
+  assert.ok(Math.abs(curvePeakDay(parcels[0].curve) - 95) < 1, curvePeakDay(parcels[0].curve));
+  assert.equal(samePhenology(parcels[0], parcels[1]), true);
+  assert.equal(samePhenology(parcels[1], parcels[2]), false, "peaks 30 days apart");
+  assert.equal(samePhenology({ curve: { k0: 0.2, k1: 0.5, k2: 0.3 } }, { curve: { k0: 0.2, k1: 0.5, k2: 0.3 } }), false, "too few composites to judge");
+  assert.deepEqual(curveCorrelation({ k0: 0.5, k1: 0.5, k2: 0.5 }, { k0: 0.1, k1: 0.5, k2: 0.3 }), { r: null, n: 3 });
+  assert.equal(curvePeakDay({}), null);
+  assert.deepEqual(phenologyPairs(parcels), [[0, 1]]);
+  // The strip between them: a real edge (not cropland, a straight line, a
+  // line in most pictures) or not. A strip 1 km x 1 km in its box: a
+  // straight diagonal 1.41 km long has a perimeter of about 2.83 km.
+  const bounds = [[[-55.73, -12.56], [-55.7208, -12.56], [-55.7208, -12.551], [-55.73, -12.551], [-55.73, -12.56]]];
+  const winding = { stripBounds: bounds, perimeterM: 7000 };
+  const straight = { stripBounds: bounds, perimeterM: 2900 };
+  assert.ok(stripStraightness(straight) > 0.95 && stripStraightness(winding) < 0.45, `${stripStraightness(straight)} ${stripStraightness(winding)}`);
+  assert.equal(stripStraightness({}), null);
+  assert.equal(isRealEdge({ ...winding, stripCropland: 0.95, edgeAny: 0.3, edgePersistent: 0.05 }), false, "a winding line in one or two pictures only");
+  assert.equal(isRealEdge({ ...straight, stripCropland: 0.95, edgeAny: 0.3, edgePersistent: 0.05 }), true, "a straight line: a field boundary");
+  assert.equal(isRealEdge({ ...winding, stripCropland: 0.95, edgeAny: 0.3, edgePersistent: 0.2 }), true, "a line in most pictures");
+  assert.equal(isRealEdge({ ...winding, stripCropland: 0.4, edgeAny: 0.1, edgePersistent: 0 }), true, "not cropland");
+  assert.equal(isRealEdge({ ...winding, stripCropland: 0.95, edgeAny: 0, edgePersistent: 0 }), false);
+  assert.equal(isRealEdge({ stripCropland: 0.95, edgeAny: 0, edgePersistent: 0 }), true, "shape unknown: kept apart");
+  assert.equal(isRealEdge(undefined), true, "not measured: kept apart");
+  const groups = sameCropGroups(parcels, { links: [[0, 1]] });
+  assert.deepEqual(groups, [[0, 1], [2]]);
+  // A joined field is not cut up again by the finer trace.
+  const joined = joinGroups(parcels, groups, [box(-55.73, -12.56, -55.71, -12.55)]);
+  assert.equal(joined[0].joined, true);
+  assert.equal(splitByFinerEdges(joined, parcels.slice(0, 2), { minHa: 1 }).length, 2);
+  assert.equal(toCandidates(joined).length, 2);
+  assert.ok(toCandidates(joined).every((c) => !("joined" in c) && !("curve" in c)));
+});
+
+test("phenology composites: 10-day windows over the last complete season, never past today", () => {
+  const north = phenologyWindows(TODAY, 42.03, null);
+  assert.equal(north[0].start, "2026-04-01");
+  assert.equal(north.at(-1).end, "2026-10-01");
+  assert.equal(north.length, 19);
+  assert.ok(north.every((w) => w.start < w.end && w.end <= TODAY));
+  const tropics = phenologyWindows(TODAY, -12.55, null);
+  assert.equal(tropics[0].start, "2025-10-01");
+  assert.ok(tropics.length >= 36 && tropics.length <= 37, tropics.length);
+  assert.equal(PHENOLOGY_MERGE.minCorrelation, 0.95);
+  assert.equal(PHENOLOGY_MERGE.maxPeakDays, 10);
+});
+
+test("detectFields joins touching parcels of one crop with no real edge between them, one request more", async () => {
+  const box = (w, s, e, n) => ({ type: "Polygon", coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] });
+  // Two ~30 ha halves of one field, overlapping by the grown-back edge.
+  const halves = [box(37.52, 49.71, 37.5301, 49.7145), box(37.5299, 49.71, 37.54, 49.7145)];
+  const boundary = [[49.716, 37.518], [49.716, 37.542], [49.709, 37.542], [49.709, 37.518]];
+  const apart = fakeProvider({ parcelGrid: 0, extraParcels: halves, values: { edgePersistent: 0.02 } });
+  const two = await apart.provider.detectFields({ boundary });
+  assert.equal(two.candidates.length, 2, "a straight line between them: two fields");
+  const strips = apart.ee.callsNamed("Image.rename").filter((c) => c.args[0] === "edgePersistent");
+  assert.equal(strips.length, 1, "the strip between them was measured");
+  const merges = [];
+  const together = fakeProvider({ parcelGrid: 0, extraParcels: halves, values: { edgePersistent: 0.02, perimeterM: 6000 } });
+  const one = await together.provider.detectFields({ boundary, onMerge: (m) => merges.push(...m) });
+  assert.equal(one.candidates.length, 1, "a winding line in one picture only: one field");
+  assert.equal(merges.length, 1);
+  assert.equal(merges[0].joined, true);
+  assert.ok(merges[0].r > 0.95 && merges[0].straightness < 0.7, JSON.stringify(merges[0]));
+  assert.ok(one.candidates[0].areaHa > 1.6 * Math.min(...two.candidates.map((c) => c.areaHa)));
+  // Off: the parts stay apart and no strip is measured.
+  const before = DETECT.mergeByPhenology;
+  DETECT.mergeByPhenology = false;
+  try {
+    const off = fakeProvider({ parcelGrid: 0, extraParcels: halves, values: { edgePersistent: 0.02 } });
+    assert.equal((await off.provider.detectFields({ boundary })).candidates.length, 2);
+    assert.equal(off.ee.callsNamed("Image.rename").filter((c) => c.args[0] === "edgePersistent").length, 0);
+  } finally {
+    DETECT.mergeByPhenology = before;
+  }
+});
+
 test("the share of a search circle covered by fields (to widen a search that landed in a town)", () => {
   const center = { lat: 42.03, lon: -93.62 };
   const near = { centroid: [42.031, -93.621], areaHa: 100 };
@@ -651,14 +763,36 @@ function assertAnalysis(a, field, seasonFrom = "2026-03-01") {
     assert.ok([null, "below", "normal", "above"].includes(m.versus));
     inRange(m.score, 0, 1, `${part}.score`);
   }
-  assert.deepEqual(Object.keys(a.stress).sort(), ["level", "patches", "share", "stressedHa"]);
+  assert.deepEqual(Object.keys(a.stress).sort(), ["cause", "level", "ndwiAnomaly", "patches", "redEdge", "redEdgeOnlyShare", "share", "stressedHa"]);
   inRange(a.stress.share, 0, 1, "stress.share");
+  inRange(a.stress.redEdgeOnlyShare, 0, 1, "stress.redEdgeOnlyShare");
+  inRange(a.stress.ndwiAnomaly, -2, 2, "stress.ndwiAnomaly");
   assert.ok([null, "low", "medium", "high"].includes(a.stress.level));
+  assert.ok([null, "dry", "other"].includes(a.stress.cause));
+  assert.equal(typeof a.stress.redEdge, "boolean");
   assert.ok(a.stress.patches.length <= 3);
-  for (const p of a.stress.patches) assert.ok(Number.isFinite(p.lat) && Number.isFinite(p.lon) && p.radiusM >= 15 && p.ha > 0);
-  assert.deepEqual(Object.keys(a.harvest).sort(), ["daysToReady", "harvestedOn", "lastDate", "peak", "peakDate", "rainBefore", "stage", "window"]);
+  for (const p of a.stress.patches) {
+    assert.ok(Number.isFinite(p.lat) && Number.isFinite(p.lon) && p.radiusM >= 15 && p.ha > 0);
+    assert.ok([null, "dry", "other"].includes(p.cause) && (p.ndwiAnomaly === null || Number.isFinite(p.ndwiAnomaly)));
+  }
+  assert.deepEqual(Object.keys(a.redEdge).sort(), ["ndre", "normal"]);
+  inRange(a.redEdge.ndre, -1, 1, "redEdge.ndre");
+  assert.deepEqual(
+    Object.keys(a.harvest).sort(),
+    ["basis", "daysToReady", "gdd", "harvestedOn", "lastDate", "leafDrop", "peak", "peakDate", "radarHarvestOn", "rainBefore", "stage", "standingDry", "window"],
+  );
   assert.ok(["unknown", "notSown", "growing", "ripening", "ready", "harvested"].includes(a.harvest.stage));
+  assert.ok([null, "dry-down", "heat units", "both", "radar", "images"].includes(a.harvest.basis));
   assert.equal(a.harvest.window, null);
+  assert.equal(typeof a.harvest.standingDry, "boolean");
+  // Radar and crop-type inputs.
+  assert.deepEqual(Object.keys(a.radar).sort(), ["dropDb", "harvestedOn", "vhPasses", "vhPeak", "vhPeak".concat("Date"), "vhSeries"].sort());
+  for (const p of a.radar.vhPasses) assert.ok(p.date < TODAY && p.vh > -35 && p.vh < 5 && [null, "ASCENDING", "DESCENDING"].includes(p.orbit) && (p.relOrbit === null || Number.isInteger(p.relOrbit)));
+  for (const [i, p] of a.radar.vhSeries.entries()) assert.ok(Object.keys(p).join() === "date,vh" && (!i || p.date > a.radar.vhSeries[i - 1].date));
+  assert.deepEqual(Object.keys(a.cropInputs).sort(), ["lat", "months", "peakMonth", "vhPeak"]);
+  assert.equal(a.cropInputs.months.length, 18);
+  assert.equal(a.cropInputs.months.at(-1).month, TODAY.slice(0, 7));
+  assert.ok(a.cropDetected && typeof a.cropDetected.id === "string" && typeof a.cropDetected.label === "string");
   inRange(a.condition.score, 0, 1, "condition.score");
   assert.ok(a.condition.class === null || CONDITION_CLASSES.some((c) => c.id === a.condition.class));
   assert.deepEqual(Object.keys(a.damage).sort(), ["chiDrop", "damagedHa", "detected", "excessFires", "fires", "firesNormal", "radarChangedShare", "since"]);
@@ -677,17 +811,14 @@ function assertAnalysis(a, field, seasonFrom = "2026-03-01") {
     assert.ok(p.date >= seasonFrom && p.date < TODAY);
     if (i) assert.ok(p.date > a.season[i - 1].date, "one reading per day, in order");
     assert.ok(p.clearPct >= 50 && Number.isFinite(p.ndvi));
+    assert.deepEqual(Object.keys(p).sort(), ["clearPct", "date", "ndre", "ndvi", "ndwi", "ndyi"]);
   }
   for (const p of a.normalCurve) {
     assert.match(p.day, /^\d\d-(01|16)$/);
     assert.ok(p.low <= p.median && p.median <= p.high);
   }
-  const z = a.zones;
-  assert.deepEqual(Object.keys(z).sort(), ["cols", "east", "north", "rows", "south", "values", "west"]);
-  assert.ok(z.cols >= 1 && z.cols <= ZONES_MAX && z.rows >= 1 && z.rows <= ZONES_MAX);
-  assert.equal(z.values.length, z.cols * z.rows);
-  assert.ok(z.west < z.east && z.south < z.north);
-  assert.ok(z.values.every((v) => v === null || (v >= 0 && v <= 1)));
+  // The zones grid is no longer measured (spec 7.7).
+  assert.equal(a.zones, null);
   assert.ok(Array.isArray(a.warnings));
   assert.equal(a.status, undefined, "status is added by the route layer");
 }
@@ -699,8 +830,11 @@ test("analyzeFields measures the 7 demo fields in a few batched requests", async
   assert.deepEqual(Object.keys(analyses).sort(), DEMO.map((f) => f.id).sort());
   for (const field of DEMO) assertAnalysis(analyses[field.id], field);
   assert.ok(Array.isArray(warnings));
-  // 1 image check + 1 passes + 1 stats + 1 zones request, NOT one per field.
-  assert.equal(ee.requests.length, 5, `requests (the growing season + 4): ${ee.requests.length}`);
+  // The growing season, the image check, 1 Sentinel-2 passes, 1 radar
+  // passes, 1 monthly (18 months) and 1 stats request: NOT one per field,
+  // and no zones request (spec 7.7).
+  assert.equal(ee.requests.length, 6, `requests: ${ee.requests.length}`);
+  assert.equal(ee.callsNamed("Image.sampleRectangle").length, 0, "no zones grid");
   // Each fields collection sent carries all 7 fields.
   const fieldFeatures = ee.callsNamed("Feature").filter((c) => c.args[1]?.fid);
   assert.equal(new Set(fieldFeatures.map((c) => c.args[1].fid)).size, 7);
@@ -710,7 +844,6 @@ test("analyzeFields measures the 7 demo fields in a few batched requests", async
   // The demo farm is in Ukraine: damage is counted from the war's start.
   assert.ok(some.every((a) => a.conflict?.id === "ukraine-2022" && a.damage.since === "2022-02-24"));
   assert.ok(some.some((a) => a.season.length >= 10), "a season curve");
-  assert.ok(some.some((a) => a.zones.values.some((v) => v === null) && a.zones.values.some((v) => v !== null)), "zones: nulls outside the outline");
   assert.ok(some.every((a) => a.normalCurve.length === 24));
   // Datasets and bands are the real catalog ids.
   const loaded = new Set(ee.callsNamed("ImageCollection").map((c) => c.args[0]).filter((id) => typeof id === "string"));
@@ -718,9 +851,17 @@ test("analyzeFields measures the 7 demo fields in a few batched requests", async
   assert.ok(ee.calls.some((c) => c.name === "Image.select" && c.args[0] === "cs"));
   assert.ok(ee.calls.some((c) => c.name === "Image.select" && c.args[0] === "SCL"));
   // The per-pixel normal is the median of the three yearly composites (each
-  // year counts once), in the stats and in the zones request.
+  // year counts once).
   const yearlySets = ee.callsNamed("ImageCollection").filter((c) => Array.isArray(c.args[0]) && c.args[0].length === 3);
-  assert.ok(yearlySets.length >= 2, `yearly normals: ${yearlySets.length}`);
+  assert.ok(yearlySets.length >= 1, `yearly normals: ${yearlySets.length}`);
+  // Red edge and yellow flowers are read from Sentinel-2 B8A/B5 and B3/B2.
+  const nd = ee.callsNamed("Image.normalizedDifference").map((c) => c.args[0].join("/"));
+  for (const pair of ["B8/B4", "B8/B11", "B8A/B5", "B3/B2"]) assert.ok(nd.includes(pair), pair);
+  // Radar VH: IW pictures with VH, both orbit directions, averaged as power.
+  assert.ok(ee.calls.some((c) => c.name === "Filter.listContains" && c.args[1] === "VH"));
+  assert.ok(ee.calls.some((c) => c.name === "ImageCollection.select" && c.args[0] === "VH"));
+  assert.ok(some.every((a) => a.radar.vhSeries.length > 10 && Number.isFinite(a.radar.vhPeak)), "a VH series and its peak");
+  assert.ok(some.every((a) => a.season.some((p) => Number.isFinite(p.ndyi) && Number.isFinite(p.ndre))), "NDYI and NDRE per pass");
   // Never a future date.
   assert.ok(dateWindows(ee).every((w) => w.start <= w.end && w.end <= TODAY), JSON.stringify(dateWindows(ee).filter((w) => w.end > TODAY)));
   // The normal curve reads each half-month on its own (a whole year of
@@ -729,6 +870,7 @@ test("analyzeFields measures the 7 demo fields in a few batched requests", async
   assert.ok(curveWindows.length >= 72, `curve windows: ${curveWindows.length}`);
   assert.ok(!dateWindows(ee).some((w) => w.start.endsWith("-12-20") && w.end.endsWith("-01-12")), "no year-long curve collection");
   assert.ok(progress.length >= 4 && progress.at(-1)[0] === 1);
+  assert.ok(progress.every(([share], i) => i === 0 || share >= progress[i - 1][0]), "progress only goes up");
   // Radar is compared from one orbit direction only (the same ground looks
   // different from the east and from the west): the radar change image
   // (the request with "abs") filters every Sentinel-1 collection by it.
@@ -740,29 +882,42 @@ test("analyzeFields measures the 7 demo fields in a few batched requests", async
   assert.equal(used.size, 1, `one orbit direction in the radar change: ${[...used]}`);
 });
 
-test("the zones grid is sampled on each field's own grid", async () => {
-  const { ee, provider } = fakeProvider();
-  const { analyses } = await provider.analyzeFields({ fields: DEMO.slice(0, 2), today: TODAY });
-  const samples = ee.callsNamed("Image.sampleRectangle");
-  assert.equal(samples.length, 2);
-  for (const call of samples) assert.equal(call.args[0].defaultValue, -1);
-  for (const field of DEMO.slice(0, 2)) {
-    const grid = zoneGrid(fieldsInput([field])[0].bbox);
-    const z = analyses[field.id].zones;
-    assert.equal(z.cols, grid.cols);
-    assert.equal(z.rows, grid.rows);
-    assert.ok(Math.abs(z.east - grid.east) < 1e-9 && Math.abs(z.south - grid.south) < 1e-9);
-  }
-});
-
-test("many fields go in chunks of FIELDS_PER_REQUEST", async () => {
+test("many fields go in batched requests, at most PARALLEL_REQUESTS at once", async () => {
   const fields = Array.from({ length: 20 }, (_, i) => ({ ...DEMO[i % 7], id: `fld-${i}` }));
-  const { ee, provider } = fakeProvider();
+  // 100 pictures this season: 30 fields per passes request would be 3,000.
+  const { ee, provider } = fakeProvider({ sizes: { "COPERNICUS/S2_SR_HARMONIZED": 100, "COPERNICUS/S1_GRD": 100 } });
   const { analyses } = await provider.analyzeFields({ fields, today: TODAY });
   assert.equal(Object.keys(analyses).length, 20);
-  const chunks = Math.ceil(20 / FIELDS_PER_REQUEST);
-  assert.equal(ee.requests.length, 2 + 3 * chunks); // + the growing season
-  assert.ok(ee.stats.peakActive <= 2, "at most 2 requests at once");
+  assert.equal(passesPerRequest(100), 30);
+  assert.equal(passesPerRequest(150), 20);
+  assert.equal(passesPerRequest(0), MAX_FIELDS_PER_PASS_REQUEST);
+  const stats = ee.requests.filter((r) => r.has("abs")).length;
+  assert.equal(stats, Math.ceil(20 / FIELDS_PER_REQUEST));
+  // season + check + 1 S2 passes + 1 radar passes + 1 monthly + stats
+  assert.equal(ee.requests.length, 5 + stats);
+  assert.ok(ee.stats.peakActive <= PARALLEL_REQUESTS && ee.stats.peakActive > 2, `at most ${PARALLEL_REQUESTS} requests at once (${ee.stats.peakActive})`);
+  // 150 pictures and 45 fields: passes in 3 requests of at most 20 fields.
+  const many = Array.from({ length: 45 }, (_, i) => ({ ...DEMO[i % 7], id: `fld-${i}` }));
+  const big = fakeProvider({ sizes: { "COPERNICUS/S2_SR_HARMONIZED": 150 } });
+  await big.provider.analyzeFields({ fields: many, today: TODAY });
+  const passRequests = big.ee.requests.filter((r) => r.find("select").some((n) => Array.isArray(n.args[0]) && n.args[0].includes("ndyi")));
+  assert.equal(passRequests.length, 3);
+});
+
+test("monthly requests: months in runs of 24, fields x months at most 1,500", () => {
+  const fields = Array.from({ length: 70 }, (_, i) => ({ id: `f${i}`, areaHa: 20 }));
+  const months = monthRange("2019-01", "2026-10");
+  const jobs = monthlyJobs(fields, months);
+  assert.ok(jobs.every((job) => job.months.length <= MONTHS_PER_REQUEST && job.months.length * job.part.length <= MONTH_ELEMENTS_PER_REQUEST));
+  // Every field-month exactly once.
+  const seen = new Set(jobs.flatMap((job) => job.part.flatMap((f) => job.months.map((m) => `${f.id}|${m}`))));
+  assert.equal(seen.size, 70 * 94);
+  assert.equal(jobs.length, 4 * 2);
+  assert.deepEqual(monthlyJobs([], months), []);
+  assert.equal(monthlyScale([{ areaHa: 2 }, { areaHa: 30 }, { areaHa: 600 }]), 20);
+  assert.equal(monthlyScale([{ areaHa: 2000 }]), 90);
+  assert.deepEqual(monthValue("2026-05", { ndvi: 0.81234, ndwi: 0.1, clear: 0.9 }), { month: "2026-05", ndvi: 0.812, ndwi: 0.1, clearPct: 90 });
+  assert.deepEqual(monthValue("2026-05", { ndvi: 0.8, clear: 0.3 }), { month: "2026-05", ndvi: null, ndwi: null, clearPct: 30 });
 });
 
 test("a field with no clear pass gets nulls, never an Earth Engine error", async () => {
@@ -791,6 +946,184 @@ test("a 'today' in the future is not used", async () => {
   const { ee, provider } = fakeProvider();
   await provider.analyzeFields({ fields: DEMO.slice(0, 1), today: "2027-01-01" });
   assert.ok(dateWindows(ee).every((w) => w.end <= TODAY));
+});
+
+// ---------- Stress v2, radar harvest, crop type, batched history ----------
+
+// A batched monthly request: one image with bands m<i>_ndvi, m<i>_ndwi, m<i>_clear.
+const isMonthlyRequest = (r) => r.find("rename").some((n) => Array.isArray(n.args[0]) && n.args[0][0] === "m0_ndvi");
+
+test("stress v2: the red-edge rule OR the NDVI rule, as image arithmetic; the cause from the NDWI anomaly", async () => {
+  const dry = fakeProvider({ values: { stressed: 0.2, redEdgeOnly: 0.05, ndwiAnomaly: -0.1 } });
+  const { analyses } = await dry.provider.analyzeFields({ fields: DEMO.slice(0, 2), today: TODAY });
+  const a = analyses[DEMO[0].id];
+  assert.equal(a.stress.share, 0.2);
+  assert.equal(a.stress.level, "high");
+  assert.equal(a.stress.ndwiAnomaly, -0.1);
+  assert.equal(a.stress.redEdgeOnlyShare, 0.05);
+  assert.equal(a.stress.cause, "dry");
+  assert.equal(a.stress.redEdge, true);
+  assert.ok(a.stress.patches.length > 0 && a.stress.patches.every((p) => p.cause === "dry" && p.ndwiAnomaly === -0.1));
+  // The stats request: field medians of NDVI and NDRE painted back, the
+  // two rules joined with OR, the NDWI anomaly over the stressed pixels.
+  const stats = dry.ee.requests.find((r) => r.has("abs"));
+  assert.ok(stats.find("rename").some((n) => JSON.stringify(n.args[0]) === JSON.stringify(["medNdvi", "medNdre"])));
+  assert.ok(stats.has("or") && stats.has("not"), "stressed = byNdvi OR byRedEdge; redEdgeOnly = byRedEdge AND NOT byNdvi");
+  for (const name of ["stressed", "redEdgeOnly", "ndwiAnomaly"]) assert.ok(stats.find("rename").some((n) => n.args[0] === name), name);
+  // The red-edge thresholds are method.js's.
+  const constants = stats.find("subtract").map((n) => n.args[0]).filter((v) => typeof v === "number");
+  for (const v of [RED_EDGE_RULES.belowFieldMedian, RED_EDGE_RULES.belowNormal, STRESS_RULES.belowFieldMedian, STRESS_RULES.belowNormal]) assert.ok(constants.includes(v), `${v}`);
+  // Wetter than normal where stressed: not water.
+  const wet = fakeProvider({ values: { stressed: 0.1, redEdgeOnly: 0, ndwiAnomaly: 0.02 } });
+  const b = (await wet.provider.analyzeFields({ fields: DEMO.slice(0, 1), today: TODAY })).analyses[DEMO[0].id];
+  assert.deepEqual([b.stress.cause, b.stress.redEdge], ["other", false]);
+  // No stress: no cause.
+  const none = fakeProvider({ values: { stressed: 0, redEdgeOnly: 0 } });
+  const c = (await none.provider.analyzeFields({ fields: DEMO.slice(0, 1), today: TODAY })).analyses[DEMO[0].id];
+  assert.deepEqual([c.stress.share, c.stress.cause, c.stress.ndwiAnomaly, c.stress.redEdge], [0, null, null, false]);
+  // The red-edge normal is read from the same 2019-2021 weeks.
+  assert.ok(a.redEdge.normal.median !== null && a.redEdge.ndre !== null);
+});
+
+test("radar harvest: a tall crop cut shows as a VH drop through cloud; with no drop it is still standing", async () => {
+  const corn = DEMO.slice(0, 1).map((f) => ({ ...f, crop: "Corn", cropSource: "user" }));
+  // VH: -12 dB under the crop until 10 September 2026, then -18 dB (cut).
+  const cut = fakeProvider({ values: { vhPower: (u, { date }) => 10 ** ((date < Date.parse("2026-09-10") ? -12 : -18) / 10) } });
+  const a = (await cut.provider.analyzeFields({ fields: corn, today: TODAY })).analyses[corn[0].id];
+  assert.ok(a.radar.harvestedOn >= "2026-09-10" && a.radar.harvestedOn <= "2026-09-14", a.radar.harvestedOn);
+  assert.ok(a.radar.dropDb >= 5.9);
+  assert.equal(a.harvest.stage, "harvested");
+  assert.equal(a.harvest.basis, "radar");
+  assert.equal(a.harvest.radarHarvestOn, a.radar.harvestedOn);
+  assert.equal(a.harvest.standingDry, false);
+  // The same field, dry and low on NDVI, with no drop: still standing, ready.
+  const standing = fakeProvider({ values: { vhPower: () => 10 ** (-13 / 10) } });
+  const b = (await standing.provider.analyzeFields({ fields: corn, today: TODAY })).analyses[corn[0].id];
+  assert.equal(b.radar.harvestedOn, null);
+  assert.equal(b.harvest.standingDry, true);
+  assert.equal(b.harvest.stage, "ready");
+  assert.equal(b.harvest.radarHarvestOn, null);
+  // A placeholder crop (not the farmer's word) is not used as the crop.
+  assert.equal(fieldsInput([{ ...DEMO[0], crop: "Corn", cropSource: "demo" }])[0].crop, null);
+  assert.equal(fieldsInput([{ ...DEMO[0], crop: "Corn" }])[0].crop, null);
+  assert.equal(fieldsInput(corn)[0].crop, "Corn");
+});
+
+test("the VH series: dB from the mean power per picture, cleaned by a running median; the peak near the NDVI peak", () => {
+  const { passes, series } = vhSeriesOf([
+    { date: "2026-07-02", vhPower: 0.05, orbit: "DESCENDING", relOrbit: 36 },
+    { date: "2026-07-01", vhPower: 10 ** -1.3, orbit: "ASCENDING", relOrbit: 14 },
+    { date: "2026-07-03", vhPower: 0 },
+    { date: "bad", vhPower: 0.05 },
+  ]);
+  assert.deepEqual(passes, [
+    { date: "2026-07-01", vh: -13, orbit: "ASCENDING", relOrbit: 14 },
+    { date: "2026-07-02", vh: -13.01, orbit: "DESCENDING", relOrbit: 36 },
+  ]);
+  // Two days only: each is the median (mean) of the two.
+  assert.deepEqual(series, [{ date: "2026-07-01", vh: -13 }, { date: "2026-07-02", vh: -13 }]);
+  // Real noise over stubble (demo farm, September 2026): one bright
+  // wet-day picture. Cleaned: no 3 dB "drop" left.
+  const day = (i) => shiftDays("2026-09-01", i);
+  const noisy = [-22.9, -23.8, -21.7, -23.7, -23.9, -16.1, -20.3, -23.0, -24.0].map((vh, i) => ({ date: day(i * 2), vh }));
+  assert.ok(radarHarvest(noisy, "2026-07-01").harvestedOn, "raw: a false harvest");
+  const cleaned = cleanVh(noisy);
+  assert.ok(cleaned.every((p, i) => !i || cleaned[i - 1].vh - p.vh < 3), JSON.stringify(cleaned));
+  assert.equal(radarHarvest(cleaned, "2026-07-01").harvestedOn, null);
+  // Real Iowa corn (field 1, 2026): cut between 27 September and 9 October.
+  const iowa = [
+    ["2026-09-15", -14.77], ["2026-09-20", -14.52], ["2026-09-27", -13.96], ["2026-10-09", -19.43], ["2026-10-14", -22.5],
+  ].map(([date, vh]) => ({ date, vh }));
+  assert.equal(radarHarvest(cleanVh(iowa), "2026-08-20").harvestedOn, "2026-10-09");
+  // A real cut (-12 -> -19 dB and staying there) keeps its step and its day.
+  const cut = [-12, -12.5, -12, -12.2, -19, -19.5, -19, -18.8].map((vh, i) => ({ date: day(i * 3), vh }));
+  assert.equal(radarHarvest(cleanVh(cut), "2026-07-01").harvestedOn, day(12));
+  // The peak: only within VH_PEAK_DAYS of the NDVI peak (frozen ground in
+  // winter reads bright too).
+  const year = [
+    { date: "2026-02-10", vh: -11 },
+    { date: "2026-07-10", vh: -14 },
+    { date: "2026-07-20", vh: -12.5 },
+    { date: "2026-07-30", vh: -13 },
+  ];
+  assert.deepEqual(vhPeakOf(year, "2026-07-18"), { vhPeak: -12.5, vhPeakDate: "2026-07-20" });
+  assert.deepEqual(vhPeakOf(year, null), { vhPeak: null, vhPeakDate: null });
+  assert.deepEqual(vhPeakOf(year, "2026-03-01"), { vhPeak: null, vhPeakDate: null });
+  assert.equal(VH_PEAK_DAYS, 30);
+});
+
+test("the crop type is read from 18 months, this season's passes (with NDYI) and the VH peak", async () => {
+  const { ee, provider } = fakeProvider();
+  const { analyses } = await provider.analyzeFields({ fields: DEMO.slice(0, 3), today: TODAY });
+  for (const field of DEMO.slice(0, 3)) {
+    const a = analyses[field.id];
+    assert.equal(a.cropInputs.months[0].month, "2025-05");
+    assert.ok(a.cropInputs.months.every((m) => Object.keys(m).join() === "month,ndvi"));
+    assert.ok(a.cropInputs.months.some((m) => Number.isFinite(m.ndvi)));
+    assert.equal(a.cropInputs.peakMonth, 7);
+    assert.ok(Math.abs(a.cropInputs.lat - 49.72) < 0.05);
+    assert.equal(a.cropInputs.vhPeak, a.radar.vhPeak);
+    assert.deepEqual(a.cropDetected, classifyCrop({ ...a.cropInputs, passes: a.season }));
+  }
+  // Last season's crop is not used for this season's harvest.
+  const pass = (date, ndvi) => ({ date, ndvi });
+  assert.equal(seasonDone([pass("2026-06-01", 0.3), pass("2026-07-01", 0.6), pass("2026-08-01", 0.85), pass("2026-09-01", 0.6), pass("2026-10-01", 0.3)]), true);
+  assert.equal(seasonDone([pass("2026-08-01", 0.2), pass("2026-08-20", 0.3), pass("2026-09-05", 0.5), pass("2026-09-20", 0.7), pass("2026-10-05", 0.85)]), false, "still greening up");
+  assert.equal(seasonDone([]), false);
+  // The 18 months of all fields in one batched request (18 x 3 values).
+  const monthly = ee.requests.filter(isMonthlyRequest);
+  assert.equal(monthly.length, 1);
+});
+
+test("histories in the same run (historyFor) and fieldHistories: batched, the same answer as fieldHistory", async () => {
+  const { ee, provider } = fakeProvider();
+  const result = await provider.analyzeFields({ fields: DEMO.slice(0, 3), today: TODAY, historyFor: [DEMO[1].id] });
+  assert.deepEqual(Object.keys(result.histories), [DEMO[1].id]);
+  const months = result.histories[DEMO[1].id];
+  assert.equal(months.length, 94);
+  assert.deepEqual(months[0], { ...months[0], month: "2019-01" });
+  for (const m of months) {
+    assert.deepEqual(Object.keys(m).sort(), ["clearPct", "month", "ndvi", "ndwi"]);
+    if (m.clearPct < 50) assert.equal(m.ndvi, null);
+  }
+  // The field with history still gets its 18 crop months (the last 18 of them).
+  assert.deepEqual(result.analyses[DEMO[1].id].cropInputs.months, months.slice(-18).map(({ month, ndvi }) => ({ month, ndvi })));
+  // 18 months for the 2 others (1 request) + 94 months for 1 field (4 requests of at most 24 months).
+  assert.equal(ee.requests.filter(isMonthlyRequest).length, 5);
+  assert.equal((await fakeProvider().provider.analyzeFields({ fields: DEMO.slice(0, 1), today: TODAY })).histories, undefined);
+  // Fields with a fresh saved history (freshHistoryFor): no monthly request at all.
+  const fresh = fakeProvider();
+  const skipped = await fresh.provider.analyzeFields({ fields: DEMO.slice(0, 3), today: TODAY, freshHistoryFor: DEMO.slice(0, 3).map((f) => f.id) });
+  assert.equal(fresh.ee.requests.filter(isMonthlyRequest).length, 0);
+  assert.deepEqual(Object.keys(skipped.analyses).sort(), DEMO.slice(0, 3).map((f) => f.id).sort());
+
+  const batch = fakeProvider();
+  const all = await batch.provider.fieldHistories({ fields: DEMO, from: "2019-01" });
+  assert.deepEqual(Object.keys(all).sort(), DEMO.map((f) => f.id).sort());
+  assert.ok(Object.values(all).every((list) => list.length === 94 && list.at(-1).month === "2026-10"));
+  // 7 fields x 94 months in 4 requests, not 7 x 4.
+  assert.equal(batch.ee.requests.length, 4);
+  assert.ok(dateWindows(batch.ee).every((w) => w.start <= w.end && w.end <= TODAY));
+  assert.equal((await batch.provider.fieldHistories({ fields: DEMO.slice(0, 1), from: "2026-03", to: "2026-05" }))[DEMO[0].id].length, 3);
+});
+
+test("radar or monthly values that fail do not stop the analysis; an internal error is tried once more", async () => {
+  const failing = fakeProvider({ fail: (r) => (r.has("exp") || isMonthlyRequest(r) ? "Computation timed out." : null) });
+  const { analyses, warnings, histories } = await failing.provider.analyzeFields({ fields: DEMO.slice(0, 2), today: TODAY, historyFor: [DEMO[0].id] });
+  const a = analyses[DEMO[0].id];
+  assert.ok(a.plantHealth.ndvi !== null);
+  assert.deepEqual(a.radar.vhSeries, []);
+  assert.ok(a.cropInputs.months.every((m) => m.ndvi === null));
+  assert.deepEqual(histories, {}, "a failed history is not saved as empty");
+  assert.match(warnings.join(" "), /Radar passes .* could not be read/);
+  assert.match(warnings.join(" "), /Reading monthly values .* failed/);
+  let failed = 0;
+  const once = fakeProvider({ fail: (r) => (r.has("abs") && failed++ === 0 ? "An internal error has occurred (request: x)" : null) });
+  const ok = await once.provider.analyzeFields({ fields: DEMO.slice(0, 1), today: TODAY });
+  assert.equal(failed, 2);
+  assert.ok(ok.analyses[DEMO[0].id].plantHealth.normal.median !== null);
+  const always = fakeProvider({ fail: (r) => (r.has("abs") ? "An internal error has occurred (request: x)" : null) });
+  await assert.rejects(always.provider.analyzeFields({ fields: DEMO.slice(0, 1), today: TODAY }), /internal error/);
 });
 
 // ---------- Anywhere on Earth ----------

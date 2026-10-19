@@ -374,6 +374,21 @@
   font-weight: 650;
 }
 
+.fp-empty-text {
+  margin: -6px 0 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--c-text-2);
+}
+
+/* A detected crop ("Corn · detected"): the same text, a dotted underline
+   that explains itself on hover. */
+.fp-crop.is-detected {
+  text-decoration: underline dotted var(--c-muted);
+  text-underline-offset: 3px;
+  cursor: help;
+}
+
 .fp-error {
   margin: 0;
   font-size: 14px;
@@ -386,6 +401,12 @@
   min-height: 52px;
   font-size: 16px;
   border-radius: 14px;
+}
+
+.fp-how {
+  display: flex;
+  justify-content: center;
+  margin-top: -4px;
 }
 
 /* ---------- Phones and small tablets: map on top, field below ---------- */
