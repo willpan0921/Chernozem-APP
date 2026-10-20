@@ -11,8 +11,11 @@
 //              Damage as shares of 100 that trade with each other (30 / 40
 //              shows as 43% / 57%), and the cutoff "Set aside least safe
 //              30%". The Postwar safe-access weight is kept as it is.
-//              At peace with no ACLED file there is no cutoff: the panel
-//              says "No war recorded: nothing set aside" instead.
+//              At peace with no ACLED file (and in a month before its war
+//              began) there is no cutoff: the panel says why instead, "No
+//              war recorded: nothing set aside", "Not at war (set by your
+//              team): nothing set aside" or "Before the war: nothing set
+//              aside" (overview.js peaceReason).
 //
 // A drag (or a run of arrow-key presses) is always worked out from the
 // weights it started from, so moving a slider and putting it back gives
@@ -33,7 +36,7 @@ import { useAtlasData, useTimeframe } from "../../state/AtlasData.jsx";
 import { isDefaultSettings } from "../../lib/atlas/method.js";
 import { WEIGHT_KEYS, rebalanceWeights } from "../../lib/atlas/weights.js";
 import { nearTermShares } from "../../lib/atlas/scoring.js";
-import { accessMeasured, timeframeOptions } from "../../lib/atlas/overview.js";
+import { accessMeasured, peaceReason, timeframeOptions } from "../../lib/atlas/overview.js";
 import "./atlas.css";
 
 const LABELS = {
@@ -190,9 +193,11 @@ export default function WeightsPanel({ showTimeframe = true, className = "" }) {
           />
         ))}
 
-        {/* At peace with no ACLED file nothing can be set aside: access is
-            100 everywhere, so the cutoff slider would change nothing. */}
-        {nearTerm && run && !accessMeasured(run) && <p className="weights-note">No war recorded: nothing set aside</p>}
+        {/* At peace with no ACLED file (or in a month before its war began)
+            nothing can be set aside: access is 100 everywhere, so the cutoff
+            slider would change nothing. The note says why: "No war
+            recorded", "Not at war (set by your team)", "Before the war". */}
+        {nearTerm && run && !accessMeasured(run) && <p className="weights-note">{peaceReason(run)?.short || "No war recorded"}: nothing set aside</p>}
         {nearTerm && (!run || accessMeasured(run)) && (
           <WeightRow
             id="weight-gate"

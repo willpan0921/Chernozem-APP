@@ -179,18 +179,41 @@ export async function saveArea(area) {
   return area;
 }
 
+// Changes a saved area one request at a time (like updateWorkspace), so a
+// new name and a new war setting sent together cannot overwrite each
+// other, and a change never brings back an area that was just removed.
+// change(area) edits it in place or gives back a new one. Gives back the
+// saved area, or null when there is no such area (nothing is saved).
+const areaLock = (globalThis.__chernozemAreaLock ??= { chain: Promise.resolve() });
+function inAreaQueue(work) {
+  const next = areaLock.chain.then(work);
+  areaLock.chain = next.catch(() => {});
+  return next;
+}
+
+export function updateArea(id, change) {
+  return inAreaQueue(async () => {
+    const area = await getArea(id);
+    if (!area) return null;
+    const changed = (await change(area)) || area;
+    return saveArea(changed);
+  });
+}
+
 // Removes an area and every monthly run made for it. Gives back how many
 // runs went with it. A missing area is not an error (gives back 0).
-export async function deleteArea(id) {
-  if (!isSafeId(id)) return 0;
-  const runs = await listRuns(id);
-  for (const run of runs) await deleteRun(run.id);
-  try {
-    await fs.unlink(fileFor("areas", id));
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-  }
-  return runs.length;
+export function deleteArea(id) {
+  return inAreaQueue(async () => {
+    if (!isSafeId(id)) return 0;
+    const runs = await listRuns(id);
+    for (const run of runs) await deleteRun(run.id);
+    try {
+      await fs.unlink(fileFor("areas", id));
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    return runs.length;
+  });
 }
 
 // ---------- Runs ----------

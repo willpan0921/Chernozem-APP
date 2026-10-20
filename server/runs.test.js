@@ -7,7 +7,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { addMonths, buildRun, compareRuns, imageryWindow, latestCompleteMonth, linkNewDamage, monthLabel, monthsBack, summarizeRun } from "./runs.js";
+import { NO_WAR_WARNING, TEAM_PEACE_WARNING, addMonths, buildRun, compareRuns, imageryWindow, latestCompleteMonth, linkNewDamage, monthLabel, monthsBack, summarizeRun } from "./runs.js";
 
 const area = { id: "area-test", name: "Test", bbox: [30, 49, 31, 50] };
 const cells = [
@@ -162,4 +162,38 @@ test("months from another data source or method are not compared", () => {
   const newer = { ...makeRun("2026-09", 0.35), method: { components: { damage: ["firms", "radar"] } } };
   assert.equal(compareRuns(older, newer).notComparable, "method");
   assert.equal(compareRuns(makeRun("2026-08", 0.1), makeRun("2026-09", 0.35)).comparable, true);
+});
+
+test("a run keeps who decided its war (the team, area.war, or the app's list); at peace by the team's choice it says so; months with another war setting are not compared", () => {
+  const ukraine = { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" };
+  const team = { id: "area-area-test", name: "Fighting in the county", since: "2023-08-01", source: "area" };
+  assert.equal(buildRun({ ...makeArgs("2026-09"), conflict: ukraine }).conflictSource, "list");
+  const set = buildRun({ ...makeArgs("2026-09"), conflict: team, conflictSource: "area" });
+  assert.deepEqual(set.conflict, team);
+  assert.equal(set.conflictSource, "area");
+  assert.equal(summarizeRun(set).conflictSource, "area", "the run list keeps it");
+  // A war marked as the team's says so by itself.
+  assert.equal(buildRun({ ...makeArgs("2026-09"), conflict: team }).conflictSource, "area");
+  // At peace: the app's list's words, or the team's.
+  const warnings = [NO_WAR_WARNING, "Something else."];
+  const listPeace = buildRun({ ...makeArgs("2026-09"), warnings });
+  assert.equal(listPeace.conflictSource, "list");
+  assert.deepEqual(listPeace.checks.warnings.slice(0, 2), warnings);
+  const teamPeace = buildRun({ ...makeArgs("2026-09"), warnings, conflictSource: "area" });
+  assert.equal(teamPeace.conflict, null);
+  assert.equal(teamPeace.conflictSource, "area");
+  assert.deepEqual(teamPeace.checks.warnings.slice(0, 2), [TEAM_PEACE_WARNING, "Something else."]);
+  // A month made at peace and one made at war (the team's setting changed
+  // in between): no differences, no "new damage".
+  const before = buildRun({ ...makeArgs("2026-08") });
+  const after = buildRun({ ...makeArgs("2026-09"), conflict: team, conflictSource: "area" });
+  const result = compareRuns(before, after);
+  assert.equal(result.comparable, false);
+  assert.equal(result.notComparable, "war");
+  assert.equal(result.notComparableText, "Not comparable: different war setting");
+  linkNewDamage([before, after]);
+  assert.equal(after.newHeavyDamageHa, null);
+  // The same start day by another name (or by the list) compares.
+  const sameDay = buildRun({ ...makeArgs("2026-08"), conflict: { ...team, name: "Another name" } });
+  assert.equal(compareRuns(sameDay, after).comparable, true);
 });

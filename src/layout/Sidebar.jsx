@@ -34,7 +34,8 @@ function AtlasScope({ icon: Icon }) {
     title = "Loading…";
     subtitle = "";
   } else if (running) {
-    subtitle = `Analyzing · ${job.done} of ${job.total}`;
+    // One area at a time: an analysis can wait for another area's first.
+    subtitle = job.queued ? "Waiting to analyze" : `Analyzing · ${job.done} of ${job.total}`;
   } else if (area && runs[0]?.totals) {
     subtitle = `${formatHaShort(runs[0].totals.croplandHa)} cropland`;
   } else if (area) {

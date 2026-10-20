@@ -5,12 +5,16 @@
 // analysis is also run end to end against a stand-in for Earth Engine
 // (fake-ee.js), which checks what gee.js asks Earth Engine for (no null
 // values, pixel sizes, chunks, dates) and gives back believable numbers.
+// Requests that take minutes (time limits, the library's deadline) run on
+// a mocked clock (t.mock.timers), and so does the Atlas giving way to the
+// Field, its retry pauses included, and a failed month sending nothing
+// more (the last tests).
 // Real Earth Engine needs credentials; `npm run gee:check` does that.
 //
 // WHO EDITS IT
 // Whoever changes gee.js or acled.js. Run with `npm test`.
 
-import { test } from "node:test";
+import { beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -60,6 +64,21 @@ import {
   isTransientError,
   isBusyError,
   keepTokenFresh,
+  evaluate,
+  yieldStatus,
+  resetYieldState,
+  newFailure,
+  markFailed,
+  holdInteractive,
+  checkChernozemAsset,
+  blackSoilImage,
+  YIELD,
+  WAITING_MESSAGE,
+  CHUNK_TIMEOUT_MS,
+  COUNT_TIMEOUT_MS,
+  EE_DEADLINE_MS,
+  TRANSIENT_RETRY_MS,
+  BUSY_RETRY_FACTOR,
   retryTransient,
   retryTooMuchWork,
   tooMuchWorkKind,
@@ -73,11 +92,18 @@ import {
   NO_WAR_WARNING,
 } from "./gee.js";
 import { createFakeEe } from "./fake-ee.js";
-import { addMonths, buildRun } from "../runs.js";
+import { createFieldGeeProvider } from "./field-gee.js";
+import { TEAM_PEACE_WARNING, addMonths, beforeWarWarning, buildRun } from "../runs.js";
+import { teamConflict, warBoxes } from "../../src/config/conflicts.js";
 import { scorePlaces } from "../../src/lib/atlas/scoring.js";
 import { HEAVY_DAMAGE, METHOD_VERSION, heavyDamagePixel, radarPersistence, worstFireYear } from "../../src/lib/atlas/method.js";
 import { areaDamageSeasons } from "../../src/lib/season.js";
 import { parseCsvRecords, parseCsv, parseAcledDate, toEvent, battlePoints, acledWindow, acledBattlesFor, acledStatus } from "./acled.js";
+
+// The count of interactive requests the Atlas gives way to is shared by the
+// whole process (gee.js yieldState). Every test starts from nothing, so one
+// that fails with a request still counted cannot make the next one fail.
+beforeEach(() => resetYieldState());
 
 // ---------- Date windows ----------
 
@@ -297,6 +323,30 @@ test("mapLimit keeps order and the limit", async () => {
   assert.equal(peak, 2);
 });
 
+test("mapLimit starts no further item once one has failed; those running finish; the first error is thrown", async () => {
+  const started = [];
+  const finished = [];
+  // Item 0 fails after 5 ms while item 1 runs for 30 ms; before, the other
+  // runner went on with items 2, 3 and 4 after item 1.
+  const run = mapLimit([5, 30, 1, 1, 1], 2, async (ms, i) => {
+    started.push(i);
+    await new Promise((r) => setTimeout(r, ms));
+    if (i === 0) throw new Error("item 0 failed");
+    finished.push(i);
+  });
+  await assert.rejects(run, /item 0 failed/);
+  await new Promise((r) => setTimeout(r, 60));
+  assert.deepEqual(started, [0, 1], "nothing new after the first failure");
+  assert.deepEqual(finished, [1], "the item running then finished");
+  // Two failures: the first one is thrown.
+  const both = mapLimit([5, 20, 1], 2, async (ms, i) => {
+    await new Promise((r) => setTimeout(r, ms));
+    throw new Error(`item ${i} failed`);
+  });
+  await assert.rejects(both, /item 0 failed/);
+  await new Promise((r) => setTimeout(r, 40));
+});
+
 test("withTimeout rejects with a clear GeeError", async () => {
   await assert.rejects(withTimeout(new Promise(() => {}), 20, "Measuring cells"), (error) => {
     assert.ok(error instanceof GeeError);
@@ -476,7 +526,15 @@ test("explainGeeError turns Google errors into clear advice", () => {
   assert.equal(code("invalid_grant: Invalid JWT Signature."), "bad_key");
   assert.equal(code("error:1E08010C:DECODER routines::unsupported"), "bad_key");
   assert.equal(code("Caller does not have required permission to use project my-proj. Grant the caller the roles/serviceusage.serviceUsageConsumer role"), "no_permission");
-  assert.equal(code("Too many concurrent aggregations."), "quota");
+  // Earth Engine too busy right now is "busy" (a job skips the month and
+  // goes on: jobs.js); a real quota is "quota" (a job stops).
+  assert.equal(code("Too many concurrent aggregations."), "busy");
+  assert.equal(code("Earth Engine capacity exceeded."), "busy");
+  assert.match(explainGeeError(new Error("Too many concurrent aggregations."), { ...ctx, what: "Measuring 98 cells" }).message, /^Measuring 98 cells: Earth Engine was too busy \("Too many concurrent aggregations\."\)\. Wait a few minutes and try again\.$/);
+  assert.equal(code("Quota exceeded for quota metric 'Requests' and limit 'Requests per minute'."), "quota");
+  assert.equal(code("Too many requests"), "quota");
+  assert.equal(code("Server returned HTTP code: 429"), "quota");
+  assert.equal(code("Earth Engine memory capacity exceeded."), "gee_error", "too much work, not busy");
   assert.equal(code("User memory limit exceeded."), "too_big");
   assert.equal(code("Computation timed out."), "too_big");
   assert.equal(code("getaddrinfo ENOTFOUND earthengine.googleapis.com"), "network");
@@ -721,6 +779,35 @@ function assertReading(reading, cellIds) {
   for (const name of ["admin1", "admin2"]) if (name in reading) assert.equal(typeof reading[name], "string");
 }
 
+// A mocked clock for requests that take minutes: t.mock.timers (setTimeout
+// and Date) moved forward by hand, with promise callbacks run in between.
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+function mockClock(t) {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.now() });
+}
+// Moves the mocked clock `ms` forward, in steps.
+async function advance(t, ms, step = 50) {
+  for (let moved = 0; moved < ms; moved += step) {
+    await flush();
+    t.mock.timers.tick(Math.min(step, ms - moved));
+  }
+  await flush();
+}
+// Moves the mocked clock forward until `promise` settles; gives it back.
+async function settle(t, promise, { step = 100, maxMs = 2 * 60 * 60 * 1000 } = {}) {
+  let done = false;
+  const watched = Promise.resolve(promise).finally(() => {
+    done = true;
+  });
+  watched.catch(() => {});
+  for (let moved = 0; !done && moved < maxMs; moved += step) {
+    await flush();
+    if (!done) t.mock.timers.tick(step);
+  }
+  await flush();
+  return watched;
+}
+
 const filterDates = (ee) => ee.callsNamed("ImageCollection.filterDate").map((c) => c.args);
 const meanRequests = (ee) => ee.requests.filter((r) => r.find("reduceRegions").some((n) => n.args[0]?.reducer && n.parent.bands?.some((b) => b.name === "chiDrop")));
 
@@ -787,6 +874,138 @@ test("analyze() on a 9-cell area gives every reading for every cell", async () =
   const fireStarts = filterDates(ee).map(([start]) => start);
   for (const year of [2018, 2019, 2020]) assert.ok(fireStarts.includes(`${year}-09-01`), `pre-war fires ${year}`);
   assert.ok(result.warnings.some((w) => /unusual fires of the last 12 months/.test(w)));
+});
+
+test("an area's own war setting decides where damage is counted from: at war from the team's day, or not at war in Ukraine", async () => {
+  // Story County, Iowa (no war in the app's list), marked at war by its team.
+  const iowa = gridArea(3, 3, 0.01, 42.05, -93.7);
+  const war = { mode: "war", since: "2023-08-01", name: "Fighting in the county" };
+  const atWar = fakeProvider();
+  const result = await atWar.provider.analyze({ area: { ...iowa.area, war }, cells: iowa.cells, month: "2026-08", cellSizeDeg: 0.01 });
+  assert.deepEqual(result.conflict, { id: "area-test-area", name: "Fighting in the county", since: "2023-08-01", source: "area" });
+  assert.equal(result.accessSource, "fires", "distance to fighting is estimated from unusual fires, as in any war");
+  assert.ok(!result.warnings.includes(NO_WAR_WARNING));
+  const windows = monthWindows("2026-08", TODAY, { lat: 42.035, conflict: teamConflict(war, "test-area") });
+  assert.deepEqual(windows.damage, { start: "2023-08-01", end: "2026-09-01" });
+  // Three whole war years (the one begun on 2026-08-01 is a month old: it
+  // counts from 3 months on).
+  assert.deepEqual(windows.fireYears.map((y) => `${y.start}..${y.end}`), ["2023-08-01..2024-08-01", "2024-08-01..2025-08-01", "2025-08-01..2026-08-01"]);
+  const starts = filterDates(atWar.ee).map(([start]) => start);
+  for (const year of windows.fireYears) assert.ok(starts.includes(year.start), `fire year from ${year.start}`);
+  // The radar compares the complete war seasons since that day (2024 and
+  // 2025: the 2023 season began before it).
+  assert.deepEqual(windows.radarSeasons.map((w) => w.start), ["2024-04-01", "2025-04-01"]);
+  assert.deepEqual(result.imagery, { from: "2024-04", to: "2025-09", label: "April to September of 2024 to 2025", seasons: 2 });
+  // The run keeps the team's war, and says who decided.
+  const run = buildRun({ area: iowa.area, month: "2026-08", provider: "gee", readings: result.readings, warnings: result.warnings, cellSizeDeg: 0.01, cells: iowa.cells, conflict: result.conflict, conflictSource: "area", imagery: result.imagery, accessSource: result.accessSource });
+  assert.equal(run.conflict.source, "area");
+  assert.equal(run.conflictSource, "area");
+
+  // Kharkiv oblast (the war in Ukraine in the app's list), marked "Not at
+  // war": the last two years, the peace rules, no distance to fighting.
+  const kharkiv = gridArea(3, 3, 0.01);
+  const atPeace = fakeProvider();
+  const calm = await atPeace.provider.analyze({ area: { ...kharkiv.area, war: { mode: "peace" } }, cells: kharkiv.cells, month: "2026-08", cellSizeDeg: 0.01 });
+  assert.equal(calm.conflict, null);
+  assert.equal(calm.accessSource, "none");
+  assert.ok(calm.readings.every((reading) => reading.conflictKm === 300));
+  assert.ok(calm.warnings.includes(NO_WAR_WARNING));
+  const calmStarts = filterDates(atPeace.ee).map(([start]) => start);
+  assert.equal(calmStarts.includes("2022-02-24"), false, "nothing is counted from the war's start");
+  for (const year of monthWindows("2026-08", TODAY, { lat: 49.785, conflict: null }).fireYears) assert.ok(calmStarts.includes(year.start), `peace year from ${year.start}`);
+  // The run says the team decided, not "no war in the app's list".
+  const calmRun = buildRun({ area: kharkiv.area, month: "2026-08", provider: "gee", readings: calm.readings, warnings: calm.warnings, cellSizeDeg: 0.01, cells: kharkiv.cells, conflict: calm.conflict, conflictSource: "area", accessSource: calm.accessSource });
+  assert.ok(calmRun.checks.warnings.includes(TEAM_PEACE_WARNING));
+  assert.ok(!calmRun.checks.warnings.includes(NO_WAR_WARNING));
+  assert.equal(calmRun.conflictSource, "area");
+});
+
+test("a month that ends before its war began: no war damage, no distance to fighting from the fires before it, and one warning that says why", async () => {
+  // Story County, Iowa, marked at war by its team from 2026-06-01: December
+  // 2025 ends before that day (a re-run of 12 months reaches back to it).
+  const iowa = gridArea(3, 3, 0.01, 42.05, -93.7);
+  const war = { mode: "war", since: "2026-06-01", name: "Fighting in the county" };
+  const conflict = teamConflict(war, "test-area");
+  const lat = 42.035;
+  const windows = monthWindows("2025-12", TODAY, { lat, conflict });
+  assert.equal(windows.beforeWar, true);
+  assert.equal(windows.damage, null);
+  assert.deepEqual(windows.fireYears, []);
+  assert.deepEqual(windows.radarSeasons, []);
+  // Radar alerts compare the month with the same month of 2019-2021, as at
+  // peace (the 3 months before would compare it with more months before
+  // the war).
+  assert.deepEqual(windows.radarBefore, monthWindows("2025-12", TODAY, { lat, conflict: null }).radarBefore);
+
+  const before = fakeProvider();
+  const result = await before.provider.analyze({ area: { ...iowa.area, war }, cells: iowa.cells, month: "2025-12", cellSizeDeg: 0.01, conflict });
+  assert.deepEqual(result.conflict, conflict, "the run keeps its war, so it compares with the area's other months");
+  assert.equal(result.accessSource, "none");
+  assert.ok(result.readings.every((reading) => reading.conflictKm === 300 && reading.heavyShare === 0 && reading.radarDb === null));
+  // One warning says why; not "No growing season since ... is complete",
+  // and no distance estimated from the fires before the war.
+  assert.deepEqual(result.warnings.filter((w) => /before the war|growing season since|estimated from unusual fires|no recent fires/.test(w)), [beforeWarWarning("2026-06-01")]);
+  assert.equal(before.ee.callsNamed("Image.stratifiedSample").length, 0);
+  assert.equal(measuredWindows(before.ee, DATASETS.firms).has(`${windows.lastYear.start}..${windows.lastYear.end}`), false, "no fires of the last 12 months are looked at for fighting");
+  // The fire evidence is the constant 0 (no war year to count).
+  const [request] = meanRequests(before.ee);
+  const value = pixelEvaluator(before.ee, { firesOn: ["2025-12-05", "2025-11-20"], leaves: { [DATASETS.worldCover]: 40 } });
+  assert.equal(value(request.nodes.find((n) => n.op === "rename" && n.args[0] === "fx0")), 0);
+
+  // A month the war had begun by estimates the distance from unusual fires.
+  const during = fakeProvider();
+  const atWar = await during.provider.analyze({ area: { ...iowa.area, war }, cells: iowa.cells, month: "2026-08", cellSizeDeg: 0.01, conflict });
+  assert.equal(atWar.accessSource, "fires");
+  assert.ok(during.ee.callsNamed("Image.stratifiedSample").length > 0);
+  assert.ok(!atWar.warnings.includes(beforeWarWarning("2026-06-01")));
+});
+
+test("a war that covers a whole-country area only in part: its rules in the squares that touch its boxes, the peace rule elsewhere, and fighting estimated from fires inside the boxes", async () => {
+  // Eight 0.1° squares across the north edge of the Kursk box (51.6° N):
+  // rows 0 and 1 outside it, rows 2 and 3 touching it.
+  const { area, cells } = gridArea(4, 2, 0.1, 51.87, 34.5);
+  const kursk = { id: "russia-kursk-belgorod", name: "Fighting in Russia's Kursk and Belgorod border areas", since: "2022-02-24", partOfCountry: true };
+  const { ee, provider } = fakeProvider();
+  const result = await provider.analyze({ area: { ...area, countryId: "643" }, cells, month: "2026-08", cellSizeDeg: 0.1, conflict: kursk });
+  assert.deepEqual(result.conflict, kursk);
+  const atWar = Object.fromEntries(result.readings.map((reading) => [reading.id, reading.atWar]));
+  assert.deepEqual(atWar, { r0c0: false, r0c1: false, r1c0: false, r1c1: false, r2c0: true, r2c1: true, r3c0: true, r3c1: true });
+
+  // Each measuring request holds squares of one kind only. A pixel with
+  // lasting radar change of 4 dB and no fire is heavy damage by the war's
+  // rule only (at peace it needs an unusual fire as well).
+  const idsOf = (request) => request.nodes.filter((n) => n.op === "Feature" && n.args[1]?.id).map((n) => n.args[1].id);
+  const value = pixelEvaluator(ee, { firesOn: [], vv: (w) => (w.start < "2022-01-01" ? -12 : -8), leaves: { [DATASETS.worldCover]: 40 } });
+  const seen = { inside: 0, outside: 0 };
+  for (const request of meanRequests(ee)) {
+    const ids = [...new Set(idsOf(request))];
+    const inside = ids.every((id) => atWar[id]);
+    assert.ok(inside || ids.every((id) => !atWar[id]), `one request mixes the war's squares and the others: ${ids}`);
+    const heavy = value(request.nodes.find((n) => n.op === "rename" && n.args[0] === "heavy"));
+    assert.equal(heavy, inside ? 1 : 0, `heavy damage by ${inside ? "the war's" : "the peace"} rule`);
+    seen[inside ? "inside" : "outside"] += 1;
+  }
+  assert.ok(seen.inside > 0 && seen.outside > 0);
+
+  // The fires that stand in for fighting come from inside the war's boxes.
+  const ring = ([w, s, e, n]) => [[[w, s], [e, s], [e, n], [w, n], [w, s]]];
+  const [sample] = ee.callsNamed("Image.stratifiedSample");
+  assert.deepEqual(ee.nodeOf(sample.args[0].region).args[0], warBoxes(kursk).map(ring));
+  assert.equal(result.accessSource, "fires");
+  assert.ok(result.warnings.some((w) => /estimated from unusual fires of the last 12 months .*inside the war's region/.test(w)));
+
+  // The run counts the war's squares; scoring reads the others at peace.
+  const run = buildRun({ area, month: "2026-08", provider: "gee", readings: result.readings, warnings: result.warnings, cellSizeDeg: 0.1, cells: cells.map((cell) => ({ ...cell, areaHa: 7000 })), conflict: result.conflict, accessSource: result.accessSource });
+  assert.equal(run.conflict.partOfCountry, true);
+  assert.equal(run.warSquares, 4);
+  assert.deepEqual(run.cells.map((cell) => cell.atWar), [false, false, false, false, true, true, true, true]);
+
+  // The same war without partOfCountry (an area inside its boxes): one
+  // rule for every square, nothing marked.
+  const plain = fakeProvider();
+  const whole = await plain.provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.1, conflict: { ...kursk, partOfCountry: false } });
+  assert.ok(whole.readings.every((reading) => !("atWar" in reading)));
+  assert.notDeepEqual(plain.ee.nodeOf(plain.ee.callsNamed("Image.stratifiedSample")[0].args[0].region).args[0], warBoxes(kursk).map(ring));
 });
 
 test("600 small cells are measured in chunks of 250, two at a time", async () => {
@@ -995,6 +1214,26 @@ test("a busy Earth Engine ('capacity exceeded') is tried again after longer paus
   assert.ok(!result.warnings.some((w) => /coarser pixels/.test(w)), "same pixels on the retry");
 });
 
+test("'Too many concurrent aggregations.' for a group of cells: after its retries the month fails as 'busy', not as a quota", async () => {
+  // Real Earth Engine says this when too many requests of the project run
+  // at once (two workloads on one project): a busy answer. A job skips such
+  // a month and goes on (server/jobs.test.js); before, it read as a quota
+  // and stopped the whole job.
+  const isChunk = (request) => request.find("reduceRegions").length > 0 && request.has("Dictionary");
+  let tries = 0;
+  const ee = createFakeEe({ fail: (request) => (isChunk(request) ? (tries++, "Too many concurrent aggregations.") : null) });
+  const provider = createGeeProvider({ ee, getConfig: () => TEST_CFG, now: () => new Date(`${TODAY}T12:00:00Z`), retryDelayMs: 0 });
+  const { area, cells } = gridArea(3, 3, 0.05);
+  await assert.rejects(provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.05 }), (error) => {
+    assert.equal(error.code, "busy");
+    assert.match(error.message, /^Measuring 9 cells \(r0c0 to r2c2\) of 9: Earth Engine was too busy \("Too many concurrent aggregations\."\)/);
+    return true;
+  });
+  // The same request again BUSY_RETRIES times, never lighter: it is not
+  // too much work.
+  assert.equal(tries, BUSY_RETRIES + 1);
+});
+
 test("out of memory or time: servers full -> the same after 5 s, then lighter after 20 s; too big -> lighter at once", async () => {
   assert.deepEqual(MEMORY_RETRY_MS, [5000, 20000]);
   const full = "Earth Engine memory capacity exceeded.";
@@ -1090,6 +1329,89 @@ test("a chunk that times out every time: no second 5-minute try, split at once, 
   assert.equal(sizesSeen.filter((n) => n === 9).length, 1, JSON.stringify(sizesSeen));
   assert.equal(sizesSeen[1], 5);
   assert.ok(sizesSeen.length <= 4, JSON.stringify(sizesSeen));
+});
+
+test("a group of cells that runs past our 5-minute limit is split: the library's own deadline comes a minute later", async (t) => {
+  mockClock(t);
+  const isChunk = (request) => request.find("reduceRegions").length > 0 && request.has("Dictionary");
+  const sizes = [];
+  const { ee, provider } = fakeProvider({
+    delayMs: (request) => {
+      if (!isChunk(request)) return 1;
+      const cellsIn = Math.max(...request.find("toList").map((n) => Number(n.args?.[0]) || 0));
+      sizes.push(cellsIn);
+      // The whole group would take 10 minutes; each half takes 2 s.
+      return cellsIn === 9 ? 10 * 60 * 1000 : 2000;
+    },
+  });
+  const { area, cells } = gridArea(3, 3, 0.05);
+  const result = await settle(t, provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.05 }), { step: 1000 });
+  // The library is given a deadline a minute after our longest limit.
+  assert.deepEqual(ee.callsNamed("data.setDeadline").map((c) => c.args[0]), [EE_DEADLINE_MS]);
+  assert.ok(EE_DEADLINE_MS > CHUNK_TIMEOUT_MS && COUNT_TIMEOUT_MS < EE_DEADLINE_MS);
+  // So at 5 minutes our own limit ends the group (too big): it is split at
+  // once, never sent again whole. (With the deadline at 5 minutes the
+  // library's "HTTP code: -1" came first: the same 9 cells again, then the
+  // month failed.)
+  assert.deepEqual(sizes, [9, 5, 4]);
+  assert.equal(result.readings.length, 9);
+  assert.ok(result.warnings.some((w) => /asked again: Measuring cells \(1 retry\)/.test(w)), JSON.stringify(result.warnings));
+  // A real dropped connection (before our limit) is still sent again as it is.
+  assert.equal(isTransientError(explainGeeError(new Error("Server returned HTTP code: -1 for POST https://earthengine.googleapis.com/v1/projects/test-proj/value:compute"))), true);
+});
+
+test("an image check may take 4 minutes; past that, its counts go one by one at once", async (t) => {
+  mockClock(t);
+  const isWholeCheck = (request) => !request.find("reduceRegions").length && request.has("Dictionary");
+  const singleCounts = (ee) => ee.requests.filter((request) => request.node.op === "size").length;
+  const { area, cells } = gridArea(3, 3, 0.05);
+  // 3 minutes (past the 2 minutes it had before): answered as it is.
+  const slow = fakeProvider({ delayMs: (request) => (isWholeCheck(request) ? 3 * 60 * 1000 : 1) });
+  const ok = await settle(t, slow.provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.05 }), { step: 1000 });
+  assert.equal(ok.readings.length, 9);
+  assert.equal(singleCounts(slow.ee), 0, "no count went on its own");
+  // 5 minutes: at 4 our own limit gives it up (too big), and the counts go
+  // one per request at once; the month still finishes.
+  const slower = fakeProvider({ delayMs: (request) => (isWholeCheck(request) ? 5 * 60 * 1000 : 1) });
+  const light = await settle(t, slower.provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.05 }), { step: 1000 });
+  assert.equal(light.readings.length, 9);
+  assert.ok(singleCounts(slower.ee) > 10, String(singleCounts(slower.ee)));
+  assert.ok(light.warnings.some((w) => /asked again: checking which satellite images exist/.test(w)), JSON.stringify(light.warnings));
+  assert.equal(COUNT_TIMEOUT_MS, 4 * 60 * 1000);
+});
+
+// The season finder's requests: MODIS NDVI of 2019-2021 (ndviClimatology).
+const isSeasonFinder = (request) => request.nodes.some((n) => n.dataset === DATASETS.modisNdvi);
+
+test("a season-finder group that runs past our 5-minute limit is sent once more before the latitude decides", async (t) => {
+  mockClock(t);
+  const { area, cells } = gridArea(3, 3, 0.05);
+  // 5.5 minutes the first time (past our limit, before the library's
+  // deadline), 1 s the second. Before, the month took the latitude's
+  // season at once.
+  let tries = 0;
+  const slowOnce = fakeProvider({ delayMs: (request) => (isSeasonFinder(request) ? (tries++ === 0 ? 5.5 * 60 * 1000 : 1000) : 1) });
+  const once = await settle(t, slowOnce.provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.05 }), { step: 1000 });
+  assert.equal(tries, 2, "sent once more after our time limit");
+  assert.equal(once.readings.length, 9);
+  assert.ok(!once.warnings.some((w) => /taken from the latitude/.test(w)), JSON.stringify(once.warnings));
+  assert.ok(once.warnings.some((w) => /asked again: Finding the growing season \(1 retry\)/.test(w)), JSON.stringify(once.warnings));
+  // Past our limit both times: two tries, then the latitude, and the run
+  // says why.
+  let always = 0;
+  const slow = fakeProvider({ delayMs: (request) => (isSeasonFinder(request) ? (always++, 5.5 * 60 * 1000) : 1) });
+  const fallback = await settle(t, slow.provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.05 }), { step: 1000 });
+  assert.equal(always, 2);
+  assert.equal(fallback.readings.length, 9);
+  assert.ok(fallback.warnings.some((w) => /growing season could not be read from the satellite record \(Finding the growing season took longer than 300 seconds.*it was taken from the latitude/.test(w)), JSON.stringify(fallback.warnings));
+  assert.ok(!fallback.warnings.some((w) => /asked again: Finding the growing season/.test(w)), "no 'the readings are the same' for a retry that failed");
+  // Any other error is not sent again here (a dropped connection has its
+  // own retry: retryTransient).
+  let broken = 0;
+  const other = fakeProvider({ fail: (request) => (isSeasonFinder(request) ? (broken++, "Image.reduceRegions: broken.") : null) });
+  const plain = await settle(t, other.provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.05 }), { step: 1000 });
+  assert.equal(broken, 1);
+  assert.ok(plain.warnings.some((w) => /taken from the latitude/.test(w)));
 });
 
 test("the season's image check that runs out of memory is tried again, then one count per request (real data: Ukraine, May 2026)", async () => {
@@ -1225,6 +1547,25 @@ test("a chunk that fails twice stops the analysis with a clear error", async () 
     assert.equal(error.code, "too_big");
     return true;
   });
+});
+
+test("once a group of cells has failed, the month sends no further group", async () => {
+  // 900 small cells: 4 groups of at most 250, two at a time. The first
+  // fails with an error nothing tries again; the second was out already.
+  const isChunk = (request) => request.find("reduceRegions").length > 0 && request.has("Dictionary");
+  let first = null;
+  const { ee, provider } = fakeProvider({
+    delayMs: (request) => {
+      if (isChunk(request) && !first) first = request;
+      return isChunk(request) ? 20 : 1;
+    },
+    fail: (request) => (request === first ? "Image.reduceRegions: Collection.reduceRegions: Error in map(ID=r0c0): broken." : null),
+  });
+  const { area, cells } = gridArea(20, 45, 0.01);
+  await assert.rejects(provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.01 }), /broken/);
+  // Anything the month still had queued would go out within these 100 ms.
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(meanRequests(ee).length, 2, "the failed group and the one already out, not all 4");
 });
 
 test("an Earth Engine without maxPixelsPerRegion still works", async () => {
@@ -1673,4 +2014,757 @@ test("the stand-in refuses a null inside ee.Dictionary and ee.Algorithms.If", ()
   assert.throws(() => ee.Dictionary({ a: null }), /null/);
   assert.throws(() => ee.Algorithms.If(true, 1, null), /null/);
   assert.doesNotThrow(() => ee.Algorithms.If(true, 1, ee.Number(-1)));
+});
+
+// ---------- The Atlas gives way to the Field ----------
+// (Last in this file: these tests use the shared count of interactive
+// requests on a mocked clock. The count starts from nothing in every test:
+// beforeEach at the top.)
+
+// An Earth Engine object whose answer the test gives by hand.
+function held() {
+  const h = { sent: false, callback: null };
+  h.object = {
+    evaluate: (callback) => {
+      h.sent = true;
+      h.callback = callback;
+    },
+  };
+  h.answer = (value) => h.callback(value);
+  h.fail = (message) => h.callback(undefined, message);
+  return h;
+}
+const background = (extra = {}) => ({ context: { background: true, ...extra } });
+// Starts on a mocked clock with nothing counted (beforeEach), past the
+// settle time of any earlier request.
+async function quietClock(t) {
+  mockClock(t);
+  await advance(t, YIELD.settleMs);
+  assert.deepEqual(yieldStatus(), { interactive: 0, waiting: 0 });
+}
+
+test("an Atlas request waits while a Field request is out and is sent 3 s after it ends; its time limit starts then", async (t) => {
+  await quietClock(t);
+  const field = held();
+  const fieldDone = evaluate(field.object, { what: "Measuring 8 fields" });
+  assert.equal(field.sent, true, "the Field request is sent at once");
+  const waits = [];
+  const atlas = held();
+  const atlasDone = evaluate(atlas.object, { timeoutMs: 60 * 1000, what: "Measuring cells", ...background({ onWait: (on) => waits.push(on) }) });
+  assert.deepEqual(yieldStatus(), { interactive: 1, waiting: 1 });
+  await advance(t, 2 * 60 * 1000, 1000);
+  assert.equal(atlas.sent, false, "nothing new while the Field request is out");
+  assert.deepEqual(waits, [true]);
+  field.answer("field");
+  assert.equal(await fieldDone, "field");
+  await advance(t, YIELD.settleMs - 1);
+  assert.equal(atlas.sent, false, "not before the settle time");
+  await advance(t, 1);
+  assert.equal(atlas.sent, true);
+  assert.deepEqual(waits, [true, false]);
+  assert.deepEqual(yieldStatus(), { interactive: 0, waiting: 0 });
+  // Its 60 s limit counts from when it was sent, not from when it was asked.
+  await advance(t, 59 * 1000, 1000);
+  atlas.answer("atlas");
+  assert.equal(await atlasDone, "atlas");
+  // With nothing interactive out, an Atlas request goes at once.
+  await advance(t, YIELD.settleMs);
+  const next = held();
+  const nextDone = evaluate(next.object, background());
+  assert.equal(next.sent, true);
+  next.answer(1);
+  await nextDone;
+});
+
+test("a Field request never waits behind the Atlas", async (t) => {
+  await quietClock(t);
+  // Atlas requests out: a Field request is still sent at once.
+  const out = [held(), held(), held()];
+  const outDone = out.map((h) => evaluate(h.object, background()));
+  assert.ok(out.every((h) => h.sent));
+  const field = held();
+  const fieldDone = evaluate(field.object);
+  assert.equal(field.sent, true);
+  // An Atlas request now waits; another Field request still goes at once.
+  const waiting = held();
+  const waitingDone = evaluate(waiting.object, background());
+  assert.equal(waiting.sent, false);
+  const second = held();
+  const secondDone = evaluate(second.object);
+  assert.equal(second.sent, true);
+  assert.deepEqual(yieldStatus(), { interactive: 2, waiting: 1 });
+  for (const h of [...out, field, second]) h.answer("ok");
+  await Promise.all([...outDone, fieldDone, secondDone]);
+  await advance(t, YIELD.settleMs);
+  assert.equal(waiting.sent, true);
+  waiting.answer("ok");
+  await waitingDone;
+  assert.deepEqual(yieldStatus(), { interactive: 0, waiting: 0 });
+});
+
+test("a farmer who keeps Earth Engine busy only slows the Atlas: after 10 minutes its request goes", async (t) => {
+  await quietClock(t);
+  // Field requests of 3 minutes, one after another, 1 s apart (less than
+  // the settle time), for 15 minutes.
+  const fieldDone = [];
+  const farm = (i) => {
+    if (i >= 5) return;
+    fieldDone.push(evaluate({ evaluate: (callback) => setTimeout(() => (callback(`field ${i}`), setTimeout(() => farm(i + 1), 1000)), 3 * 60 * 1000) }));
+  };
+  farm(0);
+  const atlas = held();
+  const waits = [];
+  const atlasDone = evaluate(atlas.object, background({ onWait: (on, info) => waits.push([on, info?.capped]) }));
+  await advance(t, YIELD.maxWaitMs - 1000, 1000);
+  assert.equal(atlas.sent, false);
+  assert.equal(yieldStatus().interactive, 1);
+  await advance(t, 1000);
+  assert.equal(atlas.sent, true, "the cap: it goes while the farm still works");
+  assert.equal(yieldStatus().interactive, 1);
+  // It says it went at the limit (the server log says so: analyze).
+  assert.deepEqual(waits, [[true, undefined], [false, true]]);
+  atlas.answer("atlas");
+  assert.equal(await atlasDone, "atlas");
+  await advance(t, 6 * 60 * 1000, 1000);
+  assert.deepEqual(await Promise.all(fieldDone), ["field 0", "field 1", "field 2", "field 3", "field 4"]);
+  assert.deepEqual(yieldStatus(), { interactive: 0, waiting: 0 });
+});
+
+test("nothing is left counted after errors and time limits", async (t) => {
+  await quietClock(t);
+  await assert.rejects(evaluate({ evaluate: (callback) => callback(undefined, "Boom") }), /Boom/);
+  await assert.rejects(
+    evaluate({
+      evaluate: () => {
+        throw new Error("Thrown while sending");
+      },
+    }),
+    /Thrown while sending/,
+  );
+  const hanging = evaluate({ evaluate: () => {} }, { timeoutMs: 1000, what: "Hanging" });
+  hanging.catch(() => {});
+  assert.equal(yieldStatus().interactive, 1);
+  await advance(t, 1000);
+  await assert.rejects(hanging, /Hanging took longer than 1 seconds/);
+  assert.deepEqual(yieldStatus(), { interactive: 0, waiting: 0 });
+  // A waiting Atlas request that fails once sent, and one that runs out of time.
+  await advance(t, YIELD.settleMs);
+  const field = held();
+  const fieldDone = evaluate(field.object);
+  fieldDone.catch(() => {});
+  const failing = evaluate({ evaluate: (callback) => callback(undefined, "Atlas boom") }, background());
+  failing.catch(() => {});
+  const late = evaluate({ evaluate: () => {} }, { timeoutMs: 2000, what: "Atlas hanging", ...background() });
+  late.catch(() => {});
+  assert.deepEqual(yieldStatus(), { interactive: 1, waiting: 2 });
+  field.fail("Field boom");
+  await assert.rejects(fieldDone, /Field boom/);
+  await advance(t, YIELD.settleMs);
+  await assert.rejects(failing, /Atlas boom/);
+  assert.deepEqual(yieldStatus(), { interactive: 0, waiting: 0 });
+  await advance(t, 2000);
+  await assert.rejects(late, /Atlas hanging took longer than 2 seconds/);
+  assert.deepEqual(yieldStatus(), { interactive: 0, waiting: 0 });
+});
+
+test("two loaded copies of gee.js (the dev server reloads it after an edit) count the same requests", async (t) => {
+  const copy = await import(new URL("./gee.js?second-copy", import.meta.url).href);
+  assert.notEqual(copy.evaluate, evaluate, "a second copy of the module");
+  await quietClock(t);
+  // A Field provider made from one copy, the Atlas from the other.
+  const field = held();
+  const fieldDone = copy.evaluate(field.object);
+  const atlas = held();
+  const atlasDone = evaluate(atlas.object, background());
+  assert.deepEqual(copy.yieldStatus(), { interactive: 1, waiting: 1 });
+  await advance(t, 60 * 1000, 1000);
+  assert.equal(atlas.sent, false);
+  field.answer("f");
+  await fieldDone;
+  await advance(t, YIELD.settleMs);
+  assert.equal(atlas.sent, true);
+  atlas.answer("a");
+  assert.equal(await atlasDone, "a");
+  // And the other way round.
+  await advance(t, YIELD.settleMs);
+  const field2 = held();
+  const field2Done = evaluate(field2.object);
+  const atlas2 = held();
+  const atlas2Done = copy.evaluate(atlas2.object, background());
+  assert.equal(atlas2.sent, false);
+  field2.answer("f2");
+  await field2Done;
+  await advance(t, YIELD.settleMs);
+  assert.equal(atlas2.sent, true);
+  atlas2.answer("a2");
+  await atlas2Done;
+  assert.deepEqual(yieldStatus(), { interactive: 0, waiting: 0 });
+});
+
+test("with the fake Earth Engine: an Atlas month sends nothing while a farm is analyzed and says it waits; the farm is not slowed", async (t) => {
+  await quietClock(t);
+  const fieldCfg = { ...TEST_CFG, geeCredentials: { client_email: "field@test-proj.iam.gserviceaccount.com", private_key: "test-key" } };
+  // Each Field request takes 20 s.
+  const farm = createFieldGeeProvider({ ee: createFakeEe({ delayMs: 20 * 1000 }), getConfig: () => fieldCfg, now: () => new Date(`${TODAY}T12:00:00Z`) });
+  const fields = [{ id: "fld-1", name: "Field 1", geometry: { type: "Polygon", coordinates: [[[37.54, 49.72], [37.55, 49.72], [37.55, 49.727], [37.54, 49.727], [37.54, 49.72]]] } }];
+  // Alone first: how long the farm takes.
+  let started = Date.now();
+  await settle(t, farm.analyzeFields({ fields, today: TODAY }), { step: 10 });
+  const alone = Date.now() - started;
+  assert.ok(alone >= 60 * 1000, String(alone));
+  await advance(t, YIELD.settleMs);
+  // Again, with an Atlas month asked for once the farm's first request is out.
+  const { ee, provider } = fakeProvider();
+  const { area, cells } = gridArea(3, 3, 0.05);
+  const progress = [];
+  started = Date.now();
+  const farmDone = farm.analyzeFields({ fields, today: TODAY }).then(() => Date.now() - started);
+  await advance(t, 1000, 10);
+  assert.equal(yieldStatus().interactive, 1);
+  const month = provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.05, onProgress: (share, message, info) => progress.push({ share, message, info, at: Date.now() - started }) });
+  month.catch(() => {});
+  const farmTook = await settle(t, farmDone, { step: 10 });
+  assert.ok(Math.abs(farmTook - alone) <= 10, `the farm took ${farmTook} ms, alone ${alone} ms`);
+  assert.equal(ee.requests.length, 0, "the Atlas sent nothing while the farm was analyzed");
+  assert.ok(progress.some((p) => p.info?.waiting === true && p.message === WAITING_MESSAGE), JSON.stringify(progress));
+  await advance(t, YIELD.settleMs - 500);
+  assert.equal(ee.requests.length, 0);
+  const result = await settle(t, month, { step: 100 });
+  assert.equal(result.readings.length, 9);
+  const resumed = progress.find((p) => p.info?.waiting === false);
+  assert.ok(resumed && resumed.at >= farmTook + YIELD.settleMs - 10, JSON.stringify(progress));
+  assert.equal(resumed.message, "Finding each place's growing season", "back to the step it waited in");
+  assert.ok(progress.every(({ share }, i) => i === 0 || share >= progress[i - 1].share), "progress only goes up");
+  assert.deepEqual(yieldStatus(), { interactive: 0, waiting: 0 });
+});
+
+// A Field request whose tries the test answers by hand, through
+// retryTransient as field-gee.js sends it (with its interactive context).
+function heldWithRetries() {
+  const tries = [];
+  const context = { projectId: "test-proj" };
+  const done = retryTransient(
+    () => {
+      const h = held();
+      tries.push(h);
+      return evaluate(h.object, { what: "Measuring 8 fields", context });
+    },
+    TRANSIENT_RETRY_MS,
+    context,
+  );
+  done.catch(() => {});
+  return { tries, done };
+}
+const DROPPED = "Server returned HTTP code: -1 for POST https://earthengine.googleapis.com/v1/projects/test-proj/value:compute";
+
+test("a Field request that waits to be tried again (8 s after a dropped connection) still holds the Atlas back", async (t) => {
+  await quietClock(t);
+  const field = heldWithRetries();
+  field.tries[0].fail(DROPPED);
+  // 4 s into the 8 s pause, past the settle time: an Atlas request waits.
+  await advance(t, YIELD.settleMs + 1000);
+  assert.equal(field.tries.length, 1);
+  const atlas = held();
+  const atlasDone = evaluate(atlas.object, background());
+  assert.equal(atlas.sent, false, "the Field request is about to be tried again");
+  assert.deepEqual(yieldStatus(), { interactive: 1, waiting: 1 });
+  await advance(t, TRANSIENT_RETRY_MS - YIELD.settleMs - 1000);
+  assert.equal(field.tries.length, 2, "tried again after 8 s");
+  assert.equal(atlas.sent, false);
+  field.tries[1].answer("field");
+  assert.equal(await field.done, "field");
+  await advance(t, YIELD.settleMs - 50);
+  assert.equal(atlas.sent, false, "not before the settle time");
+  await advance(t, 50);
+  assert.equal(atlas.sent, true, "3 s after the retry answered");
+  atlas.answer("atlas");
+  assert.equal(await atlasDone, "atlas");
+  assert.deepEqual(yieldStatus(), { interactive: 0, waiting: 0 });
+  // The Atlas's own retries hold nothing: during its pause a second Atlas
+  // request goes at once.
+  await advance(t, YIELD.settleMs);
+  const own = [];
+  const ownDone = retryTransient(
+    () => {
+      const h = held();
+      own.push(h);
+      return evaluate(h.object, background());
+    },
+    TRANSIENT_RETRY_MS,
+    background().context,
+  );
+  own[0].fail(DROPPED);
+  await advance(t, 1000);
+  assert.equal(yieldStatus().interactive, 0);
+  const other = held();
+  const otherDone = evaluate(other.object, background());
+  assert.equal(other.sent, true);
+  other.answer(1);
+  await otherDone;
+  await advance(t, TRANSIENT_RETRY_MS);
+  own[1].answer("again");
+  assert.equal(await ownDone, "again");
+});
+
+test("a Field request that finds Earth Engine busy holds the Atlas back through its 40 s and 80 s pauses; nothing stays counted when the last try fails too", async (t) => {
+  await quietClock(t);
+  const busy = "Earth Engine capacity exceeded.";
+  const field = heldWithRetries();
+  field.tries[0].fail(busy);
+  await advance(t, 10 * 1000, 1000);
+  const atlas = held();
+  const atlasDone = evaluate(atlas.object, background());
+  // The first pause: 40 s.
+  await advance(t, TRANSIENT_RETRY_MS * BUSY_RETRY_FACTOR - 10 * 1000, 1000);
+  assert.equal(field.tries.length, 2);
+  assert.equal(atlas.sent, false);
+  field.tries[1].fail(busy);
+  // The second: 80 s.
+  await advance(t, TRANSIENT_RETRY_MS * BUSY_RETRY_FACTOR * 2 - 1000, 1000);
+  assert.equal(field.tries.length, 2);
+  assert.equal(atlas.sent, false, "not during the 80 s pause either");
+  await advance(t, 1000);
+  assert.equal(field.tries.length, 3);
+  field.tries[2].fail(busy);
+  await assert.rejects(field.done, /capacity exceeded/);
+  assert.equal(yieldStatus().interactive, 0, "nothing stays counted");
+  assert.equal(atlas.sent, false);
+  await advance(t, YIELD.settleMs);
+  assert.equal(atlas.sent, true, "3 s after the Field gave up");
+  atlas.answer(1);
+  await atlasDone;
+  assert.deepEqual(yieldStatus(), { interactive: 0, waiting: 0 });
+});
+
+test("with the fake Earth Engine: a farm whose image check drops once and whose passes request finds Earth Engine busy once still holds the Atlas back all through", async (t) => {
+  await quietClock(t);
+  const fieldCfg = { ...TEST_CFG, geeCredentials: { client_email: "field@test-proj.iam.gserviceaccount.com", private_key: "test-key" } };
+  const isImageCheck = (r) => r.has("Dictionary") && !r.find("reduceRegions").length && !r.find("reduceToVectors").length;
+  const isPasses = (r) => r.find("select").some((n) => Array.isArray(n.args[0]) && n.args[0].includes("ndyi"));
+  let checks = 0;
+  let passes = 0;
+  // Each Field request takes 20 s; the app's own pauses (8 s after a
+  // dropped connection, 40 s when busy) are not shortened.
+  const farm = createFieldGeeProvider({
+    ee: createFakeEe({
+      delayMs: 20 * 1000,
+      fail: (r) => {
+        if (isImageCheck(r) && checks++ === 0) return DROPPED;
+        if (isPasses(r) && passes++ === 0) return "Earth Engine capacity exceeded.";
+        return null;
+      },
+    }),
+    getConfig: () => fieldCfg,
+    now: () => new Date(`${TODAY}T12:00:00Z`),
+  });
+  const fields = [{ id: "fld-1", name: "Field 1", geometry: { type: "Polygon", coordinates: [[[37.54, 49.72], [37.55, 49.72], [37.55, 49.727], [37.54, 49.727], [37.54, 49.72]]] } }];
+  const { ee, provider } = fakeProvider();
+  const { area, cells } = gridArea(3, 3, 0.05);
+  const farmDone = farm.analyzeFields({ fields, today: TODAY });
+  await advance(t, 1000, 10);
+  const month = provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.05 });
+  month.catch(() => {});
+  await settle(t, farmDone, { step: 100 });
+  assert.equal(checks, 2, "the image check was tried again");
+  assert.equal(passes, 2, "so was the passes request");
+  // Before, the Atlas went 3 s into each pause.
+  assert.equal(ee.requests.length, 0, "the Atlas sent nothing until the farm was done");
+  const result = await settle(t, month, { step: 100 });
+  assert.equal(result.readings.length, 9);
+  assert.deepEqual(yieldStatus(), { interactive: 0, waiting: 0 });
+});
+
+test("an Atlas month's asset reads wait for a Field request too", async (t) => {
+  await quietClock(t);
+  const { ee, provider } = fakeProvider();
+  const { area, cells } = gridArea(3, 3, 0.05);
+  let field = null;
+  const month = provider.analyze({
+    area,
+    cells,
+    month: "2026-08",
+    cellSizeDeg: 0.05,
+    onProgress: (share, message) => {
+      // A farmer's request goes out just as the month checks its images
+      // and its soil maps (checkChernozemAsset).
+      if (message === "Checking satellite images" && !field) {
+        field = held();
+        field.done = evaluate(field.object, { what: "Measuring 8 fields" });
+      }
+    },
+  });
+  month.catch(() => {});
+  await advance(t, 60 * 1000, 1000);
+  assert.equal(field?.sent, true);
+  assert.equal(ee.callsNamed("data.getAsset").length, 0, "no asset read while the Field request is out");
+  field.answer("field");
+  await field.done;
+  await advance(t, YIELD.settleMs + 100);
+  assert.ok(ee.callsNamed("data.getAsset").length >= 1, "read once the Field request had ended");
+  const result = await settle(t, month, { step: 100 });
+  assert.equal(result.readings.length, 9);
+  assert.deepEqual(yieldStatus(), { interactive: 0, waiting: 0 });
+});
+
+test("once a month has failed, its requests not out yet are not sent: a group waiting for a farm, the other half of a split group", async (t) => {
+  await quietClock(t);
+  // 900 small cells: 4 groups of at most 250, two at a time.
+  const { area, cells } = gridArea(20, 45, 0.01);
+  const isGroup = (r) => r.find("reduceRegions").some((n) => n.args[0]?.reducer && n.parent.bands?.some((b) => b.name === "chiDrop"));
+  const sizeOf = (r) => Math.max(...r.find("toList").map((n) => Number(n.args?.[0]) || 0));
+
+  // 1. Group 1 fails at 200 ms with an error nothing tries again. Group 2
+  // answers at 20 ms; just then a farmer's request goes out, so the group
+  // after it waits. When the farmer's request ends, that group is not sent.
+  let first = null;
+  const one = fakeProvider({
+    delayMs: (r) => {
+      if (!isGroup(r)) return 1;
+      if (!first) first = r;
+      return r === first ? 200 : 20;
+    },
+    fail: (r) => (r === first ? "Image.reduceRegions: Collection.reduceRegions: Error in map(ID=r0c0): broken." : null),
+  });
+  let field = null;
+  const month = one.provider.analyze({
+    area,
+    cells,
+    month: "2026-08",
+    cellSizeDeg: 0.01,
+    onProgress: (share, message) => {
+      if (/^Measured/.test(message) && !field) {
+        field = held();
+        field.done = evaluate(field.object, { what: "Measuring 8 fields" });
+      }
+    },
+  });
+  await assert.rejects(settle(t, month, { step: 10 }), /broken/);
+  assert.equal(yieldStatus().waiting, 1, "the next group waits for the farmer");
+  field.answer("field");
+  await field.done;
+  await advance(t, YIELD.settleMs + 1000);
+  assert.equal(yieldStatus().waiting, 0);
+  assert.equal(meanRequests(one.ee).length, 2, "the group that waited was not sent: its month had failed");
+
+  // 2. Group 1 is too big ("User memory limit exceeded"): split at once,
+  // its first half takes 1 s. Group 2 fails at 100 ms. The second half is
+  // not sent.
+  const sizes = [];
+  let big = null;
+  let broken = null;
+  const two = fakeProvider({
+    delayMs: (r) => {
+      if (!isGroup(r)) return 1;
+      sizes.push(sizeOf(r));
+      if (!big) return (big = r), 10;
+      if (!broken) return (broken = r), 100;
+      return 1000;
+    },
+    fail: (r) => (r === big ? "User memory limit exceeded." : r === broken ? "Image.reduceRegions: Collection.reduceRegions: Error in map(ID=r0c0): broken." : null),
+  });
+  await assert.rejects(settle(t, two.provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.01 }), { step: 10 }), /broken/);
+  await advance(t, 5000);
+  assert.deepEqual(sizes, [250, 250, 125], "the first half of the split group only");
+  assert.deepEqual(yieldStatus(), { interactive: 0, waiting: 0 });
+});
+
+test("a request counted before the count is started again (resetYieldState, for tests) ends against its own count", async (t) => {
+  await quietClock(t);
+  const old = held();
+  const oldDone = evaluate(old.object, { what: "Measuring 8 fields" });
+  resetYieldState();
+  const fresh = held();
+  const freshDone = evaluate(fresh.object, { what: "Measuring 8 fields" });
+  assert.equal(yieldStatus().interactive, 1);
+  old.answer("old");
+  await oldDone;
+  assert.equal(yieldStatus().interactive, 1, "the old request does not end the new one");
+  fresh.answer("fresh");
+  await freshDone;
+  assert.deepEqual(yieldStatus(), { interactive: 0, waiting: 0 });
+});
+
+test("a region search and a region outline count as interactive at the provider: the Atlas holds back while they are out", async (t) => {
+  await quietClock(t);
+  // Each region request takes 30 s.
+  const { provider } = fakeProvider({ delayMs: 30 * 1000 });
+  const asks = [
+    ["search", () => provider.searchAdmin1("kharkiv"), (value) => assert.deepEqual(value, [{ id: "gaul1-3180", name: "Kharkivs'ka", country: "Ukraine" }])],
+    ["outline", () => provider.admin1Boundary("gaul1-3180"), (value) => assert.equal(value.name, "Kharkivs'ka")],
+  ];
+  for (const [name, ask, check] of asks) {
+    const asked = ask();
+    asked.catch(() => {});
+    await advance(t, 1000, 10);
+    assert.equal(yieldStatus().interactive, 1, `${name}: counted while it is out`);
+    const atlas = held();
+    const atlasDone = evaluate(atlas.object, background());
+    await advance(t, 20 * 1000, 1000);
+    assert.equal(atlas.sent, false, `${name}: no Atlas request while it is out`);
+    check(await settle(t, asked, { step: 100 }));
+    assert.equal(yieldStatus().interactive, 0);
+    await advance(t, YIELD.settleMs);
+    assert.equal(atlas.sent, true, `${name}: the Atlas goes 3 s after it`);
+    atlas.answer(1);
+    await atlasDone;
+    await advance(t, YIELD.settleMs);
+  }
+  assert.deepEqual(yieldStatus(), { interactive: 0, waiting: 0 });
+});
+
+test("the server log says how long an Atlas month waited, and when a request went ahead at the 10-minute limit while a farm's request was still out", async (t) => {
+  await quietClock(t);
+  const warn = t.mock.method(console, "warn", () => {});
+  const { provider } = fakeProvider();
+  const { area, cells } = gridArea(3, 3, 0.05);
+  // Field work out for 15 minutes, from just before the month: one long
+  // request here, standing for a farm's requests one after another.
+  const field = held();
+  const fieldDone = evaluate(field.object, { what: "Measuring 8 fields", timeoutMs: 20 * 60 * 1000 });
+  const month = provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.05 });
+  month.catch(() => {});
+  await advance(t, 15 * 60 * 1000, 1000);
+  field.answer("field");
+  await fieldDone;
+  const result = await settle(t, month, { step: 100 });
+  assert.equal(result.readings.length, 9);
+  const lines = warn.mock.calls.map((call) => String(call.arguments[0])).filter((line) => / waited /.test(line));
+  assert.equal(lines.length, 2, JSON.stringify(lines));
+  // The season finder's request went at the cap, the farmer's still out...
+  assert.equal(lines[0], "[chernozem] Test 2026-08: waited 600 s for farm analyses and searches with Earth Engine, then went ahead after the 10-minute limit while they were still out");
+  // ...and the image checks then waited for it to end (5 minutes more and
+  // the 3 s settle time).
+  assert.match(lines[1], /^\[chernozem\] Test 2026-08: waited 30\d s for farm analyses and searches with Earth Engine$/);
+});
+
+test("a month that has failed reads no map description, and the black-soil class list is not remembered from such a read", async () => {
+  const classList = { id: DATASETS.blackSoil, properties: { grtgroup_class_values: [290, 291], grtgroup_class_names: ["Hapludolls", "Cryolls"] } };
+  const ee = createFakeEe({ assets: { [DATASETS.blackSoil]: classList } });
+  const remapped = () => ee.callsNamed("Image.remap").at(-1).args[0];
+  const failed = newFailure("the month");
+  markFailed(failed, new Error("Measuring 9 cells: broken."));
+  const refused = await checkChernozemAsset(ee, TEST_CFG.chernozemAsset, { background: true, failed });
+  assert.equal(ee.callsNamed("data.getAsset").length, 0, "nothing was read");
+  assert.equal(refused.assetId, null);
+  assert.match(refused.warning, /^Reading asset projects\/zhaobo\/assets\/chernozem_wrb_ukraine was not sent: the month had already failed\./);
+  // Not remembered: the built-in classes for now, and the next month reads
+  // the map's own list (then remembers it).
+  blackSoilImage(ee);
+  assert.deepEqual(remapped(), BLACK_SOIL.classes);
+  const next = await checkChernozemAsset(ee, TEST_CFG.chernozemAsset, { background: true, failed: newFailure("the month") });
+  assert.equal(next.assetId, TEST_CFG.chernozemAsset);
+  assert.deepEqual(ee.callsNamed("data.getAsset").map((c) => c.args[0]), [DATASETS.blackSoil, TEST_CFG.chernozemAsset]);
+  blackSoilImage(ee);
+  assert.deepEqual(remapped(), [290]);
+  await checkChernozemAsset(ee, TEST_CFG.chernozemAsset, { background: true, failed: newFailure("the month") });
+  assert.equal(ee.callsNamed("data.getAsset").filter((c) => c.args[0] === DATASETS.blackSoil).length, 1, "read once");
+  // A farm's analysis that has failed reads nothing either.
+  const farmEe = createFakeEe();
+  const farmFailed = newFailure("the farm's analysis");
+  markFailed(farmFailed, new Error("Checking satellite images: broken."));
+  const farm = await checkChernozemAsset(farmEe, TEST_CFG.chernozemAsset, { projectId: "test-proj", failed: farmFailed });
+  assert.equal(farmEe.callsNamed("data.getAsset").length, 0);
+  assert.match(farm.warning, /was not sent: the farm's analysis had already failed\./);
+  assert.deepEqual(yieldStatus(), { interactive: 0, waiting: 0 });
+});
+
+test("once an analysis has failed, its interactive requests and waits stop counting at once (and never twice), and nothing more of it is sent", async (t) => {
+  await quietClock(t);
+  const failed = newFailure("the farm's analysis");
+  const context = { projectId: "test-proj", failed };
+  const out = held();
+  const outDone = evaluate(out.object, { what: "Measuring 8 fields", context });
+  let release;
+  const hold = holdInteractive(() => new Promise((resolve) => (release = resolve)), context);
+  // A request that is not part of it (another farmer's search).
+  const other = held();
+  const otherDone = evaluate(other.object, { what: "Searching regions" });
+  assert.equal(yieldStatus().interactive, 3);
+  markFailed(failed, new Error("Reading satellite passes for 1 field: broken."));
+  assert.equal(yieldStatus().interactive, 1, "only the request of no failed analysis");
+  out.answer("late");
+  release("late");
+  await outDone;
+  await hold;
+  assert.equal(yieldStatus().interactive, 1, "ending them later changes nothing");
+  other.answer("ok");
+  await otherDone;
+  assert.equal(yieldStatus().interactive, 0);
+  const after = held();
+  const refused = evaluate(after.object, { what: "Measuring 8 fields", context });
+  refused.catch(() => {});
+  assert.equal(after.sent, false, "not sent");
+  await assert.rejects(refused, (error) => error.code === "stopped" && /^Measuring 8 fields was not sent: the farm's analysis had already failed\.$/.test(error.message));
+  // A retry of it is not waited for either: no 8 s pause (the mocked clock
+  // does not move here).
+  let tries = 0;
+  let settled = false;
+  const retry = retryTransient(
+    async () => {
+      tries += 1;
+      throw new Error(DROPPED);
+    },
+    TRANSIENT_RETRY_MS,
+    context,
+  ).finally(() => (settled = true));
+  retry.catch(() => {});
+  for (let i = 0; i < 5; i += 1) await flush();
+  assert.equal(settled, true, "no pause before giving up");
+  await assert.rejects(retry, /HTTP code: -1/);
+  assert.equal(tries, 1);
+  assert.deepEqual(yieldStatus(), { interactive: 0, waiting: 0 });
+});
+
+// One small field for the farm tests below.
+const ONE_FIELD = [{ id: "fld-1", name: "Field 1", geometry: { type: "Polygon", coordinates: [[[37.54, 49.72], [37.55, 49.72], [37.55, 49.727], [37.54, 49.727], [37.54, 49.72]]] } }];
+const FIELD_CFG = { ...TEST_CFG, geeCredentials: { client_email: "field@test-proj.iam.gserviceaccount.com", private_key: "test-key" } };
+const isPassesRequest = (r) => r.find("select").some((n) => Array.isArray(n.args[0]) && n.args[0].includes("ndyi"));
+const isMonthlyRequest = (r) => r.find("rename").some((n) => Array.isArray(n.args[0]) && n.args[0][0] === "m0_ndvi");
+const isRadarRequest = (r) => r.has("exp");
+
+test("with the fake Earth Engine: a farm's analysis that has failed sends no retry, and its leftover work does not hold the Atlas back", async (t) => {
+  await quietClock(t);
+  // The monthly values drop at 20 ms (to be tried again 8 s later), the
+  // passes request fails for good at 50 ms (so does the farm's analysis),
+  // the radar passes drop at 1 s. Before, both dropped requests were sent
+  // again after 8 s, and the Atlas waited for them.
+  const sent = { passes: 0, monthly: 0, radar: 0 };
+  const farm = createFieldGeeProvider({
+    ee: createFakeEe({
+      delayMs: (r) => {
+        if (isPassesRequest(r)) return (sent.passes += 1), 50;
+        if (isMonthlyRequest(r)) return (sent.monthly += 1), 20;
+        if (isRadarRequest(r)) return (sent.radar += 1), 1000;
+        return 1;
+      },
+      fail: (r) => (isPassesRequest(r) ? "Image.select: Pattern 'B8A' did not match any bands." : isMonthlyRequest(r) || isRadarRequest(r) ? DROPPED : null),
+    }),
+    getConfig: () => FIELD_CFG,
+    now: () => new Date(`${TODAY}T12:00:00Z`),
+  });
+  const farmDone = farm.analyzeFields({ fields: ONE_FIELD, today: TODAY });
+  farmDone.catch(() => {});
+  await assert.rejects(settle(t, farmDone, { step: 10 }), /did not match any bands/);
+  assert.deepEqual(sent, { passes: 1, monthly: 1, radar: 1 }, "all three were out");
+  // The radar request is still out and the monthly values wait to be tried
+  // again, but nobody waits for their answers.
+  assert.equal(yieldStatus().interactive, 0);
+  // An Atlas request asked for 1.9 s later goes 3 s after the failure.
+  await advance(t, 1900, 10);
+  const atlas = held();
+  const atlasDone = evaluate(atlas.object, background());
+  await advance(t, 1000, 10);
+  assert.equal(atlas.sent, false, "not before the settle time");
+  await advance(t, 200, 10);
+  assert.equal(atlas.sent, true, "3 s after the farm failed");
+  atlas.answer(1);
+  await atlasDone;
+  // Nothing of the failed farm was sent again: not the radar passes that
+  // dropped at 1 s, not the monthly values after their 8 s pause.
+  await advance(t, 20 * 1000, 100);
+  assert.deepEqual(sent, { passes: 1, monthly: 1, radar: 1 });
+  assert.deepEqual(yieldStatus(), { interactive: 0, waiting: 0 });
+});
+
+// A field's history is read in parts, four at once (field-gee.js
+// mapLimit); like a farm's analysis, one that has failed sends nothing more
+// (stopWhenFailed): the part that dropped is not sent again 8 s later, and
+// the parts still out stop holding the Atlas back.
+for (const [which, isPart, read] of [
+  ["fieldHistory", (r) => r.find("set").some((n) => n.args[0] === "month"), (provider) => provider.fieldHistory({ field: ONE_FIELD[0], from: "2019-01" })],
+  ["fieldHistories", isMonthlyRequest, (provider) => provider.fieldHistories({ fields: ONE_FIELD, from: "2019-01" })],
+]) {
+  test(`with the fake Earth Engine: a field's history (${which}) that has failed sends no retry, and its parts still out do not hold the Atlas back`, async (t) => {
+    await quietClock(t);
+    // The first part fails for good at 50 ms, the second drops at 20 ms (to
+    // be sent again 8 s later), the others answer after 1 s.
+    let parts = 0;
+    const role = new Map();
+    const roleOf = (r) => {
+      if (!isPart(r)) return null;
+      if (!role.has(r)) role.set(r, ++parts === 1 ? "fails" : parts === 2 ? "drops" : "slow");
+      return role.get(r);
+    };
+    const farm = createFieldGeeProvider({
+      ee: createFakeEe({
+        delayMs: (r) => ({ fails: 50, drops: 20, slow: 1000 })[roleOf(r)] ?? 1,
+        fail: (r) => (roleOf(r) === "fails" ? "Image.select: Pattern 'B8' did not match any bands." : roleOf(r) === "drops" ? DROPPED : null),
+      }),
+      getConfig: () => FIELD_CFG,
+      now: () => new Date(`${TODAY}T12:00:00Z`),
+    });
+    const done = read(farm);
+    done.catch(() => {});
+    await assert.rejects(settle(t, done, { step: 10 }), /did not match any bands/);
+    const sent = parts;
+    assert.ok(sent >= 3, `parts out at once: ${sent}`);
+    // The slow parts are still out, but nobody waits for their answers.
+    assert.equal(yieldStatus().interactive, 0);
+    await advance(t, 20 * 1000, 100);
+    assert.equal(parts, sent, "the part that dropped was not sent again, and no new part was started");
+    assert.deepEqual(yieldStatus(), { interactive: 0, waiting: 0 });
+  });
+}
+
+test("a farm's map description read that is still out when the analysis fails stops holding the Atlas back too", async (t) => {
+  await quietClock(t);
+  // The image check fails for good at 10 ms; the soil map reads take 30 s.
+  const isImageCheck = (r) => r.has("Dictionary") && !r.find("reduceRegions").length;
+  const farm = createFieldGeeProvider({
+    ee: createFakeEe({ assetDelayMs: 30 * 1000, delayMs: (r) => (isImageCheck(r) ? 10 : 1), fail: (r) => (isImageCheck(r) ? "Image.select: Pattern 'B8A' did not match any bands." : null) }),
+    getConfig: () => FIELD_CFG,
+    now: () => new Date(`${TODAY}T12:00:00Z`),
+  });
+  const farmDone = farm.analyzeFields({ fields: ONE_FIELD, today: TODAY });
+  farmDone.catch(() => {});
+  await advance(t, 5, 1);
+  // The image check (its request, and its hold for a retry: retryTransient)
+  // and a map read.
+  assert.equal(yieldStatus().interactive, 3);
+  await assert.rejects(settle(t, farmDone, { step: 1 }), /did not match any bands/);
+  assert.equal(yieldStatus().interactive, 0, "the map read still out holds nothing back");
+  await advance(t, 31 * 1000, 1000);
+  assert.deepEqual(yieldStatus(), { interactive: 0, waiting: 0 });
+});
+
+test("a farm's map description reads and a field's GeoTIFF link count as interactive: the Atlas holds back while they are out", async (t) => {
+  await quietClock(t);
+  // Each map description read takes 30 s (the black-soil class list, then
+  // the chernozem map); every other request 1 ms.
+  const farm = createFieldGeeProvider({ ee: createFakeEe({ assetDelayMs: 30 * 1000 }), getConfig: () => FIELD_CFG, now: () => new Date(`${TODAY}T12:00:00Z`) });
+  const farmDone = farm.analyzeFields({ fields: ONE_FIELD, today: TODAY });
+  farmDone.catch(() => {});
+  await advance(t, 1000, 10);
+  assert.equal(yieldStatus().interactive, 1, "the image check has answered; a map read is out");
+  const atlas = held();
+  const atlasDone = evaluate(atlas.object, background());
+  await advance(t, 50 * 1000, 1000);
+  assert.equal(atlas.sent, false, "no Atlas request while the farm's map reads are out");
+  const { analyses } = await settle(t, farmDone, { step: 100 });
+  assert.ok(analyses[ONE_FIELD[0].id]);
+  await advance(t, YIELD.settleMs);
+  assert.equal(atlas.sent, true);
+  atlas.answer(1);
+  await atlasDone;
+  await advance(t, YIELD.settleMs);
+
+  // The GeoTIFF link: 60 s to make. (The download itself, when the
+  // browser fetches the link, is made by Earth Engine and not seen here.)
+  const linker = createFieldGeeProvider({ ee: createFakeEe({ delayMs: (r) => (r.download ? 60 * 1000 : 1) }), getConfig: () => FIELD_CFG, now: () => new Date(`${TODAY}T12:00:00Z`) });
+  const link = linker.geotiffUrl({ field: ONE_FIELD[0], latestPassDate: "2026-10-10" });
+  link.catch(() => {});
+  await advance(t, 1000, 10);
+  assert.equal(yieldStatus().interactive, 1, "the link is being made");
+  const atlas2 = held();
+  const atlas2Done = evaluate(atlas2.object, background());
+  await advance(t, 30 * 1000, 1000);
+  assert.equal(atlas2.sent, false);
+  const { url } = await settle(t, link, { step: 100 });
+  assert.match(url, /^https:\/\/earthengine\.googleapis\.com\//);
+  assert.equal(yieldStatus().interactive, 0);
+  await advance(t, YIELD.settleMs);
+  assert.equal(atlas2.sent, true);
+  atlas2.answer(1);
+  await atlas2Done;
+  assert.deepEqual(yieldStatus(), { interactive: 0, waiting: 0 });
 });

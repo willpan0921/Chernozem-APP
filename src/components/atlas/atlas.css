@@ -695,6 +695,61 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Why the bar stands still: the month waits for a farm's analysis or a search. */
+.atlas-progress-wait {
+  margin: 0;
+  font-size: 12px;
+  color: var(--c-muted);
+}
+
+/* An analysis waiting for its turn (one area at a time): no bar yet, the
+   clock in the muted colour, and a Cancel link. One that runs has Stop
+   under its bar, in the same style. */
+.atlas-progress.is-waiting .atlas-progress-head {
+  color: var(--c-muted);
+}
+
+.atlas-progress.is-waiting .atlas-progress-wait {
+  font-size: 13px;
+  color: var(--c-text-2);
+}
+
+.atlas-progress.is-compact.is-waiting .atlas-progress-wait {
+  font-size: 12px;
+}
+
+.atlas-progress.is-waiting .atlas-progress-meta,
+.atlas-progress-stop {
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.atlas-progress-cancel {
+  min-height: 28px;
+  margin: -6px -8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c-green);
+}
+
+.atlas-progress-cancel:hover {
+  background: var(--c-green-soft);
+}
+
+.atlas-progress-cancel:disabled {
+  color: var(--c-muted);
+  background: none;
+}
+
+@media (max-width: 640px) {
+  .atlas-progress-cancel {
+    min-height: 40px;
+    margin: -10px -8px;
+  }
+}
+
 .atlas-spin {
   animation: atlas-spin 1s linear infinite;
 }

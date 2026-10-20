@@ -1,7 +1,7 @@
 /*
   WHAT THIS FILE DOES
   The styling for the Atlas Settings page (src/pages/atlas/SettingsPage.jsx):
-  the Area, Data, AI and Team cards. Every class starts with "aset-"
+  the Area, War, Data, AI and Team cards. Every class starts with "aset-"
   (Atlas settings) so nothing here changes another page.
   On phones (under 640 px wide) every button is at least 40 px tall so it
   is easy to tap.
@@ -257,6 +257,57 @@
   white-space: nowrap;
 }
 
+/* ---------- War ---------- */
+
+/* The three choices and the "At war" day and name, under the row's text. */
+.aset-war-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-3);
+  margin-left: 46px;
+}
+
+.aset-war-form {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr) auto;
+  gap: var(--s-2) var(--s-3);
+  align-items: end;
+  width: 100%;
+}
+
+.aset-war-field {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.aset-war-field .field-label {
+  margin-bottom: 4px;
+}
+
+.aset-war-hint {
+  grid-column: 1 / -1;
+}
+
+/* Saved months made with another setting: the re-run that applies it. */
+.aset-war-rerun {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--r-sm);
+  background: var(--c-amber-soft);
+}
+
+.aset-war-rerun p {
+  flex: 1;
+  margin: 0;
+  font-size: 13px;
+  color: var(--c-amber-text);
+}
+
 /* ---------- Data and AI: the .env lines ---------- */
 
 .aset-setup {
@@ -453,8 +504,27 @@
   }
 
   .aset-setup,
+  .aset-war-controls,
   .aset-card .atlas-progress.is-compact {
     margin-left: 0;
+  }
+
+  .aset-war-controls .segmented {
+    width: 100%;
+  }
+
+  .aset-war-controls .segmented-option {
+    flex: 1;
+    min-height: 40px;
+    padding: 6px 8px;
+  }
+
+  .aset-war-form {
+    grid-template-columns: 1fr;
+  }
+
+  .aset-war-rerun {
+    flex-wrap: wrap;
   }
 
   .aset-saved-meta {

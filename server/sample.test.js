@@ -3,8 +3,11 @@
 // area and month always give the same numbers, values stay in range, a
 // place at peace (Kenya, Moldova) has no front and no war damage, inside a
 // known war (Sudan, Ukraine) damage builds up near the front (and "new
-// damage" is exactly how much it grew), and a small farm near the real
-// front in Ukraine shows damage and people. Run with "npm test".
+// damage" is exactly how much it grew), a month before its war began has
+// no war damage and no front, a war that covers a whole country only in
+// part (Thailand) has its readings in its squares only, and a small farm
+// near the real front in Ukraine shows damage and people. Run with "npm
+// test".
 //
 // WHO EDITS IT
 // Whoever changes sample.js.
@@ -14,7 +17,8 @@ import assert from "node:assert/strict";
 import { sampleProvider, sampleReadings } from "./providers/sample.js";
 import { planGrid } from "./geo.js";
 import { getCountry } from "./countries.js";
-import { NO_WAR_WARNING, buildRun, linkNewDamage, monthsBack } from "./runs.js";
+import { NO_WAR_WARNING, beforeWarWarning, buildRun, linkNewDamage, monthsBack } from "./runs.js";
+import { warSquares } from "../src/config/conflicts.js";
 import { scorePlaces } from "../src/lib/atlas/scoring.js";
 
 // Kenya: at peace.
@@ -105,6 +109,52 @@ test("inside a known war: damage grows over a year and sits near the front", () 
   const mean = (list) => list.reduce((s, r) => s + r.chiDrop, 0) / list.length;
   assert.ok(near.length && far.length);
   assert.ok(mean(near) > mean(far) * 3);
+});
+
+test("a month that ends before its war began: no front, no war damage, distance to fighting not measured (as on Earth Engine)", () => {
+  // Sudan's grid with a war its team set from 2026-06-01.
+  const war = { id: "area-country-729", name: "Test war", since: "2026-06-01", source: "area" };
+  const at = (month) => sampleReadings({ area: sudanArea, cells: sudanGrid.cells, month, cellSizeDeg: sudanGrid.cellSizeDeg, conflict: war });
+  const before = at("2025-12");
+  assert.deepEqual(before.conflict, war, "the run keeps its war");
+  assert.equal(before.accessSource, "none");
+  assert.deepEqual(before.warnings.slice(1), [beforeWarWarning("2026-06-01")]);
+  assert.ok(before.readings.every((r) => r.conflictKm === 300 && r.heavyShare === 0 && r.firesPer100Km2 === 0 && r.radarDb === null));
+  const run = buildRun({ area: sudanArea, month: "2025-12", provider: "sample", ...before, cellSizeDeg: sudanGrid.cellSizeDeg, cells: sudanGrid.cells });
+  assert.equal(run.totals.heavyDamageHa, 0);
+  // The war scores no damage then, and sets nothing aside.
+  const scored = scorePlaces(run.cells, { conflict: run.conflict, cellSizeDeg: sudanGrid.cellSizeDeg }).places;
+  assert.ok(scored.every((p) => p.damage === 0 || p.damage === null));
+  assert.equal(scored.filter((p) => p.nearTerm.tier === "setAside").length, 0);
+  // From its first month on, the front and its damage.
+  const during = at("2026-08");
+  assert.equal(during.accessSource, "fires");
+  assert.ok(during.readings.some((r) => r.conflictKm < 30));
+  assert.ok(during.readings.some((r) => r.heavyShare > 0));
+});
+
+test("a war that covers a whole country only in part (Thailand): the front and the war's readings in the squares that touch its boxes, peace readings elsewhere", () => {
+  const thailand = getCountry("764");
+  const thaiGrid = planGrid(thailand.geometry);
+  const thaiArea = { id: "country-764", name: "Thailand", countryId: "764", bbox: thaiGrid.bbox };
+  const border = { id: "thailand-cambodia", name: "Cambodia–Thailand border conflict", since: "2025-07-24", partOfCountry: true };
+  const result = sampleReadings({ area: thaiArea, cells: thaiGrid.cells, month: "2026-09", cellSizeDeg: thaiGrid.cellSizeDeg, conflict: border });
+  const squares = warSquares(border, thaiGrid.cells, thaiGrid.cellSizeDeg);
+  assert.ok(squares.size > 0 && squares.size < thaiGrid.cells.length);
+  assert.ok(result.readings.every((r) => r.atWar === squares.has(r.id)));
+  const inside = result.readings.filter((r) => r.atWar);
+  const outside = result.readings.filter((r) => !r.atWar);
+  // Outside: the readings of peace (no heavy damage, ordinary radar change).
+  assert.ok(outside.every((r) => r.heavyShare === 0 && r.radarDb <= 0.6 && r.chiDrop < 0.05));
+  // The made-up front runs through the war's squares.
+  assert.ok(inside.some((r) => r.heavyShare > 0));
+  assert.ok(Math.min(...inside.map((r) => r.conflictKm)) < 30);
+  // Far from the border (Chiang Mai, in the north) the front is far away.
+  const north = outside.filter((r) => thaiGrid.cells.find((cell) => cell.id === r.id).lat > 18);
+  assert.ok(north.length && north.every((r) => r.conflictKm > 200));
+  const run = buildRun({ area: thaiArea, month: "2026-09", provider: "sample", ...result, cellSizeDeg: thaiGrid.cellSizeDeg, cells: thaiGrid.cells });
+  assert.equal(run.warSquares, squares.size);
+  assert.equal(run.cells.filter((cell) => cell.atWar === false).length, thaiGrid.cells.length - squares.size);
 });
 
 // A 50 ha farm near Kupiansk, in eastern Ukraine (like the demo farm).

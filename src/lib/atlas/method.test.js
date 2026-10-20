@@ -5,8 +5,10 @@
 // damageSeasons, areaDamageSeasons) and the method version that keeps old
 // runs from being compared with new ones.
 // The guarantees: at war the evidence never falls from one month to the
-// next, and two months of the same season differ only when a new war year
-// adds fire evidence.
+// next (for the same radar change per season: gee.js can measure every
+// season again from the other orbit direction when a new one joins), and
+// two months of the same season differ only when a new war year adds fire
+// evidence.
 //
 // WHO EDITS IT
 // Whoever changes the damage rules. Run with `npm test`.
@@ -185,7 +187,15 @@ test("heavy damage per pixel on the lasting change (two war seasons): 3 dB, or 2
   assert.deepEqual(radarPersistence([null]), { persistent: null, peak: null, level: null });
 });
 
-test("a pixel damaged in 2022 and ordinary in 2023-2026 stays heavy; a median of the seasons would heal it", () => {
+test("a pixel cratered in 2022 and 2023 and ordinary in 2024-2026 stays heavy (a median of the seasons would heal it); one damaged in 2022 alone stops counting when 2023 joins", () => {
+  // Damaged in 2022 only: heavy while 2022 is the only war season, not once
+  // 2023 joins (the one-to-two step), and not after.
+  const once = { 2022: 4.5, 2023: 0.3, 2024: 0.3, 2025: 0.2, 2026: 0.4 };
+  for (const month of months("2022-10", "2026-09")) {
+    const seasons = damageSeasons(49.5, lastDayOf(month), UKRAINE.since, 7);
+    const heavy = heavyDamagePixel({ radarDb: seasons.map((s) => once[Number(s.end.slice(0, 4))]), fireNear: false, atWar: true });
+    assert.equal(heavy, seasons.length === 1, `${month}: ${seasons.length} season(s)`);
+  }
   const change = { 2022: 4.5, 2023: 3.2, 2024: 0.3, 2025: 0.2, 2026: 0.4 };
   const median = (list) => {
     const sorted = [...list].sort((a, b) => a - b);
@@ -269,4 +279,19 @@ test("runs made with another method version are not comparable", () => {
   assert.equal(runsComparable(before, now).reason, "method");
   assert.equal(runsComparable(before, now).text, "Not comparable: different method version");
   assert.equal(runsComparable(now, { ...now }).comparable, true);
+});
+
+test("runs made with another war setting are not comparable: at war against at peace, or another start day", () => {
+  const base = { provider: "gee", cellSizeKm: 18, method: { version: METHOD_VERSION, components: {}, scales: {} } };
+  const listed = { ...base, conflict: { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" } };
+  const peace = { ...base, conflict: null };
+  const team = { ...base, conflict: { id: "area-x", name: "Fighting", since: "2023-08-01", source: "area" } };
+  assert.equal(runsComparable(listed, peace).reason, "war");
+  assert.equal(runsComparable(peace, team).text, "Not comparable: different war setting");
+  assert.equal(runsComparable(listed, team).why, "different war setting");
+  // The name does not change a number: the same day compares.
+  assert.equal(runsComparable(team, { ...team, conflict: { ...team.conflict, name: "Another name" } }).comparable, true);
+  assert.equal(runsComparable(listed, { ...base, conflict: { id: "area-y", name: "Set by the team", since: "2022-02-24", source: "area" } }).comparable, true);
+  // Runs saved before the war was stored count as matching.
+  assert.equal(runsComparable(base, team).comparable, true);
 });

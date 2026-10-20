@@ -131,7 +131,18 @@
 // padding merges); a FeatureCollection is never sent inside an ee.Dictionary
 // (it would come back without its features) but as .toList(n); every request
 // has a time limit, and one that runs out of memory or time is tried once
-// more with coarser pixels.
+// more with coarser pixels, and then the field's analysis (or the search)
+// says so (COARSER_NOTE). Field requests never wait for the Atlas: while
+// they are out, or wait to be tried again after a dropped connection or a
+// busy Earth Engine, the Atlas's background analysis holds back its new
+// requests (gee.js evaluate, retryTransient). That covers every request of
+// this file: the computations, the soil map's description read for a farm
+// (gee.js getAsset) and the GeoTIFF link (holdInteractive). Not covered:
+// the GeoTIFF download itself (Earth Engine makes the file when the browser
+// fetches the link, and the server never sees it), and what the Earth
+// Engine library does by itself (gee.js YIELD). Once a farm's analysis or
+// a field's history has failed, its leftover work stops: nothing more of it
+// is sent, and it no longer holds the Atlas back (gee.js stopWhenFailed).
 //
 // Tests: field-gee.test.js (against the stand-in fake-ee.js). Real Earth
 // Engine needs the key in .env; see docs/CONNECT-DATA.md. First real run
@@ -186,9 +197,12 @@ import {
   CROPLAND_CLASS,
   NONE,
   CHUNK_TIMEOUT_MS,
+  COUNT_TIMEOUT_MS,
   GeeError,
   createGeeProvider,
   evaluate,
+  holdInteractive,
+  stopWhenFailed,
   peakMonthAt,
   contextOf,
   chiHealthImage,
@@ -383,6 +397,19 @@ const PLANS = [
   { scale: 10, tileScale: 4 },
   { scale: 20, tileScale: 16 },
 ];
+// What a farm's analysis says (per field, and for the farm) when a request
+// whose pixels follow the plan had to use a coarser one (runWithRetry
+// onCoarser), like the Atlas's "N of M cells were measured with coarser
+// pixels". The fields' readings (plant health, water, stress, damage) or
+// this season's passes are then from 20 m pixels, not 10 m. With our own
+// time limit first (gee.js EE_DEADLINE_MS) this comes more often under load
+// than before, when the library's deadline sent the same request again.
+export const COARSER_NOTE = {
+  readings: (scale) => `Measured with ${scale} m pixels: Earth Engine ran short of memory or time.`,
+  passes: (scale) => `This season's passes were measured with ${scale} m pixels: Earth Engine ran short of memory or time.`,
+  farm: (count, total, scale) => `${count === total ? "Measured" : `${count} of ${total} fields measured`} with ${scale} m pixels: Earth Engine ran short of memory or time.`,
+  traced: (scale) => `Traced with ${scale} m pixels: Earth Engine ran short of memory or time, so the outlines are rougher. Search again later for sharper ones.`,
+};
 
 // ---------- The provider ----------
 
@@ -529,16 +556,25 @@ function conditionImages(ee, { latest, normal, fc, crs, plan }) {
 }
 
 // Runs one request, once more with coarser pixels if Earth Engine runs out
-// of memory or time, and once more as it is after a pause if the connection
-// dropped (retryTransient; the pause is context.retryDelayMs) or Earth
-// Engine had an internal error (real data, Iowa, 2026-10-19: "An internal
-// error has occurred" once, the same request passed again).
-// `build(plan)` makes the Earth Engine object.
-async function runWithRetry(build, { what, context, timeoutMs = CHUNK_TIMEOUT_MS }) {
+// of memory or time (also our own time limit, `timeoutMs`, which comes
+// before the library's deadline: gee.js EE_DEADLINE_MS), and once more as
+// it is after a pause if the connection dropped (retryTransient; the pause
+// is context.retryDelayMs; a busy Earth Engine gets up to two more tries)
+// or Earth Engine had an internal error (real data, Iowa, 2026-10-19: "An
+// internal error has occurred" once, the same request passed again).
+// While it waits to be tried again it still counts as out, so the Atlas
+// holds back meanwhile (retryTransient's context). Once its analysis has
+// failed (context.failed), nothing more is sent: no retry, no coarser plan.
+// `build(plan)` makes the Earth Engine object. `onCoarser(plan)` hears
+// when the answer came with a coarser plan than the first (PLANS[1]); only
+// requests whose pixel size is plan.scale pass it (COARSER_NOTE).
+async function runWithRetry(build, { what, context, timeoutMs = CHUNK_TIMEOUT_MS, onCoarser = null }) {
   let internalRetried = false;
   for (let i = 0; ; i += 1) {
     try {
-      return await retryTransient(() => evaluate(build(PLANS[i]), { what, context, timeoutMs }), context?.retryDelayMs);
+      const value = await retryTransient(() => evaluate(build(PLANS[i]), { what, context, timeoutMs }), context?.retryDelayMs, context || {});
+      if (i > 0) onCoarser?.(PLANS[i]);
+      return value;
     } catch (error) {
       if (i + 1 < PLANS.length && isTooMuchWorkError(error)) continue;
       if (!internalRetried && isInternalError(error)) {
@@ -570,9 +606,14 @@ async function detectFields(deps, input = {}) {
 
   const anchor = boundary ? bboxCenter(bboxOf(boundary)) : center;
   const crs = utmCrs(anchor.lon, anchor.lat);
+  // The outlines offered say when they were traced with coarser pixels
+  // (COARSER_NOTE.traced): the farmer sees it with the fields found.
+  const tracedNote = (trace) => (trace.coarser ? [COARSER_NOTE.traced(trace.coarser)] : []);
   if (boundary) {
     onProgress?.(0.2, "Tracing field edges");
-    const candidates = await traceFields(ee, { region: ee.Geometry(boundary), keepWithin: null, boundary, crs, anchor, today, context });
+    const trace = await traceFields(ee, { region: ee.Geometry(boundary), keepWithin: null, boundary, crs, anchor, today, context });
+    const candidates = trace.candidates;
+    warnings.push(...tracedNote(trace));
     if (!candidates.length) warnings.push("No fields found here — try a larger area or draw your fields");
     onProgress?.(1, `Found ${candidates.length} field${candidates.length === 1 ? "" : "s"}`);
     return { candidates, warnings };
@@ -587,15 +628,15 @@ async function detectFields(deps, input = {}) {
     return traceFields(ee, { region: point.buffer(radiusM * DETECT.pointPad), keepWithin, boundary: null, crs, anchor, today, context });
   };
   onProgress?.(0.2, "Tracing field edges");
-  let candidates = await traceAround(center);
+  let trace = await traceAround(center);
   let searched = center;
-  if (coverWithin(candidates, center, radiusM) < DETECT.widenBelowCover) {
+  if (coverWithin(trace.candidates, center, radiusM) < DETECT.widenBelowCover) {
     onProgress?.(0.55, "Few fields here, looking for the nearest farmland");
     const farmland = await nearestFarmland(ee, center, radiusM, { context });
     if (farmland) {
       const found = await traceAround(farmland);
-      if (found.length > candidates.length) {
-        candidates = found;
+      if (found.candidates.length > trace.candidates.length) {
+        trace = found;
         searched = farmland;
         const away = distanceKm(center, farmland);
         warnings.push(
@@ -604,6 +645,8 @@ async function detectFields(deps, input = {}) {
       }
     }
   }
+  const candidates = trace.candidates;
+  warnings.push(...tracedNote(trace));
   if (!candidates.length) warnings.push("No fields found here — try a larger area or draw your fields");
   onProgress?.(1, `Found ${candidates.length} field${candidates.length === 1 ? "" : "s"}`);
   return { candidates, warnings, center: { lat: round(searched.lat, 6), lon: round(searched.lon, 6) }, radiusM };
@@ -692,7 +735,10 @@ export function coverWithin(candidates, center, radiusM) {
 }
 
 // One trace of the fields in `region` (a boundary, or a circle around a
-// point; then only the fields touching `keepWithin` are kept) -> candidates.
+// point; then only the fields touching `keepWithin` are kept) ->
+// { candidates, coarser } (coarser: the pixel size, m, the parcels were
+// traced with when Earth Engine ran short and the coarser plan was used,
+// else null).
 async function traceFields(ee, { region, keepWithin, boundary, crs, anchor, today, context }) {
   // The place's own growing season (its greenest month in 2019-2021), else
   // its latitude's (src/lib/season.js).
@@ -772,7 +818,10 @@ async function traceFields(ee, { region, keepWithin, boundary, crs, anchor, toda
     });
   };
 
-  const result = await runWithRetry(build, { what: "Finding fields", context });
+  // The parcels are traced at plan.scale (reduceToVectors), so a coarser
+  // plan means rougher outlines: the search says so (COARSER_NOTE.traced).
+  let coarser = null;
+  const result = await runWithRetry(build, { what: "Finding fields", context, onCoarser: (plan) => (coarser = plan.scale) });
   // Touching parcels of the same crop are one field: their outlines are
   // joined in one more request. Parcels with the same phenology are joined
   // too unless the line between them is a real edge (one more request
@@ -809,7 +858,7 @@ async function traceFields(ee, { region, keepWithin, boundary, crs, anchor, toda
     );
     coarse = joinGroups(parcels, groups, Array.isArray(outlines) ? outlines : []);
   }
-  return toCandidates(coarse, featuresOf(result?.fine));
+  return { candidates: toCandidates(coarse, featuresOf(result?.fine)), coarser };
 }
 
 // The profile keys of detection window i: n<i> (mean NDVI), w<i> (mean NDWI).
@@ -1057,12 +1106,23 @@ export function joinGroups(parcels, groups, outlines) {
 
 // ---------- Measuring fields ----------
 
-async function analyzeFields(deps, input = {}) {
+// A farm's analysis (analyzeFarm). Once it has failed, its leftover work
+// stops (gee.js stopWhenFailed, context.failed): no retry, no coarser plan,
+// no waiting task is sent, and its requests still out and its waits to be
+// tried again no longer hold the Atlas back, as nobody waits for their
+// answers. (Before, a failed farm's monthly request that had dropped was
+// still sent again 8 s later, and the Atlas waited for it: fake Earth
+// Engine, review of 2026-10-19.)
+function analyzeFields(deps, input = {}) {
+  return stopWhenFailed("the farm's analysis", (failed) => analyzeFarm(deps, input, failed));
+}
+
+async function analyzeFarm(deps, input, failed) {
   const fields = fieldsInput(input.fields);
   const onProgress = typeof input.onProgress === "function" ? input.onProgress : null;
   const cfg = deps.getConfig();
   const ee = await deps.connect(cfg);
-  const context = { ...contextOf(cfg), retryDelayMs: deps.retryDelayMs };
+  const context = { ...contextOf(cfg), retryDelayMs: deps.retryDelayMs, failed };
   const nowDay = isoDay(deps.now());
   const today = isDay(input.today) && input.today < nowDay ? input.today : nowDay;
   // Fields whose whole monthly history (since HISTORY_FROM) is read too,
@@ -1109,9 +1169,14 @@ async function analyzeFields(deps, input = {}) {
       ]),
     ),
   });
+  // Each try at most 4 minutes (gee.js COUNT_TIMEOUT_MS); a dropped
+  // connection is tried once more, a busy Earth Engine up to twice more
+  // (retryTransient; the Atlas holds back while it waits to be tried again).
+  // The soil map's description is read with the farm's context too, so the
+  // Atlas holds back while that read is out (gee.js getAsset).
   const [rawCounts, asset] = await Promise.all([
-    evaluate(counts, { timeoutMs: 2 * 60 * 1000, what: "Checking satellite images", context }),
-    checkChernozemAsset(ee, cfg.chernozemAsset),
+    retryTransient(() => evaluate(counts, { timeoutMs: COUNT_TIMEOUT_MS, what: "Checking satellite images", context }), context.retryDelayMs, context),
+    checkChernozemAsset(ee, cfg.chernozemAsset, context),
   ]);
   const have = Object.fromEntries(Object.entries(rawCounts || {}).map(([key, value]) => [key, Math.max(0, numberOr(value, 0))]));
   if (asset.warning) warnings.push(asset.warning);
@@ -1142,12 +1207,21 @@ async function analyzeFields(deps, input = {}) {
   let done = 0;
   const step = (message) => onProgress?.(Math.min(0.99, 0.02 + (0.97 * ++done) / total), message);
   const names = (part) => `${part.length} field${part.length === 1 ? "" : "s"}`;
+  // The fields whose readings or passes came with coarser pixels
+  // (runWithRetry onCoarser): field id -> { readings, passes } (m). Their
+  // analysis says so (COARSER_NOTE). The radar and monthly requests are
+  // read at 20 m or coarser anyway (VH_SCALE, monthlyScale), so their
+  // coarser plan changes only how Earth Engine tiles the work.
+  const coarser = new Map();
+  const markCoarser = (part, kind) => (plan) => {
+    for (const item of part) coarser.set(item.id, { ...coarser.get(item.id), [kind]: plan.scale });
+  };
 
   const passesById = new Map(fields.map((f) => [f.id, []]));
   const s2Done = Promise.all(
     s2Chunks.map((part) =>
       run(async () => {
-        const result = await runWithRetry((plan) => passesRequest(ee, { region, window: windows.passes, part, crs, plan }), { what: `Reading satellite passes for ${names(part)}`, context });
+        const result = await runWithRetry((plan) => passesRequest(ee, { region, window: windows.passes, part, crs, plan }), { what: `Reading satellite passes for ${names(part)}`, context, onCoarser: markCoarser(part, "passes") });
         for (const feature of featuresOf(result)) {
           const p = feature.properties || {};
           if (passesById.has(p.fid) && isDay(p.date)) passesById.get(p.fid).push(p);
@@ -1212,7 +1286,7 @@ async function analyzeFields(deps, input = {}) {
     await Promise.all(
       jobs.map((part) =>
         run(async () => {
-          const result = await runWithRetry((plan) => statsRequest(shared, part, plan), { what: `Measuring ${names(part)}`, context });
+          const result = await runWithRetry((plan) => statsRequest(shared, part, plan), { what: `Measuring ${names(part)}`, context, onCoarser: markCoarser(part, "readings") });
           for (const [id, value] of Object.entries(readStats(result, part))) measured.set(id, value);
           step("Measuring fields");
         }),
@@ -1234,25 +1308,42 @@ async function analyzeFields(deps, input = {}) {
       peakMonth,
     };
     analyses[plan.id] = buildAnalysis(plan, measured.get(plan.id) || {}, null, { today, updatedAt, ...extra });
+    // Coarser pixels: said with the field (the Data page and the AI show
+    // its warnings), not on the four tiles.
+    const coarse = coarser.get(plan.id);
+    if (coarse) analyses[plan.id].warnings.push(coarse.readings ? COARSER_NOTE.readings(coarse.readings) : COARSER_NOTE.passes(coarse.passes));
     // A history with a failed part is left out (run.js reads it again later).
     if (historyIds.has(plan.id) && !failedMonths.has(plan.id)) histories[plan.id] = monthRange(HISTORY_FROM, today.slice(0, 7)).map((month) => monthValue(month, months.get(month)));
   }
+  if (coarser.size) warnings.push(COARSER_NOTE.farm(coarser.size, fields.length, Math.max(...[...coarser.values()].map((c) => c.readings || c.passes || 0))));
   onProgress?.(1, "Done");
   return historyIds.size ? { analyses, histories, warnings } : { analyses, warnings };
 }
 
 // Runs async tasks at most `limit` at a time, in the order they are given.
+// Once a task has failed, the tasks still waiting are not started: they
+// fail with that first error (tasks already running finish; once the
+// analysis has failed they send nothing more: analyzeFields). In
+// analyzeFields a task that fails fails the whole analysis (the radar
+// passes and the monthly values catch their own errors), so the requests
+// the waiting tasks would send are not needed.
 //   const run = limiter(4); await run(() => work());
-function limiter(limit) {
+export function limiter(limit) {
   let active = 0;
+  let failed = false;
+  let firstError;
   const queue = [];
   const next = () => {
+    while (failed && queue.length) queue.shift().reject(firstError);
     if (active >= limit || !queue.length) return;
     active += 1;
     const { task, resolve, reject } = queue.shift();
     Promise.resolve()
       .then(task)
-      .then(resolve, reject)
+      .then(resolve, (error) => {
+        if (!failed) [failed, firstError] = [true, error];
+        reject(error);
+      })
       .finally(() => {
         active -= 1;
         next();
@@ -1599,11 +1690,18 @@ function radarChangeImage(ee, { region, seasons, baselines, pass = null, fc, crs
 
 // ---------- History ----------
 
-async function fieldHistory(deps, { field, from = HISTORY_FROM, to } = {}) {
+// A field's history is read in parts, several at once (mapLimit); once one
+// part has failed, the history fails, and like a farm's analysis
+// (analyzeFields) its other parts send nothing more (stopWhenFailed).
+function fieldHistory(deps, input) {
+  return stopWhenFailed("the field's history", (failed) => readFieldHistory(deps, input, failed));
+}
+
+async function readFieldHistory(deps, { field, from = HISTORY_FROM, to } = {}, failed = null) {
   const [one] = fieldsInput([field]);
   const cfg = deps.getConfig();
   const ee = await deps.connect(cfg);
-  const context = { ...contextOf(cfg), retryDelayMs: deps.retryDelayMs };
+  const context = { ...contextOf(cfg), retryDelayMs: deps.retryDelayMs, failed };
   const today = isoDay(deps.now());
   const thisMonth = today.slice(0, 7);
   const first = isMonth(from) ? (from < HISTORY_FROM ? HISTORY_FROM : from) : HISTORY_FROM;
@@ -1656,11 +1754,16 @@ async function fieldHistory(deps, { field, from = HISTORY_FROM, to } = {}) {
 //   fields      the fields; from / to: "YYYY-MM" (from HISTORY_FROM, to
 //               this month)
 // -> { [fieldId]: [{ month, ndvi, ndwi, clearPct }] }
-async function fieldHistories(deps, { fields, from = HISTORY_FROM, to, onProgress } = {}) {
+// Like fieldHistory, it sends nothing more once one part has failed.
+function fieldHistories(deps, input) {
+  return stopWhenFailed("the fields' history", (failed) => readFieldHistories(deps, input, failed));
+}
+
+async function readFieldHistories(deps, { fields, from = HISTORY_FROM, to, onProgress } = {}, failed = null) {
   const list = fieldsInput(fields);
   const cfg = deps.getConfig();
   const ee = await deps.connect(cfg);
-  const context = { ...contextOf(cfg), retryDelayMs: deps.retryDelayMs };
+  const context = { ...contextOf(cfg), retryDelayMs: deps.retryDelayMs, failed };
   const today = isoDay(deps.now());
   const thisMonth = today.slice(0, 7);
   const first = isMonth(from) ? (from < HISTORY_FROM ? HISTORY_FROM : from) : HISTORY_FROM;
@@ -1719,12 +1822,20 @@ async function geotiffUrl(deps, { field, latestPassDate = null, analysis = null 
   const bands = GEOTIFF_BANDS;
   const params = { name, region: shape, scale: 10, crs, format: "GEO_TIFF", filePerBand: false };
   try {
-    const url = await withTimeout(
-      new Promise((resolve, reject) => {
-        image.getDownloadURL(params, (value, error) => (error || !value ? reject(error instanceof Error ? error : new Error(String(error || "No download link."))) : resolve(value)));
-      }),
-      2 * 60 * 1000,
-      "Making the GeoTIFF",
+    // The link is asked for like any Field request: the Atlas holds back
+    // while it is out (gee.js holdInteractive). The file itself is made by
+    // Earth Engine later, when the browser fetches the link; the server
+    // never sees that, so nothing holds back for it.
+    const url = await holdInteractive(
+      () =>
+        withTimeout(
+          new Promise((resolve, reject) => {
+            image.getDownloadURL(params, (value, error) => (error || !value ? reject(error instanceof Error ? error : new Error(String(error || "No download link."))) : resolve(value)));
+          }),
+          2 * 60 * 1000,
+          "Making the GeoTIFF",
+        ),
+      context,
     );
     return { url, date, bands, name: `${name}.tif` };
   } catch (error) {

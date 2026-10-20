@@ -7,16 +7,17 @@
 // WHAT IT RECEIVES
 //   colorBy          "priority" | "damage" | "access"
 //   timeframe        "nearTerm" | "postwar"
-//   run              the run shown (optional): at peace the access key says
-//                    distance to fighting is not measured, and nothing is
-//                    set aside
+//   run              the run shown (optional): at peace (and in a month
+//                    before its war began) the access key says distance to
+//                    fighting is not measured, and nothing is set aside
 //   onColorByChange  give it to show the switch (optional)
 //   howMeasured      show the "How it's measured" link under the key (outside
 //                    its foldable body, so it shows on a phone too): the
 //                    panel names the three scores and their data
 //                    (src/config/research.js atlasMethods; at peace it says
 //                    access is not measured, which does not make the land
-//                    safe). Default: on the
+//                    safe, and that the team decided so when it marked the
+//                    area as not at war). Default: on the
 //                    full map, i.e. when onColorByChange is given.
 //   className        extra class names (optional)
 //
@@ -28,15 +29,41 @@ import { Segmented } from "../ui/index.js";
 import HowMeasured from "../field/HowMeasured.jsx";
 import { LEGENDS, legendFor } from "../../lib/atlas/mapColors.js";
 import { atlasMethods } from "../../config/research.js";
+import { accessMeasured, atPeace, beforeWar, warInPart, warSetByTeam } from "../../lib/atlas/overview.js";
 import "./atlas.css";
 
-// The panel's words for this run: at peace, safe access is not measured.
-function methodsFor(peace) {
-  if (!peace) return atlasMethods;
+// The panel's words for this run (src/config/research.js atlasMethods):
+//   at peace           the damage score is the heavily damaged share, and
+//                      safe access is not measured unless an ACLED file is
+//                      (whatTeamPeace when the team marked the area as not
+//                      at war, Atlas Settings)
+//   before its war     the month ends before its war began: no war damage
+//                      is counted and distance is not measured
+//   a war in part      a war that covers the whole-country area only in
+//                      part: the note says its rules apply in the squares
+//                      that touch its region, peace rules elsewhere
+function methodsFor(run) {
+  const peace = atPeace(run);
+  const before = beforeWar(run);
+  const measured = !run || accessMeasured(run);
+  // A war in part of a whole-country area: the war's words, and where they
+  // apply.
+  if (warInPart(run)) return { ...atlasMethods, note: `${atlasMethods.note} ${atlasMethods.notePartOfCountry}` };
+  if (!peace && !before && measured) return atlasMethods;
+  const team = warSetByTeam(run);
+  const words = (item) => {
+    if (item.id === "access") {
+      if (measured) return {};
+      return { what: (before && item.whatBeforeWar) || (team && item.whatTeamPeace) || item.whatPeace || item.what };
+    }
+    if (before && item.whatBeforeWar) return { what: item.whatBeforeWar, ...(item.formulaBeforeWar ? { formula: item.formulaBeforeWar } : {}) };
+    if (peace && item.whatPeace) return { what: item.whatPeace, ...(item.formulaPeace ? { formula: item.formulaPeace } : {}) };
+    return {};
+  };
   return {
     ...atlasMethods,
-    items: atlasMethods.items.map((item) => ({ ...item, ...(item.whatPeace ? { what: item.whatPeace } : {}), ...(item.formulaPeace ? { formula: item.formulaPeace } : {}) })),
-    note: atlasMethods.notePeace || atlasMethods.note,
+    items: atlasMethods.items.map((item) => ({ ...item, ...words(item) })),
+    note: measured ? atlasMethods.note : atlasMethods.notePeace || atlasMethods.note,
   };
 }
 
@@ -47,7 +74,9 @@ const MODES = [
 ];
 
 export default function MapLegend({ colorBy = "priority", timeframe = "nearTerm", run = null, onColorByChange, howMeasured, className = "" }) {
-  const peace = Boolean(run) && run.conflict === null && run.accessSource !== "acled";
+  // Distance to fighting not measured (at peace, or in a month before its
+  // war began, with no ACLED file: overview.js accessMeasured).
+  const peace = Boolean(run) && !accessMeasured(run);
   // At peace with no ACLED file access is 100 everywhere: no Access layer.
   const modes = peace ? MODES.filter((item) => item.value !== "access") : MODES;
   const mode = LEGENDS[colorBy] && modes.some((item) => item.value === colorBy) ? colorBy : "priority";
@@ -75,7 +104,7 @@ export default function MapLegend({ colorBy = "priority", timeframe = "nearTerm"
         )}
       </div>
       {/* Outside the key's body, so it stays in sight when a phone folds the key. */}
-      {(howMeasured ?? Boolean(onColorByChange)) && <HowMeasured methods={methodsFor(peace)} className="map-legend-how" />}
+      {(howMeasured ?? Boolean(onColorByChange)) && <HowMeasured methods={methodsFor(run)} className="map-legend-how" />}
     </div>
   );
 }

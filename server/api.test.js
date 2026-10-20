@@ -178,6 +178,136 @@ test("areas can be renamed and removed (with their runs)", async () => {
   assert.equal((await call("DELETE", `/api/areas/${id}`)).status, 404);
 });
 
+test("an area's war setting: checked (400 with a clear message), saved, shown with what the app's list says, and followed by the next analysis", async () => {
+  // Story County, Iowa: no war in the app's list.
+  const made = await call("POST", "/api/areas", { source: "bbox", name: "War test", north: 42.05, south: 42.0, east: -93.6, west: -93.65 });
+  assert.equal(made.status, 201, made.text);
+  const id = made.json.area.id;
+  assert.equal(made.json.area.listConflict, null, "the app's list: no war here");
+  assert.equal(made.json.area.war, undefined, "the app's list is the default");
+
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  for (const [war, message] of [
+    [{ mode: "war", since: "2021-12-31" }, /1 January 2022 or later/],
+    [{ mode: "war", since: tomorrow }, /cannot be after today/],
+    [{ mode: "war", since: "2023-02-30" }, /YYYY-MM-DD/],
+    [{ mode: "war" }, /YYYY-MM-DD/],
+    [{ mode: "war", since: "2023-08-01", name: "x".repeat(81) }, /at most 80 characters/],
+    [{ mode: "sometimes" }, /must be "list" \(the app's list\), "war" \(at war from a day\) or "peace" \(not at war\)/],
+    ["war", /Send the war setting as/],
+    [null, /Send the war setting as/],
+  ]) {
+    const res = await call("PATCH", `/api/areas/${id}`, { war });
+    assert.equal(res.status, 400, JSON.stringify(war));
+    assert.equal(res.json.error.code, "bad_war_setting");
+    assert.match(res.json.error.message, message);
+  }
+  assert.equal((await call("PATCH", `/api/areas/${id}`, [1])).status, 400);
+  assert.equal((await call("PATCH", "/api/areas/area-missing", { war: { mode: "peace" } })).status, 404);
+  assert.equal((await call("GET", `/api/areas/${id}`)).json.area.war, undefined, "nothing saved by a bad request");
+
+  const set = await call("PATCH", `/api/areas/${id}`, { war: { mode: "war", since: "2023-08-01", name: "  Fighting   in the county " } });
+  assert.equal(set.status, 200, set.text);
+  assert.equal(set.json.area.name, "War test", "the name is kept");
+  assert.equal(set.json.area.war.mode, "war");
+  assert.equal(set.json.area.war.since, "2023-08-01");
+  assert.equal(set.json.area.war.name, "Fighting in the county");
+  assert.ok(set.json.area.war.setAt);
+  assert.equal(set.json.area.listConflict, null);
+
+  // The next analysis counts damage from the team's day.
+  const job = await waitForJob((await call("POST", "/api/analyze", { areaId: id, months: 1 })).json.job.id);
+  assert.equal(job.status, "done", job.error);
+  const run = (await call("GET", `/api/runs/${job.runIds[0]}`)).json.run;
+  assert.deepEqual(run.conflict, { id: `area-${id}`, name: "Fighting in the county", since: "2023-08-01", source: "area" });
+  assert.equal(run.conflictSource, "area");
+
+  // Not at war, then back to the app's list; a rename and a war setting can come together.
+  const calm = await call("PATCH", `/api/areas/${id}`, { name: "Story County", war: { mode: "peace", since: "2023-08-01" } });
+  assert.equal(calm.status, 200, calm.text);
+  assert.equal(calm.json.area.name, "Story County");
+  assert.equal(calm.json.area.war.mode, "peace");
+  assert.equal(calm.json.area.war.since, undefined);
+  const redone = await waitForJob((await call("POST", "/api/analyze", { areaId: id, months: 1, rerun: true })).json.job.id);
+  const calmRun = (await call("GET", `/api/runs/${redone.runIds[0]}`)).json.run;
+  assert.equal(calmRun.conflict, null);
+  assert.equal(calmRun.conflictSource, "area");
+  assert.ok(calmRun.checks.warnings.some((w) => /^Your team marked this area as not at war/.test(w)));
+  const back = await call("PATCH", `/api/areas/${id}`, { war: { mode: "list" } });
+  assert.equal(back.status, 200);
+  assert.equal(back.json.area.war, undefined);
+  assert.equal((await call("GET", "/api/areas")).json.areas.find((item) => item.id === id).war, undefined);
+
+  // A box in Ukraine: the app's list has its war.
+  const kyiv = (await call("POST", "/api/areas", { source: "bbox", name: "Kyiv box", north: 50.5, south: 50.45, east: 30.55, west: 30.5 })).json.area;
+  assert.deepEqual(kyiv.listConflict, { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" });
+});
+
+test("one area at a time: another area's analysis waits for the one running and can be cancelled; the one running can be stopped; removing an area takes its waiting analysis out of line", async () => {
+  const { sampleProvider } = await import("./providers/sample.js");
+  const analyze = sampleProvider.analyze;
+  let open;
+  const gate = new Promise((resolve) => {
+    open = resolve;
+  });
+  const made = async (name, west) => (await call("POST", "/api/areas", { source: "bbox", name, north: 48.05, south: 48.0, east: west + 0.05, west })).json.area;
+  const first = await made("Line first", 2.0);
+  const second = await made("Line second", 2.1);
+  const thirdArea = await made("Line third", 2.2);
+  sampleProvider.analyze = async (input) => {
+    if (input.area.id === first.id) await gate;
+    return analyze(input);
+  };
+  try {
+    const running = (await call("POST", "/api/analyze", { areaId: first.id, months: 1 })).json.job;
+    assert.equal(running.queued, false);
+    const waits = await call("POST", "/api/analyze", { areaId: second.id, months: 1 });
+    assert.equal(waits.status, 202);
+    assert.equal(waits.json.job.status, "running");
+    assert.equal(waits.json.job.queued, true);
+    assert.equal(waits.json.job.waiting, "Waiting for Line first's analysis to finish");
+    const status = (await call("GET", "/api/status")).json;
+    assert.deepEqual(status.jobs.filter((job) => [first.id, second.id].includes(job.areaId)).map((job) => job.areaId), [first.id, second.id]);
+
+    // Cancel a job that waits: it is taken out of line.
+    const cancelled = await call("POST", `/api/jobs/${waits.json.job.id}/cancel`);
+    assert.equal(cancelled.status, 200, cancelled.text);
+    assert.equal(cancelled.json.job.status, "cancelled");
+    assert.equal(cancelled.json.job.message, "Line second: cancelled before it started");
+    assert.equal((await call("POST", `/api/jobs/${waits.json.job.id}/cancel`)).json.job.status, "cancelled", "asking again gives it back as it is");
+    assert.equal((await call("POST", "/api/jobs/job-missing/cancel")).status, 404);
+    assert.equal((await call("GET", `/api/jobs/${running.id}/cancel`)).status, 404);
+
+    // Removing an area whose analysis waits takes it out of line; one that
+    // is being analyzed cannot be removed until its analysis is stopped.
+    const third = (await call("POST", "/api/analyze", { areaId: thirdArea.id, months: 1 })).json.job;
+    assert.equal(third.queued, true);
+    const removed = await call("DELETE", `/api/areas/${thirdArea.id}`);
+    assert.equal(removed.status, 200, removed.text);
+    assert.equal((await call("GET", `/api/jobs/${third.id}`)).json.job.status, "cancelled");
+    const busy = await call("DELETE", `/api/areas/${first.id}`);
+    assert.equal(busy.status, 409);
+    assert.equal(busy.json.error.code, "busy");
+    assert.match(busy.json.error.message, /Stop its analysis first/);
+
+    // The analysis running is stopped (its month never answers here: the
+    // job does not wait for it). Then the area can be removed.
+    const stopped = await call("POST", `/api/jobs/${running.id}/cancel`);
+    assert.equal(stopped.status, 200, stopped.text);
+    assert.equal(stopped.json.job.stopping, true);
+    const ended = await waitForJob(running.id);
+    assert.equal(ended.status, "cancelled");
+    assert.equal(ended.message, "Line first: stopped before its first month was done.");
+    assert.equal((await call("GET", `/api/runs?areaId=${first.id}`)).json.runs.length, 0);
+    const gone = await call("DELETE", `/api/areas/${first.id}`);
+    assert.equal(gone.status, 200, gone.text);
+    assert.equal((await call("GET", `/api/runs?areaId=${second.id}`)).json.runs.length, 0, "the cancelled analysis never ran");
+  } finally {
+    open();
+    sampleProvider.analyze = analyze;
+  }
+});
+
 test("workspace settings are cleaned", async () => {
   const res = await call("PATCH", "/api/workspace", { settings: { weights: { soil: -5, damage: 300, access: 100 }, gatePercentile: 99 } });
   assert.equal(res.status, 200);

@@ -7,7 +7,8 @@
 // batched requests) and answers with believable made-up numbers. It also
 // behaves like real Earth Engine where that once broke a real run: a
 // FeatureCollection nested inside an ee.Dictionary comes back with no
-// features (nestedCollections: "describe").
+// features (nestedCollections: "describe"), and a request longer than the
+// library's deadline ends with "HTTP code: -1" (on a mocked clock).
 //
 // What only a real run proves (thresholds that suit real images, dataset
 // access, request sizes): see the smoke test described in the final report
@@ -91,10 +92,12 @@ import {
   isThumbnailPermissionError,
   CURVE_DAYS,
   buildAnalysis,
+  limiter,
+  COARSER_NOTE,
 } from "./field-gee.js";
 import { createFakeEe } from "./fake-ee.js";
 import { areaHa } from "../geo.js";
-import { shiftDays } from "./gee.js";
+import { CHUNK_TIMEOUT_MS, EE_DEADLINE_MS, shiftDays } from "./gee.js";
 import { CONDITION_CLASSES, MIN_CLEAR_SHARE, RED_EDGE_RULES, STRESS_RULES, classifyCrop, radarHarvest, conditionScore, healthScore, waterScore } from "../../src/lib/field/method.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -1145,6 +1148,163 @@ test("radar or monthly values that fail do not stop the analysis; an internal er
   assert.ok(ok.analyses[DEMO[0].id].plantHealth.normal.median !== null);
   const always = fakeProvider({ fail: (r) => (r.has("abs") ? "An internal error has occurred (request: x)" : null) });
   await assert.rejects(always.provider.analyzeFields({ fields: DEMO.slice(0, 1), today: TODAY }), /internal error/);
+});
+
+// ---------- Time limits, retries, and work after a failure ----------
+
+// A mocked clock (t.mock.timers: setTimeout and Date) for requests that
+// take minutes, moved forward until a promise settles.
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+async function settle(t, promise, { step = 1000, maxMs = 60 * 60 * 1000 } = {}) {
+  let done = false;
+  const watched = Promise.resolve(promise).finally(() => {
+    done = true;
+  });
+  watched.catch(() => {});
+  for (let moved = 0; !done && moved < maxMs; moved += step) {
+    await flush();
+    if (!done) t.mock.timers.tick(step);
+  }
+  await flush();
+  return watched;
+}
+// The image check of analyzeFields: one ee.Dictionary of counts.
+const isImageCheck = (r) => r.has("Dictionary") && !r.find("reduceRegions").length && !r.find("reduceToVectors").length;
+const isPassesRequest = (r) => r.find("select").some((n) => Array.isArray(n.args[0]) && n.args[0].includes("ndyi"));
+
+test("a stats request that runs past our 5-minute limit goes to the coarser pixels: the library's own deadline comes a minute later", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.now() });
+  const tileScales = [];
+  const { ee, provider } = fakeProvider({
+    delayMs: (r) => {
+      if (!r.has("abs")) return 1;
+      const tileScale = r.find("reduceRegions")[0]?.args[0]?.tileScale;
+      tileScales.push(tileScale);
+      // At 10 m pixels (tileScale 4) the request would take 10 minutes.
+      return tileScale === 4 ? 10 * 60 * 1000 : 1000;
+    },
+  });
+  const { analyses, warnings } = await settle(t, provider.analyzeFields({ fields: DEMO.slice(0, 2), today: TODAY }));
+  assert.deepEqual(ee.callsNamed("data.setDeadline").map((c) => c.args[0]), [EE_DEADLINE_MS]);
+  assert.ok(EE_DEADLINE_MS > CHUNK_TIMEOUT_MS);
+  // Our limit ended it at 5 minutes (too much work), so the coarser plan
+  // went (20 m, tileScale 16). With the deadline at 5 minutes the library's
+  // "HTTP code: -1" came first: the same request again, then the analysis
+  // failed (real data, 2026-10-19: "Measuring 8 fields").
+  assert.deepEqual(tileScales, [4, 16]);
+  for (const field of DEMO.slice(0, 2)) assert.ok(analyses[field.id].plantHealth.normal.median !== null);
+  // And it says so, with each field (the Data page and the AI show a
+  // field's warnings) and for the farm; the four tiles are left alone.
+  assert.equal(COARSER_NOTE.readings(20), "Measured with 20 m pixels: Earth Engine ran short of memory or time.");
+  for (const field of DEMO.slice(0, 2)) assert.ok(analyses[field.id].warnings.includes(COARSER_NOTE.readings(20)), JSON.stringify(analyses[field.id].warnings));
+  assert.ok(warnings.includes("Measured with 20 m pixels: Earth Engine ran short of memory or time."), JSON.stringify(warnings));
+});
+
+test("passes read with the coarser pixels are said with each field they concern; a farm measured as planned says nothing of pixels", async () => {
+  // The passes request (all 3 fields in one) runs out of memory at 10 m.
+  const fields = DEMO.slice(0, 3);
+  const scales = [];
+  const { provider } = fakeProvider({
+    fail: (r) => {
+      if (!isPassesRequest(r)) return null;
+      const scale = r.find("reduceRegions")[0]?.args[0]?.scale;
+      scales.push(scale);
+      return scale === 10 ? "User memory limit exceeded." : null;
+    },
+  });
+  const { analyses, warnings } = await provider.analyzeFields({ fields, today: TODAY });
+  assert.deepEqual(scales, [10, 20]);
+  for (const field of fields) assert.deepEqual(analyses[field.id].warnings.filter((w) => /pixels/.test(w)), [COARSER_NOTE.passes(20)]);
+  assert.equal(COARSER_NOTE.passes(20), "This season's passes were measured with 20 m pixels: Earth Engine ran short of memory or time.");
+  assert.ok(warnings.includes(COARSER_NOTE.farm(3, 3, 20)), JSON.stringify(warnings));
+  assert.equal(COARSER_NOTE.farm(1, 3, 20), "1 of 3 fields measured with 20 m pixels: Earth Engine ran short of memory or time.");
+  // Nothing coarser: no word of pixels.
+  const plain = await fakeProvider().provider.analyzeFields({ fields, today: TODAY });
+  for (const field of fields) assert.ok(!plain.analyses[field.id].warnings.some((w) => /pixels/.test(w)), JSON.stringify(plain.analyses[field.id].warnings));
+  assert.ok(!plain.warnings.some((w) => /pixels/.test(w)), JSON.stringify(plain.warnings));
+});
+
+test("fields traced with the coarser pixels say so with the search's result (the farmer sees it with the fields found)", async () => {
+  // "Finding fields" runs out of memory at 10 m: the parcels are traced at 20 m.
+  const traceScales = (ee) => ee.callsNamed("Image.reduceToVectors").map((c) => c.args[0].scale);
+  const tooBig = (r) => (r.find("reduceToVectors").some((n) => n.args[0]?.scale === 10) ? "User memory limit exceeded." : null);
+  const boundary = [[49.735, 37.512], [49.735, 37.562], [49.702, 37.562], [49.702, 37.512]];
+  const inside = fakeProvider({ fail: tooBig });
+  const traced = await inside.provider.detectFields({ boundary });
+  assert.ok(traced.candidates.length >= 1);
+  assert.ok(traceScales(inside.ee).includes(20));
+  assert.deepEqual(traced.warnings, [COARSER_NOTE.traced(20)]);
+  assert.equal(COARSER_NOTE.traced(20), "Traced with 20 m pixels: Earth Engine ran short of memory or time, so the outlines are rougher. Search again later for sharper ones.");
+  // Around a point too.
+  const around = fakeProvider({ fail: tooBig });
+  const found = await around.provider.detectFields({ center: { lat: 49.73, lon: 37.54 }, radiusM: 800 });
+  assert.ok(found.candidates.length >= 1);
+  assert.ok(found.warnings.includes(COARSER_NOTE.traced(20)), JSON.stringify(found.warnings));
+  // Traced as planned: nothing said.
+  const plain = await fakeProvider().provider.detectFields({ boundary });
+  assert.deepEqual(plain.warnings, []);
+});
+
+test("the image check is tried once more after a dropped connection, and may take 4 minutes", async (t) => {
+  let checks = 0;
+  const flaky = createFakeEe({
+    nestedCollections: "describe",
+    fail: (r) => (isImageCheck(r) && checks++ === 0 ? "Server returned HTTP code: -1 for POST https://earthengine.googleapis.com/v1/projects/test-proj/value:compute" : null),
+  });
+  const provider = createFieldGeeProvider({ ee: flaky, getConfig: () => TEST_CFG, now: () => new Date(`${TODAY}T12:00:00Z`), retryDelayMs: 0 });
+  const { analyses } = await provider.analyzeFields({ fields: DEMO.slice(0, 1), today: TODAY });
+  assert.equal(checks, 2, "sent twice");
+  assert.ok(analyses[DEMO[0].id].plantHealth.normal.median !== null);
+  // On a mocked clock: 3 minutes is answered (the limit was 2 minutes);
+  // 5 minutes ends at 4 with a clear message (no second try of a check
+  // that ran out of time).
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.now() });
+  const slow = fakeProvider({ delayMs: (r) => (isImageCheck(r) ? 3 * 60 * 1000 : 1) });
+  const ok = await settle(t, slow.provider.analyzeFields({ fields: DEMO.slice(0, 1), today: TODAY }));
+  assert.ok(ok.analyses[DEMO[0].id]);
+  let sent = 0;
+  const slower = fakeProvider({ delayMs: (r) => (isImageCheck(r) ? (sent++, 5 * 60 * 1000) : 1) });
+  await assert.rejects(settle(t, slower.provider.analyzeFields({ fields: DEMO.slice(0, 1), today: TODAY })), /Checking satellite images took longer than 240 seconds/);
+  assert.equal(sent, 1);
+});
+
+test("limiter: once a task has failed, no waiting task starts; they fail with the first error", async () => {
+  const run = limiter(2);
+  const started = [];
+  const task = (i, ms, error = null) => () => {
+    started.push(i);
+    return new Promise((resolve, reject) => setTimeout(() => (error ? reject(new Error(error)) : resolve(i)), ms));
+  };
+  const all = [run(task(0, 5, "task 0 failed")), run(task(1, 30)), run(task(2, 1)), run(task(3, 1))];
+  for (const p of all) p.catch(() => {});
+  await assert.rejects(all[0], /task 0 failed/);
+  assert.equal(await all[1], 1, "the task running then finishes");
+  await assert.rejects(all[2], /task 0 failed/);
+  await assert.rejects(all[3], /task 0 failed/);
+  await assert.rejects(run(task(4, 1)), /task 0 failed/, "nor one given later");
+  assert.deepEqual(started, [0, 1]);
+});
+
+test("once a farm's passes request has failed, its radar and monthly requests are not sent", async () => {
+  // 20 fields and 600 pictures: 4 passes requests of 5 fields go first,
+  // 4 radar and 1 monthly wait behind them (PARALLEL_REQUESTS = 4). The
+  // first passes request fails at once with an error nothing tries again.
+  const fields = Array.from({ length: 20 }, (_, i) => ({ ...DEMO[i % 7], id: `fld-${i}` }));
+  let first = null;
+  const { ee, provider } = fakeProvider({
+    sizes: { "COPERNICUS/S2_SR_HARMONIZED": 600, "COPERNICUS/S1_GRD": 600 },
+    delayMs: (r) => {
+      if (!isPassesRequest(r)) return 1;
+      if (!first) first = r;
+      return r === first ? 1 : 30;
+    },
+    fail: (r) => (isPassesRequest(r) ? `Image.select: Pattern 'B8A' did not match any bands (${r === first ? "first" : "later"} request).` : null),
+  });
+  await assert.rejects(provider.analyzeFields({ fields, today: TODAY }), /first request/);
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(ee.requests.filter(isPassesRequest).length, 4, "the passes requests already out");
+  assert.equal(ee.requests.filter((r) => r.has("exp")).length, 0, "no radar request after the failure");
+  assert.equal(ee.requests.filter(isMonthlyRequest).length, 0, "no monthly request after the failure");
 });
 
 // ---------- Anywhere on Earth ----------

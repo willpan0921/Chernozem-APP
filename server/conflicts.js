@@ -6,25 +6,36 @@
 //
 //   countryAt(lat, lon)            -> { id, name } | null
 //   conflictAt(lat, lon)           -> the war covering that point, or null
-//   conflictForArea({ countryId, bbox, cells })
-//                                  -> the war covering an Atlas area: by its
-//                                     country when it is one; otherwise the
-//                                     war covering the most of its grid cells
-//                                     (or of a 9 x 9 set of points over the
-//                                     box), so a box whose middle is at sea or
-//                                     across a border still finds the war
+//   conflictForArea({ countryId, bbox, cells, war, areaId })
+//                                  -> the war covering an Atlas area: the
+//                                     team's own choice for it first (war:
+//                                     area.war, set in Atlas Settings: a war
+//                                     from a day of their choice, or none);
+//                                     else by its country when it is one;
+//                                     else the war covering the most of its
+//                                     grid cells (or of a 9 x 9 set of points
+//                                     over the box), so a box whose middle is
+//                                     at sea or across a border still finds
+//                                     the war
+//   listConflictForArea(area)      -> what the app's list alone says for a
+//                                     saved area (Atlas Settings shows it)
 //
 // Wars are matched by COUNTRY, and where a war lists boxes (areas) only
-// inside them (the Gaza war covers the Gaza Strip, not the West Bank):
-// src/config/conflicts.js. Fighting across a border (Russia's Kursk and
-// Belgorod, Lebanon) or a war that is not in the list counts as peace there.
+// inside them (the Gaza war covers the Gaza Strip, not the West Bank; the
+// war on Russia's border covers the Kursk and Belgorod border districts,
+// not Kursk city or Moscow): src/config/conflicts.js. A whole-country area
+// is the exception: it has its country's war when the war has boxes
+// (listConflictForArea says partOfCountry), and the war's rules apply in
+// its squares that touch the boxes only (src/config/conflicts.js
+// warSquares). A war that is not in the list counts as peace there, unless
+// the team marks the area at war.
 //
 // WHO EDITS IT
 // Nobody, normally. To add a war, edit src/config/conflicts.js.
 
 import { getCountry, listCountries } from "./countries.js";
-import { pointInGeometry } from "./geo.js";
-import { conflictForCountry, conflictForPoint } from "../src/config/conflicts.js";
+import { planGrid, pointInGeometry } from "./geo.js";
+import { conflictForCountry, conflictForPoint, teamConflict } from "../src/config/conflicts.js";
 
 let boxes = null;
 
@@ -61,7 +72,14 @@ export function conflictAt(lat, lon) {
 const MAX_POINTS = 400;
 const BOX_STEPS = 9;
 
-export function conflictForArea({ countryId, bbox, cells } = {}) {
+//   war     the area's own choice (area.war: { mode: "list" | "war" |
+//           "peace", since, name }); "war" gives { id: "area-<areaId>",
+//           name, since, source: "area" }, "peace" gives null, "list" (or
+//           none) leaves it to the app's list
+//   areaId  the area's id, for the id of a war the team set
+export function conflictForArea({ countryId, bbox, cells, war, areaId } = {}) {
+  const own = teamConflict(war, areaId);
+  if (own !== undefined) return own;
   if (countryId) return conflictForCountry(countryId);
   const points = samplePoints(bbox, cells);
   if (!points.length) return null;
@@ -75,6 +93,35 @@ export function conflictForArea({ countryId, bbox, cells } = {}) {
   let best = null;
   for (const [conflict, count] of counts) if (!best || count > best.count) best = { conflict, count };
   return best?.conflict || null;
+}
+
+// What the app's list says for a saved area, whatever the team chose: the
+// same answer an analysis gets from the area's grid (server/jobs.js), as
+// { id, name, since } (plus partOfCountry: true when the war has boxes and
+// the area is the whole country: its rules then apply in the squares that
+// touch the boxes),
+// or null at peace. Undefined when it cannot be told (no outline). Worked
+// out once per area (an outline never changes after it is saved).
+const listCache = new Map();
+const LIST_CACHE_SIZE = 200;
+export function listConflictForArea(area) {
+  if (!area?.id) return undefined;
+  const key = `${area.id}|${area.createdAt || ""}`;
+  if (listCache.has(key)) return listCache.get(key);
+  let conflict;
+  try {
+    if (area.countryId) conflict = conflictForCountry(area.countryId);
+    else if (area.geometry) {
+      const grid = planGrid(area.geometry);
+      conflict = conflictForArea({ bbox: area.bbox || grid.bbox, cells: grid.cells });
+    } else return undefined;
+  } catch {
+    return undefined;
+  }
+  const out = conflict ? { id: conflict.id, name: conflict.name, since: conflict.since, ...(area.countryId && conflict.areas?.length ? { partOfCountry: true } : {}) } : null;
+  if (listCache.size >= LIST_CACHE_SIZE) listCache.delete(listCache.keys().next().value);
+  listCache.set(key, out);
+  return out;
 }
 
 // The points an area is checked at: its cells' centres (at most

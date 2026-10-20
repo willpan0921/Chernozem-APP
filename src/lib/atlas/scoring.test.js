@@ -252,3 +252,20 @@ test("at peace the damage score is the heavily damaged share of the black soil, 
   assert.equal(war[1].damage, 0);
   assert.equal(scorePlaces(rows).places[0].damage, 1);
 });
+
+test("a war that covers the area only in part: squares outside its region (atWar false) are scored at peace, the others by the war's indicators", () => {
+  const rows = [
+    // Inside the war's region: unusual fire and radar change count.
+    { id: "front", lat: 51.5, wrb: 0.6, agOutput: 0.6, firms: 1, radar: 1, distance: 0.2, blackSoilHa: 20000, heavyDamageHa: 0, atWar: true },
+    // Far from it: the same fire and radar readings are everyday change,
+    // so only the heavily damaged share counts (here none).
+    { id: "far", lat: 55, wrb: 0.6, agOutput: 0.6, firms: 1, radar: 1, distance: 1, blackSoilHa: 20000, heavyDamageHa: 0, atWar: false },
+    { id: "far-hit", lat: 55, wrb: 0.6, agOutput: 0.6, firms: 0, radar: 0, distance: 1, blackSoilHa: 20000, heavyDamageHa: 2000, atWar: false },
+  ];
+  const kursk = { id: "russia-kursk-belgorod", name: "Kursk", since: "2022-02-24", partOfCountry: true };
+  const byId = Object.fromEntries(scorePlaces(rows, { conflict: kursk, cellSizeDeg: 0.2 }).places.map((p) => [p.id, p]));
+  assert.equal(byId.front.damage, 1);
+  assert.equal(byId.far.damage, 0);
+  close(byId["far-hit"].damage, 2000 / 20000 / PEACE_DAMAGE.fullShare);
+  assert.equal(byId.far.atWar, false, "the place keeps which rules it was read with");
+});

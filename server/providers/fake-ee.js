@@ -32,12 +32,20 @@
 //              (default: has b1 and no properties)
 //   authError  a message: signing in fails with it
 //   fail       (request) => message | null; a message makes that request fail
-//   delayMs    how long each request takes (default 1 ms)
+//   delayMs    how long each request takes (default 1 ms), or
+//              (request) => ms for each request. Like the real library, an
+//              evaluate() request that takes longer than the deadline given
+//              to data.setDeadline(ms) ends at that deadline with "Server
+//              returned HTTP code: -1 for POST .../value:compute", from a
+//              timer started when the request is sent (download links
+//              ignore the deadline here)
 //   nestedCollections  "describe" answers a FeatureCollection nested inside
 //              an ee.Dictionary or ee.List the way REAL Earth Engine does:
 //              { type: "FeatureCollection", columns: {} } with NO features
 //              (use .toList(n) to send features). This is the default;
 //              "full" sends the features anyway (NOT what Earth Engine does).
+//   assetDelayMs  how long data.getAsset takes (default 0 ms), or
+//              (assetId) => ms
 //   downloadError  a message: getDownloadURL fails with it
 //   parcelGrid  reduceToVectors cuts a region into parcelGrid x parcelGrid
 //              made-up parcels (default 3; 0 = finds nothing)
@@ -65,7 +73,8 @@
 //
 // WHO EDITS IT
 // Whoever changes gee.js and starts using a part of Earth Engine that is
-// not here yet. Used by gee.test.js only; the app never loads it.
+// not here yet. Used by the tests only (gee.test.js, field-gee.test.js);
+// the app never loads it.
 
 const NODE = Symbol("fake-ee node");
 
@@ -330,11 +339,15 @@ function feature(geometry, properties) {
 }
 
 export function createFakeEe(options = {}) {
-  const { sizes = {}, assets = {}, authError = null, fail = null, delayMs = 1, nestedCollections = "describe", downloadError = null, parcelGrid = 3, extraParcels = [], gaul2 = GAUL2, values = null } = options;
+  const { sizes = {}, assets = {}, authError = null, fail = null, delayMs = 1, assetDelayMs = 0, nestedCollections = "describe", downloadError = null, parcelGrid = 3, extraParcels = [], gaul2 = GAUL2, values = null } = options;
   const calls = [];
   const requests = [];
   const stats = { evaluations: 0, active: 0, peakActive: 0 };
   let initialized = false;
+  let project = null;
+  // data.setDeadline (0: none, like the library before it is set).
+  let deadlineMs = 0;
+  const delayOf = (request) => (typeof delayMs === "function" ? delayMs(request) : delayMs);
 
   // ----- building nodes -----
 
@@ -540,19 +553,24 @@ export function createFakeEe(options = {}) {
       },
       setDeadline(ms) {
         calls.push({ name: "data.setDeadline", args: [ms] });
+        deadlineMs = Number(ms) || 0;
       },
       getAsset(id, callback) {
         calls.push({ name: "data.getAsset", args: [id] });
         const info = assets[id];
-        setTimeout(() => {
-          if (info === "missing") callback(undefined, `Asset '${id}' does not exist or doesn't allow this operation.`);
-          else callback(info || { id, type: "IMAGE", bands: [{ id: "b1" }] });
-        }, 0);
+        setTimeout(
+          () => {
+            if (info === "missing") callback(undefined, `Asset '${id}' does not exist or doesn't allow this operation.`);
+            else callback(info || { id, type: "IMAGE", bands: [{ id: "b1" }] });
+          },
+          typeof assetDelayMs === "function" ? assetDelayMs(id) : assetDelayMs,
+        );
       },
     },
-    initialize(baseUrl, tileUrl, onOk, onFail, xsrf, project) {
-      calls.push({ name: "initialize", args: [project] });
+    initialize(baseUrl, tileUrl, onOk, onFail, xsrf, projectId) {
+      calls.push({ name: "initialize", args: [projectId] });
       initialized = true;
+      project = projectId;
       setTimeout(() => onOk(), 0);
     },
     reset() {
@@ -609,7 +627,7 @@ export function createFakeEe(options = {}) {
       const message = downloadError || (fail ? fail(request) : null);
       if (message) return callback(null, message);
       callback(`https://earthengine.googleapis.com/v1/projects/test/thumbnails/fake-${requests.length}:getPixels`);
-    }, delayMs);
+    }, delayOf(request));
   }
 
   function runRequest(node, callback) {
@@ -624,19 +642,26 @@ export function createFakeEe(options = {}) {
     stats.evaluations += 1;
     stats.active += 1;
     stats.peakActive = Math.max(stats.peakActive, stats.active);
-    setTimeout(() => {
-      stats.active -= 1;
-      if (!initialized) return callback(undefined, "Earth Engine client library not initialized.");
-      const message = fail ? fail(request) : null;
-      if (message) return callback(undefined, message);
-      let value;
-      try {
-        value = resolve(node, new Map());
-      } catch (error) {
-        return callback(undefined, error.message);
-      }
-      callback(value);
-    }, delayMs);
+    const took = delayOf(request);
+    // Longer than the library's deadline: it gives up at the deadline.
+    const cut = deadlineMs > 0 && took > deadlineMs;
+    setTimeout(
+      () => {
+        stats.active -= 1;
+        if (!initialized) return callback(undefined, "Earth Engine client library not initialized.");
+        if (cut) return callback(undefined, `Server returned HTTP code: -1 for POST https://earthengine.googleapis.com/v1/projects/${project}/value:compute`);
+        const message = fail ? fail(request) : null;
+        if (message) return callback(undefined, message);
+        let value;
+        try {
+          value = resolve(node, new Map());
+        } catch (error) {
+          return callback(undefined, error.message);
+        }
+        callback(value);
+      },
+      cut ? deadlineMs : took,
+    );
   }
 
   // The date window the nearest filterDate in a collection's chain uses.

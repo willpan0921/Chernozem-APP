@@ -193,7 +193,11 @@ export function peaceDamageScore(place) {
 //              excluded:   ids that are not analyzed
 //              conflict:   the run's war (run.conflict); null = at peace:
 //                          the damage score is then peaceDamageScore.
-//                          Left out (undefined): the indicators, as before
+//                          Left out (undefined): the indicators, as before.
+//                          A row with atWar false (a square outside the
+//                          region of a war that covers the area only in
+//                          part, run.conflict.partOfCountry) is scored at
+//                          peace too, whatever the run's war
 //              cellSizeDeg the map squares' size, for blackSoilFloor
 // A place with a blackSoilHa under blackSoilFloor is not ranked (reason
 // NO_BLACK_SOIL_REASON, tier "noBlackSoil"). Places without blackSoilHa
@@ -213,7 +217,7 @@ export function scorePlaces(rows, options = {}) {
   const atPeace = options.conflict === null;
   const places = rows.map((row) => {
     const scores = componentScores(row, components);
-    if (atPeace) scores.damage = peaceDamageScore(row) ?? scores.damage;
+    if (atPeace || row.atWar === false) scores.damage = peaceDamageScore(row) ?? scores.damage;
     const missing = SCORE_KEYS.filter((key) => scores[key] === null);
     let reason = null;
     if (excludedSet.has(row.id)) reason = "Not analyzed in this run";

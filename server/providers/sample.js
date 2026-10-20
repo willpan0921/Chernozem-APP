@@ -28,6 +28,15 @@
 //     measured (every place reads 300 km, nothing set aside), no war
 //     damage, only the small month-to-month wobble of the health index and
 //     radar and a few stray fires
+//   - a month that ends before its war began (a war set from a later day):
+//     no front either, and no fire or radar damage counted at all, as on
+//     Earth Engine (src/config/conflicts.js endsBeforeWar)
+//   - a whole-country area that holds its war only in part (Thailand,
+//     Russia...: conflict.partOfCountry): the made-up front runs through
+//     the squares that touch the war's boxes (src/config/conflicts.js
+//     warSquares), which get the war's readings; the other squares get the
+//     readings of peace, with their distance to that front (as Earth
+//     Engine: each reading says which, atWar)
 //   - alerts: the cells where damage or fires grew most since last month
 //
 // It returns the same shape as the Earth Engine source (gee.js), so the
@@ -39,7 +48,8 @@
 import { HEAVY_DAMAGE_CHI_DROP } from "../../src/lib/atlas/method.js";
 import { formatCoord } from "../geo.js";
 import { conflictForArea } from "../conflicts.js";
-import { NO_WAR_WARNING, cleanConflict } from "../runs.js";
+import { NO_WAR_WARNING, beforeWarWarning, cleanConflict } from "../runs.js";
+import { endsBeforeWar, warSquares } from "../../src/config/conflicts.js";
 
 // The distance to fighting at peace: the most that is measured (as gee.js).
 const PEACE_KM = 300;
@@ -181,7 +191,9 @@ export function insideUkraineBox(lat, lon) {
 // line and towns are placed in. The box is the area itself (at least 1 km
 // across), so a farm gets farm-sized patterns, not a country's. Built from
 // where the cells actually are, so far-off islands do not pull it away.
-function makeFrame(area, cells, conflict) {
+//   frontCells  for a war that covers the area only in part: the squares
+//               it covers, whose box the made-up front is drawn in
+function makeFrame(area, cells, conflict, frontCells = null) {
   const lats = cells.map((cell) => cell.lat).sort((a, b) => a - b);
   const lons = cells.map((cell) => cell.lon).sort((a, b) => a - b);
   const south = quantile(lats, 0.03);
@@ -201,6 +213,13 @@ function makeFrame(area, cells, conflict) {
   // Ukraine's box, is at peace.
   const ukraine = conflict?.id === "ukraine-2022";
   const toKm = (lat, lon) => [(lon - lon0) * kx, (lat - lat0) * ky];
+  // The box (km) of the squares a war covers in part of the area.
+  let front = null;
+  if (frontCells?.length) {
+    const [fx0, fy0] = toKm(Math.min(...frontCells.map((cell) => cell.lat)), Math.min(...frontCells.map((cell) => cell.lon)));
+    const [fx1, fy1] = toKm(Math.max(...frontCells.map((cell) => cell.lat)), Math.max(...frontCells.map((cell) => cell.lon)));
+    front = { cx: (fx0 + fx1) / 2, cy: (fy0 + fy1) / 2, w: Math.max(fx1 - fx0, 1), h: Math.max(fy1 - fy0, 1) };
+  }
   return {
     lat0,
     lon0,
@@ -214,6 +233,8 @@ function makeFrame(area, cells, conflict) {
     ukraine,
     // The real front in this area's km, before it moves.
     ukraineFront: ukraine ? UKRAINE_FRONT_FINE.map(([lat, lon]) => toKm(lat, lon)) : null,
+    // Where a made-up front goes when the war covers part of the area only.
+    front,
     // How far (km) damage and fires reach from the front: about 22 km on a
     // real front, shorter on a made-up front through a small area.
     reachKm: ukraine ? 22 : clamp(diagKm * 0.12, 0.15, 22),
@@ -242,10 +263,12 @@ function frontLine(frame, t, seed) {
   }
   const points = [];
   const steps = 64;
+  // Across the area, or across the squares of a war in part of it.
+  const box = frame.front || { cx: 0, cy: 0, w: frame.boxW, h: frame.boxH };
   for (let i = 0; i <= steps; i += 1) {
     const v = -0.25 + (1.5 * i) / steps;
     const u = frontU(v, t, seed);
-    points.push([(u - 0.5) * frame.boxW, (v - 0.5) * frame.boxH]);
+    points.push([box.cx + (u - 0.5) * box.w, box.cy + (v - 0.5) * box.h]);
   }
   return points;
 }
@@ -379,6 +402,11 @@ function heavyShareFrom(chiDrop) {
 // wide), so big countries do not flicker from month to month.
 function monthFields(statics, frame, month, seed, cellKm) {
   if (!frame.conflict) return peaceFields(statics, frame, month, seed);
+  // A month that ends before the war began (a war set from a later day):
+  // no front yet and no war damage counted, as on Earth Engine (no damage
+  // window: no war year of fires, no war season of radar). Before, warMonth
+  // stopped at 0, so such a month drew the war's first front.
+  if (endsBeforeWar(month, frame.conflict)) return peaceFields(statics, frame, month, seed, { counted: false });
   const t = warMonth(month, frame.conflict.since);
   const lineSeed = frame.ukraine ? 804 : seed;
   const line = frontLine(frame, t, lineSeed);
@@ -445,15 +473,17 @@ function monthFields(statics, frame, month, seed, cellKm) {
 // At peace: no front and no war damage. The health index only wobbles a
 // little month to month (weather, cloud), well under the heavy-damage
 // line, and a few stray fires (above the normal rate) show here and there.
-function peaceFields(statics, frame, month, seed) {
+//   counted  false for a month before its war began: no fire or radar
+//            reading counts as damage then (no damage window)
+function peaceFields(statics, frame, month, seed, { counted = true } = {}) {
   const monthSeed = seed ^ hashString(month);
   const f = frame.featureKm;
   const out = new Map();
   for (const [id, cell] of statics) {
     const { x, y } = cell;
     const chiDrop = clamp(0.012 * (fbm(x / (f * 0.5), y / (f * 0.5), monthSeed + 52) - 0.5), -0.05, 0.6);
-    const fires = 0.4 * cell.fireBackground;
-    const radarDb = clamp(0.3 + 0.4 * (fbm(x / f, y / f, seed + 77) - 0.5), 0, 0.6);
+    const fires = counted ? 0.4 * cell.fireBackground : 0;
+    const radarDb = counted ? clamp(0.3 + 0.4 * (fbm(x / f, y / f, seed + 77) - 0.5), 0, 0.6) : null;
     const flicker = 0.9 + 0.2 * hash3(Math.round(x * 10), Math.round(y * 10), monthSeed);
     const lights = clamp((0.3 + cell.popPerKm2 / 25) * flicker, 0, 80);
     out.set(id, { conflictKm: PEACE_KM, fires, chiDrop, radarDb, heavyShare: 0, lights });
@@ -513,17 +543,33 @@ function cellsBox(cells) {
 
 // Readings for every cell of an area in one month (also used by tests).
 //   conflict  the known war covering the area ({ id, name, since }) or null;
-//             looked up from the area when not given
+//             looked up from the area when not given (the team's choice for
+//             it, area.war, first; else the app's list)
 export function sampleReadings({ area, cells, month, cellSizeDeg, conflict: givenConflict }) {
-  const conflict = cleanConflict(givenConflict !== undefined ? givenConflict : cells.length ? conflictForArea({ countryId: area.countryId, bbox: area.bbox || cellsBox(cells), cells }) : null);
+  const conflict = cleanConflict(
+    givenConflict !== undefined ? givenConflict : cells.length ? conflictForArea({ countryId: area.countryId, bbox: area.bbox || cellsBox(cells), cells, war: area.war, areaId: area.id }) : null
+  );
   const sampleWarning = "Sample data: made-up values for trying the app, not satellite measurements.";
   if (!cells.length) return { readings: [], alerts: [], warnings: [sampleWarning], conflict };
   const seed = hashString(String(area.id));
-  const frame = makeFrame(area, cells, conflict);
+  // A war that covers the area only in part: its squares (null: all).
+  const warCells = warSquares(conflict, cells, cellSizeDeg);
+  const frame = makeFrame(area, cells, conflict, warCells ? cells.filter((cell) => warCells.has(cell.id)) : null);
   const statics = staticFields(area, cells, frame, seed);
   const cellKm = (cellSizeDeg || 0) * frame.kx;
-  const now = monthFields(statics, frame, month, seed, cellKm);
-  const before = monthFields(statics, frame, previousMonth(month), seed, cellKm);
+  // Outside the war's squares: the readings of peace, with the distance to
+  // the front in the war's region (300 km when no square touches it). A
+  // month before the war began has no war readings anywhere already.
+  const fieldsFor = (m) => {
+    const fields = monthFields(statics, frame, m, seed, cellKm);
+    if (!warCells || endsBeforeWar(m, conflict)) return fields;
+    for (const [id, calm] of peaceFields(statics, frame, m, seed)) {
+      if (!warCells.has(id)) fields.set(id, { ...calm, conflictKm: warCells.size ? fields.get(id).conflictKm : PEACE_KM });
+    }
+    return fields;
+  };
+  const now = fieldsFor(month);
+  const before = fieldsFor(previousMonth(month));
   const cellById = new Map(cells.map((cell) => [cell.id, cell]));
 
   const readings = [];
@@ -540,12 +586,13 @@ export function sampleReadings({ area, cells, month, cellSizeDeg, conflict: give
       croplandShare: base.croplandShare,
       firesPer100Km2: m.fires,
       chiDrop: m.chiDrop,
-      radarDb: Math.round(m.radarDb * 100) / 100,
+      radarDb: m.radarDb === null ? null : Math.round(m.radarDb * 100) / 100,
       conflictKm: m.conflictKm,
       popPerKm2: base.popPerKm2,
       lights: m.lights,
       heavyShare: m.heavyShare,
       population: base.popPerKm2 * cellKm2,
+      ...(warCells ? { atWar: warCells.has(id) } : {}),
     });
     // Radar: cropland newly heavily damaged since last month (km²).
     // Fire: new detections.
@@ -565,12 +612,15 @@ export function sampleReadings({ area, cells, month, cellSizeDeg, conflict: give
     .sort((a, b) => b.magnitude / (b.kind === "fire" ? fireTop : radarTop) - a.magnitude / (a.kind === "fire" ? fireTop : radarTop) || a.id.localeCompare(b.id))
     .slice(0, 6);
 
+  // A month before its war began says so, and measures no distance to
+  // fighting (as gee.js).
+  const beforeWar = endsBeforeWar(month, conflict);
   return {
     readings,
     alerts,
-    warnings: conflict ? [sampleWarning] : [sampleWarning, NO_WAR_WARNING],
+    warnings: !conflict ? [sampleWarning, NO_WAR_WARNING] : beforeWar ? [sampleWarning, beforeWarWarning(conflict.since)] : [sampleWarning],
     conflict,
-    accessSource: conflict ? "fires" : "none",
+    accessSource: conflict && !beforeWar ? "fires" : "none",
   };
 }
 

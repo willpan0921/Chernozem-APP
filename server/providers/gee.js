@@ -7,9 +7,10 @@
 // of "the latest season".
 //
 //   status()               is Earth Engine set up, and does signing in work?
-//   analyze({ area, cells, month, cellSizeDeg, onProgress })
+//   analyze({ area, cells, month, cellSizeDeg, conflict, onProgress, signal })
 //                          -> { readings, alerts, warnings, baseline, conflict,
-//                               imagery, accessSource } (one reading per cell)
+//                               imagery, accessSource } (one reading per cell;
+//                               signal: a person's Stop, server/jobs.js)
 //   searchAdmin1(q)        regions (provinces, oblasts, states) by name
 //   admin1Boundary(id)     one of those regions: { id, name, country, geometry }
 //
@@ -36,10 +37,12 @@
 //                  season, that one: seasonRadarImages, src/lib/atlas/
 //                  method.js radarPersistence and FIRE_YEARS)
 //   heavyShare     share of cropland pixels heavily damaged (method.js
-//                  HEAVY_DAMAGE): radar change of 3 dB or more in at least
-//                  two war seasons, or of 2 dB or more in any one within 1
-//                  km of an unusual fire; away from any known war 3 dB or
-//                  more in any season AND within 1 km of an unusual fire
+//                  HEAVY_DAMAGE), on the lasting radar change (reached in
+//                  at least two war seasons; with one season, that one):
+//                  3 dB or more, or 2 dB or more within 1 km of an unusual
+//                  fire; away from any known war (and in the squares of a
+//                  whole-country area outside its war's boxes) 3 dB or more
+//                  AND within 1 km of an unusual fire
 //   firesPer100Km2 FIRMS (band T21) detections above the normal (2019-2021
 //                  count / 3) in the WORST war year of the damage window
 //                  (years from the war's start, not overlapping), the
@@ -49,9 +52,11 @@
 //                  burning that comes every year does not count
 //   conflictKm     distance to recent battles (ACLED file, acled.js); without
 //                  a file, inside a known war, to unusual fire detections of
-//                  the last 12 months (FIGHTING_FIRES); outside any known war
-//                  without a file, not measured: 300 km everywhere, so nothing
-//                  is set aside for it (which does not make the land safe)
+//                  the last 12 months (FIGHTING_FIRES; for a war that covers
+//                  the area only in part, those inside its boxes); outside any known war
+//                  (or in a month before its war began) without a file, not
+//                  measured: 300 km everywhere, so nothing is set aside for
+//                  it (which does not make the land safe)
 //   population     WorldPop/GP/100m/pop (2020), people living in the cell
 //   lights         NASA/VIIRS/002/VNP46A2 night lights, median of the month
 //   admin1/admin2  FAO/GAUL/2015/level2 names (best effort)
@@ -74,6 +79,27 @@
 //     that still fails with coarser pixels (coarserScale), before giving
 //     up; the image checks likewise, the lighter try one count per request
 //     (retryTooMuchWork, MEMORY_RETRY_MS)
+//   - the Earth Engine library's own deadline comes a minute after our
+//     longest time limit (EE_DEADLINE_MS), so a request that runs too long
+//     ends with our limit (too big: lighter) and not with the library's
+//     "HTTP code: -1" (a dropped connection: the same request again); the
+//     season finder, which has no lighter form, sends such a group once
+//     more before the latitude decides (seasonPeaks)
+//   - once one chunk (or one count of a lighter image check) has failed,
+//     no further one is started (mapLimit); once the month has failed (or
+//     a person stopped the analysis: signal), no request of it that is not
+//     out yet is sent (analyze, evaluate: context.failed, stopWhenFailed);
+//     once the season finder has given up, nothing more of it is sent
+//     (seasonPeaks)
+//   - Earth Engine too busy ("Too many concurrent aggregations.") is not a
+//     quota: after its retries the month fails and the job goes on with
+//     the others (explainGeeError "busy"); a real quota stops the job
+//   - the analysis runs in the background: while a Field request or a
+//     region search is out (a Field request that waits to be tried again
+//     included) it holds back its new requests, asset reads too, each for
+//     10 minutes at the most (evaluate, waitForInteractive, YIELD). What
+//     the Earth Engine library does by itself (429 answers sent again, one
+//     send every 350 ms) is outside this (YIELD)
 //   - population is never re-projected over a whole country (see
 //     populationPlan)
 //   - date windows stop at today, so nothing asks for future images
@@ -82,9 +108,15 @@
 // greenest month in 2019-2021 (MODIS NDVI, MODIS/061/MOD13A2; see
 // src/lib/season.js), or from its latitude where that is not clear; cells
 // are measured in groups of the same season. The war, if any, comes from
-// server/conflicts.js. The result says which war it used (`conflict`, or
-// null at peace), which season it compared (`imagery`) and where distance
-// to fighting came from (`accessSource`).
+// the job (the team's choice for the area, else the app's list:
+// server/conflicts.js). A whole-country area that holds its war only in
+// part (conflict.partOfCountry) gets the war's rules square by square: in
+// the squares that touch the war's boxes (src/config/conflicts.js
+// warSquares), with unusual fires inside the boxes standing in for
+// fighting; elsewhere the peace rule for heavy damage (each reading says
+// which: atWar). The result says which war it used (`conflict`, or null at
+// peace), which season it compared (`imagery`) and where distance to
+// fighting came from (`accessSource`).
 //
 // Nothing here runs until Earth Engine credentials are in .env (see
 // docs/CONNECT-DATA.md). `npm run gee:check` tries it on real data.
@@ -97,11 +129,11 @@
 
 import { config, missingGeeSettings } from "../env.js";
 import { cellAreaKm2, formatCoord } from "../geo.js";
-import { NO_WAR_WARNING, addMonths, cleanConflict } from "../runs.js";
+import { NO_WAR_WARNING, addMonths, beforeWarWarning, cleanConflict } from "../runs.js";
 import { FIRE_YEARS, HEAVY_DAMAGE, fireYears } from "../../src/lib/atlas/method.js";
 import { blackSoilFloor } from "../../src/lib/atlas/scoring.js";
 import { areaDamageSeasons, baselineWindows, climateBand, damageSeasons, lastCompleteSeason, peakMonthFrom, sameWindowIn, windowLabel } from "../../src/lib/season.js";
-import { damageWindow } from "../../src/config/conflicts.js";
+import { damageWindow, warBoxes, warSquares } from "../../src/config/conflicts.js";
 import { conflictForArea } from "../conflicts.js";
 import { acledBattlesFor, expandBbox } from "./acled.js";
 
@@ -199,14 +231,70 @@ export const SEASON_FINDER = { start: "2019-01-01", end: "2022-01-01", ndviScale
 export const CHUNK_SIZE = 250;
 export const MIN_CHUNK_SIZE = 10;
 export const CHUNK_AREA_KM2 = 50000;
-// At most this many requests run at the same time.
+// At most this many groups of cells of one month are measured at the same
+// time (and as many groups of the season finder). It is not a limit for the
+// whole server: the month's image checks, a farm's analysis (field-gee.js
+// PARALLEL_REQUESTS) and searches each have their own.
 export const MAX_PARALLEL_CHUNKS = 2;
 // A chunk that runs out of memory or time is split in two (same pixels)
 // until its pieces have this many cells or fewer; only such a piece that
 // still fails is measured with coarser pixels.
 export const SPLIT_MIN_CELLS = 4;
-// How long one request may take before it is given up (or retried).
+// How long one request may take before it is given up (or tried lighter):
+// the default, for a group of cells and most Field requests. It is the
+// longest time limit of any request (the others are shorter), and the
+// library's own deadline comes a minute later (EE_DEADLINE_MS), so a
+// request that runs this long ends with our GeeError "timeout", which
+// counts as too much work (isTooMuchWorkError).
 export const CHUNK_TIMEOUT_MS = 5 * 60 * 1000;
+// The deadline the Earth Engine library gives each request itself
+// (ee.data.setDeadline, connectWith). It must come after every time limit
+// of ours: at its deadline the library answers "Server returned HTTP code:
+// -1", which reads as a dropped connection (isTransientError), so the same
+// request is sent again unchanged and the lighter one never goes. Real
+// data, 2026-10-19: with both at 5 minutes the library's came first, and a
+// farm's "Measuring 8 fields" failed twice on "HTTP code: -1" without the
+// coarser pixels (field-gee.js PLANS) being tried. The margin is a choice
+// (2026-10-19), kept as it is: a few seconds would do (the library starts
+// its timer when it sends the request, at most a moment before ours, later
+// when its queue holds it), and the cost of a minute is that a request we
+// give up on stays open in the library, Earth Engine perhaps still working
+// on it, for up to a minute more (docs/METHODS.md).
+export const EE_DEADLINE_MS = CHUNK_TIMEOUT_MS + 60 * 1000;
+// How long one try of a check of which images exist may take: the Atlas's
+// image checks (all counts in one request, and the lighter try, one count
+// per request) and the Field's "Checking satellite images". Alone the
+// Atlas's checks take 1 to 8 s (Ukraine, real data); the Field's was not
+// timed. Real data, 2026-10-19: while a farm was analyzed in a second
+// process on the same project, Ukraine's counts ran past the 2-minute
+// limit they had then, and August and September 2026 failed. 4 minutes is
+// a guess from that one incident, not measured under that load.
+export const COUNT_TIMEOUT_MS = 4 * 60 * 1000;
+// The Atlas gives way to the Field (evaluate, waitForInteractive): while a
+// Field request or another interactive one (a region search, a region
+// outline, a map's description read for a farm, a GeoTIFF link being made)
+// is out, the Atlas's analysis sends no new request (no asset read either:
+// getAsset); those already out finish. A request is out until it answers,
+// fails or reaches our time limit (the library may keep its connection
+// open until EE_DEADLINE_MS), and a Field request that waits to be tried
+// again (retryTransient: 8 s after a dropped connection, 40 s and then 80 s
+// when Earth Engine is busy) still counts (holdInteractive). Once a farm's
+// analysis has failed, nothing of it counts any more (countInteractive):
+// nobody waits for that work. The Atlas goes on once none has been out for
+// settleMs (a Field analysis has short gaps between its requests), or after
+// waiting maxWaitMs, so a busy farm slows the Atlas down but never stops
+// it. This counts the requests of this server process only: a second
+// server or a script using the same project is not seen. Nor is what the
+// Earth Engine library does on its own once a request is handed to it: it
+// sends a request answered 429 ("too many requests") again, up to 10 times
+// over about 10 minutes, and sends all requests through one queue, one
+// every 350 ms (@google/earthengine 1.7.48, apiclient.js MAX_ASYNC_RETRIES_
+// and REQUEST_THROTTLE_INTERVAL_MS_). Nor is a GeoTIFF download itself:
+// Earth Engine makes the file when the browser fetches the link.
+export const YIELD = { settleMs: 3000, maxWaitMs: 10 * 60 * 1000 };
+// What an Atlas analysis says (onProgress) while its requests wait; the
+// Atlas page shows it under the progress bar (server/jobs.js job.waiting).
+export const WAITING_MESSAGE = "Waiting for farm analyses and searches to finish";
 // Earth Engine splits work into smaller tiles when tileScale is higher:
 // slower, but uses less memory. Cells this wide (km) or wider get 16.
 export const BIG_CELL_KM = 10;
@@ -249,15 +337,17 @@ export function blackSoilClassesFrom(properties) {
 }
 
 // The class list, read once per Earth Engine connection (checkChernozemAsset
-// does it before any image is built).
+// does it before any image is built; `context` as for getAsset).
 const blackSoilClassesByEe = new WeakMap();
-async function loadBlackSoilClasses(ee) {
+async function loadBlackSoilClasses(ee, context) {
   if (blackSoilClassesByEe.has(ee)) return blackSoilClassesByEe.get(ee);
   let classes = BLACK_SOIL.classes;
   try {
-    classes = blackSoilClassesFrom((await getAsset(ee, DATASETS.blackSoil))?.properties) || BLACK_SOIL.classes;
-  } catch {
-    // The built-in list is the same classes.
+    classes = blackSoilClassesFrom((await getAsset(ee, DATASETS.blackSoil, context))?.properties) || BLACK_SOIL.classes;
+  } catch (error) {
+    // The built-in list is the same classes. Not read because the month had
+    // already failed: not remembered, so the next month reads it.
+    if (error?.code === "stopped") return classes;
   }
   blackSoilClassesByEe.set(ee, classes);
   return classes;
@@ -435,7 +525,9 @@ async function connectWith(state, cfg) {
       90 * 1000,
       "Signing in to Earth Engine",
     );
-    if (ee.data && typeof ee.data.setDeadline === "function") ee.data.setDeadline(CHUNK_TIMEOUT_MS);
+    // After our own time limits (EE_DEADLINE_MS), so ours ends a request
+    // that runs too long.
+    if (ee.data && typeof ee.data.setDeadline === "function") ee.data.setDeadline(EE_DEADLINE_MS);
     keepTokenFresh(ee);
     return ee;
   })().catch((error) => {
@@ -483,25 +575,218 @@ function asError(error) {
   return new Error(typeof error === "string" ? error : error?.message || JSON.stringify(error));
 }
 
-// Runs one Earth Engine computation and waits for the answer.
-export function evaluate(eeObject, { timeoutMs = CHUNK_TIMEOUT_MS, what = "Earth Engine request", context = {} } = {}) {
+// Runs one Earth Engine computation and waits for the answer, at most
+// `timeoutMs` from when it is sent.
+//   context.background  true for the Atlas's analysis (analyze): before it
+//                       is sent, the request waits while interactive ones
+//                       are out (waitForInteractive); context.onWait(true)
+//                       and onWait(false, { capped }) hear when such a wait
+//                       starts and ends
+//   context.failed      newFailure() of the whole analysis the request is
+//                       part of (the Atlas's month: analyze; a farm's
+//                       analysis and a field's history: field-gee.js): once
+//                       it has failed, a request that is not out yet is not
+//                       sent (GeeError "stopped"): nobody would use the answer
+// Every other request (the Field, region search and outline) is
+// interactive: it is sent at once, and counted while it is out, until it
+// answers, fails or reaches its time limit, or its analysis fails
+// (countInteractive).
+export function evaluate(eeObject, options = {}) {
+  const context = options?.context || {};
+  const what = options?.what || "Earth Engine request";
+  if (context.failed?.error) return Promise.reject(notSent(what, context.failed));
+  if (!context.background || isQuiet(yieldState())) return send(eeObject, options);
+  return waitForInteractive(context).then(() => (context.failed?.error ? Promise.reject(notSent(what, context.failed)) : send(eeObject, options)));
+}
+
+const notSent = (what, failed) => new GeeError("stopped", `${what} was not sent: ${failed?.of || "its analysis"} had already failed.`);
+
+function send(eeObject, { timeoutMs = CHUNK_TIMEOUT_MS, what = "Earth Engine request", context = {} } = {}) {
+  const end = context?.background ? null : countInteractive(context);
   const request = new Promise((resolve, reject) => {
     eeObject.evaluate((value, error) => (error ? reject(asError(error)) : resolve(value)));
   });
-  return withTimeout(request, timeoutMs, what).catch((error) => {
+  const answer = withTimeout(request, timeoutMs, what).catch((error) => {
     throw error instanceof GeeError ? error : explainGeeError(error, { ...context, what });
+  });
+  // `answer` always settles (withTimeout), so the count always comes down.
+  return end ? answer.finally(end) : answer;
+}
+
+// One whole analysis, as its requests see it (context.failed): the Atlas's
+// month (analyze), a farm's analysis or a field's history (field-gee.js).
+// Once it has failed (markFailed), nothing more of it is sent (evaluate,
+// getAsset, retryTransient), and its interactive requests out and its
+// waits to be tried again stop holding the Atlas back (countInteractive).
+//   of  what has failed, for the message ("the month", "the farm's analysis")
+export function newFailure(of) {
+  return { error: null, of, holds: new Set() };
+}
+
+// The analysis has failed with `error` (the first error is kept).
+export function markFailed(failed, error) {
+  if (!failed || failed.error) return;
+  failed.error = error || new Error(`${failed.of || "The analysis"} failed.`);
+  for (const end of [...(failed.holds || [])]) end();
+}
+
+// Runs one whole analysis, `work(failed)` (failed: newFailure(of)), and
+// marks it failed when it throws.
+export async function stopWhenFailed(of, work) {
+  const failed = newFailure(of);
+  try {
+    return await work(failed);
+  } catch (error) {
+    markFailed(failed, error);
+    throw error;
+  }
+}
+
+// Who is using Earth Engine now. Kept on globalThis, like the sign-in
+// (sharedState), so every copy of this file the dev server loads after an
+// edit, and so the Atlas and Field providers made from different copies,
+// count the same requests.
+//   interactive  interactive requests out
+//   lastEndedAt  when the last of them ended (Date.now())
+//   waiting      background requests waiting to be sent
+//   wake         what wakes those waiting when no interactive one is out
+const newYieldState = () => ({ interactive: 0, lastEndedAt: 0, waiting: 0, wake: new Set() });
+function yieldState() {
+  return (globalThis.__chernozemEeYield ??= newYieldState());
+}
+
+// For tests: how many interactive requests are out, and how many background
+// requests wait for them.
+export function yieldStatus() {
+  const { interactive, waiting } = yieldState();
+  return { interactive, waiting };
+}
+
+// For tests: starts the count again from nothing, so a test that failed
+// with a request still counted cannot make the next one fail. A request
+// counted before still ends against the count it was in (countInteractive),
+// so it changes nothing here.
+export function resetYieldState() {
+  globalThis.__chernozemEeYield = newYieldState();
+}
+
+// No interactive request out, and none ended in the last YIELD.settleMs. A
+// clock set back since counts as quiet.
+function isQuiet(state, now = Date.now()) {
+  const since = now - state.lastEndedAt;
+  return state.interactive === 0 && (since >= YIELD.settleMs || since < 0);
+}
+
+// Counts one interactive request, or an interactive caller's work
+// (holdInteractive), as out, and gives back what ends it: once, like a
+// request that ended (interactiveEnded). When the analysis it is part of
+// fails (context.failed, markFailed), it ends then: nobody waits for that
+// work any more, so the Atlas need not hold back for it. A request of an
+// analysis that has already failed is not counted.
+function countInteractive(context) {
+  const failed = context?.failed;
+  if (failed?.error) return () => {};
+  const state = yieldState();
+  state.interactive += 1;
+  let ended = false;
+  const end = () => {
+    if (ended) return;
+    ended = true;
+    failed?.holds?.delete(end);
+    interactiveEnded(state);
+  };
+  failed?.holds?.add(end);
+  return end;
+}
+
+function interactiveEnded(state) {
+  state.interactive = Math.max(0, state.interactive - 1);
+  state.lastEndedAt = Date.now();
+  if (state.interactive === 0) for (const wake of [...state.wake]) wake();
+}
+
+// Counts an interactive caller as out while `work` (a function giving a
+// promise) runs, and ends like a request (countInteractive), so the Atlas
+// does not go in the gaps of that work. retryTransient uses it for a Field
+// request that waits to be tried again (8 s after a dropped connection,
+// 40 s and 80 s when Earth Engine is busy: far longer than YIELD.settleMs);
+// field-gee.js for the GeoTIFF link. Every such work ends: its requests
+// have time limits, its pauses timers. `context` as for evaluate (its
+// `failed` ends the hold early).
+export async function holdInteractive(work, context = null) {
+  const end = countInteractive(context);
+  try {
+    return await work();
+  } finally {
+    end();
+  }
+}
+
+// A background request waits here until isQuiet, or YIELD.maxWaitMs at the
+// most (then it goes anyway: onWait(false, { capped: true })). Its own time
+// limit starts after this, when it is sent.
+async function waitForInteractive(context) {
+  const state = yieldState();
+  const started = Date.now();
+  let capped = false;
+  state.waiting += 1;
+  try {
+    context.onWait?.(true);
+    for (;;) {
+      const now = Date.now();
+      const left = started + YIELD.maxWaitMs - now;
+      if (isQuiet(state, now)) return;
+      if (left <= 0) {
+        capped = true;
+        return;
+      }
+      // Interactive requests out: until the last one ends; none: the rest of
+      // the settle time.
+      await (state.interactive > 0 ? untilIdle(state, left) : sleep(Math.min(left, YIELD.settleMs - (now - state.lastEndedAt))));
+    }
+  } finally {
+    state.waiting = Math.max(0, state.waiting - 1);
+    context.onWait?.(false, { capped });
+  }
+}
+
+// Resolves when no interactive request is out any more, or after `ms`.
+function untilIdle(state, ms) {
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      state.wake.delete(done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    state.wake.add(done);
   });
 }
 
-// Reads an asset's description (used to check the chernozem map).
-function getAsset(ee, id) {
-  return withTimeout(
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Reads an asset's description (used to check the chernozem map), with a
+// context like evaluate's: for the Atlas's analysis (context.background) it
+// waits like its other requests while interactive ones are out; for anyone
+// else (a farm's analysis, the gee:check script) it is interactive, counted
+// while it is out. It is not sent once its analysis has failed (GeeError
+// "stopped").
+async function getAsset(ee, id, context = {}) {
+  const what = `Reading asset ${id}`;
+  if (context?.failed?.error) throw notSent(what, context.failed);
+  if (context?.background) {
+    if (!isQuiet(yieldState())) await waitForInteractive(context);
+    if (context.failed?.error) throw notSent(what, context.failed);
+  }
+  const end = context?.background ? null : countInteractive(context);
+  const read = withTimeout(
     new Promise((resolve, reject) => {
       ee.data.getAsset(id, (value, error) => (error ? reject(asError(error)) : resolve(value)));
     }),
     60 * 1000,
-    `Reading asset ${id}`,
+    what,
   );
+  return end ? read.finally(end) : read;
 }
 
 // ---------- Images ----------
@@ -661,8 +946,9 @@ async function preflight(ee, { region, bufferRegion, windows, context }) {
     firmsNormal: firms(ee, region, windows.fireNormal).size(),
     firmsMonth: firms(ee, region, windows.month).size(),
     firmsMonthBase: windows.monthBaselines.map((w) => firms(ee, region, w)).reduce((all, next) => all.merge(next)).size(),
-    // Within 300 km, like the distance; only needed inside a known war.
-    firmsYear: windows.conflict ? firms(ee, bufferRegion, windows.lastYear).size() : ee.Number(0),
+    // Within 300 km, like the distance; only needed inside a known war
+    // (not in a month before it began: nothing is estimated then).
+    firmsYear: windows.conflict && !windows.beforeWar ? firms(ee, bufferRegion, windows.lastYear).size() : ee.Number(0),
     worldPop: worldPop(ee, region).size(),
   };
   const raw = await countImages(ee, counts, { what: "Checking which satellite images exist", context });
@@ -676,8 +962,8 @@ async function preflight(ee, { region, bufferRegion, windows, context }) {
 // or the request was too big. (Real data, Ukraine May 2026: "Earth Engine memory capacity
 // exceeded" in the season's image check failed the whole month.)
 async function countImages(ee, counts, { what, context }) {
-  const timeoutMs = 2 * 60 * 1000;
-  const once = (object, label = what) => retryTransient(() => evaluate(object, { timeoutMs, what: label, context }), context.retryDelayMs);
+  const timeoutMs = COUNT_TIMEOUT_MS;
+  const once = (object, label = what) => retryTransient(() => evaluate(object, { timeoutMs, what: label, context }), context.retryDelayMs, context);
   return retryTooMuchWork(() => once(ee.Dictionary(counts)), {
     delays: context.memoryRetryMs,
     onRetry: (error, tries, how) => context.retried?.(what, how),
@@ -696,12 +982,15 @@ const COUNT_PARALLEL = 4;
 // Can the service account read the chernozem asset, and does it have b1?
 // Also reads the black-soil map's class list (once). Gives back
 // { assetId|null, warning|null, source } (source: which soil map is used).
-export async function checkChernozemAsset(ee, assetId) {
-  await loadBlackSoilClasses(ee);
+// Both the Atlas's analysis and a farm's analysis pass their context
+// (getAsset): the Atlas's reads wait like its other requests, a farm's
+// count as interactive while they are out.
+export async function checkChernozemAsset(ee, assetId, context = {}) {
+  await loadBlackSoilClasses(ee, context);
   const instead = { assetId: null, source: BLACK_SOIL_SOURCE };
   if (!assetId || /^(none|off|no)$/i.test(assetId)) return { ...instead, warning: null };
   try {
-    const info = await getAsset(ee, assetId);
+    const info = await getAsset(ee, assetId, context);
     const bands = (info?.bands || []).map((band) => band.id);
     if (bands.length && !bands.includes(BANDS.chernozemAsset)) {
       return { ...instead, warning: `The chernozem map ${assetId} has no band ${BANDS.chernozemAsset}; the ${lowerFirst(BLACK_SOIL_SOURCE)} was used instead.` };
@@ -715,10 +1004,38 @@ export async function checkChernozemAsset(ee, assetId) {
 
 const lowerFirst = (text) => text.charAt(0).toLowerCase() + text.slice(1);
 
+// One month of an area (analyzeMonth). Once it has failed, the requests of
+// it that are not out yet are not sent (evaluate: context.failed,
+// stopWhenFailed): the month is reported as missing, so nobody would use
+// their answers. (Before, a failed month's group that was waiting for a
+// farm still went out after it, together with the next month's requests,
+// and a group being split went on with its other half.)
+//   input.signal  an AbortSignal (server/jobs.js): when a person stops the
+//                 analysis, the month fails at once in the same way
+//                 (GeeError "stopped"), so nothing more of it is sent; the
+//                 job does not wait for the requests already out
+function analyze(deps, input) {
+  return stopWhenFailed("the month", async (failed) => {
+    const signal = typeof input?.signal?.addEventListener === "function" ? input.signal : null;
+    const stop = () => markFailed(failed, new GeeError("stopped", "The analysis was stopped."));
+    if (signal?.aborted) stop();
+    signal?.addEventListener("abort", stop, { once: true });
+    try {
+      return await analyzeMonth(deps, input, failed);
+    } finally {
+      signal?.removeEventListener("abort", stop);
+    }
+  });
+}
+
 // conflict: the known war covering the area ({ id, name, since }) or null;
-// when it is not given it is looked up from the area's cells
-// (server/conflicts.js).
-async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conflict: givenConflict } = {}) {
+// when it is not given it is looked up as the job does: the team's own
+// choice for the area (area.war) first, else the app's list by the area's
+// country or cells (server/conflicts.js conflictForArea).
+// onProgress(share, message, info): the share done (0..1) and the step;
+// info { waiting: true } while its requests wait for farm analyses and
+// searches (WAITING_MESSAGE), { waiting: false } when they go on.
+async function analyzeMonth(deps, { area, cells, month, cellSizeDeg, onProgress, conflict: givenConflict } = {}, failed = newFailure("the month")) {
   if (!area?.bbox || !Array.isArray(cells) || !cells.length) throw new GeeError("bad_request", "Nothing to analyze: the area has no cells.");
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(month))) throw new GeeError("bad_request", `Not a month: ${month}`);
   if (!(Number(cellSizeDeg) > 0)) throw new GeeError("bad_request", `Not a cell size: ${cellSizeDeg}`);
@@ -730,10 +1047,42 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conf
   // says so (they never change a reading: the same request, or lighter
   // with the same pixels; coarser pixels have their own warning).
   const retriedSteps = new Map();
+  // The last step's share and message (step below), so a wait can be
+  // reported without moving the progress bar.
+  let progressShare = 0;
+  let progressMessage = "";
+  let waitingRequests = 0;
+  let waitStartedAt = 0;
+  let waitCapped = false;
   const context = {
     ...contextOf(cfg),
     retryDelayMs: deps.retryDelayMs,
     memoryRetryMs: deps.memoryRetryMs,
+    // The Atlas works in the background: its requests wait while Field and
+    // search requests are out (evaluate). onProgress hears it:
+    // (share, WAITING_MESSAGE, { waiting: true }) when the first starts
+    // waiting, (share, the step's message, { waiting: false }) when the
+    // last is sent. The server log says how long, and whether a request
+    // went at the time limit (YIELD.maxWaitMs) while they were still out.
+    background: true,
+    failed,
+    onWait: (waiting, { capped = false } = {}) => {
+      waitingRequests = Math.max(0, waitingRequests + (waiting ? 1 : -1));
+      if (waiting && waitingRequests === 1) {
+        waitStartedAt = Date.now();
+        waitCapped = false;
+        onProgress?.(progressShare, WAITING_MESSAGE, { waiting: true });
+      } else if (!waiting) {
+        waitCapped ||= capped;
+        // A month that has failed sends nothing more (evaluate) and says
+        // nothing more.
+        if (waitingRequests > 0 || failed.error) return;
+        const seconds = Math.round((Date.now() - waitStartedAt) / 1000);
+        const how = waitCapped ? `, then went ahead after the ${Math.round(YIELD.maxWaitMs / 60000)}-minute limit while they were still out` : "";
+        console.warn(`[chernozem] ${area.name || area.id} ${month}: waited ${seconds} s for farm analyses and searches with Earth Engine${how}`);
+        onProgress?.(progressShare, progressMessage, { waiting: false });
+      }
+    },
     retried: (what, how = "same") => {
       retriedSteps.set(what, (retriedSteps.get(what) || 0) + 1);
       console.warn(`[chernozem] ${area.name || area.id} ${month}: Earth Engine asked again (${how}): ${what}`);
@@ -750,13 +1099,26 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conf
   const scale = reduceScale(cellSizeDeg, midLat);
   const tileScale = tileScaleFor(cellSizeDeg, midLat);
   const today = isoDay(deps.now());
-  const conflict = cleanConflict(givenConflict !== undefined ? givenConflict : conflictForArea({ countryId: area.countryId, bbox, cells }));
+  const conflict = cleanConflict(givenConflict !== undefined ? givenConflict : conflictForArea({ countryId: area.countryId, bbox, cells, war: area.war, areaId: area.id }));
   const shared = monthWindows(month, today, { lat: midLat, conflict });
+  // A whole-country area that holds its war only in part (Thailand, Russia,
+  // Ethiopia...: conflict.partOfCountry, server/jobs.js warFor): the war's
+  // rules apply in the squares that touch its boxes (warCells); the others
+  // are read at peace rules (heavy damage needs strong radar change AND an
+  // unusual fire; scoring.js gives them the peace damage score), and the
+  // fires that stand in for fighting are taken from inside the boxes only,
+  // so a wildfire far from the front is not read as fighting. Null: every
+  // square has the area's rules.
+  const warCells = warSquares(conflict, cells, cellSizeDeg);
   const chunkSize = chunkSizeFor(cellSizeDeg, midLat);
   let total = Math.ceil(cells.length / chunkSize) * 2 + 3;
   let done = 0;
   // onProgress gets the share done (0..1) and a short message.
-  const step = (message) => onProgress?.(Math.min(1, done++ / total), message);
+  const step = (message) => {
+    progressShare = Math.min(1, done++ / total);
+    progressMessage = message;
+    onProgress?.(progressShare, message);
+  };
   if (shared.month.end < monthBounds(month).end) warnings.push(`${month} is not over yet; images up to ${shiftDays(today, -1)} were used.`);
 
   // 1. Each place's growing season, from its greenest month in 2019-2021
@@ -782,9 +1144,12 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conf
   // 2. What imagery is there, and can we read the chernozem map?
   step("Checking satellite images");
   const bufferRegion = boxesGeometry(ee, cellBoxes(cells, cellSizeDeg, MAX_CONFLICT_M / 1000));
+  // Where unusual fires stand in for fighting: within 300 km of the cells,
+  // or for a war that covers the area only in part, inside its boxes.
+  const fightRegion = warCells ? boxesGeometry(ee, warBoxes(conflict)) : bufferRegion;
   const [have, asset, ...groupHave] = await Promise.all([
-    preflight(ee, { region, bufferRegion, windows: shared, context }),
-    checkChernozemAsset(ee, cfg.chernozemAsset),
+    preflight(ee, { region, bufferRegion: fightRegion, windows: shared, context }),
+    checkChernozemAsset(ee, cfg.chernozemAsset, context),
     ...groups.map((group) => seasonPreflight(ee, { region: group.region, windows: group.windows, context })),
   ]);
   if (asset.warning) warnings.push(asset.warning);
@@ -795,10 +1160,14 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conf
   const fire = fireImages(ee, { region, windows: shared, have });
 
   // Distance to fighting: ACLED battles; else, inside a known war, unusual
-  // fire detections; at peace, not measured (every cell reads 300 km and
-  // nothing is set aside for it, which does not make the land safe).
+  // fire detections; at peace, and in a month before its war began, not
+  // measured (every cell reads 300 km and nothing is set aside for it, which
+  // does not make the land safe).
   const acled = acledBattlesFor({ csvPath: cfg.acledCsvPath, bbox: boxesBbox(boxes), month });
   if (acled.warning) warnings.push(acled.warning);
+  // A month before its war began: no war damage (no damage window), and
+  // its fires are not fighting (monthWindows beforeWar).
+  if (shared.beforeWar) warnings.push(beforeWarWarning(conflict.since, { accessMeasured: acled.points.length > 0 }));
   let conflictM = null;
   let accessSource = "none";
   if (acled.points.length) {
@@ -809,13 +1178,15 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conf
     // Fires in peaceful farm country (harvest burning, wildfires) are not
     // fighting, so nothing is estimated from them.
     warnings.push(NO_WAR_WARNING);
+  } else if (shared.beforeWar) {
+    // Nothing to estimate fighting from before the war (said above).
   } else if (have.firmsYear > 0) {
-    warnings.push(`Distance to fighting is estimated from unusual fires of the last 12 months (far more than in ${BASELINE_FROM}-${BASELINE_YEAR}; no ACLED file), so treat safe access as rough.`);
-    const fireBand = fightingFires(ee, bufferRegion, shared).rename("fire");
+    warnings.push(`Distance to fighting is estimated from unusual fires of the last 12 months (far more than in ${BASELINE_FROM}-${BASELINE_YEAR}; no ACLED file)${warCells ? ` inside the war's region` : ""}, so treat safe access as rough.`);
+    const fireBand = fightingFires(ee, fightRegion, shared).rename("fire");
     const fires = fireBand.stratifiedSample({
       numPoints: 3000,
       classBand: "fire",
-      region: bufferRegion,
+      region: fightRegion,
       scale: 1000,
       // A fixed seed: the same fires give the same sample points every run.
       seed: 0,
@@ -825,7 +1196,7 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conf
     conflictM = fires.distance(MAX_CONFLICT_M).unmask(MAX_CONFLICT_M).rename("conflictM");
     accessSource = "fires";
   } else {
-    warnings.push("No conflict data and no recent fires near this area; every cell counts as 300 km or more from fighting.");
+    warnings.push(`No conflict data and no recent fires ${warCells ? "in the war's region" : "near this area"}; every cell counts as 300 km or more from fighting.`);
     conflictM = ee.Image.constant(MAX_CONFLICT_M).rename("conflictM");
     accessSource = "fires";
   }
@@ -889,7 +1260,11 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conf
     // The damage radar: each complete war season on its own against the
     // same season of 2019-2021, and per pixel the change that persists over
     // them (seasonRadarImages; method.js FIRE_YEARS), so it changes only
-    // when a new season is complete and only ever grows.
+    // when a new season is complete, and then it grows, except at a pixel's
+    // step from one measured season to two, and when the new season's
+    // passes change the direction pickPass picks below (the passes of all
+    // war seasons together count): every season is then measured again
+    // from the other side.
     const radarSeasons = group.windows.radarSeasons;
     const seasonPass = radarSeasons.length ? pickPass(g.s1Season, g.s1SeasonBase) : null;
     // Only the seasons with passes from that direction (a season without
@@ -897,6 +1272,9 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conf
     const measuredSeasons = seasonPass ? radarSeasons.filter((_, j) => (g.s1SeasonEach?.[j]?.[seasonPass] ?? 1) > 0) : [];
     let radarDb;
     let heavy;
+    // The peace rule's heavy damage, for the squares outside the war's
+    // region of an area that holds it only in part (warCells).
+    let heavyOutside;
     if (seasonPass && measuredSeasons.length) {
       const before = mergedSentinel1(ee, group.region, group.windows.radarSeasonBaselines, seasonPass).median();
       const radar = seasonRadarImages(ee, { region: group.region, seasons: measuredSeasons, before, pass: seasonPass });
@@ -912,30 +1290,40 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conf
       // fire within 1 km, like a field's damage (src/lib/field/method.js
       // damageDetected).
       const strong = radar.level.gte(HEAVY_DAMAGE.radarDb);
-      heavy = (conflict ? strong.or(radar.level.gte(HEAVY_DAMAGE.radarWithFireDb).and(fire.near)) : strong.and(fire.near)).updateMask(cropland).rename("heavy");
+      const peaceHeavy = () => strong.and(fire.near).updateMask(cropland).rename("heavy");
+      heavy = conflict ? strong.or(radar.level.gte(HEAVY_DAMAGE.radarWithFireDb).and(fire.near)).updateMask(cropland).rename("heavy") : peaceHeavy();
+      if (warCells) heavyOutside = peaceHeavy();
     } else {
       radarDb = emptyBand(ee, "radarDb");
       heavy = emptyBand(ee, "heavy");
-      warnings.push(
-        radarSeasons.length
-          ? `No Sentinel-1 radar images from one orbit direction for both ${radarLabel} and the same season of ${BASELINE_FROM}-${BASELINE_YEAR}; heavy damage could not be measured there.`
-          : `No growing season since ${shared.damage ? shared.damage.start : month} is complete yet; heavy damage could not be measured there.`,
-      );
+      // A month before its war began has said why once (beforeWarWarning).
+      if (!shared.beforeWar) {
+        warnings.push(
+          radarSeasons.length
+            ? `No Sentinel-1 radar images from one orbit direction for both ${radarLabel} and the same season of ${BASELINE_FROM}-${BASELINE_YEAR}; heavy damage could not be measured there.`
+            : `No growing season since ${shared.damage ? shared.damage.start : month} is complete yet; heavy damage could not be measured there.`,
+        );
+      }
     }
-    group.meanImage = ee.Image.cat([
-      chernozem.updateMask(cropland).rename("chernozemCrop"),
-      chernozem.rename("chernozemAll"),
-      cropland,
-      chiDrop,
-      radarDb,
-      heavy,
-      fire.years,
-      // Left out at peace: a missing distance reads as 300 km (toReading).
-      ...(conflictM ? [conflictM] : []),
-      lights,
-      radarShare,
-      fire.month,
-    ]);
+    const meanImage = (heavyBand) =>
+      ee.Image.cat([
+        chernozem.updateMask(cropland).rename("chernozemCrop"),
+        chernozem.rename("chernozemAll"),
+        cropland,
+        chiDrop,
+        radarDb,
+        heavyBand,
+        fire.years,
+        // Left out at peace: a missing distance reads as 300 km (toReading).
+        ...(conflictM ? [conflictM] : []),
+        lights,
+        radarShare,
+        fire.month,
+      ]);
+    group.meanImage = meanImage(heavy);
+    // The same images with the peace rule's heavy damage, for the group's
+    // squares outside the war's region (warCells).
+    if (warCells) group.meanImageOutside = heavyOutside ? meanImage(heavyOutside) : group.meanImage;
   }
 
   // 4. Reduce over the cells, group by group and chunk by chunk, two
@@ -984,7 +1372,7 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conf
     let internalRetried = false;
     for (;;) {
       try {
-        return await retryTransient(() => evaluate(measure(part, meanImage, plan), { what: label, context }), deps.retryDelayMs);
+        return await retryTransient(() => evaluate(measure(part, meanImage, plan), { what: label, context }), deps.retryDelayMs, context);
       } catch (error) {
         // An older Earth Engine without maxPixelsPerRegion: drop it, try again.
         if (!deps.state.noMaxPixelsArg && isUnknownArgumentError(error, "maxPixelsPerRegion")) {
@@ -1026,11 +1414,23 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conf
   // A whole chunk that finds Earth Engine's servers full ("memory capacity
   // exceeded") is tried again as it is after a pause, then lighter; one
   // that is too big ("User memory limit exceeded", "Computation timed
-  // out", our own 5-minute limit) goes lighter at once (retryTooMuchWork).
+  // out", our own 5-minute limit, CHUNK_TIMEOUT_MS, which ends it before
+  // the library's deadline does) goes lighter at once (retryTooMuchWork).
   const measureChunk = (part, meanImage, plan) =>
     retryTooMuchWork(async () => keep(await attempt(part, meanImage, plan)), { delays: deps.memoryRetryMs, lighter: () => lighter(part, meanImage, plan), onRetry: (error, tries, how) => context.retried?.("Measuring cells", how) });
-  const work = groups.flatMap((group) => chunk(group.cells, chunkSize).map((part) => ({ part, meanImage: group.meanImage })));
+  // A group of an area that holds its war only in part is sent as its
+  // squares inside the war's region (the war's rules) and those outside
+  // (the peace rules): a cell's reading does not depend on which cells
+  // share its request.
+  const work = groups.flatMap((group) => {
+    if (!warCells) return chunk(group.cells, chunkSize).map((part) => ({ part, meanImage: group.meanImage }));
+    const inside = group.cells.filter((cell) => warCells.has(cell.id));
+    const outside = group.cells.filter((cell) => !warCells.has(cell.id));
+    return [...chunk(inside, chunkSize).map((part) => ({ part, meanImage: group.meanImage })), ...chunk(outside, chunkSize).map((part) => ({ part, meanImage: group.meanImageOutside }))];
+  });
   chunkCount = work.length;
+  // The progress bar counts the requests really sent.
+  total += work.length - groups.reduce((sum, group) => sum + Math.ceil(group.cells.length / chunkSize), 0);
   let measured = 0;
   await mapLimit(work, MAX_PARALLEL_CHUNKS, async ({ part, meanImage }) => {
     await measureChunk(part, meanImage, { scale, tileScale });
@@ -1056,6 +1456,9 @@ async function analyze(deps, { area, cells, month, cellSizeDeg, onProgress, conf
     const props = means.get(cell.id);
     // At peace without ACLED there is no distance band: 300 km everywhere.
     const reading = toReading(cell, props && !conflictM ? { ...props, conflictM: MAX_CONFLICT_M } : props, people ? sums.get(cell.id) : { people: 0 }, { cellSizeDeg, names: names.get(cell.id) });
+    // Which rules the square was read with, where the war covers the area
+    // only in part (runs.js keeps it; scoring.js scores by it).
+    if (warCells) reading.atWar = warCells.has(cell.id);
     if (reading.chiDrop === null) noHealth += 1;
     if (reading.radarDb === null) noRadar += 1;
     readings.push(reading);
@@ -1221,8 +1624,11 @@ const NO_RADAR = -1;
 //               one. Heavy damage and the radar indicator use it
 //   persistent  the same, -1 with one season measured
 //   peak        the largest change of any season
-// all masked where no season was measured. With two seasons or more a
-// later season that looks ordinary never lowers them: they only grow.
+// all masked where no season was measured. With two seasons or more
+// measured, a later season that looks ordinary never lowers them: they
+// only grow, as long as `pass` stays the same (analyze's pickPass counts
+// the passes of all war seasons, so a new season can change it; every
+// season is then measured from the other direction).
 export function seasonRadarImages(ee, { region, seasons, before, pass }) {
   const changes = seasons.map((season) => {
     const now = sentinel1(ee, region, season, pass).median();
@@ -1241,8 +1647,9 @@ export function seasonRadarImages(ee, { region, seasons, before, pass }) {
 }
 
 // The orbit direction to compare radar with: the one with the most passes
-// in BOTH windows ({ ASCENDING, DESCENDING } counts each), or null when
-// neither direction has passes in both.
+// in BOTH windows ({ ASCENDING, DESCENDING } counts each): the larger of
+// the two directions' smaller counts, then the more passes in all; or null
+// when neither direction has passes in both.
 export function pickPass(now = {}, before = {}) {
   let best = null;
   for (const pass of ORBIT_PASSES) {
@@ -1318,20 +1725,64 @@ export async function peakMonthAt(ee, region, { context = {} } = {}) {
 // The peak month (1-12) of each cell's cropland greenness in 2019-2021, from
 // MODIS NDVI (MOD13A2, 1 km, 16 days): the mean of each calendar month,
 // then src/lib/season.js peakMonthFrom. -> Map(cell id -> month | null)
+// A group that runs past our time limit (CHUNK_TIMEOUT_MS: GeeError
+// "timeout") is sent once more, unchanged, after the pause of a dropped
+// connection (context.retryDelayMs), before the whole area takes its
+// seasons from the latitude (analyze): the season finder has no lighter
+// form. While the library's own deadline was 5 minutes too, its "HTTP
+// code: -1" came first and gave that second try (isTransientError); with
+// our limit first (EE_DEADLINE_MS) and no second try, a slow group sent the
+// whole month to latitude seasons at once (found in review, fake Earth
+// Engine, 2026-10-19), which under load can make a month differ from its
+// neighbours.
+// Once one group has failed for good, the whole area takes its seasons from
+// the latitude, so nothing more of the finder is sent: not a group still to
+// start (mapLimit), not another group's second try, nor its re-sends after a
+// dropped connection or a busy Earth Engine (retryTransient), nor one still
+// waiting for farm analyses (evaluate). The finder has its own failure for
+// that (newFailure, `finder.failed`), which the month's own failure (a Stop:
+// server/jobs.js) ends too. A second try that passed is reported
+// (context.retried: "asked again ... the readings are the same") only once
+// the whole finder has passed: when the latitude decided, they are not the
+// same. (Found in review, fake Earth Engine, 2026-10-19: with two groups
+// past the limit, one second try passing and one failing, the run said both
+// "taken from the latitude" and "asked again ... the same"; and a group's
+// second try still went out 8 s after another group had failed, after its
+// month had ended.)
 async function seasonPeaks(ee, { cells, cellSizeDeg, scale, tileScale, chunkSize, state, context }) {
   const monthly = ndviClimatology(ee);
   const peaks = new Map();
   const pixel = Math.max(SEASON_FINDER.minScale, Math.min(SEASON_FINDER.maxScale, scale));
-  await mapLimit(chunk(cells, chunkSize), MAX_PARALLEL_CHUNKS, async (part) => {
-    const squares = cellCollection(ee, part, cellSizeDeg);
-    const args = { collection: squares, reducer: ee.Reducer.mean(), scale: pixel, crs: "EPSG:4326", tileScale, ...(state.noMaxPixelsArg ? {} : { maxPixelsPerRegion: MAX_PIXELS_PER_CELL }) };
-    const result = await retryTransient(() => evaluate(monthly.reduceRegions(args).select([".*"], null, false).toList(part.length), { what: "Finding the growing season", context }), context.retryDelayMs);
-    for (const feature of Array.isArray(result) ? result : result?.features || []) {
-      const p = feature?.properties || {};
-      const values = Array.from({ length: 12 }, (_, i) => numberOr(p[`ndvi${pad(i + 1)}`], null));
-      peaks.set(p.id, peakMonthFrom(values));
-    }
-  });
+  const gaveUp = newFailure("the season finder");
+  const month = context.failed;
+  const finder = { ...context, failed: { of: gaveUp.of, holds: gaveUp.holds, get error() { return gaveUp.error || month?.error || null; } } };
+  let passedAgain = 0;
+  try {
+    await mapLimit(chunk(cells, chunkSize), MAX_PARALLEL_CHUNKS, async (part) => {
+      const squares = cellCollection(ee, part, cellSizeDeg);
+      const args = { collection: squares, reducer: ee.Reducer.mean(), scale: pixel, crs: "EPSG:4326", tileScale, ...(state.noMaxPixelsArg ? {} : { maxPixelsPerRegion: MAX_PIXELS_PER_CELL }) };
+      const once = () => retryTransient(() => evaluate(monthly.reduceRegions(args).select([".*"], null, false).toList(part.length), { what: "Finding the growing season", context: finder }), context.retryDelayMs, finder);
+      const result = await once().catch(async (error) => {
+        if (error?.code !== "timeout" || finder.failed.error) throw error;
+        await sleep(Number.isFinite(context.retryDelayMs) ? Math.max(0, context.retryDelayMs) : TRANSIENT_RETRY_MS);
+        // Not sent ("stopped": evaluate) when the finder failed meanwhile.
+        const again = await once();
+        passedAgain += 1;
+        return again;
+      });
+      for (const feature of Array.isArray(result) ? result : result?.features || []) {
+        const p = feature?.properties || {};
+        const values = Array.from({ length: 12 }, (_, i) => numberOr(p[`ndvi${pad(i + 1)}`], null));
+        peaks.set(p.id, peakMonthFrom(values));
+      }
+    });
+  } catch (error) {
+    markFailed(gaveUp, error);
+    throw error;
+  }
+  // Said only when the finder passed (the readings are then the same as
+  // without the retries); when it failed, the latitude's warning says why.
+  for (let i = 0; i < passedAgain; i += 1) context.retried?.("Finding the growing season");
   return peaks;
 }
 
@@ -1352,7 +1803,7 @@ async function placeNames(ee, { region, cells, context }) {
       const adm = ee.Feature(feature.get("adm"));
       return ee.Feature(null, { id: feature.get("id"), admin1: adm.get("ADM1_NAME"), admin2: adm.get("ADM2_NAME") });
     });
-    const result = await retryTransient(() => evaluate(joined, { timeoutMs: 2 * 60 * 1000, what: "Looking up place names", context }), context.retryDelayMs);
+    const result = await retryTransient(() => evaluate(joined, { timeoutMs: 2 * 60 * 1000, what: "Looking up place names", context }), context.retryDelayMs, context);
     for (const feature of result?.features || []) {
       const p = feature.properties || {};
       names.set(p.id, { admin1: cleanName(p.admin1), admin2: cleanName(p.admin2) });
@@ -1385,7 +1836,7 @@ async function alertDates(ee, { alerts, cells, cellSizeDeg, region, windows, mon
   const dated = fireDay
     .reduceRegions({ collection: withRadar, reducer: ee.Reducer.max().setOutputs(["fireDay"]), scale: Math.max(scale, 100), crs: "EPSG:4326", tileScale })
     .select([".*"], null, false);
-  const result = await retryTransient(() => evaluate(dated, { timeoutMs: 2 * 60 * 1000, what: "Dating the alerts", context }), context.retryDelayMs);
+  const result = await retryTransient(() => evaluate(dated, { timeoutMs: 2 * 60 * 1000, what: "Dating the alerts", context }), context.retryDelayMs, context);
   const found = new Map(
     (result?.features || []).map((feature) => {
       const p = feature.properties || {};
@@ -1487,14 +1938,21 @@ export function monthBounds(month) {
 //   month      the month itself (alerts, night lights)
 //   monthBaselines  the same month in 2019, 2020 and 2021 (fire alerts
 //              compare the month with them), cut short like the month
-//   radarBefore what radar alerts compare the month with: at peace the same
-//              month of 2019-2021 (so harvest and tillage, which come every
-//              year, cancel out); inside a known war the 3 months before (so
-//              an alert is NEW change: against 2019-2021 a whole front reads
-//              as changed every month)
+//   radarBefore what radar alerts compare the month with: at peace (and in
+//              a month before its war began) the same month of 2019-2021 (so
+//              harvest and tillage, which come every year, cancel out);
+//              inside a known war the 3 months before (so an alert is NEW
+//              change: against 2019-2021 a whole front reads as changed
+//              every month)
 //   damage     where damage is counted: from the day the known war began
 //              (null for a month before it), else the two years up to the
 //              end of the month (src/config/conflicts.js damageWindow)
+//   beforeWar  true for a month that ends before its war began (damage
+//              null): no war damage is counted, and analyze measures no
+//              distance to fighting (src/config/conflicts.js endsBeforeWar;
+//              found in review, fake Earth Engine, 2026-10-19: such a month
+//              estimated "fighting" from pre-war fires, and read 0 heavy
+//              damage next to "War since ...")
 //   asOf       the day seasons must be complete by (the month's last day,
 //              or yesterday for a month not over yet)
 //   radarSeasons  every complete growing season inside the damage window
@@ -1530,13 +1988,16 @@ export function monthWindows(month, today = isoDay(new Date()), { lat, conflict 
   const war = cleanConflict(conflict);
   const counted = damageWindow(war, lastDay(month));
   const damage = counted.start < own.end ? stop({ start: counted.start, end: own.end }) : null;
+  // A month before its war began: read as at peace, with no war damage.
+  const beforeWar = Boolean(war) && !damage;
+  const fighting = Boolean(war) && !beforeWar;
   // The damage radar: every complete growing season inside the damage
   // window, against the same season of 2019-2021 (method.js FIRE_YEARS).
   const radarSeasons = !damage ? [] : Array.isArray(givenSeasons) ? givenSeasons.map((w) => ({ start: w.start, end: w.end })) : damageSeasons(Number.isFinite(lat) ? lat : 50, asOf, damage.start, peakMonth);
   return {
     month: own,
     monthBaselines: BASELINE_YEARS.map((year) => sameWindowIn(own, year)),
-    radarBefore: war ? [stop({ start: `${addMonths(month, -3)}-01`, end: monthBounds(month).start })] : BASELINE_YEARS.map((year) => sameWindowIn(own, year)),
+    radarBefore: fighting ? [stop({ start: `${addMonths(month, -3)}-01`, end: monthBounds(month).start })] : BASELINE_YEARS.map((year) => sameWindowIn(own, year)),
     season,
     baseline: baselines[baselines.length - 1],
     baselines,
@@ -1547,6 +2008,7 @@ export function monthWindows(month, today = isoDay(new Date()), { lat, conflict 
     fireNormal: { ...FIRE_NORMAL },
     fireYears: fireYears(damage, { anchor: war ? "start" : "end" }),
     conflict: war,
+    beforeWar,
     lastYear: stop({ start: yearBefore(own.end), end: own.end }),
     fireBaselines: BASELINE_YEARS.map((year) => {
       const end = sameDayIn(year, own.end);
@@ -1776,11 +2238,17 @@ export function isTooMuchWorkError(error) {
 // rather than in the computation? Worth one more try of the same request
 // after a pause. Real data, 2026-10-19: a Brazil box run failed after
 // 321 s on "Server returned HTTP code: -1 for POST .../value:compute"
-// while other runs were going; the same request passed on a retry.
+// while other runs were going; the same request passed on a retry. The
+// library also answers "HTTP code: -1" at its own deadline, which was then
+// as long as our time limit and came first (that Brazil failure, 321 s
+// into the run, was probably that 5-minute deadline). It now comes after
+// every time limit of ours (EE_DEADLINE_MS, a minute after the longest),
+// so an "HTTP code: -1" we see now most likely means the connection
+// dropped before our limit.
 // Earth Engine busy (isBusyError) counts too. So does "Unknown reference
-// to value named ''": real data, Kenya 12 months, 2026-10-19, the request
-// that went out as the 1-hour sign-in token ran out was sent again by the
-// library without its body (see keepTokenFresh); the next one worked.
+// to value named ''": real data, Kenya 12 months, 2026-10-19, a request
+// sent when the 1-hour sign-in token had already run out was sent again by
+// the library without its body (see keepTokenFresh); the next one worked.
 export function isTransientError(error) {
   const texts = [error?.message, error?.cause?.message, typeof error === "string" ? error : ""].filter(Boolean).join(" ");
   return /HTTP code: -1\b|HTTP code: (429|5\d\d)\b|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|socket hang up|network error|fetch failed|unknown reference to value named ''/i.test(texts) || isBusyError(error);
@@ -1791,8 +2259,10 @@ export function isTransientError(error) {
 // Kenya 12 months, 2026-10-19: a month failed on "Earth Engine capacity
 // exceeded." after 637 s and the job stopped. Nothing is wrong with the
 // request, so it is tried again as it is after a longer pause
-// (BUSY_RETRY_FACTOR). "memory capacity exceeded" is not this: it means
-// the request is too big (isTooMuchWorkError, coarser pixels).
+// (BUSY_RETRY_FACTOR); if it still fails, the error is "busy"
+// (explainGeeError) and an Atlas job skips that month and goes on.
+// "memory capacity exceeded" is not this: it means the request is too big
+// (isTooMuchWorkError, coarser pixels).
 export function isBusyError(error) {
   const texts = [error?.message, error?.cause?.message, typeof error === "string" ? error : ""].filter(Boolean).join(" ");
   return /(?<!memory )capacity exceeded|too many concurrent/i.test(texts);
@@ -1806,7 +2276,21 @@ export const BUSY_RETRY_FACTOR = 5;
 // Runs `request` (a function giving a promise); on a transient failure
 // waits `delayMs` and runs it once more (a busy Earth Engine: up to
 // BUSY_RETRIES more times, with longer pauses).
-export async function retryTransient(request, delayMs = TRANSIENT_RETRY_MS) {
+//   context  the request's context. An interactive one (the Field: not
+//            context.background) stays counted as out for the whole call,
+//            pauses included (holdInteractive), so the Atlas does not send
+//            its requests while a Field request waits to be tried again.
+//            Before, the Atlas went 3 s into the pause (YIELD.settleMs),
+//            and the Field's retry met its groups of cells. Once its
+//            analysis has failed (context.failed), nothing is tried again:
+//            no pause, and a retry after a pause is not sent (evaluate);
+//            a Field one stops holding the Atlas back then.
+export async function retryTransient(request, delayMs = TRANSIENT_RETRY_MS, context = null) {
+  if (context && !context.background) return holdInteractive(() => sendAgainWhenTransient(request, delayMs, context), context);
+  return sendAgainWhenTransient(request, delayMs, context);
+}
+
+async function sendAgainWhenTransient(request, delayMs, context) {
   const pause = Math.max(0, Number.isFinite(delayMs) ? delayMs : TRANSIENT_RETRY_MS);
   for (let tries = 0; ; tries++) {
     try {
@@ -1815,7 +2299,9 @@ export async function retryTransient(request, delayMs = TRANSIENT_RETRY_MS) {
       if (!isTransientError(error)) throw error;
       const busy = isBusyError(error);
       if (tries >= (busy ? BUSY_RETRIES : 1)) throw error;
-      await new Promise((resolve) => setTimeout(resolve, busy ? pause * BUSY_RETRY_FACTOR * (tries + 1) : pause));
+      // Its analysis has failed: nobody would use the answer.
+      if (context?.failed?.error) throw error;
+      await sleep(busy ? pause * BUSY_RETRY_FACTOR * (tries + 1) : pause);
     }
   }
 }
@@ -1928,13 +2414,29 @@ export function chunk(items, size) {
 }
 
 // Runs `work` over items, at most `limit` at a time, in order of start.
+// Once one item has failed, no further item is started (those already
+// running finish) and the first error is the one thrown. mapLimit rejects
+// with it anyway, so the other items' results are never used and the
+// requests they would send are not needed. Its users: here the Atlas's
+// groups of cells (the month fails), the season finder's groups (the
+// latitude decides) and the single counts of a lighter image check (the
+// check fails); in field-gee.js the parts of a field's history
+// (fieldHistory, fieldHistories: the history fails, as it always did).
+// (Before, a month that failed on one group of cells still sent all its
+// other groups to Earth Engine, one after the other.)
 export async function mapLimit(items, limit, work) {
   const results = new Array(items.length);
   let next = 0;
+  let failed = false;
   const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (next < items.length) {
+    while (!failed && next < items.length) {
       const index = next++;
-      results[index] = await work(items[index], index);
+      try {
+        results[index] = await work(items[index], index);
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
     }
   });
   await Promise.all(runners);
@@ -2157,7 +2659,21 @@ export function explainGeeError(error, { projectId, clientEmail, asset, what } =
   if (/permission|forbidden|access denied|not authorized|unauthorized|\b403\b|does not have/.test(text)) {
     return make("no_permission", `The service account ${account} lacks permission in project ${project}. In Google Cloud > IAM, give it the roles "Earth Engine Resource Viewer" and "Service Usage Consumer", then wait a few minutes.`);
   }
-  if (/quota|rate limit|too many requests|\b429\b|too many concurrent/.test(text)) {
+  // Earth Engine too busy right now ("Too many concurrent aggregations.",
+  // "Earth Engine capacity exceeded.": isBusyError), which two workloads on
+  // one project at once can bring: nothing is wrong with the request, the
+  // key or the project's quota. Such a request is tried again after longer
+  // pauses (retryTransient); one that still fails is "busy", which an Atlas
+  // job does not stop for: it skips the month and goes on (server/jobs.js
+  // STOPPING_CODES), as for any other month that fails. "Too many
+  // concurrent" used to read as a quota, which stopped a 12-month job at
+  // that month (fake Earth Engine, review of 2026-10-19). A real quota (or a
+  // 429 "too many requests" the library has already sent again up to 10
+  // times) still stops it, below.
+  if (isBusyError(error)) {
+    return make("busy", `${prefix}Earth Engine was too busy ("${raw.trim()}"). Wait a few minutes and try again.`);
+  }
+  if (/quota|rate limit|too many requests|\b429\b/.test(text)) {
     return make("quota", `${prefix}Earth Engine is limiting requests for project ${project}. Wait a few minutes and run the analysis again.`);
   }
   if (/user memory limit|memory limit exceeded|too many pixels|computation timed out|computed value is too large|too many elements|aggregation/.test(text)) {

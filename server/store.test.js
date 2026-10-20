@@ -1,6 +1,7 @@
 // WHAT THIS FILE DOES
 // Tests for server/store.js: files are saved in the data folder, ids that
-// could reach other files are refused. Run with "npm test".
+// could reach other files are refused, and changes to an area run one at a
+// time. Run with "npm test".
 //
 // WHO EDITS IT
 // Whoever changes store.js.
@@ -120,4 +121,40 @@ test("locks: one holder at a time, stale locks are taken over", async () => {
     await store.releaseLock("scheduler");
     assert.equal(fs.existsSync(path.join(fresh, "scheduler.lock")), false);
   });
+});
+
+test("changes to an area run one at a time: a new name and a war setting sent together are both kept, and a change never brings back an area just removed", async () => {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const area = { id: "area-queue", name: "Queue test", kind: "custom", bbox: [30, 50, 30.1, 50.1], createdAt: "2026-10-01T00:00:00.000Z" };
+  await store.saveArea(area);
+  // The rename reads the area, then takes a moment; the war setting comes
+  // meanwhile. Each sees the other's change.
+  const [renamed, set] = await Promise.all([
+    store.updateArea(area.id, async (saved) => {
+      await sleep(30);
+      saved.name = "Queue renamed";
+    }),
+    store.updateArea(area.id, (saved) => {
+      saved.war = { mode: "peace" };
+    }),
+  ]);
+  assert.equal(renamed.name, "Queue renamed");
+  assert.deepEqual(set.war, { mode: "peace" });
+  const both = await store.getArea(area.id);
+  assert.equal(both.name, "Queue renamed", "the rename is kept");
+  assert.deepEqual(both.war, { mode: "peace" }, "the war setting is kept");
+
+  // A change sent while the area is being removed finds no area: it is not
+  // saved again.
+  const [removed, late] = await Promise.all([
+    store.deleteArea(area.id),
+    store.updateArea(area.id, async (saved) => {
+      await sleep(30);
+      saved.name = "Back again";
+    }),
+  ]);
+  assert.equal(removed, 0);
+  assert.equal(late, null);
+  assert.equal(await store.getArea(area.id), null);
+  assert.equal(fs.existsSync(path.join(dir, "areas", `${area.id}.json`)), false);
 });

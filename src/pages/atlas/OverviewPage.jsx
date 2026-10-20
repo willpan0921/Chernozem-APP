@@ -68,7 +68,8 @@ function Overview() {
   const isLatest = runs[0]?.id === run.id;
   const reanalyzing = job?.status === "running" && job.areaId === area.id;
   const fromEarthEngine = run.provider === "gee";
-  // The war marker: only when the run counted damage from a known war.
+  // The war marker: when the run counted damage from a war, and when the
+  // team marked the area as not at war ("set by your team").
   const war = warNote(run);
 
   // Hovering or focusing a top area outlines it on the map; if the map has
@@ -97,7 +98,7 @@ function Overview() {
             ) : (
               <Badge tone="amber">Sample data</Badge>
             )}
-            {war?.war && (
+            {war?.badge && (
               <span title={war.line}>
                 <Badge tone="outline">{war.badge}</Badge>
               </span>

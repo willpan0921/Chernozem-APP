@@ -8,7 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { scorePlaces } from "./scoring.js";
-import { STEP_NONE, STEP_SET_ASIDE, colorStep, colorVar, rankedCount, valueText } from "./mapColors.js";
+import { STEP_NONE, STEP_SET_ASIDE, colorStep, colorVar, legendFor, rankedCount, valueText } from "./mapColors.js";
 import { makePlaces } from "./testPlaces.js";
 
 const { places } = scorePlaces(makePlaces(12, 12));
@@ -52,4 +52,18 @@ test("colour variables and hover text", () => {
   assert.equal(valueText({ raw: { conflictKm: 140 } }, "access"), "100 km + from fighting");
   assert.equal(valueText({ nearTerm: { rank: 12 } }, "priority", "nearTerm", 1176), "Rank 12 of 1,176");
   assert.equal(valueText({ nearTerm: { tier: "setAside" } }, "priority", "nearTerm", 10), "Set aside (little safe access)");
+});
+
+test("the access key at peace says distance to fighting is not measured, and who decided there is no war", () => {
+  assert.equal(legendFor("access", { conflict: { id: "ukraine-2022", since: "2022-02-24" }, accessSource: "fires" }).title, "Distance to fighting");
+  const listed = legendFor("access", { conflict: null, conflictSource: "list", accessSource: "none" });
+  assert.deepEqual([listed.title, listed.high], ["Distance to fighting: not measured", "No war listed"]);
+  const team = legendFor("access", { conflict: null, conflictSource: "area", accessSource: "none" });
+  assert.deepEqual([team.title, team.high], ["Distance to fighting: not measured", "Not at war (your team)"]);
+  // With an ACLED file access is measured even at peace.
+  assert.equal(legendFor("access", { conflict: null, conflictSource: "area", accessSource: "acled" }).title, "Distance to fighting");
+  // A month that ends before its war began: not measured either.
+  const early = legendFor("access", { month: "2025-12", conflict: { id: "area-x", since: "2026-06-01", source: "area" }, conflictSource: "area", accessSource: "none" });
+  assert.deepEqual([early.title, early.high], ["Distance to fighting: not measured", "Before the war"]);
+  assert.equal(legendFor("access", { month: "2026-08", conflict: { id: "area-x", since: "2026-06-01", source: "area" }, conflictSource: "area", accessSource: "fires" }).title, "Distance to fighting");
 });

@@ -7,19 +7,32 @@
 //   GET    /api/areas/search?q=         find a country (or a region, with Earth Engine)
 //   POST   /api/areas                   save an area (country, coordinates, box, drawn)
 //   GET    /api/areas                   saved areas
-//   GET    /api/areas/:id               one area with its outline
-//   PATCH  /api/areas/:id               rename an area ({ name })
+//   GET    /api/areas/:id               one area with its outline, and
+//                                       listConflict: what the app's list of
+//                                       wars says for it (null at peace)
+//   PATCH  /api/areas/:id               rename an area ({ name }) and/or set
+//                                       its war ({ war: { mode: "list" |
+//                                       "war" | "peace", since, name } }:
+//                                       src/config/conflicts.js checkAreaWar)
 //   DELETE /api/areas/:id               remove an area and its runs (not while
-//                                       it is being analyzed)
+//                                       it is being analyzed: stop that
+//                                       first; an analysis still waiting
+//                                       for its turn is cancelled)
 //   GET    /api/workspace              settings, team, budget... (a current
 //                                       area that no longer exists is cleared)
 //   PATCH  /api/workspace               change any of those
 //   POST   /api/team                    add a team member
 //   PATCH  /api/team/:id                 change a member
 //   DELETE /api/team/:id                 remove a member (never the last admin)
-//   POST   /api/analyze                 start an analysis (gives back a job)
+//   POST   /api/analyze                 start an analysis (gives back a job;
+//                                       one area at a time, others wait in
+//                                       line, a person's before the monthly
+//                                       check's)
 //   GET    /api/jobs                    recent jobs (?areaId=)
 //   GET    /api/jobs/:id                how far a job got
+//   POST   /api/jobs/:id/cancel         cancel an analysis still waiting for
+//                                       its turn, or stop one that has
+//                                       started (the months done are kept)
 //   GET    /api/runs?areaId=            monthly runs, newest first
 //   GET    /api/runs/compare?a=&b=      what changed between two runs
 //   GET    /api/runs/:id                one run with its cells and alerts
@@ -47,12 +60,15 @@ import {
   listRuns,
   newId,
   saveArea,
+  updateArea,
   updateWorkspace,
 } from "./store.js";
 import { areaHa, bboxOf, displayTolerance, planGrid, simplifyGeometry, splitAntimeridian } from "./geo.js";
 import { getCountry, searchCountries } from "./countries.js";
 import { compareRuns, summarizeRun } from "./runs.js";
-import { getJob, listJobs, startAnalysis } from "./jobs.js";
+import { cancelAnalysis, getJob, listJobs, startAnalysis } from "./jobs.js";
+import { listConflictForArea } from "./conflicts.js";
+import { checkAreaWar } from "../src/config/conflicts.js";
 import { getProvider, providerStatus, withTimeout } from "./providers/index.js";
 import { schedulerStatus } from "./scheduler.js";
 import { checkSettings } from "../src/lib/atlas/method.js";
@@ -186,11 +202,39 @@ async function createArea(body) {
   throw bad('Unknown source. Use "country", "admin1", "coordinates", "bbox" or "draw".');
 }
 
-// The area as the pages get it: outline simplified for drawing.
+// The area as the pages get it: outline simplified for drawing, and what
+// the app's list of wars says for it (listConflict: { id, name, since,
+// partOfCountry? } or null; Atlas Settings shows it next to the team's own
+// war setting, area.war).
 function areaForClient(area, { full = false } = {}) {
   if (!area) return null;
-  if (full || !area.geometry || !area.bbox) return area;
-  return { ...area, geometry: simplifyGeometry(area.geometry, displayTolerance(area.bbox)) };
+  const listConflict = listConflictForArea(area);
+  const withList = listConflict === undefined ? area : { ...area, listConflict };
+  if (full || !area.geometry || !area.bbox) return withList;
+  return { ...withList, geometry: simplifyGeometry(area.geometry, displayTolerance(area.bbox)) };
+}
+
+// Today as "YYYY-MM-DD" (UTC, as the pages give it): the latest day a war
+// the team sets can count from.
+const todayIso = () => new Date().toISOString().slice(0, 10);
+
+// The changes a PATCH /api/areas/:id may make: { name } (a rename, the
+// old shape), { war } (the team's war setting), or both. Throws a 400 with
+// a message a person can read.
+function areaChanges(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw bad("Send the changes as an object, like { name } or { war }.");
+  const changes = {};
+  if (body.name !== undefined || body.war === undefined) {
+    const name = cleanName(body.name, "");
+    if (!name) throw bad("Give the area a name.");
+    changes.name = name;
+  }
+  if (body.war !== undefined) {
+    const checked = checkAreaWar(body.war, todayIso());
+    if (checked.error) throw bad(checked.error, "bad_war_setting");
+    changes.war = checked.war;
+  }
+  return changes;
 }
 
 function withoutGeometry(area) {
@@ -405,22 +449,34 @@ async function route(req, res, url) {
       return sendJson(res, 200, { area: areaForClient(area, { full: q.get("full") === "1" }) });
     }
     if (second && !third && method === "PATCH") {
-      const area = await getArea(second);
+      if (!(await getArea(second))) throw notFound("That area does not exist.");
+      const changes = areaChanges(await readJson(req));
+      // Saved months keep the war setting they were made with; Atlas
+      // Settings offers the re-run (nothing is analyzed here).
+      const area = await updateArea(second, (current) => {
+        if (changes.name) current.name = changes.name;
+        if (changes.war) {
+          if (changes.war.mode === "list") delete current.war;
+          else current.war = { ...changes.war, setAt: new Date().toISOString() };
+        }
+        current.updatedAt = new Date().toISOString();
+      });
       if (!area) throw notFound("That area does not exist.");
-      const body = await readJson(req);
-      const name = cleanName(body?.name, "");
-      if (!name) throw bad("Give the area a name.");
-      area.name = name;
-      area.updatedAt = new Date().toISOString();
-      await saveArea(area);
       return sendJson(res, 200, { area: areaForClient(area) });
     }
     if (second && !third && method === "DELETE") {
       const area = await getArea(second);
       if (!area) throw notFound("That area does not exist.");
-      if (listJobs({ areaId: area.id, status: "running" }).length) {
-        throw new HttpError(409, "busy", `${area.name} is being analyzed right now. Remove it once the analysis has finished.`);
+      const analyses = listJobs({ areaId: area.id, status: "running" });
+      const started = analyses.find((job) => !job.queued);
+      if (started?.stopping) {
+        throw new HttpError(409, "busy", `${area.name}'s analysis is stopping. Remove the area in a moment, once it has stopped.`);
       }
+      if (started) {
+        throw new HttpError(409, "busy", `${area.name} is being analyzed right now. Stop its analysis first (Stop, under the progress bar), then remove it.`);
+      }
+      // Its analysis has not started yet: it is taken out of line.
+      for (const job of analyses) cancelAnalysis(job.id);
       const removedRuns = await deleteArea(area.id);
       // If it was the area on screen, show none rather than a missing one.
       await updateWorkspace((ws) => {
@@ -463,6 +519,18 @@ async function route(req, res, url) {
       if (!job) throw notFound("That job does not exist (jobs are forgotten when the server restarts).");
       return sendJson(res, 200, { job });
     }
+  }
+
+  if (first === "jobs" && second && third === "cancel" && parts.length === 3 && method === "POST") {
+    const job = getJob(second);
+    if (!job) throw notFound("That job does not exist (jobs are forgotten when the server restarts).");
+    if (job.kind !== "atlas") throw bad("Only an Atlas analysis can be cancelled here.");
+    // Waiting: taken out of line. Started: stopped (job.stopping, then
+    // "cancelled"; the months done are kept), except one started before
+    // the server's code was reloaded, which has nothing to stop it with
+    // (409 "cannot_stop": jobs.js cancelAnalysis). Ended already (done,
+    // failed or cancelled): given back as it is.
+    return sendJson(res, 200, { job: job.status === "running" ? cancelAnalysis(second) : job });
   }
 
   if (first === "runs" && method === "GET") {

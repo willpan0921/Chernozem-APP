@@ -13,7 +13,8 @@
 .dp-meta {
   display: inline-flex;
   align-items: center;
-  gap: var(--s-2);
+  flex-wrap: wrap;
+  gap: var(--s-1) var(--s-2);
   font-size: 13px;
   color: var(--c-text-2);
 }

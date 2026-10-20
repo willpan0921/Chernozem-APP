@@ -49,6 +49,15 @@ test("a healthy growing field", () => {
   assert.equal(listed.normalCurve, undefined);
 });
 
+test("the data source's notes on how a field was measured are kept, also in the list the pages load (the Field Data page shows them)", () => {
+  // field-gee.js COARSER_NOTE, when Earth Engine ran short and a request
+  // used the coarser pixels.
+  const note = "Measured with 20 m pixels: Earth Engine ran short of memory or time.";
+  const a = finishAnalysis({ field, raw: { ...base, warnings: [note, 3, null] }, today: "2026-06-10", provider: "gee" });
+  assert.deepEqual(a.warnings, [note]);
+  assert.deepEqual(stripForList(a).warnings, [note]);
+});
+
 test("damage evidence makes the field Needs recovery, with its damaged area", () => {
   const raw = { ...base, damage: { radarChangedShare: 0.3, firesSinceWar: 1, chiDrop: 0.2 } };
   const a = finishAnalysis({ field, raw, today: "2026-06-10" });

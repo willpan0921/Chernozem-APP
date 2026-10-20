@@ -151,8 +151,12 @@ export const HEAVY_DAMAGE = { radarDb: 3, radarWithFireDb: 2, fireNearM: 1000, p
 // joined. The largest change of any one season instead, with fire nearby
 // at 2 dB, put 5.8M ha, 22% of Ukraine's black soil, under heavy damage:
 // the largest of four or five noisy seasons is 2 dB almost anywhere fire
-// was unusual once.) From two seasons on it only grows as seasons join;
-// the step from one season to two (a war's second year) can lower it once.
+// was unusual once.) From two measured seasons on it only grows as seasons
+// join, seen from the same orbit direction; the step from one measured
+// season to two (a war's second year, or later where a season was not
+// measured) can lower it once, and so can a new season that changes the
+// direction compared (server/providers/gee.js pickPass, over the passes of
+// all war seasons): every season is then measured from the other side.
 //
 // HEAVY DAMAGE (HEAVY_DAMAGE above) is then a pixel rule on these two
 // (heavyDamagePixel), and "new damage" is the increase over the previous
@@ -234,8 +238,10 @@ export function worstFireYear(fires, baseFires, years) {
 //               (SCALES.radar) use it
 //   persistent  the same, null with fewer seasons than persistSeasons
 //   peak        the largest change of any season (for reference)
-// With two seasons or more, all three only grow as seasons join. All null
-// when no season was measured.
+// With two seasons or more, all three only grow as seasons join, as long
+// as the earlier seasons' changes stay as they are (a new orbit direction,
+// gee.js pickPass, measures every season again). All null when no season
+// was measured.
 export function radarPersistence(changes) {
   const known = (Array.isArray(changes) ? changes : [changes]).filter(Number.isFinite).sort((a, b) => b - a);
   if (!known.length) return { persistent: null, peak: null, level: null };
@@ -290,26 +296,50 @@ export const METHOD_VERSION = "2026-10-19.3";
 
 // Whether two runs of an area can be compared number for number: the same
 // data source (Earth Engine or sample), the same method (its components
-// and scales, saved on every run) and the same squares. Gives back
-// { comparable: true } or { comparable: false, reason, text } with reason
+// and scales, saved on every run), the same squares and the same war
+// setting. Gives back { comparable: true } or { comparable: false, reason,
+// text } with reason
 //   "source"  one month is Earth Engine and the other sample data
 //   "method"  the method changed between them (e.g. damage from the health
 //             index before 2026-10-19, from radar and fire since)
 //   "grid"    different square sizes
+//   "war"     one was made at war and the other at peace, or with another
+//             war start (run.conflict.since), or one with the war's rules
+//             all over a whole-country area and the other only in the
+//             squares that touch the war's region (partOfCountry): the
+//             damage window, the fire years, the war seasons and the rules
+//             differ (warKey). Happens when the team changes the area's war
+//             setting (Atlas Settings) or the app's list of wars changes,
+//             until the area is re-run
 // Runs saved before a field existed count as matching on it.
 //   why   "different data source" / "different method version" /
-//         "different squares"; text "Not comparable: " + why
+//         "different squares" / "different war setting"; text
+//         "Not comparable: " + why
 export const NOT_COMPARABLE_WHY = {
   source: "different data source",
   method: "different method version",
   grid: "different squares",
+  war: "different war setting",
 };
+// What decides a war's numbers: the day it began (the damage window, the
+// fire years and the war seasons follow it), and, for a war that covers a
+// whole-country area only in part (conflict.partOfCountry), that its rules
+// apply only in the squares that touch its region; null at peace,
+// undefined when not known. Two runs (or a run and a setting) with the same
+// key give the same numbers; the war's name does not matter.
+export function warKey(conflict) {
+  if (conflict === undefined) return undefined;
+  if (!conflict?.since) return null;
+  return conflict.partOfCountry ? `${conflict.since} (in part of the country)` : conflict.since;
+}
+
 export function runsComparable(a, b) {
   const no = (reason) => ({ comparable: false, reason, why: NOT_COMPARABLE_WHY[reason], text: `Not comparable: ${NOT_COMPARABLE_WHY[reason]}` });
   if (!a || !b) return { comparable: true };
   if ((a.provider || null) !== (b.provider || null)) return no("source");
   if (a.method && b.method && JSON.stringify(a.method) !== JSON.stringify(b.method)) return no("method");
   if (Number.isFinite(a.cellSizeKm) && Number.isFinite(b.cellSizeKm) && Math.abs(a.cellSizeKm - b.cellSizeKm) > 0.001 * Math.max(a.cellSizeKm, b.cellSizeKm)) return no("grid");
+  if (a.conflict !== undefined && b.conflict !== undefined && warKey(a.conflict) !== warKey(b.conflict)) return no("war");
   return { comparable: true };
 }
 

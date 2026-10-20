@@ -244,8 +244,9 @@ export function sameWindowIn(window, startYear) {
 // The window in each of the normal years 2019 to 2021. A window that
 // crosses the new year is placed so that it ENDS in each normal year
 // (October 2025 to March 2026 -> October 2018 to March 2019, ..., October
-// 2020 to March 2021), so the normal years never reach into 2022, when the
-// wars in src/config/conflicts.js began.
+// 2020 to March 2021), so the normal years never reach into 2022: the wars
+// in src/config/conflicts.js began in 2022 or later, and a war the team sets
+// for an area counts from 2022-01-01 at the earliest.
 export function baselineWindows(window, years = BASELINE_YEARS) {
   const startYear = Number(window.start.slice(0, 4));
   const lastYear = Number(addDays(window.end, -1).slice(0, 4));

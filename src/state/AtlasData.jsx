@@ -2,7 +2,9 @@
 // Keeps the Atlas's data in one place and shares it with every Atlas page
 // and the sidebar: the workspace (settings, team, budget), the current
 // area, its monthly runs, the selected run with its map squares, the
-// scores, the top areas and any analysis that is running.
+// scores, the top areas and any analysis that is running (or waiting for
+// its turn: the server analyzes one area at a time, server/jobs.js; such a
+// job is "running" with job.queued true).
 //
 // It is mounted ONCE around the whole app (src/App.jsx), so moving between
 // pages is instant and the sidebar can show the current area.
@@ -27,7 +29,7 @@
 
 import { Suspense, createContext, lazy, useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
-import { Loader2, RefreshCw, TriangleAlert } from "lucide-react";
+import { Clock, Loader2, RefreshCw, TriangleAlert } from "lucide-react";
 import * as api from "../api/atlasApi.js";
 import { DEFAULT_SETTINGS, checkSettings } from "../lib/atlas/method.js";
 import { scorePlaces } from "../lib/atlas/scoring.js";
@@ -280,6 +282,26 @@ export function AtlasDataProvider({ children }) {
     return { job: started, finished };
   }, []);
 
+  // Takes an analysis that still waits for its turn out of line (one area
+  // at a time, server/jobs.js), or stops one that has started (the months
+  // done are kept). Its poll below sees it end and reloads. Throws the
+  // server's error (code "cannot_stop" for an analysis started before the
+  // server's code was reloaded).
+  const cancelAnalysis = useCallback((jobId) => api.cancelJob(jobId), []);
+
+  // Renames an area ({ name }) or sets its war ({ war: { mode, since,
+  // name } }), then loads everything again. Throws the server's error (a
+  // bad date: code "bad_war_setting"). The saved months keep the war they
+  // were made with until the area is analyzed again.
+  const updateArea = useCallback(
+    async (areaId, body) => {
+      const area = await api.updateArea(areaId, body);
+      await load();
+      return area;
+    },
+    [load]
+  );
+
   // Country, coordinates or drawing -> saved area -> current area -> analysis.
   const chooseArea = useCallback(
     async (body, { months = 12 } = {}) => {
@@ -374,13 +396,15 @@ export function AtlasDataProvider({ children }) {
       toggleStep,
       createArea,
       setCurrentArea,
+      updateArea,
       analyzeArea,
+      cancelAnalysis,
       chooseArea,
       addMember,
       updateMember,
       removeMember,
     }),
-    [load, selectRun, updateSettings, resetSettings, updateWorkspace, toggleStep, createArea, setCurrentArea, analyzeArea, chooseArea, addMember, updateMember, removeMember]
+    [load, selectRun, updateSettings, resetSettings, updateWorkspace, toggleStep, createArea, setCurrentArea, updateArea, analyzeArea, cancelAnalysis, chooseArea, addMember, updateMember, removeMember]
   );
 
   const value = useMemo(
@@ -453,9 +477,16 @@ export function useColorBy() {
 
 // ---------- What shows before the page can ----------
 
-// Progress of a running analysis: "Analyzing Ukraine", a bar, "7 of 12 months".
+// Progress of a running analysis: "Analyzing Ukraine", a bar, "7 of 12 months",
+// and while the month waits for Earth Engine to finish a farm's analysis or a
+// search, why the bar stands still (job.waiting, server/jobs.js). Stop ends it
+// (the months done are kept, and the next area in line starts): one slow or
+// huge area (a 24-month re-run of a big country) would otherwise hold every
+// other area back for hours. An analysis still waiting for its turn
+// (job.queued: one area at a time) says so instead, with Cancel.
 export function AnalysisProgress({ job, compact = false }) {
   if (!job) return null;
+  if (job.queued) return <WaitingTurn job={job} compact={compact} />;
   const total = job.total || 1;
   const share = Math.min(1, ((job.done || 0) + (job.monthProgress || 0)) / total);
   const month = /:\s*(.+?)\s*\(/.exec(job.message || "")?.[1];
@@ -474,6 +505,71 @@ export function AnalysisProgress({ job, compact = false }) {
         </span>
         {month && <span>{month}</span>}
       </div>
+      {job.waiting && <p className="atlas-progress-wait">{job.waiting}</p>}
+      <StopAnalysis job={job} />
+    </div>
+  );
+}
+
+// Cancels a job that waits for its turn, or stops one that has started
+// (server/jobs.js cancelAnalysis): -> { busy, error, run }
+function useCancelJob(jobId) {
+  const { actions } = useAtlasData();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await actions.cancelAnalysis(jobId);
+    } catch (err) {
+      setError(err?.message || String(err));
+      setBusy(false);
+    }
+  };
+  return { busy, error, run };
+}
+
+// "Months done are kept · Stop" under the bar; "Stopping…" until the server
+// has ended the month in progress (job.stopping).
+function StopAnalysis({ job }) {
+  const stop = useCancelJob(job.id);
+  const stopping = Boolean(job.stopping) || stop.busy;
+  return (
+    <>
+      <div className="atlas-progress-meta atlas-progress-stop">
+        <span>{stopping ? "Stopping… the months done are kept" : "Months done are kept if you stop"}</span>
+        <button type="button" className="atlas-progress-cancel" onClick={stop.run} disabled={stopping}>
+          {stopping ? "Stopping…" : "Stop"}
+        </button>
+      </div>
+      {stop.error && <p className="atlas-error-text">{stop.error}</p>}
+    </>
+  );
+}
+
+// An analysis waiting for its turn: "Waiting to analyze Kenya", what it
+// waits for ("Waiting for Ukraine's analysis to finish") and Cancel, which
+// takes it out of line (it never started, so nothing is lost).
+function WaitingTurn({ job, compact }) {
+  const { busy: cancelling, error, run: cancel } = useCancelJob(job.id);
+  // "Up to": months already analyzed with this method and war setting are
+  // kept, so the monthly check of an area usually analyzes only the new one.
+  const months = job.total === 1 ? "1 month" : `Up to ${job.total || 12} months`;
+  return (
+    <div className={compact ? "atlas-progress is-compact is-waiting" : "atlas-progress is-waiting"} role="status" aria-live="polite">
+      <div className="atlas-progress-head">
+        <Clock size={compact ? 14 : 18} aria-hidden="true" />
+        <span className="atlas-progress-title">Waiting to analyze {job.areaName || "the area"}</span>
+      </div>
+      <p className="atlas-progress-wait">{job.waiting || "Waiting for another area's analysis to finish"}</p>
+      <div className="atlas-progress-meta">
+        <span>{months} · one area at a time</span>
+        <button type="button" className="atlas-progress-cancel" onClick={cancel} disabled={cancelling}>
+          {cancelling ? "Cancelling…" : "Cancel"}
+        </button>
+      </div>
+      {error && <p className="atlas-error-text">{error}</p>}
     </div>
   );
 }

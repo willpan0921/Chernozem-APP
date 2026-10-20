@@ -84,6 +84,22 @@
   color: var(--c-muted);
 }
 
+/* The analysis's notes on how the field was measured (its warnings), under
+   the big numbers: small, only when there are any. */
+.fdata-notes {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 10px 14px;
+  list-style: none;
+  border-radius: 14px;
+  background: var(--c-amber-soft);
+  color: var(--c-amber-text);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 640px) {
   .fdata-stats {
     gap: var(--s-2);

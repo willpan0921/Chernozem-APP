@@ -17,9 +17,11 @@
 // cache working).
 
 import { scorePlaces, ranking, nearTermShares } from "../../src/lib/atlas/scoring.js";
-import { COSTS, DEFAULT_SETTINGS, HEAVY_DAMAGE, PEACE_DAMAGE, checkSettings, runsComparable } from "../../src/lib/atlas/method.js";
-import { accessSourceOf, alertPlaces, conflictOf, shownNewDamage } from "../../src/lib/atlas/overview.js";
-import { NO_WAR_WARNING } from "../runs.js";
+import { COSTS, DEFAULT_SETTINGS, FIRE_YEARS, HEAVY_DAMAGE, METHOD_VERSION, PEACE_DAMAGE, checkSettings, runsComparable } from "../../src/lib/atlas/method.js";
+import { accessMeasured, accessSourceOf, alertPlaces, atPeace, beforeWar, conflictOf, outsideWar, peaceSquares, shownNewDamage, warInPart, warKey, warSetByTeam } from "../../src/lib/atlas/overview.js";
+import { EARLIEST_WAR_DAY, TEAM_WAR_NAME, teamConflict } from "../../src/config/conflicts.js";
+import { listConflictForArea } from "../conflicts.js";
+import { NO_WAR_WARNING, TEAM_PEACE_WARNING } from "../runs.js";
 
 // ---------- Tool definitions (sent to Claude) ----------
 // strict: true makes Claude's tool inputs always match these shapes.
@@ -258,29 +260,128 @@ async function safe(fn) {
 // src/lib/atlas/scoring.js). Callers pass conflictOf(run) (overview.js),
 // which fills in the war for older country runs; when it is still
 // undefined nothing is said.
-//   accessSource  where safe access came from (run.accessSource: "acled",
-//                 "fires", "none" or null)
-export function conflictLine(conflict, accessSource = null) {
+//   accessSource   where safe access came from (run.accessSource: "acled",
+//                  "fires", "none" or null)
+//   currentMethod  the run was made with this method version
+//                  (run.method.version === METHOD_VERSION): how damage
+//                  behaves over time (src/lib/atlas/method.js FIRE_YEARS) is
+//                  said only then; an older run is said to be older
+//   setByTeam      the area's team set this war (or this peace) in Atlas
+//                  Settings, instead of the app's list (overview.js
+//                  warSetByTeam): the AI is told so, and to say so
+//   beforeWar      the month ends before the war began (overview.js
+//                  beforeWar): no war damage is counted for it and distance
+//                  to fighting is not measured, so neither "Damage is counted
+//                  from that day" nor "recorded fighting" is said
+//   inPart         the war covers this whole-country area only in part
+//                  (run.conflict.partOfCountry): { warSquares, squares },
+//                  the squares that had its rules (run.warSquares) and all
+//                  of them; the others were read at peace rules
+export function conflictLine(conflict, accessSource = null, { currentMethod = true, setByTeam = false, beforeWar = false, inPart = null } = {}) {
   if (conflict === undefined) return "";
+  const notMeasured = (why) =>
+    `Safe access: ${why}, so it is full (100) everywhere and nothing is set aside for it. That does NOT mean the land is safe: never call land safe, and point to local authorities for unexploded ordnance or security questions.`;
+  const acledAccess = "Safe access: the distance to battles in the ACLED file, full at 100 km.";
   if (conflict && conflict.since) {
+    // A war the team set from the earliest day allowed may have begun
+    // before it (src/config/conflicts.js EARLIEST_WAR_DAY).
+    const earliest =
+      setByTeam && conflict.since === EARLIEST_WAR_DAY
+        ? " That is the earliest day the app allows (the normal years 2019 to 2021 must come before the war): the war may have begun earlier, so damage before that day is not counted, and the normal years may already include the war."
+        : "";
+    // Without a name of its own (TEAM_WAR_NAME), the AI does not call the
+    // placeholder the team's name for it.
+    const named = conflict.name && conflict.name !== TEAM_WAR_NAME;
+    const who = setByTeam
+      ? named
+        ? ` This war was set by the user's team for this area in Atlas Settings (its name and start date are the team's, not from the app's list of wars); say so when you name it.${earliest}`
+        : ` This war was set by the user's team for this area in Atlas Settings (its start date is the team's; the team gave it no name, so call it the war the user's team set for this area, not by a name).${earliest}`
+      : "";
+    if (beforeWar) {
+      return `War: ${conflict.name || conflict.id}, since ${conflict.since}.${who} This month ends before the war began, so no war damage is counted for it (no war year of fires, no war season of radar: the damage score is 0 everywhere) and distance to fighting was not measured for it. Do not present this month's numbers as war damage; the months from the day the war began count it. ${accessSource === "acled" ? acledAccess : notMeasured("not measured for this month")}`;
+    }
     // With no ACLED file the distance is to unusual fires: an estimate of
     // where fighting is, not recorded fighting (server/providers/gee.js).
+    // "none" (nothing measured) is never called recorded fighting.
     const warAccess =
       accessSource === "acled"
-        ? "Safe access: the distance to battles in the ACLED file, full at 100 km."
+        ? acledAccess
         : accessSource === "fires"
           ? "Safe access: the distance to unusual fires (an estimate of where fighting is; there is no ACLED file of recorded fighting), full at 100 km. Treat it as rough."
-          : "Safe access: the distance to recorded fighting, full at 100 km.";
-    return `War: ${conflict.name || conflict.id}, since ${conflict.since}. Damage is counted from that day. Damage score: the mean of unusual fire and radar change against the normal years 2019 to 2021. ${warAccess}`;
+          : accessSource === "none"
+            ? notMeasured("not measured for this month")
+            : "Safe access: the distance to recorded fighting, full at 100 km.";
+    // A war in part of a whole-country area: where its rules apply, and
+    // what the other squares are (src/config/conflicts.js warSquares).
+    const fullAt = Math.round(PEACE_DAMAGE.fullShare * 100);
+    const counted = Number.isFinite(inPart?.warSquares) && Number.isFinite(inPart?.squares) ? ` (${inPart.warSquares} of ${inPart.squares} squares)` : "";
+    const part = inPart
+      ? ` This war covers only part of this country: its rules apply only in the map squares that touch the war's region${counted}, which have atWar true in their details. The other squares were read as at peace: there heavy damage needs radar change of ${HEAVY_DAMAGE.radarDb} dB or more AND an unusual fire within ${HEAVY_DAMAGE.fireNearM / 1000} km, the damage score is the heavily damaged share of the black soil (full at ${fullAt}%), and unusual fires there have ordinary causes (harvest burning, wildfire); their distance to fighting is measured to the unusual fires inside the war's region. Do not talk about fighting, a front line or demining for a place outside the war's region unless the user raises it.`
+      : "";
+    return `War: ${conflict.name || conflict.id}, since ${conflict.since}.${who} Damage is counted from that day. Damage score: the mean of unusual fire and radar change against the normal years 2019 to 2021. ${currentMethod ? damageOverTime() : OLDER_METHOD} ${warAccess}${part}`;
   }
   const fullAt = Math.round(PEACE_DAMAGE.fullShare * 100);
   const damage = `Damage score: the share of each place's black-soil cropland that is heavily damaged (radar change of ${HEAVY_DAMAGE.radarDb} dB or more backed by an unusual fire within ${HEAVY_DAMAGE.fireNearM / 1000} km, against the normal years 2019 to 2021), full at ${fullAt}%. Here that change has everyday causes (tillage, new buildings, wildfire, flooding).`;
-  const access =
-    accessSource === "acled"
-      ? "Safe access: the distance to battles in the ACLED file, full at 100 km."
-      : "Safe access: no war is recorded here, so it is full (100) everywhere and nothing is set aside for it. That does NOT mean the land is safe: never call land safe, and point to local authorities for unexploded ordnance or security questions.";
-  return `War: none in the app's list covers this area (wars are matched by country and, where listed, by area, e.g. the Gaza Strip only). ${damage} ${access} Do not talk about a war, a front line or demining for this area unless the user raises it.`;
+  // Who decided there is no war: never "no war is recorded" where the app's
+  // list has one that the team overrode.
+  const access = accessSource === "acled" ? acledAccess : notMeasured(setByTeam ? "the user's team marked this area as not at war" : "no war is recorded here");
+  const none = setByTeam
+    ? "War: none. The user's team marked this area as not at war in Atlas Settings, so the app's list of wars is not used for it (say so if asked about a war here)."
+    : "War: none in the app's list covers this area (wars are matched by country and, where listed, by area, e.g. the Gaza Strip only).";
+  return `${none} ${damage} ${access} Do not talk about a war, a front line or demining for this area unless the user raises it.`;
 }
+
+// Why nothing is set aside for safe access, as the AI should say it (the
+// pages' words are overview.js peaceReason, which speaks to "your team"):
+// "no war recorded", "the user's team marked this area as not at war", or
+// "this month ends before the war began on 2026-06-01".
+export function quietReason(run) {
+  if (beforeWar(run)) return `this month ends before the war began on ${conflictOf(run).since}`;
+  if (atPeace(run) && warSetByTeam(run)) return "the user's team marked this area as not at war";
+  return "no war recorded";
+}
+
+// A line for when the area's war setting no longer gives the war this
+// month was made with: the team changed it in Atlas Settings (area.war),
+// or the app's list changed, and the analysis has not been re-run. The
+// month's numbers follow the setting it was made with. "" otherwise, and
+// when it cannot be told (an older run, an area without an outline).
+export function warSettingNote(area, run) {
+  const madeWith = conflictOf(run);
+  const made = warKey(madeWith);
+  if (!area || made === undefined) return "";
+  const own = teamConflict(area.war, area.id);
+  const now = own !== undefined ? own : listConflictForArea(area);
+  if (now === undefined || warKey(now) === made) return "";
+  // The same start day: what changed is where the war's rules apply (all
+  // over a whole-country area, or only in its squares that touch the war's
+  // region: partOfCountry).
+  const where = (war) => (war?.since && now?.since === madeWith?.since ? (war.partOfCountry ? " (war rules only in the squares that touch the war's region)" : " (war rules all over the area)") : "");
+  const nowText = now ? `at war (${now.name}) since ${now.since}${where(now)}` : "not at war";
+  const who = own !== undefined ? `the user's team has since marked this area ${nowText}` : now ? `the app's list now has this area ${nowText}` : "the app's list now has no war for this area";
+  return `War setting changed: this month was made ${made ? `at war since ${madeWith.since}${where(madeWith)}` : "at peace"}, but ${who}. Its numbers follow the setting it was made with until the analysis is re-run (Atlas Settings, Re-run analysis).`;
+}
+
+// How damage behaves from month to month in a war, for runs made with this
+// method (src/lib/atlas/method.js FIRE_YEARS, radarPersistence; season.js
+// damageSeasons), with the exceptions the code has, so the AI can explain a
+// drop: a war's second season, a new season (which can also change the
+// orbit direction compared: gee.js pickPass), a month measured with coarser
+// pixels or the latitude's season, and scores that are relative (ranks,
+// tiers) or use the last 12 months (safe access).
+function damageOverTime() {
+  return [
+    `Unusual fire is the fires of the worst war year (12-month years counted from the day the war began; the current one so far, once it is ${FIRE_YEARS.minMonths} months long) above a normal year (the 2019 to 2021 average).`,
+    "Radar change is the change that lasts: reached in at least two complete growing seasons since the war began (while only one is complete, that one).",
+    "Damage is not allowed to fade with time, because soil damage lasts after the fires stop (land abandoned near the front is not burned again).",
+    "So while the war seasons stay the same, heavily damaged land does not shrink from one month to the next: it can only grow, with new fires.",
+    "When a new year's growing season joins (once a year) it usually grows, but it can fall where a place goes from one measured season to two (normally the war's second year), or when the new season changes the orbit direction the radar is compared from (the one with the most passes in both the war seasons and the same season of 2019 to 2021): every season is then measured again from the other side.",
+    "A month whose data warnings say it used coarser pixels, or took the growing season from the latitude, can differ either way.",
+    "This is about heavily damaged hectares; the damage score usually moves the same way, but a square scored on fire alone (no radar reading) can drop when radar is first read, and priority scores, ranks and tiers can go up or down from month to month.",
+  ].join(" ");
+}
+// The same for a run made with an older method (before METHOD_VERSION).
+const OLDER_METHOD = `This month was made with an older method (fires over the whole window, the last season's radar): its heavy damage could fall from month to month, and it is not comparable with months made with the current method (${METHOD_VERSION}).`;
 
 // The weights as the two rankings really use them (scoring.js):
 //   Near term   soil and damage only, as shares of 100; safe access is a
@@ -295,12 +396,14 @@ export function conflictLine(conflict, accessSource = null) {
 export function settingsLine(settings, run, scored, timeframe) {
   const w = settings.weights;
   const near = nearTermShares(w);
-  const peace = conflictOf(run) === null;
-  const measured = !peace || accessSourceOf(run) === "acled";
+  // Outside a war's rules (at peace, or a month before its war began) the
+  // long view is "Long term", and without an ACLED file nothing is set
+  // aside (overview.js outsideWar, accessMeasured).
+  const measured = accessMeasured(run);
   const setAside = scored.places.filter((p) => p.nearTerm.tier === "setAside").length;
-  const longName = peace ? "Long term" : "Postwar";
+  const longName = outsideWar(run) ? "Long term" : "Postwar";
   const cutoff = !measured
-    ? "nothing is set aside (no war recorded)"
+    ? `nothing is set aside (${quietReason(run)})`
     : settings.gatePercentile > 0
       ? `safe access is a cutoff, not a weight: the least safe ${settings.gatePercentile}% of the black soil is set aside first (${setAside} squares set aside)`
       : "safe access is a cutoff, not a weight, and the cutoff is 0%: nothing is set aside";
@@ -309,14 +412,20 @@ export function settingsLine(settings, run, scored, timeframe) {
   return `Weights as used: Near term ranks by soil value ${near.soil}% and damage ${near.damage}%; ${cutoff}. ${longName} blends soil value ${w.soil}%, damage ${w.damage}% and safe access ${w.access}% (weighted power mean, r = ${settings.r})${longNote}. The user is viewing ${viewing}.`;
 }
 
-function hotspotLine(h, index) {
+// A top place outside the region of a war that covers the area only in
+// part: every one of its squares was read at peace rules (overview.js
+// peaceSquares).
+const outsideWarRegion = (h, calm) => calm.size > 0 && h.cellIds.length > 0 && h.cellIds.every((id) => calm.has(id));
+
+function hotspotLine(h, index, calm = new Set()) {
   const coords = coordLabel(h.lat, h.lon);
   // A repeated name already ends in " · <coords>" (see labelHasCoords in
   // src/lib/atlas/hotspots.js), so it is used as it is.
   const labelHasCoords = Boolean(h.coords && h.label?.endsWith(` · ${h.coords}`));
   const where = h.label === coords || labelHasCoords ? h.label : `${h.label} (${coords})`;
   const squares = h.cellIds.length;
-  return `${index + 1}. ${where}, ${squares} ${squares === 1 ? "square" : "squares"}: score ${score100(h.score)}/100, tier ${h.tier}, black-soil ${ha(h.blackSoilHa)}, heavily damaged ${ha(h.heavyDamageHa)}, soil ${score100(h.soil)} / damage ${score100(h.damage)} / access ${score100(h.access)}`;
+  const region = outsideWarRegion(h, calm) ? " (outside the war's region: read as at peace)" : "";
+  return `${index + 1}. ${where}, ${squares} ${squares === 1 ? "square" : "squares"}${region}: score ${score100(h.score)}/100, tier ${h.tier}, black-soil ${ha(h.blackSoilHa)}, heavily damaged ${ha(h.heavyDamageHa)}, soil ${score100(h.soil)} / damage ${score100(h.damage)} / access ${score100(h.access)}`;
 }
 
 export function contextText({ workspace, area, run, summaries, scored, settings, timeframe, hotspots, selected }) {
@@ -334,20 +443,26 @@ export function contextText({ workspace, area, run, summaries, scored, settings,
   lines.push(`Month: ${run.label || run.month} (imagery ${run.imagery?.from || "?"} to ${run.imagery?.to || "?"}, baseline ${run.baseline?.label || "2019 to 2021"}).`);
   lines.push(`Data source: ${source}.`);
   const peace = conflictOf(run) === null;
-  const war = conflictLine(conflictOf(run), accessSourceOf(run));
+  // How damage behaves over time is said only for a run made with this
+  // method (older runs: fires over the whole window, the last season's radar).
+  const inPart = warInPart(run) ? { warSquares: run.warSquares, squares: run.cellCount ?? run.cells?.length } : null;
+  const war = conflictLine(conflictOf(run), accessSourceOf(run), { currentMethod: run.method?.version === METHOD_VERSION, setByTeam: warSetByTeam(run), beforeWar: beforeWar(run), inPart });
   if (war) lines.push(war);
+  const changed = warSettingNote(area, run);
+  if (changed) lines.push(changed);
   lines.push(`Grid: ${run.cellCount ?? run.cells?.length ?? 0} map squares (cells) of about ${round(run.cellSizeKm, 2)} km.`);
   const t = run.totals || {};
   lines.push(
     `Totals: cropland ${ha(t.croplandHa)}, black-soil cropland ${ha(t.blackSoilHa)}, heavily damaged ${ha(t.heavyDamageHa)}, people on damaged land ${people(t.peopleOnDamagedSoil)}.` +
       (Number.isFinite(shownNewDamage(run, summaries)) ? ` New heavy damage since the previous month: ${ha(run.newHeavyDamageHa)}.` : "")
   );
-  // The "no war" warning is said better by the War line above (it still
-  // names distance to fighting, which is not part of a run at peace).
+  // The "no war" warning (or the team's "not at war") is said better by the
+  // War line above (it still names distance to fighting, which is not part
+  // of a run at peace).
   // At peace the damage score needs radar change (scoring.js), so a square
   // without radar has no damage score from fires alone.
   const warnings = (run.checks?.warnings || [])
-    .filter((w) => !(peace && w === NO_WAR_WARNING))
+    .filter((w) => !(peace && (w === NO_WAR_WARNING || w === TEAM_PEACE_WARNING)))
     .map((w) => (peace ? String(w).replace(/their damage uses fires only\.?$/, "no heavy damage can be found there (here it needs radar change).") : w));
   if (warnings.length) lines.push(`Data warnings: ${warnings.map((w) => String(w).replace(/[.\s]+$/, "")).join("; ")}.`);
 
@@ -356,10 +471,11 @@ export function contextText({ workspace, area, run, summaries, scored, settings,
   // Top places are groups of touching squares; the same name in both lists
   // can be two different groups (see the square counts).
   lines.push("", "Top places, near term:");
-  hotspots.nearTerm.forEach((h, i) => lines.push(hotspotLine(h, i)));
+  const calm = peaceSquares(run);
+  hotspots.nearTerm.forEach((h, i) => lines.push(hotspotLine(h, i, calm)));
   if (!hotspots.nearTerm.length) lines.push("(none)");
-  lines.push("", `Top places, ${peace ? "long term" : "postwar"}:`);
-  hotspots.postwar.forEach((h, i) => lines.push(hotspotLine(h, i)));
+  lines.push("", `Top places, ${outsideWar(run) ? "long term" : "postwar"}:`);
+  hotspots.postwar.forEach((h, i) => lines.push(hotspotLine(h, i, calm)));
   if (!hotspots.postwar.length) lines.push("(none)");
 
   const alerts = run.alerts || [];
@@ -373,7 +489,7 @@ export function contextText({ workspace, area, run, summaries, scored, settings,
 
   if (summaries.length) {
     lines.push("", "History by month (newest first):");
-    lines.push("(Months from different data sources or method versions are not comparable: never subtract them.)");
+    lines.push("(Months from different data sources, method versions or war settings are not comparable: never subtract them.)");
     for (const s of summaries.slice(0, 24)) {
       lines.push(
         `- ${s.month}: heavily damaged ${ha(s.totals?.heavyDamageHa)}, new ${Number.isFinite(shownNewDamage(s, summaries)) ? ha(s.newHeavyDamageHa) : "n/a"}, black-soil ${ha(s.totals?.blackSoilHa)}, people on damaged land ${people(s.totals?.peopleOnDamagedSoil)}, ${s.provider === "gee" ? "Earth Engine" : "sample"}`
@@ -402,9 +518,14 @@ export function costNote(war) {
   return war ? "before demining; planning assumption (not sourced)" : "rough ranges for restoring the soil; planning assumption (not sourced)";
 }
 
+// A place's details for the AI. For a war that covers the area only in
+// part, a square read at peace rules (p.atWar false) says so, and its costs
+// are not "before demining".
 function placeDetail(p, war = true) {
+  const atWarHere = war && p.atWar !== false;
   return {
     cellId: p.id,
+    ...(typeof p.atWar === "boolean" ? { atWar: p.atWar } : {}),
     label: placeLabel(p),
     lat: round(p.lat, 4),
     lon: round(p.lon, 4),
@@ -417,7 +538,7 @@ function placeDetail(p, war = true) {
     heavyDamageHa: round(p.heavyDamageHa),
     people: round(p.people),
     peopleOnDamagedSoil: round(p.peopleOnDamagedSoil),
-    recoveryCostUsd: recoveryCost(p.heavyDamageHa, war),
+    recoveryCostUsd: recoveryCost(p.heavyDamageHa, atWarHere),
   };
 }
 
@@ -433,9 +554,10 @@ function recoveryCost(hectares, war = true) {
   };
 }
 
-function hotspotDetail(h) {
+function hotspotDetail(h, calm = new Set()) {
   return {
     rank: h.rank,
+    ...(outsideWarRegion(h, calm) ? { outsideWarRegion: true } : {}),
     label: h.label,
     lat: round(h.lat, 4),
     lon: round(h.lon, 4),
@@ -469,10 +591,10 @@ export async function runAtlasTool(name, input = {}, data) {
         // The weights as this ranking uses them (see settingsLine).
         weightsUsed:
           timeframe === "nearTerm"
-            ? { ...nearTermShares(data.settings.weights), safeAccess: conflictOf(run) === null && accessSourceOf(run) !== "acled" ? "not used: full everywhere (no war recorded)" : "cutoff, not a weight" }
+            ? { ...nearTermShares(data.settings.weights), safeAccess: !accessMeasured(run) ? `not used: full everywhere (${quietReason(run)})` : "cutoff, not a weight" }
             : data.settings.weights,
         setAsideCells: scored.places.filter((p) => p.nearTerm.tier === "setAside").length,
-        places: list.map(hotspotDetail),
+        places: list.map((h) => hotspotDetail(h, peaceSquares(run))),
       };
     }
     case "get_place": {
@@ -510,7 +632,7 @@ export async function runAtlasTool(name, input = {}, data) {
       if (!data.runs?.compareRuns) return { error: "Comparison is not available on this server." };
       const runA = await data.store.getRun(byMonth(a).id);
       const runB = await data.store.getRun(byMonth(b).id);
-      // Another data source, method or grid: no differences (method.js runsComparable).
+      // Another data source, method, grid or war setting: no differences (method.js runsComparable).
       const check = runsComparable(runA, runB);
       if (!check.comparable) {
         return { a: { month: a, dataSource: runA.provider }, b: { month: b, dataSource: runB.provider }, comparable: false, note: `${check.text}: these two months cannot be subtracted. Say so; do not compare their totals.` };
@@ -572,7 +694,7 @@ export async function runAtlasTool(name, input = {}, data) {
         coversFirst,
         note: atWar(run)
           ? "Costs exclude demining. Only certified deminers can declare land safe. The per-hectare costs are planning assumptions (not sourced), not measurements: say so."
-          : "Rough ranges for restoring damaged soil. No war is recorded in this area; this does not say the land is safe. The per-hectare costs are planning assumptions (not sourced), not measurements: say so.",
+          : `Rough ranges for restoring damaged soil. ${warSetByTeam(run) ? "The user's team marked this area as not at war" : "No war is recorded in this area"}; this does not say the land is safe. The per-hectare costs are planning assumptions (not sourced), not measurements: say so.`,
       };
     }
     case "get_history": {

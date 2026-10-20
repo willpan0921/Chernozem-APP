@@ -7,9 +7,11 @@
 //   searchAreas(q)                   countries (and regions, with Earth Engine)
 //   createArea(body)                 save an area: country, coordinates, box, drawn
 //   listAreas() / getArea(id)        saved areas
+//   updateArea(id, { name?, war? })  rename an area, or set its war
 //   getWorkspace() / patchWorkspace(partial)
 //   addMember / updateMember / removeMember      the team
 //   analyze({ areaId, months, rerun }) / getJob(id) / listJobs(areaId)
+//   cancelJob(id)                    take an analysis still waiting for its turn out of line, or stop one
 //   listRuns(areaId) / getRun(id) / compareRuns(a, b)
 //   streamChat({ ...body, onEvent })  the AI, streamed as it is written
 //   listChats(product) / getChat(id) / deleteChat(id)
@@ -146,9 +148,22 @@ export async function listAreas() {
   return areas || [];
 }
 
-// -> the area with its outline (simplified unless full is true)
+// -> the area with its outline (simplified unless full is true), its war
+//    setting (war: { mode: "war" | "peace", since?, name? }; none means
+//    "the app's list") and what the app's list says for it (listConflict:
+//    { id, name, since, partOfCountry? }, or null at peace)
 export async function getArea(areaId, { full = false } = {}) {
   const { area } = await request("GET", `/areas/${id(areaId)}${full ? "?full=1" : ""}`);
+  return area;
+}
+
+// body: { name } to rename, and/or { war: { mode: "list" | "war" | "peace",
+// since: "YYYY-MM-DD" (for "war": 2022-01-01 to today), name? (up to 80
+// characters) } }. Saved months keep the setting they were made with until
+// the area is analyzed again (rerun). -> the saved area. Throws an ApiError
+// (code "bad_war_setting") for a bad date or mode.
+export async function updateArea(areaId, body) {
+  const { area } = await request("PATCH", `/areas/${id(areaId)}`, body);
   return area;
 }
 
@@ -192,9 +207,24 @@ export async function analyze({ areaId, months, rerun } = {}) {
   return job;
 }
 
-// -> { id, areaId, areaName, status: "running" | "done" | "error", done, total, message, error?, runIds }
+// -> { id, areaId, areaName, status: "running" | "done" | "error" | "cancelled", done, total, analyzed, message, error?, runIds,
+//      queued (true while it waits for another area's analysis: one area at a time),
+//      stopping (true from a Stop until the month in progress has been given up),
+//      waiting (what it waits for, to show: "Waiting for Ukraine's analysis to finish", or
+//      "Waiting for farm analyses and searches to finish" while a month waits; else null) }
 export async function getJob(jobId) {
   const { job } = await request("GET", `/jobs/${id(jobId)}`);
+  return job;
+}
+
+// Takes an analysis that still waits for its turn out of line (-> the job,
+// "cancelled"), or stops one that has started (-> the job with stopping:
+// true; it ends "cancelled" a moment later, the months done kept). A job
+// that has ended is given back as it is. Throws an ApiError with code
+// "cannot_stop" for an analysis started before the server's code was
+// reloaded.
+export async function cancelJob(jobId) {
+  const { job } = await request("POST", `/jobs/${id(jobId)}/cancel`, {});
   return job;
 }
 

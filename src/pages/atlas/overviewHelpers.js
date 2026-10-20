@@ -17,9 +17,10 @@
 //                            · Access 30"; Near term "Soil 43 · Damage 57 ·
 //                            Cutoff 30%" (safe access is a cutoff there, so
 //                            soil and damage are shown as shares of 100)
-//   warNote(run)             the war the run counted damage from, or the
-//                            "no war in the app's list" note; null for
-//                            older runs that do not say
+//   warNote(run)             the war the run counted damage from (or the
+//                            team's "not at war"), or the "no war in the
+//                            app's list" note; null for older runs that do
+//                            not say (from src/lib/atlas/overview.js)
 //   haFixed(ha)              hectares for tables: "4.0 ha", "4.7 ha", "52 ha", "0 ha"
 //   priorityIndex(hotspot)   the score as 0–100, where 100 is the best square
 //
@@ -30,7 +31,7 @@
 import { useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useAtlasData } from "../../state/AtlasData.jsx";
-import { accessMeaning, accessMeasured, atPeace, damageMeaning, nextSteps } from "../../lib/atlas/overview.js";
+import { accessMeasured, nextSteps, warNote } from "../../lib/atlas/overview.js";
 import { labelParts } from "../../lib/atlas/hotspots.js";
 import { nearTermShares } from "../../lib/atlas/scoring.js";
 import { addDays, formatHaShort, formatKm2, toDay } from "../../lib/format.js";
@@ -121,7 +122,6 @@ export function planSteps({ run, hotspots = [], alerts = [], isLatest = false })
   const steps = nextSteps({ run, hotspots: named, alerts });
   const analyzed = run?.createdAt ? toDay(new Date(run.createdAt)) : toDay(new Date());
   const earliest = isLatest ? addDays(analyzed, DAYS_TO_ACT) : null;
-  const peace = atPeace(run);
 
   return steps.map((step) => {
     const next = { ...step };
@@ -131,7 +131,11 @@ export function planSteps({ run, hotspots = [], alerts = [], isLatest = false })
     if (alert && !alert.place && !Number.isFinite(alert.lat)) {
       // An alert with no place: named by its size. (With a place, the step
       // keeps overview.js's words, which use the alert's own place, as the
-      // alert list, the Report and the AI do.)
+      // alert list, the Report and the AI do.) Radar change, not new damage,
+      // where no war's rules apply to it (overview.js gave it the amber
+      // tone: no war, the team's "Not at war", a month before its war
+      // began, or a square outside the region of a war in part of the area).
+      const peace = step.tone !== "red";
       next.title = peace
         ? Number.isFinite(alert.magnitude) ? `Check ${formatKm2(alert.magnitude)} of radar change` : "Check the radar change"
         : Number.isFinite(alert.magnitude) ? `Review ${formatKm2(alert.magnitude)} of new damage` : "Review new damage";
@@ -180,32 +184,6 @@ export function priorityIndex(hotspot) {
   return Number.isFinite(hotspot?.share) ? Math.round(hotspot.share * 100) : null;
 }
 
-// The war a run counted damage from (run.conflict, set by the server from
-// src/config/conflicts.js), in words for the pages:
-//   { war: true, badge: "War since 24 Feb 2022", line: "Full-scale invasion
-//     of Ukraine, since 24 February 2022: damage is counted from that day." }
-//   { war: false, badge: null, line: "No war recorded here: ..." }
-// Runs saved before the field existed give null (nothing is shown).
-export function warNote(run) {
-  const conflict = run?.conflict;
-  if (conflict === undefined) return null;
-  if (!conflict?.since) {
-    // At peace the damage score is the heavily damaged share of the black
-    // soil (overview.js damageMeaning), from any cause.
-    const damage = `Damage is ${damageMeaning(run)}, from any cause.`;
-    // With an ACLED file, safe access is measured from its battles even at
-    // peace, so places can still be set aside.
-    if (run.accessSource === "acled") {
-      return { war: false, badge: null, line: `No war in the app's list covers this area; safe access is ${accessMeaning(run)}. ${damage}` };
-    }
-    return {
-      war: false,
-      badge: null,
-      line: `No war recorded here, so nothing is set aside. ${damage} Everywhere counts as safe to reach; this does not prove the land is safe.`,
-    };
-  }
-  const day = new Date(`${conflict.since}T00:00:00Z`);
-  const short = day.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
-  const long = day.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
-  return { war: true, name: conflict.name, badge: `War since ${short}`, line: `${conflict.name}, since ${long}: damage is counted from that day.` };
-}
+// The war a run counted damage from, in words for the pages: now in
+// src/lib/atlas/overview.js (warNote), kept here for the pages that import it.
+export { warNote };

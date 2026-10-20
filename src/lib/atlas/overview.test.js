@@ -9,8 +9,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { scorePlaces } from "./scoring.js";
 import { groupHotspots } from "./hotspots.js";
-import { accessMeaning, accessMeasured, accessSourceOf, conflictOf, alertPlaces, atPeace, damageMeaning, describeAlert, nearTermSetAside, heavyDamageRule, imageryText, kpis, nextSteps, recoveryCost, ruleText, shownNewDamage, sourceBadge, springPlan, summarize, timeframeLabel, timeframeOptions, weightsText } from "./overview.js";
-import { runsComparable } from "./method.js";
+import { accessMeaning, accessMeasured, accessSourceOf, analysisMonths, areaWar, beforeWar, conflictOf, alertPlaces, atPeace, damageMeaning, describeAlert, keepsMonth, monthsWithOtherWar, nearTermSetAside, heavyDamageRule, imageryText, kpis, nextSteps, outsideWar, peaceReason, peaceSquares, recoveryCost, ruleText, shownNewDamage, sourceBadge, springPlan, summarize, timeframeLabel, timeframeOptions, warInPart, warKey, warNote, warSetByTeam, warText, weightsText } from "./overview.js";
+import { METHOD_VERSION, runsComparable } from "./method.js";
 import { makePlaces } from "./testPlaces.js";
 
 const { places, settings } = scorePlaces(makePlaces(12, 12));
@@ -92,8 +92,16 @@ test("at peace: no demining, no 'new damage', no war words", () => {
 test("the damage score and safe access are described as used (10.6)", () => {
   const warRun = { ...run, conflict: { id: "ukraine-2022", name: "War", since: "2022-02-24" }, accessSource: "fires" };
   const peaceRun = { ...run, conflict: null, accessSource: "none" };
-  assert.equal(damageMeaning(warRun), "unusual fire and radar change against the normal years 2019–2021");
+  assert.equal(damageMeaning(warRun), "unusual fire and radar change against the normal years 2019–2021", "a run made with an older method");
   assert.equal(damageMeaning(run), damageMeaning(warRun), "older runs were made in a war");
+  // Made with this method: the worst war year and the lasting radar change.
+  const currentRun = { ...warRun, method: { version: METHOD_VERSION } };
+  assert.equal(
+    damageMeaning(currentRun),
+    "unusual fire (the fires of the worst war year, in 12-month years from the day the war began, against a normal year) and lasting radar change (a change seen in at least two complete growing seasons since the war began, which need not include the latest; while only one is complete, that one) against the normal years 2019–2021",
+  );
+  assert.equal(damageMeaning({ ...warRun, method: { version: "2026-10-19.2" } }), damageMeaning(warRun));
+  assert.equal(damageMeaning({ ...peaceRun, method: { version: METHOD_VERSION } }), damageMeaning(peaceRun), "at peace the same either way");
   assert.equal(damageMeaning(peaceRun), "the heavily damaged share of the black soil (radar change backed by unusual fire), full at 20%");
   // In a war with no ACLED file the distance is to unusual fires, an estimate.
   assert.equal(accessMeaning(warRun), "the distance to unusual fires (an estimate of where fighting is; no ACLED file), full at 100 km");
@@ -205,4 +213,176 @@ test("older runs: the access source from the fires warning, the war from the cou
   assert.equal(conflictOf({ areaId: "area-1234" }), undefined);
   assert.equal(conflictOf({ areaId: "country-404" }), undefined);
   assert.equal(accessSourceOf({ checks: { warnings: [] } }), null);
+});
+
+test("the war in words (the Overview's chip, the report's line): from the app's list, or set by the team", () => {
+  const ukraine = { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" };
+  const listed = warNote({ ...run, conflict: ukraine, conflictSource: "list" });
+  assert.deepEqual(
+    { badge: listed.badge, line: listed.line, team: listed.team },
+    { badge: "War since 24 Feb 2022", line: "Full-scale invasion of Ukraine, since 24 February 2022: damage is counted from that day.", team: false }
+  );
+  const team = { id: "area-area-1", name: "Fighting in Amhara", since: "2023-08-03", source: "area" };
+  const set = warNote({ ...run, conflict: team, conflictSource: "area" });
+  assert.equal(set.badge, "War since 3 Aug 2023 · set by your team");
+  assert.equal(set.line, "Fighting in Amhara, set by your team, since 3 August 2023: damage is counted from that day.");
+  assert.equal(set.team, true);
+  // Without a name of its own.
+  const plain = warNote({ ...run, conflict: { ...team, name: "War (set for this area)" }, conflictSource: "area" });
+  assert.equal(plain.line, "War since 3 August 2023, set by your team: damage is counted from that day.");
+  // Not at war: the team's choice has a chip; the list's peace has none.
+  const calm = warNote({ ...run, conflict: null, conflictSource: "area", accessSource: "none" });
+  assert.equal(calm.badge, "Not at war · set by your team");
+  assert.match(calm.line, /^Your team marked this area as not at war, so nothing is set aside\./);
+  const quiet = warNote({ ...run, conflict: null, conflictSource: "list", accessSource: "none" });
+  assert.equal(quiet.badge, null);
+  assert.match(quiet.line, /^No war recorded here, so nothing is set aside\./);
+  assert.match(warNote({ ...run, conflict: null, conflictSource: "area", accessSource: "acled" }).line, /^Your team marked this area as not at war; safe access is the distance to battles in the ACLED file/);
+  assert.equal(warNote({ ...run }), null, "older runs that do not say");
+  assert.equal(warSetByTeam({ conflict: team }), true);
+  assert.equal(warSetByTeam({ conflict: null, conflictSource: "area" }), true);
+  assert.equal(warSetByTeam({ conflict: ukraine }), false);
+  assert.equal(warKey(undefined), undefined);
+  assert.equal(warKey(null), null);
+  assert.equal(warKey(team), "2023-08-03");
+  assert.equal(warText(team), "at war since 3 Aug 2023");
+  assert.equal(warText(null), "at peace");
+});
+
+test("an area's war now, and the saved months made with another setting (Atlas Settings offers the re-run)", () => {
+  const ukraine = { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" };
+  const area = { id: "country-804", listConflict: ukraine };
+  assert.deepEqual(areaWar(area), { conflict: ukraine, team: false });
+  assert.deepEqual(areaWar({ ...area, war: { mode: "peace" } }), { conflict: null, team: true });
+  assert.deepEqual(areaWar({ ...area, war: { mode: "war", since: "2023-08-01" } }), {
+    conflict: { id: "area-country-804", name: "War (set for this area)", since: "2023-08-01", source: "area" },
+    team: true,
+  });
+  assert.equal(areaWar({ id: "area-x" }), undefined, "the server did not say what the list gives");
+  assert.equal(areaWar(null), undefined);
+
+  const months = [
+    { id: "run-sep", month: "2026-09", conflict: ukraine },
+    { id: "run-aug", month: "2026-08", conflict: ukraine },
+    { id: "run-old", month: "2026-07" },
+  ];
+  assert.deepEqual(monthsWithOtherWar(area, months), [], "all made with the list's war");
+  // The team marks it as not at war: the months made at war need a re-run
+  // (an older run that does not say is left out).
+  assert.deepEqual(monthsWithOtherWar({ ...area, war: { mode: "peace" } }, months).map((item) => item.id), ["run-sep", "run-aug"]);
+  // The same start day, set by the team under its own name: nothing to redo.
+  assert.deepEqual(monthsWithOtherWar({ ...area, war: { mode: "war", since: "2022-02-24", name: "Our name" } }, months), []);
+  assert.deepEqual(monthsWithOtherWar({ id: "area-x" }, months), [], "cannot be told");
+});
+
+test("a month that ends before its war began: no war's rules (no damage, nothing set aside, no demining), but the run keeps its war", () => {
+  const team = { id: "area-area-1", name: "Fighting in the county", since: "2026-06-01", source: "area" };
+  const early = { ...run, month: "2025-12", label: "December 2025", conflict: team, conflictSource: "area", accessSource: "none" };
+  assert.equal(beforeWar(early), true);
+  assert.equal(outsideWar(early), true);
+  assert.equal(atPeace(early), false, "it is not at peace: the area's war began later");
+  assert.equal(accessMeasured(early), false);
+  assert.equal(accessMeasured({ ...early, accessSource: "acled" }), true, "an ACLED file measures it anyway");
+  assert.equal(beforeWar({ ...early, month: "2026-06" }), false, "the month the war began counts from that day");
+  assert.equal(timeframeLabel("postwar", early), "Long term");
+  assert.equal(kpis({ croplandHa: 1, blackSoilHa: 1, heavyDamageHa: 0, peopleOnDamagedSoil: 0 }, early).find((k) => k.id === "heavy-damage").tone, undefined);
+  assert.deepEqual(peaceReason(early), { short: "Before the war", note: "before the war, which began on 1 June 2026", clause: "this month ends before the war began on 1 June 2026" });
+  const note = warNote(early);
+  assert.equal(note.badge, "Before the war (from 1 Jun 2026) · set by your team");
+  assert.equal(note.line, "This month ends before Fighting in the county (set by your team) began on 1 June 2026: no war damage is counted, and distance to fighting is not measured, so nothing is set aside (this does not prove the land is safe).");
+  assert.equal(note.beforeWar, true);
+  assert.equal(damageMeaning(early), "not counted for this month: it ends before the war began on 1 June 2026, so the damage score is 0 everywhere");
+  assert.equal(accessMeaning(early), "full everywhere: this month ends before the war began on 1 June 2026, so every square counts as safe to reach (this does not prove the land is safe)");
+  assert.equal(heavyDamageRule(early), "none counted: this month ends before the war began on 1 June 2026");
+  assert.equal(nearTermSetAside(early, { gatePercentile: 30 }), "Near term sets nothing aside and ranks by soil value and damage.");
+  assert.equal(ruleText("nearTerm", { gatePercentile: 30 }, early), "This month ends before the war began on 1 June 2026, so nothing is set aside. Places are ranked by soil value and damage.");
+  assert.equal(ruleText("postwar", {}, early), "All three scores are blended into one long-term ranking.");
+  for (const step of nextSteps({ run: early, hotspots, alerts })) assert.doesNotMatch(step.title, /demining|cleared|damage/i);
+  // A war of the app's list, in a long re-run reaching back before it.
+  const listed = warNote({ ...run, month: "2024-11", conflict: { id: "thailand-cambodia", name: "Cambodia–Thailand border conflict", since: "2025-07-24" }, conflictSource: "list", accessSource: "none" });
+  assert.equal(listed.badge, "Before the war (from 24 Jul 2025)");
+  assert.match(listed.line, /^This month ends before Cambodia–Thailand border conflict began on 24 July 2025: no war damage is counted/);
+});
+
+test("a team's 'Not at war' over a war on the app's list is never called 'no war recorded'", () => {
+  const teamPeace = { ...run, conflict: null, conflictSource: "area", accessSource: "none" };
+  assert.deepEqual(peaceReason(teamPeace), { short: "Not at war (set by your team)", note: "not at war, set by your team", clause: "your team marked this area as not at war" });
+  assert.equal(accessMeaning(teamPeace), "full everywhere: your team marked this area as not at war, so every square counts as safe to reach (this does not prove the land is safe)");
+  assert.equal(ruleText("nearTerm", { gatePercentile: 30 }, teamPeace), "Your team marked this area as not at war, so nothing is set aside. Places are ranked by soil value and damage.");
+  const words = [accessMeaning(teamPeace), ruleText("nearTerm", {}, teamPeace), peaceReason(teamPeace).short, peaceReason(teamPeace).note, warNote(teamPeace).line].join(" ");
+  assert.doesNotMatch(words, /no war (is )?recorded/i);
+  // The app's own peace keeps its words.
+  const listPeace = { ...run, conflict: null, conflictSource: "list", accessSource: "none" };
+  assert.equal(peaceReason(listPeace).short, "No war recorded");
+  assert.equal(ruleText("nearTerm", {}, listPeace), "No war is recorded here, so nothing is set aside. Places are ranked by soil value and damage.");
+  assert.equal(peaceReason({ ...run, conflict: { id: "ukraine-2022", since: "2022-02-24" } }), null, "a war's rules apply");
+});
+
+test("a war the team counts from the earliest day allowed is not given that day as its start", () => {
+  const team = { id: "area-area-1", name: "War in the hills", since: "2022-01-01", source: "area" };
+  const note = warNote({ ...run, conflict: team, conflictSource: "area", accessSource: "fires" });
+  assert.equal(note.badge, "War · damage from 1 Jan 2022 · set by your team");
+  assert.equal(note.line, "War in the hills, set by your team: damage is counted from 1 January 2022, the earliest day the app allows (the normal years 2019–2021 must come before the war). The war may be older: damage before that day is not counted, and the normal years may already include it.");
+  assert.doesNotMatch(note.badge, /War since/);
+  const unnamed = warNote({ ...run, conflict: { ...team, name: "War (set for this area)" }, conflictSource: "area" });
+  assert.match(unnamed.line, /^A war set by your team: damage is counted from 1 January 2022/);
+});
+
+test("a war that covers a whole-country area only in part: its words only where its rules applied", () => {
+  const border = { id: "thailand-cambodia", name: "Cambodia–Thailand border conflict", since: "2025-07-24", partOfCountry: true };
+  // Squares r0c* touch the war's region; the rest were read at peace.
+  const cells = places.map((place) => ({ id: place.id, atWar: /^r[0-2]c/.test(place.id) }));
+  const inPart = { ...run, conflict: border, conflictSource: "list", accessSource: "fires", method: { version: METHOD_VERSION }, warSquares: cells.filter((c) => c.atWar).length, cellCount: cells.length, cells };
+  assert.equal(warInPart(inPart), true);
+  assert.equal(warInPart({ ...inPart, conflict: { ...border, partOfCountry: false } }), false);
+  assert.equal(peaceSquares(inPart).size, cells.filter((c) => !c.atWar).length);
+  assert.equal(peaceSquares({ ...inPart, conflict: { ...border, partOfCountry: false } }).size, 0);
+  const note = warNote(inPart);
+  assert.equal(note.badge, "War since 24 Jul 2025 · in part of the country");
+  assert.equal(
+    note.line,
+    `Cambodia–Thailand border conflict, since 24 July 2025: damage is counted from that day. The war covers only part of this country: its rules apply in the squares that touch the war's region (in ${inPart.warSquares} of ${cells.length} squares); the other squares are read as at peace (heavy damage needs strong radar change and an unusual fire), with their distance to fighting measured to the war's region.`
+  );
+  assert.match(damageMeaning(inPart), /lasting radar change .* in the squares that touch the war's region; elsewhere the heavily damaged share of the black soil \(radar change backed by unusual fire\), full at 20%$/);
+  assert.equal(heavyDamageRule(inPart), "radar change of 3 dB or more, or of 2 dB or more with an unusual fire within 1 km in the squares that touch the war's region; elsewhere radar change of 3 dB or more and an unusual fire within 1 km");
+  assert.equal(accessMeaning(inPart), "the distance to unusual fires inside the war's region (an estimate of where fighting is; no ACLED file), full at 100 km");
+  assert.equal(timeframeLabel("postwar", inPart), "Postwar");
+  // Next steps: demining only for places that touch the war's region.
+  const calm = peaceSquares(inPart);
+  const outsideSpots = hotspots.filter((h) => h.cellIds.every((id) => calm.has(id)));
+  const insideSpots = hotspots.filter((h) => h.cellIds.some((id) => !calm.has(id)));
+  assert.ok(outsideSpots.length >= 3 && insideSpots.length >= 1, "the test places have both");
+  const quiet = nextSteps({ run: inPart, hotspots: outsideSpots, alerts: [{ ...alerts[0], cellIds: [outsideSpots[0].cellIds[0]] }] });
+  assert.equal(quiet[0].title, `Plan soil surveys in ${outsideSpots[0].label} and ${outsideSpots[1].label}`);
+  assert.equal(quiet[1].title, "Check the radar change near 48.59° N, 38.00° E");
+  assert.equal(quiet[1].tone, "amber");
+  assert.equal(quiet[2].title, `Test soil in ${outsideSpots[2].label}`);
+  const front = nextSteps({ run: inPart, hotspots: [insideSpots[0], ...outsideSpots], alerts: [{ ...alerts[0], cellIds: [insideSpots[0].cellIds[0]] }] });
+  assert.match(front[0].title, /^Fund demining surveys in /);
+  assert.equal(front[1].title, "Review new damage near 48.59° N, 38.00° E");
+  // Its key differs from the same war with its rules all over the area.
+  assert.equal(warKey(border), "2025-07-24 (in part of the country)");
+  assert.equal(warKey({ ...border, partOfCountry: undefined }), "2025-07-24");
+  assert.equal(runsComparable({ ...run, conflict: border }, { ...run, conflict: { ...border, partOfCountry: undefined } }).reason, "war");
+  assert.equal(runsComparable({ ...run, conflict: border }, { ...run, conflict: { ...border, name: "Another name" } }).comparable, true);
+});
+
+test("which saved months an analysis keeps (the server and Atlas Settings use one rule), and the months it covers", () => {
+  const current = { month: "2026-09", provider: "gee", method: { version: METHOD_VERSION }, conflict: null };
+  const options = { provider: "gee", manual: true, warNow: null };
+  assert.equal(keepsMonth(current, options), true);
+  assert.equal(keepsMonth(undefined, options), false, "a missing month is analyzed");
+  assert.equal(keepsMonth(current, { ...options, rerun: true }), false);
+  assert.equal(keepsMonth({ ...current, provider: "sample" }, options), false, "sample data once Earth Engine is connected");
+  assert.equal(keepsMonth({ ...current, provider: "sample" }, { ...options, provider: "sample" }), true);
+  const older = { ...current, method: { version: "2026-10-19.2" } };
+  assert.equal(keepsMonth(older, options), false, "an older method, in a run someone started");
+  assert.equal(keepsMonth(older, { ...options, manual: false }), true, "the monthly job keeps it");
+  const atWar = { ...current, conflict: { id: "area-x", since: "2023-08-01", source: "area" } };
+  assert.equal(keepsMonth(atWar, options), false, "made at war, now at peace");
+  assert.equal(keepsMonth(atWar, { ...options, warNow: "2023-08-01" }), true);
+  assert.equal(keepsMonth(atWar, { ...options, manual: false }), true, "the monthly job keeps another war setting too");
+  assert.equal(keepsMonth({ ...current, conflict: undefined }, options), true, "a run that does not say its war is kept");
+  assert.deepEqual(analysisMonths(3, new Date(2026, 9, 20)), ["2026-09", "2026-08", "2026-07"]);
+  assert.deepEqual(analysisMonths(2, new Date(2026, 0, 5)), ["2025-12", "2025-11"]);
 });

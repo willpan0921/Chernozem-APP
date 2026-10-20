@@ -32,7 +32,7 @@ import { ArrowLeft, Download, Printer } from "lucide-react";
 import { Button, Badge } from "../../components/ui/index.js";
 import { AtlasGate, useAtlasData, useTimeframe } from "../../state/AtlasData.jsx";
 import { placeLabel } from "../../lib/atlas/hotspots.js";
-import { accessMeaning, accessMeasured, alertPlaces, atPeace, damageMeaning, describeAlert, imageryText, kpis, nearTermSetAside, shownNewDamage, summarize, timeframeLabel } from "../../lib/atlas/overview.js";
+import { accessMeaning, accessMeasured, alertPlaces, atPeace, damageMeaning, describeAlert, imageryText, kpis, nearTermSetAside, peaceReason, shownNewDamage, summarize, timeframeLabel } from "../../lib/atlas/overview.js";
 import { formatHaShort, listNames } from "../../lib/format.js";
 import { toCsv } from "../../lib/csv.js";
 import { atlasLink, haFixed, nameAreas, priorityIndex, useMonthInUrl, warNote, weightItems } from "./overviewHelpers.js";
@@ -158,10 +158,14 @@ function Report() {
   // Alerts named as on the Overview and in the AI (overview.js alertPlaces).
   const alertNames = alertPlaces(run.alerts || []);
   const measured = accessMeasured(run);
+  // Why nothing is set aside, in the run's own words: "no war recorded",
+  // "not at war, set by your team" (never "no war recorded" over a war the
+  // team overrode) or "before the war, which began on 1 June 2026".
+  const quiet = peaceReason(run);
   const nearTermWeights = weightItems(settings, "nearTerm")
     .filter((item) => measured || item.key !== "access")
     .map((item) => item.text)
-    .concat(measured ? [] : ["nothing set aside (no war recorded)"])
+    .concat(measured ? [] : [`nothing set aside (${quiet?.note || "no war recorded"})`])
     .join(" · ");
 
   return (
@@ -273,6 +277,8 @@ function Report() {
             of the damage score. In the tables the three scores are shown 0–100, and priority is each area's score as a share of the best
             square in that time frame (100 = the best). The exact scores are in the CSV.
           </p>
+          {/* A month before its war began keeps the deminers' line: the
+              area is at war now, and the land may be mined since. */}
           {atPeace(run) ? (
             <p className="rp-disclaimer">
               Scores show model priority from satellite data, not proven restoration results. They do not replace field sampling or local

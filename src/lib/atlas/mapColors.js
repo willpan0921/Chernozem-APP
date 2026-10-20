@@ -17,6 +17,8 @@
 // WHO EDITS IT
 // Whoever changes how the map is coloured. Tested in mapColors.test.js.
 
+import { accessMeasured, beforeWar, warSetByTeam } from "./overview.js";
+
 export const COLOR_MODES = ["priority", "damage", "access"];
 
 // Steps returned for squares that are not coloured on the ramp.
@@ -38,12 +40,16 @@ export const LEGENDS = {
 };
 
 // The legend for a colour mode and a run. Where no war in the app's list
-// covers the run (and no ACLED file was used), distance to fighting is not
-// measured: every square reads 100 km +, which is not the same as safe.
+// covers the run, or the team marked the area as not at war (Atlas
+// Settings: run.conflictSource "area"), or the month ends before its war
+// began, and no ACLED file was used (overview.js accessMeasured), distance
+// to fighting is not measured: every square reads 100 km +, which is not
+// the same as safe.
 export function legendFor(colorBy, run) {
   const legend = LEGENDS[colorBy] || LEGENDS.priority;
-  if (colorBy === "access" && run && run.conflict === null && run.accessSource !== "acled") {
-    return { ...legend, title: "Distance to fighting: not measured", high: "No war listed" };
+  if (colorBy === "access" && run && !accessMeasured(run)) {
+    const high = beforeWar(run) ? "Before the war" : warSetByTeam(run) ? "Not at war (your team)" : "No war listed";
+    return { ...legend, title: "Distance to fighting: not measured", high };
   }
   return legend;
 }

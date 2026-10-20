@@ -1,9 +1,15 @@
 // WHAT THIS FILE DOES
-// The Atlas Settings page (/atlas/settings). Four cards:
+// The Atlas Settings page (/atlas/settings). Five cards:
 //   Area   the area being analyzed, "New area" (country, GPS coordinates
 //          or a drawn shape) and the saved areas: open, rename, remove
+//   War    whether the current area is at war, and from which day damage
+//          is counted: the app's list (src/config/conflicts.js), "At war"
+//          from a day the team picks, or "Not at war" (saved as area.war).
+//          When saved months were made with another setting, one line
+//          offers the re-run that applies it (never started by itself)
 //   Data   Earth Engine status and the .env lines that connect it,
-//          "Re-run analysis" and the monthly automatic analysis switch
+//          "Re-run analysis" and the switch that analyzes every saved
+//          area automatically each month
 //   AI     Claude status (the key is tested by "Check connections") and
 //          the .env line that connects it
 //   Team   who has access: add, change role, remove
@@ -26,16 +32,19 @@ import {
   Plus,
   RefreshCw,
   Satellite,
+  ShieldAlert,
   Sparkles,
   SquareDashed,
   Trash2,
   X,
 } from "lucide-react";
-import { PageHeader, Card, Badge, Button, Toggle } from "../../components/ui/index.js";
+import { PageHeader, Card, Badge, Button, Segmented, Toggle } from "../../components/ui/index.js";
 import { AnalysisProgress, AtlasGate, useAtlasData } from "../../state/AtlasData.jsx";
 import AreaPicker from "../../components/atlas/AreaPicker.jsx";
 import { API_ROOT, ApiError, AUTH_REQUIRED_EVENT } from "../../api/atlasApi.js";
-import { formatAreaSize } from "../../lib/format.js";
+import { formatAreaSize, formatMonthYear } from "../../lib/format.js";
+import { EARLIEST_WAR_DAY, WAR_NAME_MAX, checkAreaWar } from "../../config/conflicts.js";
+import { analysisMonths, areaWar, conflictOf, keepsMonth, monthsWithOtherWar, warDay, warKey, warText } from "../../lib/atlas/overview.js";
 import "./SettingsPage.css";
 
 // Where people make a Claude API key.
@@ -57,8 +66,10 @@ const AREA_KINDS = {
 };
 const areaKind = (area) => AREA_KINDS[area?.source] || AREA_KINDS[area?.kind] || AREA_KINDS.coordinates;
 
-// How many months "Re-run analysis" recomputes (at least 12, at most 24).
-const rerunMonths = (runCount) => Math.min(24, Math.max(12, runCount));
+// How many months "Re-run analysis" recomputes (at least 12, at most 24:
+// MAX_RERUN_MONTHS, as server/jobs.js allows).
+const MAX_RERUN_MONTHS = 24;
+const rerunMonths = (runCount) => Math.min(MAX_RERUN_MONTHS, Math.max(12, runCount));
 
 // Re-running these takes a while (and uses Earth Engine quota), so the
 // button asks first: anything on Earth Engine, or bigger than 100,000 km².
@@ -352,12 +363,11 @@ function SavedArea({ item, busy, onOpen, opening }) {
 }
 
 function AreaCard() {
-  const { area, areas, runs, job, actions } = useAtlasData();
+  const { area, areas, runs, actions } = useAtlasData();
   const [picking, setPicking] = useState(!area);
   const [switching, setSwitching] = useState(null);
   const [error, setError] = useState(null);
   const others = areas.filter((item) => item.id !== area?.id);
-  const running = job?.status === "running";
 
   const open = async (id) => {
     setSwitching(id);
@@ -418,7 +428,11 @@ function AreaCard() {
               <SavedArea
                 key={item.id}
                 item={item}
-                busy={Boolean(switching) || running}
+                // Open works even while an analysis runs or waits: with one
+                // area at a time the next one can wait for hours. It goes
+                // on on the server, and the pages follow the area that is
+                // open (the War and Data cards start again for it: key).
+                busy={Boolean(switching)}
                 opening={switching === item.id}
                 onOpen={open}
               />
@@ -487,23 +501,139 @@ function useWhileConnecting(connecting, reload) {
   }, [connecting]);
 }
 
-function DataCard() {
-  const { serverStatus, workspace, area, runs, job, actions } = useAtlasData();
+// "Re-run analysis" for the current area and how it went. The Data card
+// and the War card's "Re-run the analysis to apply this" both use it. Each
+// card starts again for every area (key={area.id} in SettingsPage), so an
+// area's re-run never reports under another one opened meanwhile.
+//   redoAll  true (the Data card): every month of the last 12 (at most 24)
+//            is analyzed again (rerun). False (the War card): a plain run a
+//            person starts over the same months, which redoes only the
+//            months made with another war setting (or an older method, or
+//            sample data now that Earth Engine is connected) and fills in
+//            missing ones (server/jobs.js; overview.js keepsMonth)
+//   -> { months, running, waiting, starting, askFirst, result, start }
+//      result { tone: "ok" | "error" | "muted", text }
+//   months   how many months back from the latest complete one (default:
+//            rerunMonths, at least 12, as many as there are saved, at most 24)
+function useRerun({ redoAll = true, months: monthsAsked } = {}) {
+  const { serverStatus, area, runs, job, actions } = useAtlasData();
   const [starting, setStarting] = useState(false);
-  const [asking, setAsking] = useState(false); // "Re-run 12 months?" shown
-  const [result, setResult] = useState(null); // { ok, text }
-  const [toggleError, setToggleError] = useState(null);
+  const [result, setResult] = useState(null);
   const mounted = useRef(true);
-  const confirmRef = useRef(null);
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
     };
   }, []);
+
+  const provider = serverStatus?.provider;
+  const months = monthsAsked || rerunMonths(runs.length);
+  const running = job?.status === "running" && job.areaId === area?.id;
+  // Ask before a slow re-run (Earth Engine, or a very big area).
+  const askFirst = runs.length > 0 && (provider?.id === "gee" || (area?.areaHa || 0) > BIG_AREA_HA);
+
+  const start = async () => {
+    if (!area) return;
+    setStarting(true);
+    setResult(null);
+    try {
+      const { finished } = await actions.analyzeArea(area.id, { months, rerun: redoAll && runs.length > 0 });
+      if (mounted.current) setStarting(false);
+      const final = await finished;
+      if (!mounted.current) return;
+      setResult(rerunOutcome(final, months));
+    } catch (err) {
+      if (!mounted.current) return;
+      setStarting(false);
+      setResult({ tone: "error", text: errorText(err) });
+    }
+  };
+
+  return { months, running, waiting: running && Boolean(job.queued), starting, askFirst, result, start };
+}
+
+// How a finished re-run went, in a few words:
+//   done       "Updated · 2 months" (the months analyzed, job.analyzed), or
+//              "Already up to date" when every month was kept
+//   cancelled  the job's own words: "Kenya: cancelled before it started",
+//              "Russia: stopped after 3 of 24 months. The months analyzed
+//              before are kept."
+//   error      why it stopped, or which months are missing
+function rerunOutcome(final, months = 12) {
+  if (final?.status === "done") {
+    const analyzed = Number.isFinite(final.analyzed) ? final.analyzed : final.total || months;
+    if (!analyzed) return { tone: "ok", text: "Already up to date" };
+    return { tone: "ok", text: `Updated · ${analyzed === 1 ? "1 month" : `${analyzed} months`}` };
+  }
+  if (final?.status === "cancelled") return { tone: "muted", text: final.message || "Stopped." };
+  return { tone: "error", text: final?.error || "The analysis stopped." };
+}
+
+// The re-run button, which first asks (confirm, e.g. "Re-run 12 months")
+// when that is slow (rerun.askFirst). Escape or the cross takes the
+// question back.
+//   rerun    from useRerun()
+//   primary  draw it as the page's main button
+//   confirm  the question's button (default "Re-run 12 months")
+function RerunButton({ rerun, primary = false, confirm }) {
+  const { runs } = useAtlasData();
+  const [asking, setAsking] = useState(false);
+  const confirmRef = useRef(null);
   useEffect(() => {
     if (asking) confirmRef.current?.focus();
   }, [asking]);
+  const { months, running, waiting, starting, askFirst, start } = rerun;
+
+  if (asking && !running) {
+    return (
+      <div className="aset-confirm" onKeyDown={(event) => event.key === "Escape" && setAsking(false)}>
+        <Button
+          ref={confirmRef}
+          variant="primary"
+          size="sm"
+          onClick={() => {
+            setAsking(false);
+            start();
+          }}
+        >
+          {confirm || `Re-run ${months} months`}
+        </Button>
+        <Button variant="ghost" size="sm" icon={<X size={14} />} aria-label="Cancel re-run" onClick={() => setAsking(false)} />
+      </div>
+    );
+  }
+  return (
+    <Button
+      variant={primary || !runs.length ? "primary" : "secondary"}
+      size="sm"
+      icon={<RefreshCw size={14} className={running && !waiting ? "atlas-spin" : undefined} />}
+      onClick={askFirst ? () => setAsking(true) : start}
+      disabled={starting || running}
+      className="aset-rerun"
+    >
+      {waiting ? "Waiting…" : running ? "Analyzing…" : starting ? "Starting…" : runs.length ? "Re-run analysis" : "Analyze 12 months"}
+    </Button>
+  );
+}
+
+// How the last re-run went: "Updated · 12 months", why it stopped, or that
+// it was stopped or cancelled (muted: a person's own choice).
+function RerunResult({ rerun }) {
+  if (rerun.running || !rerun.result) return null;
+  const { tone, text } = rerun.result;
+  return (
+    <p className={tone === "ok" ? "aset-ok" : tone === "muted" ? "aset-hint" : "aset-error"} role="status">
+      {tone === "ok" && <Check size={14} />}
+      {text}
+    </p>
+  );
+}
+
+function DataCard() {
+  const { serverStatus, workspace, area, runs, job, actions } = useAtlasData();
+  const [toggleError, setToggleError] = useState(null);
+  const rerun = useRerun();
 
   const provider = serverStatus?.provider;
   useWhileConnecting(Boolean(provider?.connecting), actions.reload);
@@ -512,35 +642,9 @@ function DataCard() {
   const lines = geeLines(provider);
   const problem = provider?.credentialsError || (provider?.fallbackFrom ? provider.detail : null);
   const latest = runs[0];
-  const running = job?.status === "running" && job.areaId === area?.id;
   const autoMonthly = workspace?.schedule?.autoMonthly !== false;
-  const months = rerunMonths(runs.length);
   // Earth Engine is connected but the months shown are still sample data.
   const needsRealData = provider?.id === "gee" && provider.ok && latest && latest.provider !== "gee";
-  // Ask before a slow re-run (Earth Engine, or a very big area).
-  const askFirst = runs.length > 0 && (provider?.id === "gee" || (area?.areaHa || 0) > BIG_AREA_HA);
-
-  const rerun = async () => {
-    if (!area) return;
-    setAsking(false);
-    setStarting(true);
-    setResult(null);
-    try {
-      const { finished } = await actions.analyzeArea(area.id, { months, rerun: runs.length > 0 });
-      if (mounted.current) setStarting(false);
-      const final = await finished;
-      if (!mounted.current) return;
-      setResult(
-        final.status === "done"
-          ? { ok: true, text: `Updated · ${final.total || months} months` }
-          : { ok: false, text: final.error || "The analysis stopped." }
-      );
-    } catch (err) {
-      if (!mounted.current) return;
-      setStarting(false);
-      setResult({ ok: false, text: errorText(err) });
-    }
-  };
 
   const setAuto = async (value) => {
     setToggleError(null);
@@ -556,31 +660,6 @@ function DataCard() {
     : area
       ? "Not analyzed yet"
       : "Choose an area first";
-
-  let action = null;
-  if (area && asking && !running) {
-    action = (
-      <div className="aset-confirm" onKeyDown={(event) => event.key === "Escape" && setAsking(false)}>
-        <Button ref={confirmRef} variant="primary" size="sm" onClick={rerun}>
-          Re-run {months} months
-        </Button>
-        <Button variant="ghost" size="sm" icon={<X size={14} />} aria-label="Cancel re-run" onClick={() => setAsking(false)} />
-      </div>
-    );
-  } else if (area) {
-    action = (
-      <Button
-        variant={needsRealData || !runs.length ? "primary" : "secondary"}
-        size="sm"
-        icon={<RefreshCw size={14} className={running ? "atlas-spin" : undefined} />}
-        onClick={askFirst ? () => setAsking(true) : rerun}
-        disabled={starting || running}
-        className="aset-rerun"
-      >
-        {running ? "Analyzing…" : starting ? "Starting…" : runs.length ? "Re-run analysis" : "Analyze 12 months"}
-      </Button>
-    );
-  }
 
   return (
     <Card className="aset-card" title="Data">
@@ -607,19 +686,232 @@ function DataCard() {
       </div>
 
       <div className="aset-block">
-        <StatusRow icon={<CalendarClock size={16} />} title="Latest month" meta={latestMeta} action={action} />
-        {running && <AnalysisProgress job={job} compact />}
-        {!running && result && (
-          <p className={result.ok ? "aset-ok" : "aset-error"} role="status">
-            {result.ok && <Check size={14} />}
-            {result.text}
-          </p>
-        )}
+        <StatusRow
+          icon={<CalendarClock size={16} />}
+          title="Latest month"
+          meta={latestMeta}
+          action={area ? <RerunButton rerun={rerun} primary={needsRealData} /> : null}
+        />
+        {rerun.running && <AnalysisProgress job={job} compact />}
+        <RerunResult rerun={rerun} />
       </div>
 
       <div className="aset-block aset-auto">
-        <Toggle title="Analyze automatically each month" checked={autoMonthly} onChange={setAuto} />
+        <Toggle
+          title="Analyze every saved area automatically each month"
+          help="One area at a time, the current one first"
+          checked={autoMonthly}
+          onChange={setAuto}
+        />
         {toggleError && <p className="aset-error">{toggleError}</p>}
+      </div>
+    </Card>
+  );
+}
+
+// ---------- War ----------
+
+// The team's three choices for the current area, saved as area.war (the
+// server checks them with the same rules: src/config/conflicts.js
+// checkAreaWar).
+const WAR_MODES = [
+  { value: "list", label: "App's list" },
+  { value: "war", label: "At war" },
+  { value: "peace", label: "Not at war" },
+];
+
+// Today as "YYYY-MM-DD" in UTC, as the server checks it: the latest day a
+// war can count from.
+const todayUtc = () => new Date().toISOString().slice(0, 10);
+
+// What the app's list says for the area (area.listConflict from the
+// server), in words: "Full-scale invasion of Ukraine, since 24 Feb 2022",
+// "no war here", or null when the server did not say.
+function listWords(list) {
+  if (list === undefined) return null;
+  if (!list) return "no war here";
+  return `${list.name}, since ${warDay(list.since)}`;
+}
+
+function WarCard() {
+  const { area, runs, serverStatus, actions } = useAtlasData();
+  const savedMode = area?.war?.mode === "war" || area?.war?.mode === "peace" ? area.war.mode : "list";
+  const list = area?.listConflict;
+  // A war of the app's list that started in 2022 or later is offered as
+  // the day to start from.
+  const startDay = area?.war?.since || (list?.since && list.since >= EARLIEST_WAR_DAY ? list.since : "");
+  const [mode, setMode] = useState(savedMode);
+  const [since, setSince] = useState(startDay);
+  const [name, setName] = useState(area?.war?.name || "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  // The saved months made with another war setting than the area's now.
+  // The re-run that applies it is a plain run a person starts (not every
+  // month again): back from the latest month to the oldest such month (24
+  // months at most), it redoes those months and fills in the missing ones
+  // between them.
+  const stale = monthsWithOtherWar(area, runs);
+  const lastMonths = analysisMonths(MAX_RERUN_MONTHS);
+  const reach = Math.max(1, ...stale.map((item) => lastMonths.indexOf(item.month) + 1));
+  const rerun = useRerun({ redoAll: false, months: reach });
+
+  // Start again from what is saved when the area or its setting changes.
+  const savedKey = `${area?.id}|${savedMode}|${area?.war?.since || ""}|${area?.war?.name || ""}`;
+  useEffect(() => {
+    setMode(savedMode);
+    setSince(startDay);
+    setName(area?.war?.name || "");
+    setError(null);
+    // savedKey holds everything the reset reads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedKey]);
+
+  if (!area) return null;
+
+  const save = async (war) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await actions.updateArea(area.id, { war });
+    } catch (err) {
+      setError(errorText(err));
+      // Not saved: the switch shows what is saved again ("At war" keeps
+      // its form open, to fix the day).
+      if (war.mode !== "war") setMode(savedMode);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // The app's list and "Not at war" need nothing more: saved at once.
+  // "At war" opens the day and the name first.
+  const choose = (next) => {
+    if (busy) return;
+    setError(null);
+    setMode(next);
+    if (next !== "war" && next !== savedMode) save({ mode: next });
+  };
+
+  const cleanName = name.replace(/\s+/g, " ").trim();
+  const unchanged = savedMode === "war" && since === area.war.since && cleanName === (area.war.name || "");
+  const submit = (event) => {
+    event.preventDefault();
+    // The server's own rules, for a quick answer (it checks them again).
+    const checked = checkAreaWar({ mode: "war", since, name: cleanName }, todayUtc());
+    if (checked.error) {
+      setError(checked.error);
+      return;
+    }
+    save(checked.war);
+  };
+
+  // What the saved setting gives, and the months made with another one.
+  const now = areaWar(area);
+  const war = now?.conflict;
+  const listText = listWords(list);
+  const title = now === undefined ? "The app's list" : war ? `At war since ${warDay(war.since)}` : "Not at war";
+  let meta = null;
+  if (now?.team) {
+    const own = war ? (area.war.name ? `${area.war.name}. ` : "") : "";
+    meta = listText ? `${own}The app's list: ${listText}.` : own.trim() || null;
+  } else if (now) {
+    meta = war
+      ? `${war.name}.${list?.partOfCountry ? " It covers part of this country: its rules apply in the squares that touch the war's region, the rest is read as at peace." : ""}`
+      : "No war in the app's list covers this area.";
+  }
+  // Which of them the re-run reaches (and the months it redoes in all, for
+  // its question: "Redo 2 months"); older ones keep the setting they were
+  // made with. A run saved before run.conflict existed is read with
+  // conflictOf, as monthsWithOtherWar reads it.
+  const rerunWindow = analysisMonths(rerun.months);
+  const reached = stale.filter((item) => rerunWindow.includes(item.month));
+  const older = stale.length - reached.length;
+  const byMonth = new Map();
+  for (const item of runs) if (!byMonth.has(item.month)) byMonth.set(item.month, item);
+  const redo = rerunWindow.filter((month) => !keepsMonth(byMonth.get(month), { provider: serverStatus?.provider?.id || "sample", warNow: warKey(war) })).length;
+  const madeWith = (months) => {
+    const keys = new Set(months.map((item) => warKey(conflictOf(item))));
+    return keys.size === 1 ? `made ${warText(conflictOf(months[0]))}` : "made with another war setting";
+  };
+  const staleCount =
+    reached.length === runs.length ? (runs.length === 1 ? "The saved month was" : "The saved months were") : reached.length === 1 ? "1 saved month was" : `${reached.length} saved months were`;
+  const olderText = older > 0 ? ` ${older === 1 ? "1 older month keeps the setting it was" : `${older} older months keep the setting they were`} made with: a re-run reaches back ${MAX_RERUN_MONTHS} months at most.` : "";
+  const staleText = reached.length ? `${staleCount} ${madeWith(reached)}.${olderText}` : "";
+  const firstReached = rerunWindow.length ? formatMonthYear(rerunWindow[rerunWindow.length - 1]) : "";
+  const onlyOlderText = !reached.length && older > 0 ? `${older === 1 ? "1 saved month" : `${older} saved months`} before ${firstReached} ${older === 1 ? "was" : "were"} ${madeWith(stale)} and ${older === 1 ? "keeps that setting" : "keep that setting"}: a re-run reaches back ${MAX_RERUN_MONTHS} months at most.` : "";
+
+  return (
+    <Card className="aset-card" title="War">
+      <div className="aset-block">
+        <StatusRow
+          icon={<ShieldAlert size={16} />}
+          title={title}
+          badge={now && <Badge tone="outline">{now.team ? "Set by your team" : "App's list"}</Badge>}
+          meta={meta}
+        />
+        <div className="aset-war-controls">
+          <Segmented light options={WAR_MODES} value={mode} onChange={choose} ariaLabel={`War setting for ${area.name}`} />
+          {mode === "war" && (
+            // noValidate: the app's own message says why a day is refused
+            // (the date picker still offers 2022-01-01 to today only).
+            <form className="aset-war-form" onSubmit={submit} noValidate>
+              <label className="aset-war-field">
+                <span className="field-label">Count damage from</span>
+                <input
+                  className="input"
+                  type="date"
+                  min={EARLIEST_WAR_DAY}
+                  max={todayUtc()}
+                  value={since}
+                  disabled={busy}
+                  onChange={(event) => {
+                    setError(null);
+                    setSince(event.target.value);
+                  }}
+                />
+              </label>
+              <label className="aset-war-field">
+                <span className="field-label">Name (optional)</span>
+                <input
+                  className="input"
+                  maxLength={WAR_NAME_MAX}
+                  placeholder="For example Fighting in Amhara"
+                  value={name}
+                  disabled={busy}
+                  onChange={(event) => {
+                    setError(null);
+                    setName(event.target.value);
+                  }}
+                />
+              </label>
+              <Button variant="primary" size="sm" type="submit" className="aset-war-save" disabled={busy || !since || unchanged}>
+                {busy ? "Saving…" : "Save"}
+              </Button>
+              <p className="aset-hint aset-war-hint">
+                Began before 2022? Count from 1 Jan 2022: earlier damage is not counted, and the normal years 2019–2021 may already include the war.
+              </p>
+            </form>
+          )}
+          {busy && mode !== "war" && <p className="aset-hint">Saving…</p>}
+          {error && (
+            <p className="aset-error" role="alert">
+              {error}
+            </p>
+          )}
+          {reached.length > 0 && !rerun.running && (
+            <div className="aset-war-rerun" role="status">
+              <p>
+                <strong>Re-run the analysis to apply this.</strong> {staleText}
+              </p>
+              <RerunButton rerun={rerun} confirm={`Redo ${redo === 1 ? "1 month" : `${redo} months`}`} />
+            </div>
+          )}
+          {onlyOlderText && !rerun.running && <p className="aset-hint">{onlyOlderText}</p>}
+          {/* The analysis running reads the setting again before each month
+              (server/jobs.js), so a change applies from its next month. */}
+          {rerun.running && !rerun.waiting && <p className="aset-hint">This area is being analyzed: a change here applies from its next month on.</p>}
+          <RerunResult rerun={rerun} />
+        </div>
       </div>
     </Card>
   );
@@ -811,7 +1103,7 @@ function TeamCard() {
 // ---------- The page ----------
 
 export default function SettingsPage() {
-  const { status, serverStatus, actions } = useAtlasData();
+  const { status, serverStatus, area, actions } = useAtlasData();
   const [checking, setChecking] = useState(false);
   const [checkError, setCheckError] = useState(null);
   const [testedAi, setTestedAi] = useState(null); // the AI part of the last ?check=1 answer
@@ -873,7 +1165,11 @@ export default function SettingsPage() {
         </p>
       )}
       <AreaCard />
-      <DataCard />
+      {/* Started again for each area, so a re-run's result (or an open
+          "Re-run 12 months?") never shows under another area opened
+          meanwhile. */}
+      <WarCard key={`war-${area?.id || "none"}`} />
+      <DataCard key={`data-${area?.id || "none"}`} />
       <AiCard ai={ai} checking={checking} />
       <TeamCard />
     </div>

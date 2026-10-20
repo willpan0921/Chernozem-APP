@@ -1,7 +1,12 @@
 // WHAT THIS FILE DOES
 // The Field "Data" page (/field/data): the satellite record of one field.
 //   1. Three big numbers   the last clear pass, clear passes this season, plant health
-//                          against normal
+//                          against normal; under them, when there are any,
+//                          the analysis's own notes on how the field was
+//                          measured (analysis.warnings: no clear view lately,
+//                          no normal to compare with, coarser pixels when
+//                          Earth Engine ran short), kept off the Fields
+//                          page's four tiles
 //   2. Since 2019          monthly plant health (NDVI) or water (NDWI) of the
 //                          field against the farm average, with the normal
 //                          years (2019 to 2021) shaded. Where a known war
@@ -58,13 +63,32 @@ function warPosition(months, conflict) {
 }
 
 // The war marker's label: "Full-scale invasion of Ukraine · Feb 24, 2022"
-// on one line when it fits the plot width, else the name and the date on
-// two lines. About 6 px a letter at the label's 11 px.
+// on one line when it fits the plot width, else the name on as many lines
+// as it needs (a long one, like "Israel–Hezbollah war (south Lebanon,
+// northern Israel and the Golan Heights)" on a phone, is cut between
+// words) and the date on its own line, or after the name's last line
+// when that fits. About 6 px a letter at the label's 11 px.
 const labelWidth = (text) => text.length * 6;
 function warLines(conflict, room) {
   const date = dayText(conflict.since);
   const full = `${conflict.name} · ${date}`;
-  return labelWidth(full) <= room ? [full] : [conflict.name, date];
+  if (labelWidth(full) <= room) return [full];
+  const lines = [];
+  let line = "";
+  for (const word of String(conflict.name).split(/\s+/).filter(Boolean)) {
+    const longer = line ? `${line} ${word}` : word;
+    if (line && labelWidth(longer) > room) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = longer;
+    }
+  }
+  if (line) lines.push(line);
+  const withDate = `${lines[lines.length - 1]} · ${date}`;
+  if (lines.length > 1 && labelWidth(withDate) <= room) lines[lines.length - 1] = withDate;
+  else lines.push(date);
+  return lines;
 }
 
 const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -206,6 +230,9 @@ function FieldDataPage() {
   }, [histories.byId, fields, field.id]);
 
   const season = useMemo(() => [...(analysis?.season || [])].sort((a, b) => b.date.localeCompare(a.date)), [analysis]);
+  // How this field was measured, in the analysis's own words (for example
+  // "Measured with 20 m pixels: Earth Engine ran short of memory or time.").
+  const notes = (Array.isArray(analysis?.warnings) ? analysis.warnings : []).filter((note) => typeof note === "string" && note.trim());
 
   return (
     <div className="page fdata">
@@ -251,6 +278,14 @@ function FieldDataPage() {
             line={analysis?.plantHealth?.versus ? versusWord(analysis.plantHealth.versus) : null}
           />
         </div>
+
+        {notes.length > 0 && (
+          <ul className="fdata-notes" aria-label={`Notes on how ${field.name} was measured`}>
+            {notes.map((note) => (
+              <li key={note}>{note}</li>
+            ))}
+          </ul>
+        )}
 
         <Card
           title="Since 2019"

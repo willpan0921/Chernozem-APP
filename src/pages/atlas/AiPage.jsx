@@ -30,7 +30,7 @@ import { Segmented } from "../../components/ui/index.js";
 import { AtlasGate, useAtlasData, useTimeframe } from "../../state/AtlasData.jsx";
 import { findFocus, placeLabel } from "../../lib/atlas/hotspots.js";
 import { weightItems } from "./overviewHelpers.js";
-import { atPeace, timeframeOptions } from "../../lib/atlas/overview.js";
+import { atPeace, outsideWar, timeframeOptions } from "../../lib/atlas/overview.js";
 import { atlasStarterQuestions, SMALL_AREA_HA, composer } from "../../data/chats.js";
 
 // The Near term | Postwar switch ("Long term" where no war is listed): timeframeOptions(run).
@@ -107,7 +107,10 @@ function AtlasAi() {
   ];
 
   const values = { area: area.name, budget: shortUsd(workspace?.budgetUsd) };
-  // No war in the app's list: no talk of deminers or fighting.
+  // No war covers the area (none in the app's list, or the team's "Not at
+  // war"): no talk of deminers. A month before its war began keeps the
+  // deminers line (the area is at war now) but, like a month at peace,
+  // asks nothing about fighting: no distance to it was measured then.
   const peace = atPeace(run);
   const text = {
     placeholder: fill(composer.atlas.placeholder, values),
@@ -116,7 +119,7 @@ function AtlasAi() {
   };
   // A farm-sized area gets farm-sized questions.
   const small = Number.isFinite(area.areaHa) && area.areaHa < SMALL_AREA_HA;
-  const suggestions = atlasStarterQuestions({ small, peace }).map((question) => fill(question, values));
+  const suggestions = atlasStarterQuestions({ small, peace: outsideWar(run) }).map((question) => fill(question, values));
 
   return (
     <div className="aai-page">

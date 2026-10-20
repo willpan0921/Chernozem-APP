@@ -153,7 +153,7 @@ It prints how many squares and Earth Engine requests that takes, the time, and t
 Stop the app (**Control + C**) and run `npm run dev` again. **Settings > Data** now says **Earth Engine** in both products. What happens next:
 
 - **Field**: every field still on sample data is analysed again with real data, including its history since 2019. With **Update automatically** on, each field is refreshed when its analysis is more than a day old (Sentinel-2 passes every 2 to 5 days). **Update now** in Settings does it straight away. A farm of 7 fields takes about half a minute; a large farm several minutes.
-- **Atlas**: the current area is analysed again with real data (when **Analyze automatically each month** is on), starting a few seconds after the app connects. **Re-run analysis** in Settings redoes it straight away. A country-sized area takes several minutes per month.
+- **Atlas**: every saved area is analysed again with real data (when **Analyze every saved area automatically each month** is on), starting a few seconds after the app connects: the area on screen first, then the others by name, one area at a time (the others say "Waiting for … analysis to finish"). **Re-run analysis** in Settings redoes the area on screen: at once, or once the analysis running now (and any other a person asked for before) has ended; areas waiting for the monthly check go after it. **Stop**, under the progress bar, ends the analysis running (the months done are kept) and lets the next area start. A country-sized area takes several minutes per month.
 
 Both products show progress while they work, and the rest of the app stays usable.
 
@@ -179,11 +179,17 @@ The full list, with formulas, is in [METHODS.md](METHODS.md). In short:
 | Night lights | `NASA/VIIRS/002/VNP46A2` |
 | Place names | `FAO/GAUL/2015/level1` and `level2` |
 
-How the app keeps a big job from failing:
+How the app keeps a big job from failing (the details are in [METHODS.md](METHODS.md), "Same code, same answer?"):
 
-- Atlas squares are sent to Earth Engine in groups (up to 250 small squares at a time, about 100 for a country like Ukraine), at most two groups at once. Field analyses send up to 8 fields per request.
-- If Earth Engine says a request was too much work ("User memory limit exceeded" or "Computation timed out"), it is tried once more with coarser pixels, and the result says so.
-- A dropped connection is retried once after a short pause. This retry is **tested only with the fake Earth Engine** in the tests (`server/providers/fake-ee.js`), not against a real dropped connection.
+- The server analyses one Atlas area at a time: another area's analysis (from the monthly check of every saved area, or a person) waits until the ones before it have ended, so two areas never share the project's limits at once. A person's request goes before the areas waiting for the monthly check, and the analysis running can be stopped (Stop: the months done are kept).
+- Atlas squares are sent to Earth Engine in groups (up to 250 small squares at a time, about 100 for a country like Ukraine), at most two groups of a month at once. Field analyses send up to 8 fields per request, at most 4 requests at once.
+- Every request has the app's own time limit, at most 5 minutes: 5 for a group of squares and for the Field's requests, 4 for a check of which images exist, 2 for place names, alert dates, a region's outline and a GeoTIFF link, 1 for a region search and a read of a map's description. The Earth Engine library's own deadline comes a minute after the longest, so the app's limit ends a request first.
+- A request that is too much work ("User memory limit exceeded", "Computation timed out", or past the app's time limit) is made lighter at once. An Atlas group is split in two with the same pixels, down to 4 squares; only a piece that still fails uses coarser pixels, and the run says how many squares. A lighter image check sends each count as its own request, four at a time. A Field request uses 20 m pixels instead of 10 m, and the field's analysis (on the Data page) or the field search says so. When Earth Engine's servers are full ("memory capacity exceeded"), the same request is first tried again after 5 s.
+- A growing-season group that runs past the time limit is sent once more; if it fails again, the area takes its seasons from the latitude and the run says so.
+- A dropped connection is retried once after 8 s; a busy Earth Engine ("Too many concurrent aggregations.", "Earth Engine capacity exceeded.") twice more, after 40 s and then 80 s. These retries are **tested only with the fake Earth Engine** in the tests (`server/providers/fake-ee.js`), not against a real dropped connection or a real busy answer.
+- A month that still fails is skipped: the job goes on with the other months and says which are missing; running it again fills them in. Only a problem that would fail every month (a bad key, no permission, a real quota) stops the job at once. Once a month, or a farm's analysis, has failed, nothing more of it is sent.
+- The Atlas gives way to the Field: while a farm's analysis, a field search or a region search has a request with Earth Engine, the Atlas sends nothing new (each request waits 10 minutes at most), and the Atlas page says it is waiting. This counts one server's requests only: a second server or a script on the same project is not seen.
+- Outside the app's control, the Earth Engine library itself sends a request answered "429, too many requests" again (up to 10 times, about 10 minutes in all) and sends one request every 350 ms.
 - The Atlas totals are made repeatable: fixed pixel scales, no "best effort" rescaling, and fixed date windows (see docs/METHODS.md, "Same code, same answer?").
 - No request asks for dates after today. For a month that is not over yet, only images up to yesterday are used, and the run says so.
 
@@ -202,7 +208,7 @@ Both need an internet connection. If the weather service cannot be reached, the 
 
 ## 4. Conflict data from ACLED (optional)
 
-Without this file, the Atlas measures "distance to fighting" inside a known war from **unusual** fire detections (fires well above the normal years' rate for the place). Outside a known war it is not measured at all. An ACLED file gives the real battle locations.
+Without this file, the Atlas measures "distance to fighting" inside a known war (the app's list, or a war your team set for the area in Atlas Settings) from **unusual** fire detections (fires well above the normal years' rate for the place). Outside a war it is not measured at all. An ACLED file gives the real battle locations.
 
 1. Create a free account at **https://acleddata.com** (choose the research or public-sector access type).
 2. Open the **Data Export Tool**. Pick the country (and its neighbours if the area is near a border), a date range that covers **at least the last 13 months**, and event type **Battles** (others are fine but are not used). Export as **CSV**.
@@ -251,7 +257,9 @@ What `npm run gee:check` (or **Settings > Data**) says, and what to do:
 | `Asset not found: projects/zhaobo/...` | The research team's map is not shared with your service account. Set `GEE_CHERNOZEM_ASSET=none` (the public map; see [The black-soil map](#the-black-soil-map)). |
 | `Could not reach Google Earth Engine` | Check the internet connection. |
 | `Earth Engine could not finish this much work` / `did not answer in time` | Try again later, or analyse a smaller area first. |
-| `Earth Engine is limiting requests` | Wait a few minutes and try again. |
+| `Earth Engine is limiting requests` | The project hit its quota or rate limit. Wait a few minutes and try again. |
+| `Earth Engine was too busy` | Usually another job or script was using the same project at the same time ("Too many concurrent aggregations."): let it finish (or stop it), then run the analysis again to fill in the missing months. An Atlas job goes on with its other months (a farm: analyse it again later). "Earth Engine capacity exceeded." is Earth Engine as a whole: try again later. |
+| `Waiting for Ukraine's analysis to finish` | Nothing to fix: the server analyses one Atlas area at a time, and this one starts when the ones before it have ended (a person's request goes before the areas waiting for the monthly check). **Cancel** takes it out of line. **Stop**, under the progress bar of the analysis running, ends that one (its months done are kept) so the next can start; the monthly check starts a stopped area again within 6 hours if its latest month is still missing. |
 | Settings says **Sample data** with a working key | `.env` has `GEE_DISABLED=1`. Empty it and restart. |
 | Settings says **Not connected** | Earth Engine is set up but could not connect; the reason is shown. The app tries again every 5 minutes. Meanwhile analyses stop with "Earth Engine is set up but cannot be reached right now" (try again later): sample numbers are never saved for a real place. |
 

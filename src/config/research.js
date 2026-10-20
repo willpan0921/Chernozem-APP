@@ -56,7 +56,11 @@ export function safetyNoteFor(run) {
 // ---------------------------------------------------------------------------
 // "How it's measured"
 // ---------------------------------------------------------------------------
-// Each item: { id, name, what (one plain sentence), formula, source }.
+// Each item: { id, name, what (one plain sentence), formula, source }. The
+// Atlas items may also say what they are at peace (whatPeace, formulaPeace;
+// whatTeamPeace where the team marked the area as not at war) and in a
+// month that ends before its war began (whatBeforeWar, formulaBeforeWar):
+// src/components/atlas/MapLegend.jsx picks them.
 
 export const fieldMethods = {
   title: "How it's measured",
@@ -114,6 +118,8 @@ export const atlasMethods = {
       whatPeace: "The share of the square's black-soil cropland heavily damaged over the last two years: radar change of 3 dB or more in a growing season together with fire beyond the normal year (the worst year). Squares with almost no black-soil cropland are not ranked.",
       formula: "Mean of excess fire (worst war year) and lasting radar (VV) change (war seasons)",
       formulaPeace: "Heavily damaged ha ÷ black-soil ha, full at 20 %",
+      whatBeforeWar: "This month ends before the war began, so no war damage is counted: the damage score is 0 everywhere. Months from the day the war began count its fires and radar change.",
+      formulaBeforeWar: "Not counted before the war began",
       source: "NASA FIRMS fire detections, 1 km · Sentinel-1 radar, 10 m",
     },
     {
@@ -121,12 +127,16 @@ export const atlasMethods = {
       name: "Safe access",
       what: "Distance to fighting: ACLED battles when a file is connected, else unusual fires (a rough estimate). 100 km or more scores full access (1.0); this does not make the land safe.",
       whatPeace: "No known war covers this area, so access is not measured (this does not make the land safe).",
+      whatTeamPeace: "Your team marked this area as not at war, so access is not measured (this does not make the land safe).",
+      whatBeforeWar: "This month ends before the war began, so distance to fighting is not measured (this does not make the land safe).",
       formula: "Distance to the nearest fighting, capped at 100 km",
       source: "ACLED battles when connected, else unusual fire inside a known war",
     },
   ],
   note: "Near term sets aside the least safe places and ranks the rest by soil value and damage; the long view blends all three. The soil-health index is shown for context only.",
   notePeace: "Near term ranks by soil value and damage; the long view blends all three. The soil-health index is shown for context only.",
+  // Added for a war that covers a whole-country area only in part.
+  notePartOfCountry: "The war covers only part of this country: its rules apply in the squares that touch its region. Elsewhere heavy damage needs strong radar change and an unusual fire, and the damage score is the heavily damaged share of the black soil.",
   limits: "Scores show model priority, not proven results. Check the land on the ground before you act on it.",
   sources: "Processed in Google Earth Engine.",
 };

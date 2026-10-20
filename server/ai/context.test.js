@@ -10,8 +10,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { buildAtlasContext, fallbackGroupHotspots, coordLabel, placeLabel, ATLAS_TOOLS, conflictLine, settingsLine } from "./context.js";
+import { buildAtlasContext, fallbackGroupHotspots, coordLabel, placeLabel, ATLAS_TOOLS, conflictLine, settingsLine, warSettingNote } from "./context.js";
 import { scorePlaces } from "../../src/lib/atlas/scoring.js";
+import { METHOD_VERSION } from "../../src/lib/atlas/method.js";
 
 // A 6 x 6 grid with a strong corner (top left) and a weak rest.
 function gridCells() {
@@ -92,6 +93,21 @@ test("the war line: a known war, no war, ACLED at peace, older runs", () => {
   assert.match(peace, /Safe access: no war is recorded here, so it is full \(100\) everywhere/);
   assert.doesNotMatch(peace, /fighting/);
   assert.match(war, /Damage score: the mean of unusual fire and radar change/);
+  // How damage behaves over time, as the current method does it.
+  assert.match(war, /Unusual fire is the fires of the worst war year \(12-month years counted from the day the war began; the current one so far, once it is 3 months long\) above a normal year/);
+  assert.match(war, /Radar change is the change that lasts: reached in at least two complete growing seasons since the war began \(while only one is complete, that one\)/);
+  assert.match(war, /while the war seasons stay the same, heavily damaged land does not shrink from one month to the next: it can only grow, with new fires\./);
+  // A new season can lower it: the step from one measured season to two,
+  // and a new orbit direction (gee.js pickPass over all war seasons).
+  assert.match(war, /When a new year's growing season joins \(once a year\) it usually grows, but it can fall where a place goes from one measured season to two \(normally the war's second year\), or when the new season changes the orbit direction the radar is compared from/);
+  assert.match(war, /coarser pixels, or took the growing season from the latitude, can differ either way/);
+  assert.match(war, /a square scored on fire alone \(no radar reading\) can drop when radar is first read, and priority scores, ranks and tiers can go up or down/);
+  assert.doesNotMatch(war, /older method/);
+  // A run made with an older method is said to be one.
+  const older = conflictLine({ id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" }, "fires", { currentMethod: false });
+  assert.match(older, /This month was made with an older method \(fires over the whole window, the last season's radar\): its heavy damage could fall from month to month, and it is not comparable with months made with the current method \(2026-10-19\.3\)/);
+  assert.doesNotMatch(older, /does not shrink|worst war year/);
+  assert.match(older, /distance to unusual fires/);
   assert.doesNotMatch(peace, /safe to reach|counts as safe/i);
   const acled = conflictLine(null, "acled");
   assert.match(acled, /battles in the ACLED file/);
@@ -332,6 +348,68 @@ test("at peace the data warnings do not repeat the no-war note or say 'fires onl
   assert.equal((await ctx.runTool("get_ranking", { timeframe: "nearTerm", limit: 1 })).weightsUsed.safeAccess, "not used: full everywhere (no war recorded)");
 });
 
+test("the war line says when the user's team set the war, or marked the area as not at war", () => {
+  const team = { id: "area-area-grid", name: "Fighting in Amhara", since: "2023-08-01", source: "area" };
+  const set = conflictLine(team, "fires", { setByTeam: true });
+  assert.match(set, /^War: Fighting in Amhara, since 2023-08-01\. This war was set by the user's team for this area in Atlas Settings \(its name and start date are the team's, not from the app's list of wars\); say so when you name it\. Damage is counted from that day\./);
+  assert.doesNotMatch(set, /earliest day/);
+  assert.match(set, /distance to unusual fires/);
+  // Counted from the earliest day allowed: the war may be older.
+  const earliest = conflictLine({ ...team, since: "2022-01-01" }, "fires", { setByTeam: true });
+  assert.match(earliest, /That is the earliest day the app allows \(the normal years 2019 to 2021 must come before the war\): the war may have begun earlier, so damage before that day is not counted, and the normal years may already include the war\./);
+  // A war from the app's list says nothing of the kind.
+  const listed = conflictLine({ id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" }, "fires");
+  assert.doesNotMatch(listed, /user's team|earliest day/);
+  // Not at war by the team's choice: no war talk, and why.
+  const calm = conflictLine(null, "none", { setByTeam: true });
+  assert.match(calm, /^War: none\. The user's team marked this area as not at war in Atlas Settings, so the app's list of wars is not used for it \(say so if asked about a war here\)\./);
+  assert.match(calm, /Do not talk about a war, a front line or demining for this area unless the user raises it\./);
+  assert.match(conflictLine(null, "none"), /^War: none in the app's list covers this area/);
+});
+
+test("the AI is told when the team set the war, and when the area's war setting changed after the month was made", async () => {
+  const { TEAM_PEACE_WARNING } = await import("../runs.js");
+  const team = { id: "area-area-grid", name: "Fighting in Amhara", since: "2023-08-01", source: "area" };
+  const set = await buildAtlasContext({ store: fakeStore(gridCells(), { conflict: team, conflictSource: "area", accessSource: "fires" }) });
+  assert.match(set.text, /War: Fighting in Amhara, since 2023-08-01\. This war was set by the user's team/);
+  assert.doesNotMatch(set.text, /War setting changed/, "the area has no other setting");
+  assert.match(set.text, /never subtract them/);
+
+  // The team marked the area as not at war after this month was made at war.
+  const base = fakeStore(gridCells(), { conflict: team, conflictSource: "area", accessSource: "fires" });
+  const changed = { ...base, getArea: async (id) => ({ ...(await base.getArea(id)), war: { mode: "peace" } }) };
+  const ctx = await buildAtlasContext({ store: changed });
+  assert.match(ctx.text, /War setting changed: this month was made at war since 2023-08-01, but the user's team has since marked this area not at war\. Its numbers follow the setting it was made with until the analysis is re-run \(Atlas Settings, Re-run analysis\)\./);
+  // And the other way: made at peace, now at war from a day the team set.
+  const calmBase = fakeStore(gridCells(), { conflict: null, conflictSource: "list", accessSource: "none" });
+  const nowWar = { ...calmBase, getArea: async (id) => ({ ...(await calmBase.getArea(id)), war: { mode: "war", since: "2024-05-01", name: "Fighting in the county" } }) };
+  assert.match((await buildAtlasContext({ store: nowWar })).text, /this month was made at peace, but the user's team has since marked this area at war \(Fighting in the county\) since 2024-05-01/);
+  // The same day by another name changes no number: nothing is said.
+  assert.equal(warSettingNote({ id: "area-grid", war: { mode: "war", since: "2023-08-01", name: "Another name" } }, { conflict: team }), "");
+  assert.equal(warSettingNote({ id: "area-grid" }, { conflict: team }), "", "no outline: what the list says cannot be told");
+  assert.equal(warSettingNote({ id: "area-grid", war: { mode: "peace" } }, {}), "", "an older run that does not say");
+
+  // At peace by the team's choice, the data warnings do not repeat it.
+  const peaceBase = fakeStore(gridCells(), { conflict: null, conflictSource: "area", accessSource: "none" });
+  const checks = { passed: 2, total: 2, warnings: [TEAM_PEACE_WARNING] };
+  const peace = { ...peaceBase, getRun: async (id) => ({ ...(await peaceBase.getRun(id)), checks }) };
+  const peaceText = (await buildAtlasContext({ store: peace })).text;
+  assert.match(peaceText, /War: none\. The user's team marked this area as not at war/);
+  assert.doesNotMatch(peaceText, /Data warnings:/);
+});
+
+test("how damage behaves over time is said only for a run made with the current method", async () => {
+  const ukraine = { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" };
+  const current = await buildAtlasContext({ store: fakeStore(gridCells(), { conflict: ukraine, method: { version: METHOD_VERSION } }) });
+  assert.match(current.text, /does not shrink from one month to the next/);
+  assert.doesNotMatch(current.text, /older method/);
+  for (const method of [undefined, { version: "2026-10-19.2" }]) {
+    const older = await buildAtlasContext({ store: fakeStore(gridCells(), { conflict: ukraine, ...(method ? { method } : {}) }) });
+    assert.match(older.text, /This month was made with an older method/);
+    assert.doesNotMatch(older.text, /does not shrink/);
+  }
+});
+
 test("an older Ukraine run (no conflict, no accessSource) still reads as the war, fires-based access (10.6)", async () => {
   const base = fakeStore(gridCells());
   const firesWarning = "Distance to fighting is estimated from unusual fires of the last 12 months (far more than in 2019-2021; no ACLED file), so treat safe access as rough.";
@@ -346,4 +424,69 @@ test("an older Ukraine run (no conflict, no accessSource) still reads as the war
   assert.match(ctx.text, /War: Full-scale invasion of Ukraine, since 2022-02-24/);
   assert.match(ctx.text, /distance to unusual fires \(an estimate of where fighting is/);
   assert.doesNotMatch(ctx.text, /distance to recorded fighting/);
+});
+
+test("a month that ends before its war began: the AI is told no war damage is counted and no distance was measured, never 'recorded fighting'", async () => {
+  const recent = { id: "area-area-grid", name: "Recent war", since: "2026-10-01", source: "area" };
+  const line = conflictLine(recent, "none", { setByTeam: true, beforeWar: true });
+  assert.match(line, /^War: Recent war, since 2026-10-01\. This war was set by the user's team/);
+  assert.match(line, /This month ends before the war began, so no war damage is counted for it \(no war year of fires, no war season of radar: the damage score is 0 everywhere\) and distance to fighting was not measured for it\./);
+  assert.match(line, /Safe access: not measured for this month, so it is full \(100\) everywhere and nothing is set aside for it\. That does NOT mean the land is safe/);
+  assert.doesNotMatch(line, /Damage is counted from that day|recorded fighting|worst war year/);
+  // In a war month, "none" (nothing measured) is not recorded fighting either.
+  assert.doesNotMatch(conflictLine({ id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" }, "none"), /recorded fighting/);
+
+  const ctx = await buildAtlasContext({ store: fakeStore(gridCells().map((c) => ({ ...c, distance: 1 })), { conflict: recent, conflictSource: "area", accessSource: "none" }) });
+  assert.match(ctx.text, /This month ends before the war began/);
+  assert.match(ctx.text, /nothing is set aside \(this month ends before the war began on 2026-10-01\)/);
+  assert.match(ctx.text, /Long term blends/);
+  assert.match(ctx.text, /Top places, long term:/);
+  assert.doesNotMatch(ctx.text, /recorded fighting|Damage is counted from that day/);
+  assert.equal((await ctx.runTool("get_ranking", { timeframe: "nearTerm", limit: 1 })).weightsUsed.safeAccess, "not used: full everywhere (this month ends before the war began on 2026-10-01)");
+});
+
+test("a team's 'Not at war' is never 'no war recorded' for the AI: the war line, the weights, get_ranking and budget_coverage", async () => {
+  const calm = conflictLine(null, "none", { setByTeam: true });
+  assert.match(calm, /Safe access: the user's team marked this area as not at war, so it is full \(100\) everywhere and nothing is set aside for it\. That does NOT mean the land is safe/);
+  const settings = { weights: { soil: 30, damage: 40, access: 30 }, gatePercentile: 30, r: 0.5 };
+  const teamPeaceRun = { conflict: null, conflictSource: "area", accessSource: "none" };
+  assert.match(settingsLine(settings, teamPeaceRun, { places: [] }, "nearTerm"), /nothing is set aside \(the user's team marked this area as not at war\)/);
+  const ctx = await buildAtlasContext({ store: fakeStore(gridCells().map((c) => ({ ...c, distance: 1 })), teamPeaceRun) });
+  assert.doesNotMatch(ctx.text, /no war (is )?recorded/i);
+  const ranking = await ctx.runTool("get_ranking", { timeframe: "nearTerm", limit: 1 });
+  assert.equal(ranking.weightsUsed.safeAccess, "not used: full everywhere (the user's team marked this area as not at war)");
+  const budget = await ctx.runTool("budget_coverage", { usd: 1000000 });
+  assert.match(budget.note, /^Rough ranges for restoring damaged soil\. The user's team marked this area as not at war; this does not say the land is safe\./);
+  // The app's own peace keeps its words.
+  const listPeace = await buildAtlasContext({ store: fakeStore(gridCells(), { conflict: null, conflictSource: "list", accessSource: "none" }) });
+  assert.match((await listPeace.runTool("budget_coverage", { usd: 1000000 })).note, /No war is recorded in this area/);
+});
+
+test("a war the team set without a name is not called by the stand-in name", () => {
+  const unnamed = conflictLine({ id: "area-area-grid", name: "War (set for this area)", since: "2024-06-25", source: "area" }, "fires", { setByTeam: true });
+  assert.match(unnamed, /its start date is the team's; the team gave it no name, so call it the war the user's team set for this area, not by a name/);
+  assert.doesNotMatch(unnamed, /its name and start date are the team's/);
+});
+
+test("a war that covers a whole-country area only in part: the AI is told where its rules apply, and which places and costs are outside it", async () => {
+  const border = { id: "thailand-cambodia", name: "Cambodia–Thailand border conflict", since: "2025-07-24", partOfCountry: true };
+  // The strong corner (rows 0 and 1) touches the war's region; the rest was read at peace.
+  const cells = gridCells().map((c) => ({ ...c, atWar: /^r[01]c/.test(c.id) }));
+  const ctx = await buildAtlasContext({ store: fakeStore(cells, { conflict: border, conflictSource: "list", accessSource: "fires", warSquares: 12, method: { version: METHOD_VERSION } }) });
+  assert.match(ctx.text, /This war covers only part of this country: its rules apply only in the map squares that touch the war's region \(12 of 36 squares\), which have atWar true in their details\. The other squares were read as at peace: there heavy damage needs radar change of 3 dB or more AND an unusual fire within 1 km/);
+  assert.match(ctx.text, /Do not talk about fighting, a front line or demining for a place outside the war's region unless the user raises it\./);
+  assert.match(ctx.text, /\(outside the war's region: read as at peace\)/);
+  const inside = await ctx.runTool("get_place", { cellId: "r0c0" });
+  const outside = await ctx.runTool("get_place", { cellId: "r5c5" });
+  assert.equal(inside.place.atWar, true);
+  assert.match(inside.place.recoveryCostUsd.note, /before demining/);
+  assert.equal(outside.place.atWar, false);
+  assert.doesNotMatch(outside.place.recoveryCostUsd.note, /demining/);
+  // (The strong corner is set aside in Near term: the long view has it.)
+  const ranking = await ctx.runTool("get_ranking", { timeframe: "postwar", limit: 10 });
+  assert.ok(ranking.places.some((p) => p.outsideWarRegion === true));
+  assert.ok(ranking.places.some((p) => !p.outsideWarRegion && p.cellIds.includes("r0c0")));
+  // A war over the whole area says nothing of the kind.
+  const whole = await buildAtlasContext({ store: fakeStore(gridCells(), { conflict: { ...border, partOfCountry: undefined }, conflictSource: "list", accessSource: "fires" }) });
+  assert.doesNotMatch(whole.text, /covers only part|outside the war's region/);
 });

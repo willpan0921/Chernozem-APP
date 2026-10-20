@@ -1,6 +1,8 @@
 // WHAT THIS FILE DOES
 // The Atlas "Data" page (/atlas/data): the history of the current area,
-// month by month.
+// month by month. The header names the latest month's data source and, as
+// on the Overview, its war ("War since 24 Feb 2022", "... · set by your
+// team" for a war or a peace the team set in Atlas Settings).
 //   1. Trends   the latest value and its change since the month before, a
 //               bar chart of one measure per month (hover a bar, or tap it
 //               on a phone, for the numbers) and the table of every
@@ -31,7 +33,7 @@ import { placeLabel } from "../../lib/atlas/hotspots.js";
 import { validation, citation } from "../../config/research.js";
 import { formatCount, formatHaShort, formatSigned } from "../../lib/format.js";
 import { runsComparable } from "../../lib/atlas/method.js";
-import { shownNewDamage, sourceBadge } from "../../lib/atlas/overview.js";
+import { shownNewDamage, sourceBadge, warNote } from "../../lib/atlas/overview.js";
 import "./DataPage.css";
 
 // The measures the chart can show. "get" reads the number from a month.
@@ -109,6 +111,8 @@ function DataArchive() {
   const months = runs.length;
   // The latest month's source, and how many earlier months came from the other.
   const badge = sourceBadge(runs);
+  // The latest month's war, as the Overview's chip shows it.
+  const war = warNote(runs[0]);
 
   return (
     <div className="page dp">
@@ -118,6 +122,11 @@ function DataArchive() {
           <span className="dp-meta">
             Data · {months} {months === 1 ? "month" : "months"}
             {badge && <Badge tone={badge.tone || undefined}>{badge.text}</Badge>}
+            {war?.badge && (
+              <span title={war.line}>
+                <Badge tone="outline">{war.badge}</Badge>
+              </span>
+            )}
           </span>
         }
       />
@@ -169,7 +178,7 @@ function TrendsCard() {
   };
 
   // New damage is hidden for a month whose month before is not comparable
-  // (another data source, method or grid: method.js runsComparable).
+  // (another data source, method, grid or war setting: method.js runsComparable).
   const shown = useMemo(() => runs.map((run) => (shownNewDamage(run, runs) === run.newHeavyDamageHa ? run : { ...run, newHeavyDamageHa: null })), [runs]);
   const enough = shown.length >= 2;
   // Oldest month on the left.
@@ -205,7 +214,7 @@ function TrendsCard() {
 // "Sep 2026  1.03M ha  ↓ −20.5k ha vs Aug 2026". A rise is red, a fall green.
 // Shows the latest month, or the month tapped on a phone (with an
 // "Open month" button).
-// Months from another data source, method or grid are not compared:
+// Months from another data source, method, grid or war setting are not compared:
 // "Not comparable with Aug 2026: different data source".
 function MonthChange({ run, previous, measure, onOpen }) {
   const now = measure.get(run);
@@ -557,6 +566,9 @@ const NOT_COMPARABLE_NOTES = {
   source: "come from different data sources (Earth Engine and sample data), so their difference says nothing about the land. Analyze both months with the same source.",
   method: "were analyzed with different versions of the method, so their difference says nothing about the land. Analyze the older month again to compare.",
   grid: "were analyzed on different squares, so they cannot be compared square by square.",
+  // The team changed the area's war setting (Atlas Settings), or the app's
+  // list of wars changed, between the two months.
+  war: "were analyzed with different war settings (at war and at peace, or another start day), so their difference says nothing about the land. Re-run the analysis (Settings) to compare.",
 };
 
 const CHANGE_LIMIT = 8;
@@ -591,7 +603,7 @@ function CompareCard() {
   const from = runs.find((item) => item.id === picked.from) || runs[1] || null;
   const to = runs.find((item) => item.id === picked.to) || runs[0] || null;
   const same = from && to && from.id === to.id;
-  // Months from another data source, method or grid: no differences.
+  // Months from another data source, method, grid or war setting: no differences.
   const check = from && to && !same ? runsComparable(from, to) : { comparable: true };
   const key = enough && !same && check.comparable ? `${from.id}@${from.createdAt}|${to.id}@${to.createdAt}` : null;
 

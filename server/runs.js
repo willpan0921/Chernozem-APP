@@ -4,7 +4,7 @@
 // hectares, the area totals, the alerts and the quality checks. Also
 // compares two runs and works with months.
 //
-//   buildRun({ area, month, provider, readings, alerts, warnings, cellSizeDeg, cells, baseline, conflict, imagery, accessSource })
+//   buildRun({ area, month, provider, readings, alerts, warnings, cellSizeDeg, cells, baseline, conflict, conflictSource, imagery, accessSource })
 //   summarizeRun(run)        the run without its cells and alerts (for lists)
 //   compareRuns(a, b)        what changed from run a to run b
 //   linkNewDamage(runs)      fills "new heavy damage" from each previous month
@@ -86,19 +86,49 @@ function cleanImagery(value) {
 // cell reads 300 km) and nothing is set aside for it.
 export const NO_WAR_WARNING =
   "No war in the app's list covers this area, so distance to fighting is not measured and nothing is set aside for it. This does not mean the land is safe.";
+// The same where the team marked the area as not at war (Atlas Settings,
+// area.war), whatever the app's list says: buildRun says it instead.
+export const TEAM_PEACE_WARNING =
+  "Your team marked this area as not at war (Atlas Settings), so distance to fighting is not measured and nothing is set aside for it. This does not mean the land is safe.";
+// What a run says for a month that ends before its war began
+// (src/config/conflicts.js endsBeforeWar: a war the team set from a later
+// day, or a long re-run reaching back past a new war's start). Real data
+// would otherwise read pre-war fires as fighting and give every square a
+// heavy damage of 0 next to "War since ...".
+//   since          the day the war began ("YYYY-MM-DD")
+//   accessMeasured true when an ACLED file measured the distance anyway
+export function beforeWarWarning(since, { accessMeasured = false } = {}) {
+  const access = accessMeasured ? "" : ", and distance to fighting is not measured (nothing is set aside for it; this does not mean the land is safe)";
+  return `This month ends before the war began (${since}): no war damage is counted${access}.`;
+}
 
 // Where the distance to fighting came from: "acled" (battles in the ACLED
-// file), "fires" (unusual fires inside a known war), "none" (no war in the
-// list, nothing measured), or null when the data source does not say.
+// file), "fires" (unusual fires inside a known war), "none" (no war, or a
+// month before its war began: nothing measured), or null when the data
+// source does not say.
 export const ACCESS_SOURCES = ["acled", "fires", "none"];
 function cleanAccessSource(value) {
   return ACCESS_SOURCES.includes(value) ? value : null;
 }
 
-// The war stored on a run (or a field analysis): { id, name, since } or null.
+// The war stored on a run (or a field analysis): { id, name, since } or
+// null; a war the team set for the area (server/conflicts.js
+// conflictForArea) also keeps source: "area", and a war of the app's list
+// limited to boxes, on an area that is the whole country (so the war's
+// rules apply all over it: src/config/conflicts.js LIMITS), keeps
+// partOfCountry: true (server/jobs.js).
 export function cleanConflict(value) {
   if (!value || typeof value !== "object" || !value.id || !/^\d{4}-\d{2}-\d{2}$/.test(String(value.since || ""))) return null;
-  return { id: String(value.id), name: String(value.name || value.id), since: String(value.since) };
+  const war = { id: String(value.id), name: String(value.name || value.id), since: String(value.since) };
+  if (value.source === "area") return { ...war, source: "area" };
+  return value.partOfCountry === true ? { ...war, partOfCountry: true } : war;
+}
+
+// Who decided a run's war (or its peace): "area" when the team set it for
+// the area in Atlas Settings (area.war), "list" when the app's list did.
+function cleanConflictSource(value, conflict) {
+  if (value === "area" || value === "list") return value;
+  return conflict?.source === "area" ? "area" : "list";
 }
 
 export const BASELINE = { from: 2019, to: 2021, label: "2019 to 2021" };
@@ -132,7 +162,14 @@ function providerId(provider) {
 // imagery: the season the provider compared ({ from, to, label? }); without
 // it, imageryWindow() by the area's centre latitude.
 // accessSource: where distance to fighting came from (ACCESS_SOURCES).
-export function buildRun({ area, month, provider, readings = [], alerts = [], warnings = [], cellSizeDeg, cells = [], baseline, conflict = null, imagery = null, accessSource = null }) {
+// A reading may say atWar (true or false): for a war that covers the area
+// only in part, whether the square had the war's rules; the run then keeps
+// it on the cell and counts the war's squares (warSquares).
+// conflictSource: "area" when the team set the war (or the peace) for the
+// area, "list" (the default) when the app's list decided. At peace by the
+// team's choice the run says so (TEAM_PEACE_WARNING) instead of "no war in
+// the app's list", which may not be true there.
+export function buildRun({ area, month, provider, readings = [], alerts = [], warnings = [], cellSizeDeg, cells = [], baseline, conflict = null, conflictSource = null, imagery = null, accessSource = null }) {
   if (!isMonth(month)) throw new Error(`Not a month: ${month}`);
   const byId = new Map(readings.map((reading) => [reading.id, reading]));
   const outCells = [];
@@ -184,6 +221,10 @@ export function buildRun({ area, month, provider, readings = [], alerts = [], wa
     };
     if (raw.admin1) out.admin1 = String(raw.admin1);
     if (raw.admin2) out.admin2 = String(raw.admin2);
+    // Which rules the square was read with, where the war covers the area
+    // only in part (conflict.partOfCountry): false outside the war's region
+    // (peace rules; scoring.js gives it the peace damage score).
+    if (typeof raw.atWar === "boolean") out.atWar = raw.atWar;
     outCells.push(out);
   }
 
@@ -212,6 +253,12 @@ export function buildRun({ area, month, provider, readings = [], alerts = [], wa
     .filter((alert) => alert && (alert.kind === "radar" || alert.kind === "fire"))
     .slice(0, 6)
     .map((alert, i) => ({ ...alert, id: alert.id || `alert-${i + 1}` }));
+  const war = cleanConflict(conflict);
+  const decidedBy = cleanConflictSource(conflictSource, war);
+  const said = !war && decidedBy === "area" ? warnings.map((w) => (w === NO_WAR_WARNING ? TEAM_PEACE_WARNING : w)) : warnings;
+  // A war that covers the area only in part: how many squares had its rules
+  // (the Overview's chip, the report and the AI say "in 12 of 340 squares").
+  const marked = war?.partOfCountry && outCells.some((cell) => typeof cell.atWar === "boolean");
 
   return {
     id: newId("run"),
@@ -223,15 +270,17 @@ export function buildRun({ area, month, provider, readings = [], alerts = [], wa
     createdAt: new Date().toISOString(),
     imagery: cleanImagery(imagery) || imageryWindow(month, midLat),
     baseline: cleanBaseline(baseline),
-    conflict: cleanConflict(conflict),
+    conflict: war,
+    conflictSource: decidedBy,
     accessSource: cleanAccessSource(accessSource),
     cellSizeDeg,
     cellSizeKm: Math.round(cellSizeKm(cellSizeDeg, midLat) * 1000) / 1000,
     cellCount: outCells.length,
+    ...(marked ? { warSquares: outCells.filter((cell) => cell.atWar !== false).length } : {}),
     totals,
     newHeavyDamageHa: null,
     alertsCount: strongest.length,
-    checks: { passed: checks.length - failed.length, total: checks.length, warnings: [...warnings, ...failed] },
+    checks: { passed: checks.length - failed.length, total: checks.length, warnings: [...said, ...failed] },
     // The method version, components and scales: runs made with another
     // method are "not comparable" (method.js runsComparable).
     method: { version: METHOD_VERSION, components: COMPONENTS, scales: SCALES },
