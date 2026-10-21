@@ -57,6 +57,13 @@
 //   values     { outputName: number | (u, { date, lat, id }) => number }: fixed
 //              answers for some reduced values (e.g. { fires: 8 }), used
 //              before the made-up ones
+//   samplePoints  how many points Image.stratifiedSample / sample finds
+//              (default 3). With 0 the sample is empty, as for a war whose
+//              fires never look like fighting (real data, south Lebanon,
+//              September 2026): like real Earth Engine, the distance to an
+//              empty collection is masked everywhere, so an unmask(value)
+//              of it reads that value in every cell (an unmask(number) of
+//              any band with no pixels does)
 //
 // Field bands added for stress v2 and the crop type: ndre, ndyi, vhPower
 // (Sentinel-1 VH as power, a tall crop in July), the phenology composites
@@ -339,7 +346,7 @@ function feature(geometry, properties) {
 }
 
 export function createFakeEe(options = {}) {
-  const { sizes = {}, assets = {}, authError = null, fail = null, delayMs = 1, assetDelayMs = 0, nestedCollections = "describe", downloadError = null, parcelGrid = 3, extraParcels = [], gaul2 = GAUL2, values = null } = options;
+  const { sizes = {}, assets = {}, authError = null, fail = null, delayMs = 1, assetDelayMs = 0, nestedCollections = "describe", downloadError = null, parcelGrid = 3, extraParcels = [], gaul2 = GAUL2, values = null, samplePoints = 3 } = options;
   const calls = [];
   const requests = [];
   const stats = { evaluations: 0, active: 0, peakActive: 0 };
@@ -374,6 +381,9 @@ export function createFakeEe(options = {}) {
     return node?.bands || [];
   }
   const allEmpty = (bands) => bands.length > 0 && bands.every((b) => b.empty);
+  // A sample of an image's pixels (stratifiedSample, sample) that finds
+  // nothing (samplePoints 0).
+  const isEmptySample = (node) => (node?.op === "stratifiedSample" || node?.op === "sample") && !(samplePoints > 0);
   const isZeroConstant = (value) => {
     const node = unwrap(value);
     return node?.op === "Image.constant" && node.args[0] === 0;
@@ -384,8 +394,11 @@ export function createFakeEe(options = {}) {
     const from = parent.bands || [];
     const empty = allEmpty(from);
     switch (method) {
-      case "rename":
-        return names(args.length > 1 ? args : args[0]).map((name) => ({ name, empty }));
+      case "rename": {
+        // A one-band image keeps the value an unmask gave it (below).
+        const fill = from.length === 1 && from[0].fill !== undefined ? { fill: from[0].fill } : {};
+        return names(args.length > 1 ? args : args[0]).map((name) => ({ name, empty, ...fill }));
+      }
       case "select": {
         const picked = names(args[0]);
         return picked.length && !picked.includes(".*") ? picked.map((name) => ({ name, empty })) : from;
@@ -399,7 +412,10 @@ export function createFakeEe(options = {}) {
       case "updateMask":
         return isZeroConstant(args[0]) ? from.map((b) => ({ ...b, empty: true })) : from;
       case "unmask":
-        return from.map((b) => ({ ...b, empty: false }));
+        // A band with no pixels anywhere, unmasked with a number, is that
+        // number everywhere (the distance to an empty sample, unmasked
+        // with 300 km: every cell reads 300 km).
+        return from.map((b) => ({ ...b, empty: false, ...(b.empty && typeof args[0] === "number" ? { fill: args[0] } : {}) }));
       default:
         return from;
     }
@@ -418,7 +434,8 @@ export function createFakeEe(options = {}) {
     const extra = { parent, dataset: parent.dataset };
     if (kind === "Image") {
       if (parent.kind === "Image") extra.bands = imageBands(parent, method, args);
-      else if (parent.kind === "FeatureCollection") extra.bands = [{ name: "distance", empty: false }];
+      // The distance to a sample that found no points has no pixels.
+      else if (parent.kind === "FeatureCollection") extra.bands = [{ name: "distance", empty: method === "distance" && isEmptySample(parent) }];
       else extra.bands = parent.bands || [];
     }
     if (kind === "ImageCollection") extra.bands = method === "select" ? names(args[0]).map((name) => ({ name, empty: false })) : parent.bands || [];
@@ -974,7 +991,13 @@ export function createFakeEe(options = {}) {
     bands.forEach((band, i) => {
       const name = outputs ? outputs[i] : bands.length === 1 && reducerName !== "first" ? reducerName : band.name;
       if (!name || band.empty) return; // no pixels: Earth Engine leaves the value out
-      out[name] = fakeValue(outputs ? name : band.name, unitHash(`${id}|${band.name}|${name}`), areaKm2, { date, lat, values, id: f.properties?.id ?? f.properties?.fid });
+      const valueName = outputs ? name : band.name;
+      // A band that is an unmask's number everywhere (unless `values` says otherwise).
+      if (band.fill !== undefined && !(values && Object.hasOwn(values, valueName))) {
+        out[name] = band.fill;
+        return;
+      }
+      out[name] = fakeValue(valueName, unitHash(`${id}|${band.name}|${name}`), areaKm2, { date, lat, values, id: f.properties?.id ?? f.properties?.fid });
     });
     return out;
   }
@@ -1001,7 +1024,7 @@ export function createFakeEe(options = {}) {
     if (method === "stratifiedSample" || method === "sample") {
       return {
         type: "FeatureCollection",
-        features: [0, 1, 2].map((i) => feature({ type: "Point", coordinates: [37 + i * 0.1, 49] }, { fire: 1 })),
+        features: Array.from({ length: Math.max(0, samplePoints) }, (_, i) => feature({ type: "Point", coordinates: [37 + i * 0.1, 49] }, { fire: 1 })),
       };
     }
     throw new Error(`fake-ee: cannot answer Image.${method} directly.`);

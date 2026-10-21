@@ -30,7 +30,7 @@ import { Segmented } from "../../components/ui/index.js";
 import { AtlasGate, useAtlasData, useTimeframe } from "../../state/AtlasData.jsx";
 import { findFocus, placeLabel } from "../../lib/atlas/hotspots.js";
 import { weightItems } from "./overviewHelpers.js";
-import { atPeace, outsideWar, timeframeOptions } from "../../lib/atlas/overview.js";
+import { atPeace, noFightingFound, outsideWar, timeframeOptions } from "../../lib/atlas/overview.js";
 import { atlasStarterQuestions, SMALL_AREA_HA, composer } from "../../data/chats.js";
 
 // The Near term | Postwar switch ("Long term" where no war is listed): timeframeOptions(run).
@@ -46,11 +46,13 @@ function shortUsd(amount) {
 
 // "● Soil 30  ● Damage 40  ● Access 30" (Postwar) or "● Soil 43
 // ● Damage 57  ● Cutoff 30%" (Near term), each dot in the colour the
-// weights panel on the map page uses.
-function WeightsChip({ settings, timeframe }) {
+// weights panel on the map page uses. No cutoff where nothing is set aside
+// (safe access not measured: overview.js accessMeasured), as on the
+// Overview.
+function WeightsChip({ settings, timeframe, run }) {
   return (
     <span className="aai-weights" data-testid="aai-weights">
-      {weightItems(settings, timeframe).map((item) => (
+      {weightItems(settings, timeframe, run).map((item) => (
         <span key={item.key} className={`aai-weight is-${item.key}`}>
           {item.text}
         </span>
@@ -102,7 +104,7 @@ function AtlasAi() {
       control: <Segmented options={timeframeOptions(run)} value={timeframe} onChange={setTimeframe} ariaLabel="Ranking" light />,
     },
     { key: "source", icon: "database", label: "Source", value: run.provider === "gee" ? "Earth Engine" : "Sample data", to: "/atlas/settings" },
-    { key: "weights", icon: "sliders-horizontal", label: "Weights", control: <WeightsChip settings={settings} timeframe={timeframe} />, to: "/atlas/map" },
+    { key: "weights", icon: "sliders-horizontal", label: "Weights", control: <WeightsChip settings={settings} timeframe={timeframe} run={run} />, to: "/atlas/map" },
     ...(place ? [{ key: "place", icon: "map-pin", label: "Place", value: place.label, onClear: clearPlace }] : []),
   ];
 
@@ -117,9 +119,12 @@ function AtlasAi() {
     disclaimer: peace ? composer.atlas.disclaimerPeace : composer.atlas.disclaimer,
     welcome: fill(composer.atlas.welcome, values),
   };
-  // A farm-sized area gets farm-sized questions.
+  // A farm-sized area gets farm-sized questions. In a war where no fire
+  // looked like fighting no distance to it was measured either
+  // (noFightingFound), so it is not asked "How far is it from the
+  // fighting?" (the deminers' line stays: it is still a war).
   const small = Number.isFinite(area.areaHa) && area.areaHa < SMALL_AREA_HA;
-  const suggestions = atlasStarterQuestions({ small, peace: outsideWar(run) }).map((question) => fill(question, values));
+  const suggestions = atlasStarterQuestions({ small, peace: outsideWar(run) || noFightingFound(run) }).map((question) => fill(question, values));
 
   return (
     <div className="aai-page">

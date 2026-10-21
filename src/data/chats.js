@@ -79,7 +79,10 @@ export const atlasSmallAreaPeaceSuggestions = [
 ];
 // The questions for an area: small or not, at war or at peace.
 //   small  the area is under SMALL_AREA_HA
-//   peace  true when no war in the app's list covers it
+//   peace  true when no war in the app's list covers it, or when no
+//          distance to fighting was measured (a month before its war
+//          began, or a war where no fire looked like fighting): no
+//          question about fighting
 export function atlasStarterQuestions({ small = false, peace = false } = {}) {
   if (!small) return atlasSuggestions;
   return peace ? atlasSmallAreaPeaceSuggestions : atlasSmallAreaSuggestions;

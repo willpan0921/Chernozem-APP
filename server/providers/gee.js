@@ -56,7 +56,10 @@
 //                  the area only in part, those inside its boxes); outside any known war
 //                  (or in a month before its war began) without a file, not
 //                  measured: 300 km everywhere, so nothing is set aside for
-//                  it (which does not make the land safe)
+//                  it (which does not make the land safe). Inside a war
+//                  where no fire within 300 km of any square looks like
+//                  fighting, 300 km everywhere too, and the result says
+//                  safe access is not measured (accessSource "fires-none")
 //   population     WorldPop/GP/100m/pop (2020), people living in the cell
 //   lights         NASA/VIIRS/002/VNP46A2 night lights, median of the month
 //   admin1/admin2  FAO/GAUL/2015/level2 names (best effort)
@@ -120,7 +123,8 @@
 // the fire years, the war seasons). The result
 // says which war it used (`conflict`, or null at peace), which season it
 // compared (`imagery`) and where distance to fighting came from
-// (`accessSource`).
+// (`accessSource`: "acled", "fires", "fires-none" when no fire looked like
+// fighting, or "none").
 //
 // Nothing here runs until Earth Engine credentials are in .env (see
 // docs/CONNECT-DATA.md). `npm run gee:check` tries it on real data.
@@ -203,7 +207,64 @@ export const MAX_CONFLICT_M = 300000;
 // rule Kupiansk 1 km, Pokrovsk 2, Kherson 10, Kharkiv 28, Dnipro 75, Odesa
 // 100, Poltava 140, Lviv and Uzhhorod 300+. A 90-day window failed in
 // winter (too few fires anywhere: Kherson 295 km), so 12 months are used.
+// The floor is set at a front line, so a war of scattered strikes can stay
+// under it everywhere. Real data, 2026-10-21: south Lebanon (the
+// Israel–Hezbollah war, September 2026) had 463 fire-pixel days in a
+// 1,200 km² box and 2,095 within 100 km over the last 12 months, but its
+// densest 10 km neighbourhood reached 0.74 per km² against the floor of
+// 1: no fire counted as fighting, every square read 300 km, and the run
+// still said distance was "estimated from unusual fires". Such a run now
+// says safe access is not measured there (accessSource "fires-none",
+// farFromAnyFighting, noFightingFiresWarning); the rule itself is kept
+// (changing it would change every war's numbers and METHOD_VERSION). An
+// ACLED file, or the team's own knowledge, is needed in such a war.
 export const FIGHTING_FIRES = { radiusM: 10000, timesPrewar: 3, minPerKm2: 1 };
+// What a run inside a war says when no fire within 300 km of any square
+// looks like fighting (FIGHTING_FIRES found none, or there was no fire
+// data to look in), so safe access is not measured (accessSource
+// "fires-none": the readings keep their 300 km, nothing is set aside for
+// it, and the pages and the AI say it is not measured, never that the
+// land is safe):
+//   since     the day the war began, in its first year (monthWindows
+//             fightingSince): only the fires since then were looked at
+//   region    "war" for a war that covers the area only in part (only the
+//             fires inside its region count), "war+other" when its squares
+//             in another listed war count too; null otherwise
+//   fireData  false when NASA FIRMS had no fire data for the window at all
+//             (the preflight's firmsYear counts its daily images, so none
+//             is a gap in the data, never a land without fires): nothing
+//             could be looked for
+//   acled     what the ACLED file did (acled.js acledBattlesFor status):
+//             "no-battles" (connected, but no battles within 300 km) and
+//             "unusable" (named in ACLED_CSV_PATH but not usable) say so
+//             in the last sentence instead of "An ACLED file ... would
+//             measure it", which would read as "there is no file"
+//             (src/lib/atlas/overview.js acledFileState)
+export function noFightingFiresWarning({ since = null, region = null, fireData = true, acled = null } = {}) {
+  const km = MAX_CONFLICT_M / 1000;
+  const where = region ? ` inside the war's region${region === "war+other" ? " and its squares in another listed war" : ""}` : "";
+  const when = since ? `since the war began on ${since}` : "in the last 12 months";
+  const per = FIGHTING_FIRES.minPerKm2;
+  // In a war's first year the floor is scaled to its days (fightingFires).
+  // Both conditions are named: dense fire that is usual for the place
+  // (seasonal farm burning) is not fighting either.
+  const floor = `about ${per} detection${per === 1 ? "" : "s"} per km²${since ? " a year" : ""} within ${FIGHTING_FIRES.radiusM / 1000} km and ${FIGHTING_FIRES.timesPrewar} times the normal years' rate`;
+  const found = fireData
+    ? `No fires that look like fighting were found within ${km} km${where} ${when} (the rule needs fire as dense as at a front line, ${floor}; scattered strikes do not reach it).`
+    : `No fire data (NASA FIRMS) was available ${since ? `since the war began on ${since}` : "for the last 12 months"}, so fires that look like fighting could not be looked for.`;
+  const measure =
+    acled === "no-battles"
+      ? "The ACLED file has no battles within 300 km of this area in the last 12 months either (only battles count, not strikes or shelling), so it cannot measure it: check that the export covers this country and its neighbours, or rely on your team's knowledge of where the fighting is."
+      : acled === "unusable"
+        ? "The ACLED file could not be used (see its warning), so it cannot measure it either: fix the file that ACLED_CSV_PATH names."
+        : "An ACLED file of recorded fighting would measure it.";
+  return `${found} Safe access is not measured here: every square counts as far from fighting, which does NOT make the land safe. ${measure}`;
+}
+// True when every reading is MAX_CONFLICT_M or more from fighting: no
+// fighting fire within 300 km of any square (there is at least one).
+export function farFromAnyFighting(readings) {
+  return readings.length > 0 && readings.every((reading) => reading.conflictKm >= MAX_CONFLICT_M / 1000);
+}
 // A radar pixel "changed" when its VV backscatter moved by more than 2 dB
 // (radar alerts: the month against the same month of 2019-2021).
 export const RADAR_CHANGE_DB = 2;
@@ -1200,7 +1261,9 @@ async function analyzeMonth(deps, { area, cells, month, cellSizeDeg, onProgress,
   // Distance to fighting: ACLED battles; else, inside a known war, unusual
   // fire detections; at peace, and in a month before its war began, not
   // measured (every cell reads 300 km and nothing is set aside for it, which
-  // does not make the land safe).
+  // does not make the land safe). Inside a war, when no fire within 300 km
+  // of any square looks like fighting, it is not measured either: that is
+  // known once the cells are read (step 6, "fires-none").
   const acled = acledBattlesFor({ csvPath: cfg.acledCsvPath, bbox: boxesBbox(boxes), month });
   if (acled.warning) warnings.push(acled.warning);
   // A month before its war began: no war damage (no damage window), and
@@ -1208,6 +1271,11 @@ async function analyzeMonth(deps, { area, cells, month, cellSizeDeg, onProgress,
   if (shared.beforeWar) warnings.push(beforeWarWarning(conflict.since, { accessMeasured: acled.points.length > 0 }));
   let conflictM = null;
   let accessSource = "none";
+  // Where the fires that stand in for fighting come from, for the words
+  // (noFightingFiresWarning), and where the run's warning about them sits
+  // (worded again in step 6 when none looks like fighting).
+  const fightWhere = warCells ? (otherWarCells.length ? "war+other" : "war") : null;
+  let accessWarning = -1;
   if (acled.points.length) {
     const battles = ee.FeatureCollection(acled.points.map((point) => ee.Feature(ee.Geometry.Point(point))));
     conflictM = onFireGrid(battles.distance(MAX_CONFLICT_M)).unmask(MAX_CONFLICT_M).rename("conflictM");
@@ -1224,7 +1292,9 @@ async function analyzeMonth(deps, { area, cells, month, cellSizeDeg, onProgress,
     const which = shared.fightingSince
       ? `unusual fires since the war began on ${shared.fightingSince} (far more than on the same days of the normal years; no ACLED file)`
       : `unusual fires of the last 12 months (far more than in ${BASELINE_FROM}-${BASELINE_YEAR}; no ACLED file)`;
-    warnings.push(`Distance to fighting is estimated from ${which}${warCells ? ` inside the war's region${otherWarCells.length ? " and its squares in another listed war" : ""}` : ""}, so treat safe access as rough.`);
+    accessWarning = warnings.push(`Distance to fighting is estimated from ${which}${warCells ? ` inside the war's region${otherWarCells.length ? " and its squares in another listed war" : ""}` : ""}, so treat safe access as rough.`) - 1;
+    // An empty sample (no fire looks like fighting) gives an empty distance
+    // image, and every cell 300 km (unmask): step 6 says so.
     const fireBand = fightingFires(ee, fightRegion, shared).rename("fire");
     const fires = fireBand.stratifiedSample({
       numPoints: 3000,
@@ -1239,7 +1309,10 @@ async function analyzeMonth(deps, { area, cells, month, cellSizeDeg, onProgress,
     conflictM = onFireGrid(fires.distance(MAX_CONFLICT_M)).unmask(MAX_CONFLICT_M).rename("conflictM");
     accessSource = "fires";
   } else {
-    warnings.push(`No conflict data and no recent fires ${warCells ? `in the war's region${otherWarCells.length ? " or its squares in another listed war" : ""}` : "near this area"}; every cell counts as 300 km or more from fighting.`);
+    // No FIRMS fire data at all in the window (a gap in the data): no fire
+    // can be looked at, every cell reads 300 km, and safe access is not
+    // measured (step 6 makes it "fires-none").
+    accessWarning = warnings.push(noFightingFiresWarning({ since: shared.fightingSince, region: fightWhere, fireData: false, acled: acled.status })) - 1;
     conflictM = ee.Image.constant(MAX_CONFLICT_M).rename("conflictM");
     accessSource = "fires";
   }
@@ -1505,6 +1578,19 @@ async function analyzeMonth(deps, { area, cells, month, cellSizeDeg, onProgress,
     if (reading.chiDrop === null) noHealth += 1;
     if (reading.radarDb === null) noRadar += 1;
     readings.push(reading);
+  }
+  // Inside a war, no fire within 300 km of any square looked like fighting
+  // (the sample of fighting fires was empty, or there were no fires at
+  // all): every square reads 300 km, which in a war zone is not "safe to
+  // reach". Safe access is then not measured ("fires-none"), and the run
+  // says so instead of "estimated from unusual fires" (real data,
+  // 2026-10-21: south Lebanon, FIGHTING_FIRES). Known from the readings,
+  // so no other request is sent; the readings keep their 300 km.
+  if (accessSource === "fires" && farFromAnyFighting(readings)) {
+    accessSource = "fires-none";
+    const said = noFightingFiresWarning({ since: shared.fightingSince, region: fightWhere, fireData: have.firmsYear > 0, acled: acled.status });
+    if (accessWarning >= 0) warnings[accessWarning] = said;
+    else warnings.push(said);
   }
   if (noRadar > 0 && noRadar < cells.length) {
     warnings.push(`${noRadar} of ${cells.length} cells had no radar reading on cropland; their damage uses fires only.`);

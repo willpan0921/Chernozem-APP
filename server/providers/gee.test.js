@@ -95,6 +95,9 @@ import {
   DATASETS,
   NO_WAR_WARNING,
   squareRuns,
+  noFightingFiresWarning,
+  farFromAnyFighting,
+  MAX_CONFLICT_M,
 } from "./gee.js";
 import { createFakeEe } from "./fake-ee.js";
 import { createFieldGeeProvider } from "./field-gee.js";
@@ -102,8 +105,9 @@ import { TEAM_PEACE_WARNING, addMonths, beforeWarWarning, buildRun } from "../ru
 import { teamConflict, warBoxes } from "../../src/config/conflicts.js";
 import { scorePlaces } from "../../src/lib/atlas/scoring.js";
 import { HEAVY_DAMAGE, METHOD_VERSION, heavyDamagePixel, radarPersistence, worstFireYear } from "../../src/lib/atlas/method.js";
+import { FIGHTING_SEARCH_KM, accessMeaning, acledFileState, noFightingFound, noFightingNote, notMeasuredReason, warNote } from "../../src/lib/atlas/overview.js";
 import { areaDamageSeasons } from "../../src/lib/season.js";
-import { parseCsvRecords, parseCsv, parseAcledDate, toEvent, battlePoints, acledWindow, acledBattlesFor, acledStatus } from "./acled.js";
+import { parseCsvRecords, parseCsv, parseAcledDate, toEvent, battlePoints, acledWindow, acledBattlesFor, acledStatus, ACLED_NO_BATTLES_WARNING } from "./acled.js";
 
 // The count of interactive requests the Atlas gives way to is shared by the
 // whole process (gee.js yieldState). Every test starts from nothing, so one
@@ -688,19 +692,29 @@ test("acledBattlesFor reads a file and never throws", () => {
   assert.equal(found.source, "acled");
   assert.deepEqual(found.points, [[37, 48]]);
   assert.equal(found.warning, null);
+  assert.equal(found.status, "ok");
   assert.equal(acledStatus(file).ok, true);
 
   const none = acledBattlesFor({ csvPath: file, bbox: [-60, -10, -50, 0], month: "2026-09" });
   assert.deepEqual(none.points, []);
   assert.match(none.warning, /no battles within 300 km/);
+  assert.equal(none.status, "no-battles");
 
   const missing = acledBattlesFor({ csvPath: path.join(dir, "nope.csv"), bbox: [36, 47.5, 38, 49], month: "2026-09" });
   assert.match(missing.warning, /ACLED file not found/);
-  assert.deepEqual(acledBattlesFor({ csvPath: null, bbox: [0, 0, 1, 1], month: "2026-09" }), { points: [], warning: null, source: null });
+  assert.equal(missing.status, "unusable");
+  assert.deepEqual(acledBattlesFor({ csvPath: null, bbox: [0, 0, 1, 1], month: "2026-09" }), { points: [], warning: null, source: null, status: "none" });
 
   const wrong = path.join(dir, "wrong.csv");
   fs.writeFileSync(wrong, "name,value\na,1\n");
-  assert.match(acledBattlesFor({ csvPath: wrong, bbox: [0, 0, 1, 1], month: "2026-09" }).warning, /does not look like an ACLED export/);
+  const notAcled = acledBattlesFor({ csvPath: wrong, bbox: [0, 0, 1, 1], month: "2026-09" });
+  assert.match(notAcled.warning, /does not look like an ACLED export/);
+  assert.equal(notAcled.status, "unusable");
+  // A file that cannot be read at all (here a folder) is the ACLED file's
+  // problem too, never a bare system message.
+  const folder = acledBattlesFor({ csvPath: dir, bbox: [0, 0, 1, 1], month: "2026-09" });
+  assert.equal(folder.status, "unusable");
+  assert.match(folder.warning, /^The ACLED file could not be read: /);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -1112,6 +1126,207 @@ test("a war in part of an area across a border: its squares in another listed wa
   assert.equal(squareRuns([], 0.1).length, 0);
   // A gap in a row starts a new box.
   assert.deepEqual(squareRuns([{ lat: 50.05, lon: 30.05 }, { lat: 50.05, lon: 30.15 }, { lat: 50.05, lon: 30.45 }], 0.1), [[30, 50, 30.2, 50.1], [30.4, 50, 30.5, 50.1]]);
+});
+
+// ---------- Safe access in a war where no fire looks like fighting ----------
+
+// The run's warning, word for word (ACCESS-SPEC, 2026-10-21).
+const NO_FIGHTING_12_MONTHS =
+  "No fires that look like fighting were found within 300 km in the last 12 months (the rule needs fire as dense as at a front line, about 1 detection per km² within 10 km and 3 times the normal years' rate; scattered strikes do not reach it). Safe access is not measured here: every square counts as far from fighting, which does NOT make the land safe. An ACLED file of recorded fighting would measure it.";
+const ESTIMATED = /estimated from unusual fires/;
+
+test("the warning where no fire looks like fighting, and when every square counts as that far", () => {
+  assert.equal(noFightingFiresWarning(), NO_FIGHTING_12_MONTHS);
+  assert.equal(noFightingFiresWarning({ since: "2026-06-01" }), NO_FIGHTING_12_MONTHS.replace("in the last 12 months", "since the war began on 2026-06-01").replace("per km² within", "per km² a year within"));
+  assert.match(noFightingFiresWarning({ region: "war" }), /^No fires that look like fighting were found within 300 km inside the war's region in the last 12 months \(/);
+  assert.match(noFightingFiresWarning({ region: "war+other" }), /^No fires that look like fighting were found within 300 km inside the war's region and its squares in another listed war in the last 12 months \(/);
+  // No FIRMS data for the window: a gap in the data, never "no fires".
+  assert.equal(
+    noFightingFiresWarning({ fireData: false }),
+    "No fire data (NASA FIRMS) was available for the last 12 months, so fires that look like fighting could not be looked for. Safe access is not measured here: every square counts as far from fighting, which does NOT make the land safe. An ACLED file of recorded fighting would measure it.",
+  );
+  assert.match(noFightingFiresWarning({ fireData: false, since: "2026-06-01" }), /^No fire data \(NASA FIRMS\) was available since the war began on 2026-06-01, so /);
+  // An ACLED file is connected: never "an ACLED file would measure it" as
+  // if there were none.
+  const SAFE_ACCESS = "Safe access is not measured here: every square counts as far from fighting, which does NOT make the land safe.";
+  assert.equal(
+    noFightingFiresWarning({ acled: "no-battles" }),
+    NO_FIGHTING_12_MONTHS.replace(
+      "An ACLED file of recorded fighting would measure it.",
+      "The ACLED file has no battles within 300 km of this area in the last 12 months either (only battles count, not strikes or shelling), so it cannot measure it: check that the export covers this country and its neighbours, or rely on your team's knowledge of where the fighting is.",
+    ),
+  );
+  assert.ok(noFightingFiresWarning({ acled: "unusable" }).endsWith(`${SAFE_ACCESS} The ACLED file could not be used (see its warning), so it cannot measure it either: fix the file that ACLED_CSV_PATH names.`));
+  assert.equal(noFightingFiresWarning({ acled: "none" }), NO_FIGHTING_12_MONTHS);
+  // Never the words of a measured distance, never "safe".
+  for (const options of [{}, { since: "2026-06-01" }, { region: "war" }, { fireData: false }, { acled: "no-battles" }, { acled: "unusable" }]) {
+    const said = noFightingFiresWarning(options);
+    assert.ok(said.includes(SAFE_ACCESS), said);
+    assert.doesNotMatch(said, ESTIMATED);
+    assert.doesNotMatch(said, /safe to reach|treat safe access as rough/);
+  }
+  // The pages say "within 300 km" from their own copy of the distance cap.
+  assert.equal(FIGHTING_SEARCH_KM, MAX_CONFLICT_M / 1000);
+  const at = (km) => ({ id: "r0c0", conflictKm: km });
+  assert.equal(farFromAnyFighting([at(300), at(300)]), true);
+  assert.equal(farFromAnyFighting([at(300), at(299.99)]), false, "one square has a fighting fire within 300 km");
+  assert.equal(farFromAnyFighting([]), false, "no squares, nothing to tell");
+});
+
+test("a war where no fire looks like fighting (south Lebanon): the sample of fighting fires is empty, every square reads 300 km, and safe access is not measured", async () => {
+  // A 3 x 3 km box in south Lebanon, inside the Israel–Hezbollah war's box.
+  const lebanon = gridArea(3, 3, 0.01, 33.3, 35.4);
+  const { ee, provider } = fakeProvider({ samplePoints: 0 });
+  const result = await provider.analyze({ area: lebanon.area, cells: lebanon.cells, month: "2026-09", cellSizeDeg: 0.01 });
+  assert.equal(result.conflict.id, "israel-hezbollah");
+  // The fires were sampled as in any war; none looked like fighting.
+  assert.equal(ee.callsNamed("Image.stratifiedSample").length, 1);
+  assert.equal(result.accessSource, "fires-none");
+  // The readings keep their numbers: 300 km everywhere.
+  assert.ok(result.readings.every((reading) => reading.conflictKm === 300));
+  // The run says safe access is not measured, not "estimated from unusual fires".
+  assert.ok(result.warnings.includes(NO_FIGHTING_12_MONTHS), result.warnings.join(" | "));
+  assert.equal(result.warnings.filter((w) => ESTIMATED.test(w) || /Safe access is not measured/.test(w)).length, 1);
+  assert.ok(!result.warnings.some((w) => ESTIMATED.test(w)));
+
+  // Found without another Earth Engine request: the same requests as a run
+  // whose fires do look like fighting.
+  const found = fakeProvider();
+  const withFires = await found.provider.analyze({ area: lebanon.area, cells: lebanon.cells, month: "2026-09", cellSizeDeg: 0.01 });
+  assert.equal(withFires.accessSource, "fires");
+  assert.equal(ee.requests.length, found.ee.requests.length);
+
+  // The run keeps it, and nothing is set aside for it.
+  const cells = lebanon.cells.map((cell) => ({ ...cell, areaHa: 100 }));
+  const run = buildRun({ area: lebanon.area, month: "2026-09", provider: "gee", readings: result.readings, warnings: result.warnings, cellSizeDeg: 0.01, cells, conflict: result.conflict, imagery: result.imagery, accessSource: result.accessSource });
+  assert.equal(run.accessSource, "fires-none");
+  assert.ok(run.checks.warnings.includes(NO_FIGHTING_12_MONTHS));
+  assert.ok(run.cells.every((cell) => cell.raw.conflictKm === 300 && cell.distance === 1));
+  const scored = scorePlaces(run.cells, { settings: { weights: { soil: 30, damage: 40, access: 30 }, gatePercentile: 30, rampWidth: 0.2, r: 0.5 }, conflict: run.conflict, cellSizeDeg: 0.01 });
+  assert.equal(scored.places.filter((place) => place.nearTerm.tier === "setAside").length, 0);
+});
+
+test("one fire that looks like fighting within 300 km of one square keeps the distance estimated from fires", async () => {
+  const lebanon = gridArea(3, 3, 0.01, 33.3, 35.4);
+  // r1c1 is 299 km from the nearest fighting fire, the others 300 km.
+  const { provider } = fakeProvider({ values: { conflictM: (u, { id }) => (id === "r1c1" ? 299000 : 300000) } });
+  const result = await provider.analyze({ area: lebanon.area, cells: lebanon.cells, month: "2026-09", cellSizeDeg: 0.01 });
+  assert.deepEqual(result.readings.map((reading) => reading.conflictKm), [300, 300, 300, 300, 299, 300, 300, 300, 300]);
+  assert.equal(result.accessSource, "fires");
+  assert.ok(result.warnings.some((w) => w.startsWith("Distance to fighting is estimated from unusual fires of the last 12 months")));
+  assert.ok(!result.warnings.some((w) => /Safe access is not measured/.test(w)));
+});
+
+test("no fire that looks like fighting in a war's first year, in a war in part of the area, or no fires at all: not measured either", async () => {
+  // A war the team set from 2026-06-01 (Story County, Iowa): only the fires
+  // since then are looked at, and the warning says so.
+  const iowa = gridArea(3, 3, 0.01, 42.05, -93.7);
+  const war = { mode: "war", since: "2026-06-01", name: "Fighting in the county" };
+  const young = fakeProvider({ samplePoints: 0 });
+  const first = await young.provider.analyze({ area: { ...iowa.area, war }, cells: iowa.cells, month: "2026-08", cellSizeDeg: 0.01, conflict: teamConflict(war, "test-area") });
+  assert.equal(first.accessSource, "fires-none");
+  assert.ok(first.warnings.includes(noFightingFiresWarning({ since: "2026-06-01" })), first.warnings.join(" | "));
+  assert.ok(first.warnings.some((w) => w.startsWith("No fires that look like fighting were found within 300 km since the war began on 2026-06-01 (")));
+  assert.ok(!first.warnings.some((w) => ESTIMATED.test(w)));
+
+  // A war that covers the area only in part (the Kursk box): only the fires
+  // inside its region stand in for fighting, and none does.
+  const { area, cells } = gridArea(4, 2, 0.1, 51.87, 34.5);
+  const kursk = { id: "russia-kursk-belgorod", name: "Fighting in Russia's Kursk and Belgorod border areas", since: "2022-02-24", partOfCountry: true };
+  const part = fakeProvider({ samplePoints: 0 });
+  const inPart = await part.provider.analyze({ area: { ...area, countryId: "643" }, cells, month: "2026-08", cellSizeDeg: 0.1, conflict: kursk });
+  const ring = ([w, s, e, n]) => [[[w, s], [e, s], [e, n], [w, n], [w, s]]];
+  assert.deepEqual(part.ee.nodeOf(part.ee.callsNamed("Image.stratifiedSample")[0].args[0].region).args[0], warBoxes(kursk).map(ring));
+  assert.equal(inPart.accessSource, "fires-none");
+  assert.ok(inPart.readings.every((reading) => reading.conflictKm === 300));
+  assert.ok(inPart.warnings.includes(noFightingFiresWarning({ region: "war" })));
+  assert.ok(inPart.warnings.some((w) => w.startsWith("No fires that look like fighting were found within 300 km inside the war's region in the last 12 months")));
+  // ... and with squares in another listed war (a box over the Sumy-Kursk border).
+  const border = gridArea(4, 4, 0.1, 51.8, 34.0);
+  const across = fakeProvider({ samplePoints: 0 });
+  const both = await across.provider.analyze({ area: border.area, cells: border.cells, month: "2026-08", cellSizeDeg: 0.1, conflict: { ...kursk, partOf: "area" } });
+  assert.equal(both.accessSource, "fires-none");
+  assert.ok(both.warnings.includes(noFightingFiresWarning({ region: "war+other" })));
+
+  // No FIRMS fire data at all for the last 12 months (a gap in the data):
+  // no sample is taken, and safe access is not measured. (The distance is
+  // then the constant 300 km; the stand-in cannot read a constant's value,
+  // so it is given.)
+  const quiet = fakeProvider({ sizes: { [DATASETS.firms]: 0 }, values: { conflictM: 300000 } });
+  const lebanon = gridArea(3, 3, 0.01, 33.3, 35.4);
+  const none = await quiet.provider.analyze({ area: lebanon.area, cells: lebanon.cells, month: "2026-09", cellSizeDeg: 0.01 });
+  assert.equal(quiet.ee.callsNamed("Image.stratifiedSample").length, 0);
+  assert.equal(none.accessSource, "fires-none");
+  assert.ok(none.readings.every((reading) => reading.conflictKm === 300));
+  assert.ok(none.warnings.includes(noFightingFiresWarning({ fireData: false })), none.warnings.join(" | "));
+  assert.ok(!none.warnings.some((w) => /No conflict data and no recent fires|No fire detections at all/.test(w)));
+});
+
+test("an ACLED file connected but with no battles near the area, or one that cannot be used: no fire looks like fighting, and nothing says there is no ACLED file", async () => {
+  // The team exported Ukraine only, then analyses south Lebanon.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acled-"));
+  const file = path.join(dir, "acled.csv");
+  const rows = Array.from({ length: 6 }, (_, i) => `2026-08-0${i + 1},2026,Battles,,48.00,37.00,1,Ukraine`);
+  fs.writeFileSync(file, ["event_date,year,event_type,notes,latitude,longitude,fatalities,country", ...rows].join("\n"));
+  const lebanon = gridArea(3, 3, 0.01, 33.3, 35.4);
+  const cells = lebanon.cells.map((cell) => ({ ...cell, areaHa: 100 }));
+  const runOf = (result) => buildRun({ area: lebanon.area, month: "2026-09", provider: "gee", readings: result.readings, warnings: result.warnings, cellSizeDeg: 0.01, cells, conflict: result.conflict, imagery: result.imagery, accessSource: result.accessSource });
+  const far = fakeProvider({ samplePoints: 0 }, { ...TEST_CFG, acledCsvPath: file });
+  const elsewhere = await far.provider.analyze({ area: lebanon.area, cells: lebanon.cells, month: "2026-09", cellSizeDeg: 0.01 });
+  assert.equal(elsewhere.accessSource, "fires-none");
+  assert.ok(elsewhere.warnings.includes(ACLED_NO_BATTLES_WARNING));
+  assert.ok(elsewhere.warnings.includes(noFightingFiresWarning({ acled: "no-battles" })), elsewhere.warnings.join(" | "));
+  assert.ok(!elsewhere.warnings.some((w) => /An ACLED file of recorded fighting would measure it/.test(w)));
+  // The pages read the file's state from the run's own warnings (the
+  // acled.js words), so they never say "there is no ACLED file" or "Connect one".
+  const run = runOf(elsewhere);
+  assert.equal(acledFileState(run), "no-battles");
+  assert.equal(noFightingFound(run), true);
+  const pageWords = [accessMeaning(run), warNote(run).line, notMeasuredReason(run).clause, noFightingNote(run)];
+  for (const text of pageWords) {
+    assert.doesNotMatch(text, /there is no ACLED file|Connect one|would measure it/, text);
+  }
+  assert.match(accessMeaning(run), /and the ACLED file has no battles within 300 km of this area/);
+
+  // A file that cannot be used (ACLED_CSV_PATH names a missing file).
+  const broken = fakeProvider({ samplePoints: 0 }, { ...TEST_CFG, acledCsvPath: path.join(dir, "missing.csv") });
+  const unusable = await broken.provider.analyze({ area: lebanon.area, cells: lebanon.cells, month: "2026-09", cellSizeDeg: 0.01 });
+  assert.equal(unusable.accessSource, "fires-none");
+  assert.ok(unusable.warnings.some((w) => /^ACLED file not found: /.test(w)));
+  assert.ok(unusable.warnings.includes(noFightingFiresWarning({ acled: "unusable" })), unusable.warnings.join(" | "));
+  const brokenRun = runOf(unusable);
+  assert.equal(acledFileState(brokenRun), "unusable");
+  assert.match(accessMeaning(brokenRun), /and the ACLED file could not be used/);
+  assert.doesNotMatch(accessMeaning(brokenRun), /there is no ACLED file/);
+
+  // Without a file, as before (the spec's words), and the state is null.
+  const plain = runOf(await fakeProvider({ samplePoints: 0 }).provider.analyze({ area: lebanon.area, cells: lebanon.cells, month: "2026-09", cellSizeDeg: 0.01 }));
+  assert.equal(acledFileState(plain), null);
+  assert.match(accessMeaning(plain), /and there is no ACLED file/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("an ACLED file, and peace, are not changed by it: with battles the distance is to them, at peace it is not measured as before", async () => {
+  // An ACLED file with battles near the area: its distance, even where the
+  // fires found nothing and every square is 300 km away.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "acled-"));
+  const file = path.join(dir, "acled.csv");
+  const rows = Array.from({ length: 6 }, (_, i) => `2026-08-0${i + 1},2026,Battles,,33.27,35.42,1,Lebanon`);
+  fs.writeFileSync(file, ["event_date,year,event_type,notes,latitude,longitude,fatalities,country", ...rows].join("\n"));
+  const lebanon = gridArea(3, 3, 0.01, 33.3, 35.4);
+  const { ee, provider } = fakeProvider({ samplePoints: 0, values: { conflictM: 300000 } }, { ...TEST_CFG, acledCsvPath: file });
+  const acled = await provider.analyze({ area: lebanon.area, cells: lebanon.cells, month: "2026-09", cellSizeDeg: 0.01 });
+  assert.equal(acled.accessSource, "acled");
+  assert.equal(ee.callsNamed("Image.stratifiedSample").length, 0);
+  assert.ok(!acled.warnings.some((w) => /Safe access is not measured|estimated from unusual fires/.test(w)), acled.warnings.join(" | "));
+
+  // At peace (Iowa): "none", the list's warning, nothing about fires.
+  const calm = fakeProvider({ samplePoints: 0 });
+  const iowa = gridArea(3, 3, 0.01, 42.05, -93.65);
+  const peace = await calm.provider.analyze({ area: iowa.area, cells: iowa.cells, month: "2026-08", cellSizeDeg: 0.01 });
+  assert.equal(peace.accessSource, "none");
+  assert.ok(peace.warnings.includes(NO_WAR_WARNING));
+  assert.ok(!peace.warnings.some((w) => /Safe access is not measured|look like fighting/.test(w)));
 });
 
 test("600 small cells are measured in chunks of 250, two at a time", async () => {

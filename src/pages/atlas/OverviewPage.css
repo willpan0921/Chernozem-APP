@@ -213,6 +213,13 @@
   padding-left: var(--s-2);
 }
 
+/* "Safe access not measured here: ..." takes the place of "Set aside". */
+.ao-legend .map-legend-note {
+  grid-area: aside;
+  max-width: 38ch;
+  padding-left: var(--s-2);
+}
+
 /* Top areas under the map. */
 .ao-top {
   display: flex;
@@ -603,7 +610,8 @@
     display: none;
   }
 
-  .ao-legend .map-legend-aside {
+  .ao-legend .map-legend-aside,
+  .ao-legend .map-legend-note {
     padding-left: 0;
   }
 }

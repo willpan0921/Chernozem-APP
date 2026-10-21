@@ -18,7 +18,7 @@
 
 import { scorePlaces, ranking, nearTermShares } from "../../src/lib/atlas/scoring.js";
 import { COSTS, DEFAULT_SETTINGS, FIRE_YEARS, HEAVY_DAMAGE, METHOD_VERSION, PEACE_DAMAGE, checkSettings, runsComparable } from "../../src/lib/atlas/method.js";
-import { accessMeasured, accessSourceOf, alertPlaces, atPeace, beforeWar, conflictOf, outsideWar, peaceSquares, seasonWords, shownNewDamage, warInPart, warKey, warPartOf, warSetByTeam } from "../../src/lib/atlas/overview.js";
+import { FIGHTING_SEARCH_KM, accessMeasured, accessSourceOf, acledFileState, acledStateText, alertPlaces, atPeace, beforeWar, conflictOf, noFightingFound, notMeasuredReason, outsideWar, peaceSquares, seasonWords, shownNewDamage, warInPart, warKey, warPartOf, warSetByTeam } from "../../src/lib/atlas/overview.js";
 import { EARLIEST_WAR_DAY, TEAM_WAR_NAME, teamConflict } from "../../src/config/conflicts.js";
 import { listConflictForArea } from "../conflicts.js";
 import { NO_WAR_WARNING, TEAM_PEACE_WARNING } from "../runs.js";
@@ -261,7 +261,12 @@ async function safe(fn) {
 // which fills in the war for older country runs; when it is still
 // undefined nothing is said.
 //   accessSource   where safe access came from (run.accessSource: "acled",
-//                  "fires", "none" or null)
+//                  "fires", "fires-none", "none" or null). "fires-none": in
+//                  the war, no fire within 300 km of any square looked like
+//                  fighting (server/providers/gee.js), so safe access is
+//                  not measured: every square reads as far from fighting,
+//                  which does not mean safe, and the AI is told never to
+//                  call land safe
 //   currentMethod  the run was made with this method version
 //                  (run.method.version === METHOD_VERSION): how damage
 //                  behaves over time (src/lib/atlas/method.js FIRE_YEARS) is
@@ -283,7 +288,12 @@ async function safe(fn) {
 //                  (run.otherWarSquares: server/conflicts.js warCellsFor);
 //                  the others keep the war's dates but get the peace rule
 //                  for heavy damage and the peace damage score
-export function conflictLine(conflict, accessSource = null, { currentMethod = true, setByTeam = false, beforeWar = false, inPart = null } = {}) {
+//   acled          what a connected ACLED file did when the distance did not
+//                  come from it (overview.js acledFileState: null,
+//                  "no-battles", "unusable"): where no fire looked like
+//                  fighting, the AI is then never told "there is no ACLED
+//                  file"
+export function conflictLine(conflict, accessSource = null, { currentMethod = true, setByTeam = false, beforeWar = false, inPart = null, acled = null } = {}) {
   if (conflict === undefined) return "";
   const notMeasured = (why) =>
     `Safe access: ${why}, so it is full (100) everywhere and nothing is set aside for it. That does NOT mean the land is safe: never call land safe, and point to local authorities for unexploded ordnance or security questions.`;
@@ -308,15 +318,24 @@ export function conflictLine(conflict, accessSource = null, { currentMethod = tr
     }
     // With no ACLED file the distance is to unusual fires: an estimate of
     // where fighting is, not recorded fighting (server/providers/gee.js).
-    // "none" (nothing measured) is never called recorded fighting.
+    // "none" (nothing measured) is never called recorded fighting, and
+    // "fires-none" (no fire looked like fighting) is never called safe.
+    const otherWarFires = inPart?.otherWar > 0;
+    const firesWhere = inPart ? ` inside the war's region${otherWarFires ? " and its squares in another listed war" : ""}` : "";
+    // A connected ACLED file that had no battles near the area, or could
+    // not be used, is said as such (never "there is no ACLED file"), and
+    // the AI points to what would measure it.
+    const pointTo = acled === "no-battles" ? "ACLED data that covers this area (only battles count, not strikes)" : acled === "unusable" ? "fixing the ACLED file (see the data warnings)" : "an ACLED file";
     const warAccess =
       accessSource === "acled"
         ? acledAccess
         : accessSource === "fires"
           ? "Safe access: the distance to unusual fires (an estimate of where fighting is; there is no ACLED file of recorded fighting), full at 100 km. Treat it as rough."
-          : accessSource === "none"
-            ? notMeasured("not measured for this month")
-            : "Safe access: the distance to recorded fighting, full at 100 km.";
+          : accessSource === "fires-none"
+            ? `Safe access: not measured here (no fires that look like fighting were found within ${FIGHTING_SEARCH_KM} km${firesWhere}, and ${acledStateText(acled)}); every square reads as far from fighting, which does not mean safe. Never call land safe; point to local authorities and ${pointTo}.`
+            : accessSource === "none"
+              ? notMeasured("not measured for this month")
+              : "Safe access: the distance to recorded fighting, full at 100 km.";
     // A war in part of the area: where its rules apply (the squares that
     // touch its region, and those another listed war covers:
     // server/conflicts.js warCellsFor), and exactly what differs for the
@@ -331,7 +350,9 @@ export function conflictLine(conflict, accessSource = null, { currentMethod = tr
     const fires =
       accessSource === "acled"
         ? ""
-        : ` Without an ACLED file, every square's distance to fighting is measured to the unusual fires inside the war's region${otherWar ? " and its squares in another listed war" : ""}; unusual fires in the other squares do not count as fighting (they are taken to have ordinary causes: harvest burning, wildfire).`;
+        : accessSource === "fires-none"
+          ? ` ${acled === "no-battles" ? "With no ACLED battles near the area" : acled === "unusable" ? "Without a usable ACLED file" : "Without an ACLED file"}, only the fires inside the war's region${otherWar ? " and its squares in another listed war" : ""} could stand in for fighting, and none of them looked like fighting, so safe access is not measured in any square; unusual fires in the other squares do not count as fighting (they are taken to have ordinary causes: harvest burning, wildfire).`
+          : ` Without an ACLED file, every square's distance to fighting is measured to the unusual fires inside the war's region${otherWar ? " and its squares in another listed war" : ""}; unusual fires in the other squares do not count as fighting (they are taken to have ordinary causes: harvest burning, wildfire).`;
     const part = inPart
       ? ` This war covers only part of this ${inPart.of === "area" ? "area" : "country"}: its rules apply only in the map squares that touch the war's region${otherWar ? " or lie in another listed war" : ""}${counted}, which have atWar true in their details.${elsewhere} The other squares (atWar false) keep the war's dates (damage counted from the day it began, its fire years and war seasons), but two things there follow the peace rules: heavy damage needs radar change of ${HEAVY_DAMAGE.radarDb} dB or more AND an unusual fire within ${HEAVY_DAMAGE.fireNearM / 1000} km, and the damage score is the heavily damaged share of the black soil (full at ${fullAt}%).${fires} Do not talk about fighting, a front line or demining for a place whose squares all have atWar false unless the user raises it.`
       : "";
@@ -350,9 +371,17 @@ export function conflictLine(conflict, accessSource = null, { currentMethod = tr
 
 // Why nothing is set aside for safe access, as the AI should say it (the
 // pages' words are overview.js peaceReason, which speaks to "your team"):
-// "no war recorded", "the user's team marked this area as not at war", or
-// "this month ends before the war began on 2026-06-01".
+// "no war recorded", "the user's team marked this area as not at war",
+// "this month ends before the war began on 2026-06-01", or, in a war where
+// no fire looked like fighting (overview.js noFightingFound), "safe access
+// is not measured here: no fires that look like fighting were found within
+// 300 km, and there is no ACLED file" (or what a connected ACLED file did:
+// overview.js acledFileState).
 export function quietReason(run) {
+  if (noFightingFound(run)) {
+    const reason = notMeasuredReason(run);
+    return `safe access is not measured here: ${reason.found}, and ${reason.acled}`;
+  }
   if (beforeWar(run)) return `this month ends before the war began on ${conflictOf(run).since}`;
   if (atPeace(run) && warSetByTeam(run)) return "the user's team marked this area as not at war";
   return "no war recorded";
@@ -457,7 +486,11 @@ export function settingsLine(settings, run, scored, timeframe) {
     : settings.gatePercentile > 0
       ? `safe access is a cutoff, not a weight: the least safe ${settings.gatePercentile}% of the black soil is set aside first (${setAside} squares set aside)`
       : "safe access is a cutoff, not a weight, and the cutoff is 0%: nothing is set aside";
-  const longNote = measured ? "" : "; safe access is 100 everywhere here, so it changes no order: both rankings put the squares in the same order (their top places can still group differently)";
+  const longNote = measured
+    ? ""
+    : noFightingFound(run)
+      ? "; safe access is not measured here (it reads 100 everywhere, which does not mean safe), so it changes no order: both rankings put the squares in the same order (their top places can still group differently)"
+      : "; safe access is 100 everywhere here, so it changes no order: both rankings put the squares in the same order (their top places can still group differently)";
   const viewing = timeframe === "postwar" ? longName : "Near term";
   return `Weights as used: Near term ranks by soil value ${near.soil}% and damage ${near.damage}%; ${cutoff}. ${longName} blends soil value ${w.soil}%, damage ${w.damage}% and safe access ${w.access}% (weighted power mean, r = ${settings.r})${longNote}. The user is viewing ${viewing}.`;
 }
@@ -468,7 +501,9 @@ export function settingsLine(settings, run, scored, timeframe) {
 // peaceSquares).
 const outsideWarRegion = (h, calm) => calm.size > 0 && h.cellIds.length > 0 && h.cellIds.every((id) => calm.has(id));
 
-function hotspotLine(h, index, calm = new Set()) {
+// accessUnknown: safe access is not measured in the run (overview.js
+// noFightingFound), so a place's access is "not measured", not 100.
+function hotspotLine(h, index, calm = new Set(), accessUnknown = false) {
   const coords = coordLabel(h.lat, h.lon);
   // A repeated name already ends in " · <coords>" (see labelHasCoords in
   // src/lib/atlas/hotspots.js), so it is used as it is.
@@ -476,7 +511,7 @@ function hotspotLine(h, index, calm = new Set()) {
   const where = h.label === coords || labelHasCoords ? h.label : `${h.label} (${coords})`;
   const squares = h.cellIds.length;
   const region = outsideWarRegion(h, calm) ? " (outside the war's squares: heavy damage and the damage score by the peace rules)" : "";
-  return `${index + 1}. ${where}, ${squares} ${squares === 1 ? "square" : "squares"}${region}: score ${score100(h.score)}/100, tier ${h.tier}, black-soil ${ha(h.blackSoilHa)}, heavily damaged ${ha(h.heavyDamageHa)}, soil ${score100(h.soil)} / damage ${score100(h.damage)} / access ${score100(h.access)}`;
+  return `${index + 1}. ${where}, ${squares} ${squares === 1 ? "square" : "squares"}${region}: score ${score100(h.score)}/100, tier ${h.tier}, black-soil ${ha(h.blackSoilHa)}, heavily damaged ${ha(h.heavyDamageHa)}, soil ${score100(h.soil)} / damage ${score100(h.damage)} / access ${accessUnknown ? "not measured" : score100(h.access)}`;
 }
 
 export function contextText({ workspace, area, run, summaries, scored, settings, timeframe, hotspots, selected }) {
@@ -497,7 +532,7 @@ export function contextText({ workspace, area, run, summaries, scored, settings,
   // How damage behaves over time is said only for a run made with this
   // method (older runs: fires over the whole window, the last season's radar).
   const inPart = warInPart(run) ? { warSquares: run.warSquares, squares: run.cellCount ?? run.cells?.length, of: warPartOf(run.conflict), otherWar: run.otherWarSquares } : null;
-  const war = conflictLine(conflictOf(run), accessSourceOf(run), { currentMethod: run.method?.version === METHOD_VERSION, setByTeam: warSetByTeam(run), beforeWar: beforeWar(run), inPart });
+  const war = conflictLine(conflictOf(run), accessSourceOf(run), { currentMethod: run.method?.version === METHOD_VERSION, setByTeam: warSetByTeam(run), beforeWar: beforeWar(run), inPart, acled: acledFileState(run) });
   if (war) lines.push(war);
   const changed = warSettingNote(area, run);
   if (changed) lines.push(changed);
@@ -523,10 +558,11 @@ export function contextText({ workspace, area, run, summaries, scored, settings,
   // can be two different groups (see the square counts).
   lines.push("", "Top places, near term:");
   const calm = peaceSquares(run);
-  hotspots.nearTerm.forEach((h, i) => lines.push(hotspotLine(h, i, calm)));
+  const accessUnknown = noFightingFound(run);
+  hotspots.nearTerm.forEach((h, i) => lines.push(hotspotLine(h, i, calm, accessUnknown)));
   if (!hotspots.nearTerm.length) lines.push("(none)");
   lines.push("", `Top places, ${outsideWar(run) ? "long term" : "postwar"}:`);
-  hotspots.postwar.forEach((h, i) => lines.push(hotspotLine(h, i, calm)));
+  hotspots.postwar.forEach((h, i) => lines.push(hotspotLine(h, i, calm, accessUnknown)));
   if (!hotspots.postwar.length) lines.push("(none)");
 
   const alerts = run.alerts || [];
@@ -552,7 +588,15 @@ export function contextText({ workspace, area, run, summaries, scored, settings,
     }
   }
 
-  if (selected) lines.push("", `The user has this cell selected on the map: ${JSON.stringify(placeDetail(selected, atWar(run)))}`);
+  // The place picked on the map. Where safe access is not measured
+  // (noFightingFound) its access reads "not measured", as on the Map page
+  // and in the top places above, with the tools' note beside it: never a
+  // bare 100 for the place the user asks about.
+  if (selected) {
+    const detail = placeDetail(selected, atWar(run));
+    if (accessUnknown) detail.scores.access = "not measured";
+    lines.push("", `The user has this cell selected on the map: ${JSON.stringify({ ...accessNote(run), ...detail })}`);
+  }
   if (workspace?.budgetUsd) lines.push("", `Workspace budget: $${Math.round(workspace.budgetUsd).toLocaleString("en-US")}.`);
   return lines.join("\n");
 }
@@ -629,6 +673,25 @@ function hotspotDetail(h, calm = new Set()) {
 
 const NO_RUN = { error: "No analysis is available for the current area yet." };
 
+// In a war where no fire looked like fighting (overview.js
+// noFightingFound), the tools' answers (and the place selected on the map,
+// in the context) say once that the places' access score of 100 is not a
+// measurement: { safeAccess }; {} otherwise.
+function accessNote(run) {
+  if (!noFightingFound(run)) return {};
+  const reason = notMeasuredReason(run);
+  return { safeAccess: `not measured here (${reason.found}, and ${reason.acled}): every place's access of 100 only means nothing was found, not that it is safe` };
+}
+
+// What get_ranking says of safe access where it is not measured: "not
+// used: full everywhere (no war recorded)" at peace; in a war where no
+// fire looked like fighting, that it is not measured and that its 100 does
+// not mean safe.
+function unusedAccess(run) {
+  if (noFightingFound(run)) return `not used: ${quietReason(run)}; it reads 100 everywhere, which does not mean safe, and nothing is set aside`;
+  return `not used: full everywhere (${quietReason(run)})`;
+}
+
 // Runs one tool. Always gives back a plain object (sent to Claude as JSON).
 // Problems come back as { error } so Claude can explain them.
 export async function runAtlasTool(name, input = {}, data) {
@@ -647,9 +710,10 @@ export async function runAtlasTool(name, input = {}, data) {
         // The weights as this ranking uses them (see settingsLine).
         weightsUsed:
           timeframe === "nearTerm"
-            ? { ...nearTermShares(data.settings.weights), safeAccess: !accessMeasured(run) ? `not used: full everywhere (${quietReason(run)})` : "cutoff, not a weight" }
+            ? { ...nearTermShares(data.settings.weights), safeAccess: !accessMeasured(run) ? unusedAccess(run) : "cutoff, not a weight" }
             : data.settings.weights,
         setAsideCells: scored.places.filter((p) => p.nearTerm.tier === "setAside").length,
+        ...accessNote(run),
         places: list.map((h) => hotspotDetail(h, peaceSquares(run))),
       };
     }
@@ -676,7 +740,7 @@ export async function runAtlasTool(name, input = {}, data) {
       } else {
         return { error: "Give a cellId, or both lat and lon." };
       }
-      return { month: run.month, dataSource: run.provider, place: placeDetail(place, atWar(run)) };
+      return { month: run.month, dataSource: run.provider, ...accessNote(run), place: placeDetail(place, atWar(run)) };
     }
     case "compare_months": {
       if (!run) return NO_RUN;

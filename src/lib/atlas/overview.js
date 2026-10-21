@@ -24,8 +24,15 @@
 //   ruleText(tf, settings, run)  the one-line rule of a time frame
 //   damageMeaning(run)           what the damage score is for this run
 //   accessMeaning(run)           what safe access is for this run
-//   accessMeasured(run)          false outside a war (outsideWar) without an ACLED file
+//   accessMeasured(run)          false outside a war (outsideWar) without an ACLED file, and
+//                                in a war where no fire looked like fighting (noFightingFound)
 //   accessSourceOf(run)          where safe access came from, also for older runs
+//   noFightingFound(run)         in a war, no fire within 300 km looked like fighting: not measured
+//   acledFileState(run)          what a connected ACLED file did: null (none), "no-battles", "unusable"
+//   notMeasuredReason(run)       why safe access is not measured: { short, note, clause, found, acled }
+//   setAsideNote(run)            the weights panel's "nothing set aside" line
+//   longTermAccessNote(run)      the report's note on the long-term order when access is not measured
+//   noFightingNote(run)          the run's own line saying safe access is not measured (Atlas Settings)
 //   conflictOf(run)              the run's war, also for older runs
 //   warSetByTeam(run)            true when the team set the war (or the peace)
 //   warNote(run)                 the war (or the peace) in words: the chip and the line
@@ -292,15 +299,134 @@ export function weightsText(settings) {
   return `Soil ${w.soil ?? "–"} · Damage ${w.damage ?? "–"} · Access ${w.access ?? "–"}`;
 }
 
-// Where safe access came from: "acled", "fires", "none" or null. Runs
-// saved before run.accessSource existed still carry the provider's warning
-// (server/providers/gee.js), so "fires" is read from that.
+// Where safe access came from: "acled", "fires", "fires-none" (inside a
+// war, no fire within 300 km of any square looked like fighting:
+// noFightingFound), "none" or null. Runs saved before run.accessSource
+// existed still carry the provider's warning (server/providers/gee.js), so
+// "fires" is read from that.
 const FIRES_WARNING = /estimated from unusual fires/i;
 export function accessSourceOf(run) {
   if (!run) return null;
   if (run.accessSource) return run.accessSource;
   const warnings = run.checks?.warnings || run.warnings || [];
   return warnings.some((w) => FIRES_WARNING.test(String(w))) ? "fires" : null;
+}
+
+// How far from the squares the fires that stand in for fighting are looked
+// for (km): server/providers/gee.js MAX_CONFLICT_M. Farther reads 300 km.
+export const FIGHTING_SEARCH_KM = 300;
+
+// True when the run is under a war's rules, has no ACLED battles near it
+// (no file, or one without battles there: acledFileState), and no fire
+// within 300 km of any square looked like fighting (run.accessSource
+// "fires-none", server/providers/gee.js). The rule that picks those fires
+// is set at a front line (about 1 detection per km² within 10 km), so a
+// war of scattered strikes can find none (real data, 2026-10-21: south
+// Lebanon, densest 0.74 per km²). Every square then reads 300 km, full
+// access, which in a war zone is NOT "safe to reach": safe access is not
+// measured there. The pages and the AI say so, never that the land is
+// safe or that a distance was measured, and nothing is set aside
+// (accessMeasured is false).
+export function noFightingFound(run) {
+  return accessSourceOf(run) === "fires-none" && !outsideWar(run);
+}
+
+// "no fires that look like fighting were found within 300 km" ("... inside
+// the war's region" for a war in part of the area: those fires come only
+// from there).
+function noFightingClause(run) {
+  return `no fires that look like fighting were found within ${FIGHTING_SEARCH_KM} km${warInPart(run) ? ` ${warFiresWhere(run)}` : ""}`;
+}
+
+// What the run's ACLED file did, when the distance did not come from it,
+// read from the run's own warnings (server/providers/acled.js
+// acledBattlesFor; a run summary keeps them too):
+//   null          no ACLED file is connected (or the run does not say)
+//   "no-battles"  a file is connected, but it has no battles within 300 km
+//                 of the area in the 12 months (it may not cover this
+//                 country, or the fighting there is strikes, which are not
+//                 battles)
+//   "unusable"    ACLED_CSV_PATH names a file that could not be used (not
+//                 found, not an ACLED export, not readable)
+// So a run whose fires found no fighting never says "there is no ACLED
+// file", or "connect one", when one is connected. Tied to acled.js's own
+// words in server/providers/gee.test.js.
+const ACLED_NO_BATTLES = /^The ACLED file has no battles within 300 km/;
+const ACLED_UNUSABLE = /^ACLED file not found: |does not look like an ACLED export|^The ACLED file could not be read: /;
+export function acledFileState(run) {
+  if (!run || accessSourceOf(run) === "acled") return null;
+  const warnings = (run.checks?.warnings || run.warnings || []).map(String);
+  if (warnings.some((w) => ACLED_NO_BATTLES.test(w))) return "no-battles";
+  if (warnings.some((w) => ACLED_UNUSABLE.test(w))) return "unusable";
+  return null;
+}
+
+// The ACLED half of "not measured here", for an acledFileState: "there is
+// no ACLED file", "the ACLED file has no battles within 300 km of this
+// area" or "the ACLED file could not be used" (also the AI's words:
+// server/ai/context.js conflictLine).
+export function acledStateText(state) {
+  if (state === "no-battles") return `the ACLED file has no battles within ${FIGHTING_SEARCH_KM} km of this area`;
+  if (state === "unusable") return "the ACLED file could not be used";
+  return "there is no ACLED file";
+}
+const acledClause = (run) => acledStateText(acledFileState(run));
+
+// Why safe access is not measured for a run (accessMeasured false), in
+// words for the pages: { short, note, clause }.
+//   no fighting found (noFightingFound)  "Safe access not measured here",
+//            "safe access not measured here", "safe access is not
+//            measured here (no fires that look like fighting were found
+//            within 300 km, and there is no ACLED file)", found: "no fires
+//            that look like fighting were found within 300 km", and acled:
+//            "there is no ACLED file" (or, with a file connected, "the
+//            ACLED file has no battles within 300 km of this area", "the
+//            ACLED file could not be used": acledFileState)
+//   otherwise  peaceReason(run) ("No war recorded", "Not at war (set by
+//            your team)", "Before the war"), with "no war recorded" when it
+//            does not say
+// Null when safe access is measured.
+export function notMeasuredReason(run) {
+  if (accessMeasured(run)) return null;
+  if (noFightingFound(run)) {
+    const found = noFightingClause(run);
+    const acled = acledClause(run);
+    return { short: "Safe access not measured here", note: "safe access not measured here", clause: `safe access is not measured here (${found}, and ${acled})`, found, acled };
+  }
+  return peaceReason(run) || { short: "No war recorded", note: "no war recorded", clause: "no war is recorded here" };
+}
+
+// The weights panel's line where nothing can be set aside (accessMeasured
+// false), or null: "Safe access is not measured here, so nothing can be
+// set aside for it" (noFightingFound), else "No war recorded: nothing set
+// aside", "Not at war (set by your team): nothing set aside", "Before the
+// war: nothing set aside".
+export function setAsideNote(run) {
+  if (!run || accessMeasured(run)) return null;
+  if (noFightingFound(run)) return "Safe access is not measured here, so nothing can be set aside for it";
+  return `${notMeasuredReason(run).short}: nothing set aside`;
+}
+
+// The report's note after the long-term weights where safe access is not
+// measured (it is the same in every square, so it changes no order), or "".
+export function longTermAccessNote(run) {
+  if (accessMeasured(run)) return "";
+  if (noFightingFound(run)) return " (safe access is not measured here, so it is the same in every square and the order follows soil and damage)";
+  return " (access is full everywhere, so the order follows soil and damage)";
+}
+
+// The run's own line saying safe access is not measured where no fire
+// looked like fighting (its warning from server/providers/gee.js
+// noFightingFiresWarning, which also says what the ACLED file did), for
+// Atlas Settings, next to the month and its data source; null for any
+// other run. A run summary is enough.
+const NO_FIGHTING_WARNING = /Safe access is not measured here/;
+export function noFightingNote(run) {
+  if (!noFightingFound(run)) return null;
+  const said = (run.checks?.warnings || run.warnings || []).find((w) => NO_FIGHTING_WARNING.test(String(w)));
+  if (said) return String(said);
+  const measure = acledFileState(run) ? `Nor can ACLED: ${acledClause(run)}.` : "An ACLED file of recorded fighting would measure it.";
+  return `${noFightingClause(run).replace(/^n/, "N")}. Safe access is not measured here: every square counts as far from fighting, which does NOT make the land safe. ${measure}`;
 }
 
 // The war covering the run: { id, name, since }, null at peace, or
@@ -466,6 +592,10 @@ export function warDay(since, style = "short") {
 //     run.otherWarSquares) ("in 12 of 340 squares"), and what changes for
 //     the others (the peace rule for heavy damage and the damage score;
 //     they also count damage from the day the war began)
+//   a war where no fire looked like fighting (noFightingFound): the line
+//     ends "Safe access is not measured here: no fires that look like
+//     fighting were found within 300 km, and there is no ACLED file (this
+//     does not make the land safe)." and never says a distance was measured
 // Runs saved before the field existed give null (nothing is shown).
 export function warNote(run) {
   const conflict = run?.conflict;
@@ -496,6 +626,9 @@ export function warNote(run) {
         : ", and distance to fighting is not measured, so nothing is set aside (this does not prove the land is safe)";
     return { war: false, team, beforeWar: true, name: conflict.name, badge: `Before the war (from ${short})${team ? " · set by your team" : ""}`, line: `This month ends before ${what} began on ${long}: no war damage is counted${access}.` };
   }
+  // In a war where no fire looked like fighting (noFightingFound), every
+  // line says safe access is not measured there.
+  const notMeasured = noFightingFound(run) ? ` Safe access is not measured here: ${noFightingClause(run)}, and ${acledClause(run)} (this does not make the land safe).` : "";
   if (team) {
     // Counted from the earliest day the app allows: the war may be older,
     // so that day is not given as its start.
@@ -506,11 +639,11 @@ export function warNote(run) {
         team,
         name: conflict.name,
         badge: `War · damage from ${short} · set by your team`,
-        line: `${who}: damage is counted from ${long}, the earliest day the app allows (the normal years 2019–2021 must come before the war). The war may be older: damage before that day is not counted, and the normal years may already include it.`,
+        line: `${who}: damage is counted from ${long}, the earliest day the app allows (the normal years 2019–2021 must come before the war). The war may be older: damage before that day is not counted, and the normal years may already include it.${notMeasured}`,
       };
     }
     const line = named ? `${conflict.name}, set by your team, since ${long}` : `War since ${long}, set by your team`;
-    return { war: true, team, name: conflict.name, badge: `War since ${short} · set by your team`, line: `${line}: damage is counted from that day.` };
+    return { war: true, team, name: conflict.name, badge: `War since ${short} · set by your team`, line: `${line}: damage is counted from that day.${notMeasured}` };
   }
   // A war of the list limited to boxes that covers the area only in part
   // (server/conflicts.js listWarFor): its rules apply in the squares that
@@ -518,11 +651,12 @@ export function warNote(run) {
   // also count damage from the day it began, but get the peace rule for
   // heavy damage and the peace damage score. Their distance to fighting is
   // said only without an ACLED file: with one, every square's is to its
-  // battles.
+  // battles; where no fire in the war's region looked like fighting it was
+  // not measured (notMeasured says so).
   if (conflict.partOfCountry) {
     const squares = warSquaresText(run);
     const where = warPartOf(conflict);
-    const fires = accessSourceOf(run) === "acled" ? "" : `, and their distance to fighting is measured to the unusual fires ${warFiresWhere(run)}`;
+    const fires = accessSourceOf(run) === "acled" || notMeasured ? "" : `, and their distance to fighting is measured to the unusual fires ${warFiresWhere(run)}`;
     return {
       war: true,
       team,
@@ -530,10 +664,10 @@ export function warNote(run) {
       partOf: where,
       name: conflict.name,
       badge: `War since ${short} · in part of the ${where}`,
-      line: `${conflict.name}, since ${long}: damage is counted from that day. The war covers only part of this ${where}: its rules apply in ${warSquaresWhere(run)}${squares ? ` (${squares})` : ""}. The other squares also count damage from that day, but use the peace rules for heavy damage (strong radar change and an unusual fire) and for the damage score${fires}.`,
+      line: `${conflict.name}, since ${long}: damage is counted from that day. The war covers only part of this ${where}: its rules apply in ${warSquaresWhere(run)}${squares ? ` (${squares})` : ""}. The other squares also count damage from that day, but use the peace rules for heavy damage (strong radar change and an unusual fire) and for the damage score${fires}.${notMeasured}`,
     };
   }
-  return { war: true, team, name: conflict.name, badge: `War since ${short}`, line: `${conflict.name}, since ${long}: damage is counted from that day.` };
+  return { war: true, team, name: conflict.name, badge: `War since ${short}`, line: `${conflict.name}, since ${long}: damage is counted from that day.${notMeasured}` };
 }
 
 // The war an area's next analysis will use (server/conflicts.js
@@ -632,8 +766,10 @@ export function timeframeOptions(run) {
 // run), or with an ACLED file. At peace without one, and in a month before
 // its war began (outsideWar: gee.js measures no distance then), every
 // square gets full access (nothing to measure it from), so nothing is set
-// aside.
+// aside. So too in a war where no fire within 300 km of any square looked
+// like fighting (run.accessSource "fires-none": noFightingFound).
 export function accessMeasured(run) {
+  if (accessSourceOf(run) === "fires-none") return false;
   return !outsideWar(run) || accessSourceOf(run) === "acled";
 }
 
@@ -678,9 +814,14 @@ export function damageMeaning(run) {
 // list, the team's "Not at war", or before the war; never "no war
 // recorded" for a war the team overrode). In a war with no ACLED file it is
 // the distance to unusual fires (run.accessSource "fires",
-// server/providers/gee.js), an estimate, never "recorded fighting".
+// server/providers/gee.js), an estimate, never "recorded fighting"; where
+// none of them looked like fighting (noFightingFound) it is "not measured
+// here", never "safe to reach".
 export function accessMeaning(run) {
   const km = SCALES.distance.full;
+  if (noFightingFound(run)) {
+    return `not measured here: ${noFightingClause(run)}, and ${acledClause(run)}, so every square counts as far from fighting (this does not make the land safe)`;
+  }
   if (!accessMeasured(run)) {
     const reason = peaceReason(run);
     if (!reason || (atPeace(run) && !warSetByTeam(run))) return "full everywhere: with no war recorded, every square counts as safe to reach (this does not prove the land is safe)";
@@ -692,21 +833,27 @@ export function accessMeaning(run) {
 }
 
 // What the distance is measured to, in a few words: "recorded fighting",
-// "an ACLED battle" or "an unusual fire".
+// "an ACLED battle" or "an unusual fire"; where no fire looked like
+// fighting (noFightingFound) nothing was found to measure it to: "a fire
+// that looks like fighting (none was found within 300 km)".
 function accessTarget(run) {
   if (accessSourceOf(run) === "acled") return "an ACLED battle";
+  if (noFightingFound(run)) return `a fire that looks like fighting (none was found within ${FIGHTING_SEARCH_KM} km)`;
   if (accessSourceOf(run) === "fires") return "an unusual fire";
   return "recorded fighting";
 }
 
 // The Near term set-aside in one sentence, for the report's method:
 //   at peace, no ACLED   "Near term sets nothing aside and ranks by soil value and damage."
+//   no fighting found    "Near term sets nothing aside (safe access is not
+//                        measured here) and ranks by soil value and damage."
 //   cutoff 0%            "Near term sets nothing aside (cutoff 0%) and ranks ..."
 //   else                 "Near term sets aside the least safe 30% of black soil
 //                        (squares 100 km or more from an unusual fire are never
 //                        set aside) and ranks the rest by soil value and damage."
 export function nearTermSetAside(run, settings) {
   const gate = settings?.gatePercentile ?? 0;
+  if (noFightingFound(run)) return "Near term sets nothing aside (safe access is not measured here) and ranks by soil value and damage.";
   if (!accessMeasured(run)) return "Near term sets nothing aside and ranks by soil value and damage.";
   if (!(gate > 0)) return "Near term sets nothing aside (cutoff 0%) and ranks by soil value and damage.";
   return `Near term sets aside the least safe ${gate}% of black soil (squares ${SCALES.distance.full} km or more from ${accessTarget(run)} are never set aside) and ranks the rest by soil value and damage.`;
@@ -727,12 +874,19 @@ export function heavyDamageRule(run) {
 
 // The one-line rule for each time frame (for the report). Outside a war
 // (outsideWar) it says why nothing is set aside, in the words of
-// peaceReason.
+// peaceReason; in a war where no fire looked like fighting
+// (noFightingFound), that safe access is not measured, so nothing can be
+// set aside for it and it changes no order.
 export function ruleText(timeframe, settings, run) {
   if (timeframe === "postwar") {
+    if (noFightingFound(run)) return "All three scores are blended; safe access is not measured here, so it is the same in every square and changes no order.";
     return outsideWar(run)
       ? "All three scores are blended into one long-term ranking."
       : "All three scores are blended, so heavy damage can outweigh lower access once fighting ends.";
+  }
+  if (noFightingFound(run)) {
+    const clause = notMeasuredReason(run).clause;
+    return `${clause.charAt(0).toUpperCase()}${clause.slice(1)}, so nothing can be set aside for it. Places are ranked by soil value and damage.`;
   }
   if (!accessMeasured(run)) {
     const clause = peaceReason(run)?.clause || "no war is recorded here";
@@ -788,6 +942,9 @@ export function alertPlaces(alerts = []) {
 //   tone   "green" | "red" | "amber" | null
 //   to     the page that clicking the step opens
 // "hotspots" are the Near-term top areas (groupHotspots(..., "nearTerm")).
+// No step says a place is near the fighting, far from it or set aside, so
+// they stay true where safe access is not measured (accessMeasured false:
+// at peace, or in a war where no fire looked like fighting, noFightingFound).
 export function nextSteps({ run, hotspots = [], alerts = [] }) {
   if (!run) return [];
   const steps = [];

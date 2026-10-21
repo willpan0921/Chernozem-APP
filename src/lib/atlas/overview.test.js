@@ -9,7 +9,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { scorePlaces } from "./scoring.js";
 import { groupHotspots } from "./hotspots.js";
-import { accessMeaning, accessMeasured, accessSourceOf, analysisMonths, areaWar, beforeWar, conflictOf, alertPlaces, atPeace, damageMeaning, describeAlert, keepsMonth, monthsWithOtherWar, nearTermSetAside, heavyDamageRule, imageryText, kpis, nextSteps, outsideWar, peaceReason, peaceSquares, recoveryCost, ruleText, seasonAdded, seasonJump, seasonLeft, seasonWords, shownNewDamage, sourceBadge, springPlan, summarize, timeframeLabel, timeframeOptions, warInPart, warKey, warNote, warPartOf, warSetByTeam, warText, weightsText } from "./overview.js";
+import { accessMeaning, accessMeasured, accessSourceOf, acledFileState, analysisMonths, areaWar, beforeWar, conflictOf, alertPlaces, atPeace, damageMeaning, describeAlert, keepsMonth, longTermAccessNote, monthsWithOtherWar, nearTermSetAside, heavyDamageRule, imageryText, kpis, nextSteps, noFightingFound, noFightingNote, notMeasuredReason, outsideWar, peaceReason, peaceSquares, recoveryCost, ruleText, seasonAdded, seasonJump, seasonLeft, seasonWords, setAsideNote, shownNewDamage, sourceBadge, springPlan, summarize, timeframeLabel, timeframeOptions, warInPart, warKey, warNote, warPartOf, warSetByTeam, warText, weightsText } from "./overview.js";
 import { METHOD_VERSION, runsComparable } from "./method.js";
 import { makePlaces } from "./testPlaces.js";
 
@@ -517,4 +517,145 @@ test("a growing season that joins with no new heavy damage is named, never calle
   // ...but nothing says most of the new damage is older damage: there is none.
   assert.equal(seasonJump(nov, runs), null);
   assert.equal(seasonWords(nov, runs).jump, null);
+});
+
+// ---------- Safe access in a war where no fire looked like fighting ----------
+
+// The run's warning (server/providers/gee.js noFightingFiresWarning).
+const NO_FIGHTING_WARNING =
+  "No fires that look like fighting were found within 300 km in the last 12 months (the rule needs fire as dense as at a front line, about 1 detection per km² within 10 km and 3 times the normal years' rate; scattered strikes do not reach it). Safe access is not measured here: every square counts as far from fighting, which does NOT make the land safe. An ACLED file of recorded fighting would measure it.";
+const lebanonWar = { id: "israel-hezbollah", name: "Israel–Hezbollah war (south Lebanon, northern Israel and the Golan Heights)", since: "2023-10-08" };
+// Words that would say a distance was measured, or that the land is safe.
+const MEASURED_OR_SAFE = /safe to reach|distance to unusual fires|is measured to|estimated|recorded fighting|nearest|treat .* as rough|full at 100 km|least safe/;
+
+test("in a war where no fire looked like fighting, safe access is not measured: never safe, never a measured distance, nothing set aside", () => {
+  const settings30 = { gatePercentile: 30 };
+  const quiet = { ...run, conflict: lebanonWar, conflictSource: "list", accessSource: "fires-none", method: { version: METHOD_VERSION }, checks: { passed: 6, total: 6, warnings: [NO_FIGHTING_WARNING] } };
+  assert.equal(accessSourceOf(quiet), "fires-none");
+  assert.equal(noFightingFound(quiet), true);
+  assert.equal(accessMeasured(quiet), false);
+  // Still a war: the damage words, the red number and "Postwar" stay.
+  assert.equal(outsideWar(quiet), false);
+  assert.equal(atPeace(quiet), false);
+  assert.equal(timeframeLabel("postwar", quiet), "Postwar");
+  assert.equal(damageMeaning(quiet), damageMeaning({ ...quiet, accessSource: "fires" }));
+
+  assert.equal(accessMeaning(quiet), "not measured here: no fires that look like fighting were found within 300 km, and there is no ACLED file, so every square counts as far from fighting (this does not make the land safe)");
+  assert.equal(nearTermSetAside(quiet, settings30), "Near term sets nothing aside (safe access is not measured here) and ranks by soil value and damage.");
+  assert.equal(ruleText("nearTerm", settings30, quiet), "Safe access is not measured here (no fires that look like fighting were found within 300 km, and there is no ACLED file), so nothing can be set aside for it. Places are ranked by soil value and damage.");
+  assert.equal(ruleText("postwar", settings30, quiet), "All three scores are blended; safe access is not measured here, so it is the same in every square and changes no order.");
+  assert.equal(setAsideNote(quiet), "Safe access is not measured here, so nothing can be set aside for it");
+  assert.equal(longTermAccessNote(quiet), " (safe access is not measured here, so it is the same in every square and the order follows soil and damage)");
+  assert.deepEqual(notMeasuredReason(quiet), {
+    short: "Safe access not measured here",
+    note: "safe access not measured here",
+    clause: "safe access is not measured here (no fires that look like fighting were found within 300 km, and there is no ACLED file)",
+    found: "no fires that look like fighting were found within 300 km",
+    acled: "there is no ACLED file",
+  });
+  // The war's line (the Overview's chip, the Data page, the report).
+  const note = warNote(quiet);
+  assert.equal(note.badge, "War since 8 Oct 2023");
+  assert.equal(note.line, "Israel–Hezbollah war (south Lebanon, northern Israel and the Golan Heights), since 8 October 2023: damage is counted from that day. Safe access is not measured here: no fires that look like fighting were found within 300 km, and there is no ACLED file (this does not make the land safe).");
+  // A war the team set, also from the earliest day allowed, says it too.
+  const team = { id: "area-area-1", name: "Fighting in the south", since: "2024-03-01", source: "area" };
+  assert.match(warNote({ ...quiet, conflict: team, conflictSource: "area" }).line, /^Fighting in the south, set by your team, since 1 March 2024: damage is counted from that day\. Safe access is not measured here: /);
+  assert.match(warNote({ ...quiet, conflict: { ...team, since: "2022-01-01" }, conflictSource: "area" }).line, /may already include it\. Safe access is not measured here: /);
+  const words = [accessMeaning(quiet), nearTermSetAside(quiet, settings30), ruleText("nearTerm", settings30, quiet), ruleText("postwar", settings30, quiet), setAsideNote(quiet), longTermAccessNote(quiet), note.line];
+  for (const text of words) assert.doesNotMatch(text, MEASURED_OR_SAFE, text);
+
+  // Next steps: the same as with fires that look like fighting, and none
+  // says a place is near the fighting, set aside or safe.
+  const steps = nextSteps({ run: quiet, hotspots, alerts });
+  assert.deepEqual(steps, nextSteps({ run: { ...quiet, accessSource: "fires" }, hotspots, alerts }));
+  assert.deepEqual(steps.map((s) => s.icon), ["shield", "alert", "soil", "report"]);
+  for (const step of steps) assert.doesNotMatch(step.title, /fighting|set aside|safe/i, step.title);
+
+  // Atlas Settings shows the run's own line; a summary (no cells) is enough.
+  assert.equal(noFightingNote(quiet), NO_FIGHTING_WARNING);
+  const { cells: _cells, ...summary } = { ...quiet, cells: [] };
+  assert.equal(noFightingNote(summary), NO_FIGHTING_WARNING);
+  // Without the line (a run that lost its warnings), the same facts.
+  assert.equal(noFightingNote({ ...quiet, checks: { warnings: [] } }), "No fires that look like fighting were found within 300 km. Safe access is not measured here: every square counts as far from fighting, which does NOT make the land safe. An ACLED file of recorded fighting would measure it.");
+});
+
+test("in a war in part of the area where no fire in its region looked like fighting: not measured, and no distance 'measured to the unusual fires'", () => {
+  const border = { id: "thailand-cambodia", name: "Cambodia–Thailand border conflict", since: "2025-07-24", partOfCountry: true };
+  const cells = places.map((place) => ({ id: place.id, atWar: /^r[0-2]c/.test(place.id) }));
+  const inPart = { ...run, conflict: border, conflictSource: "list", accessSource: "fires-none", method: { version: METHOD_VERSION }, warSquares: cells.filter((c) => c.atWar).length, cellCount: cells.length, cells };
+  assert.equal(warInPart(inPart), true);
+  assert.equal(noFightingFound(inPart), true);
+  assert.equal(accessMeaning(inPart), "not measured here: no fires that look like fighting were found within 300 km inside the war's region, and there is no ACLED file, so every square counts as far from fighting (this does not make the land safe)");
+  const line = warNote(inPart).line;
+  assert.match(line, /and for the damage score\. Safe access is not measured here: no fires that look like fighting were found within 300 km inside the war's region, and there is no ACLED file \(this does not make the land safe\)\.$/);
+  assert.doesNotMatch(line, /is measured to the unusual fires/);
+  // Squares in another listed war count too.
+  assert.match(accessMeaning({ ...inPart, otherWarSquares: 9 }), /within 300 km inside the war's region and its squares in another listed war, and there is no ACLED file/);
+  // Steps outside the war's region keep the peace words, as before.
+  const calm = peaceSquares(inPart);
+  const outsideSpots = hotspots.filter((h) => h.cellIds.every((id) => calm.has(id)));
+  assert.equal(nextSteps({ run: inPart, hotspots: outsideSpots, alerts: [] })[0].title, `Plan soil surveys in ${outsideSpots[0].label} and ${outsideSpots[1].label}`);
+});
+
+test("with an ACLED file connected but no battles near the area, or one that cannot be used, the pages never say there is no ACLED file", () => {
+  const quiet = { ...run, conflict: lebanonWar, conflictSource: "list", accessSource: "fires-none", method: { version: METHOD_VERSION } };
+  const withWarnings = (...warnings) => ({ ...quiet, checks: { passed: 6, total: 6, warnings } });
+  // The file's own words (server/providers/acled.js; tied to them in gee.test.js).
+  const noBattles = withWarnings("The ACLED file has no battles within 300 km of this area in the last 12 months.");
+  const missing = withWarnings("ACLED file not found: /data/acled.csv. Fix ACLED_CSV_PATH in .env or leave it empty.");
+  const notAcled = withWarnings("/data/x.csv does not look like an ACLED export (it needs latitude, longitude and event_type columns).");
+  const unreadable = withWarnings("The ACLED file could not be read: EACCES: permission denied, open '/data/acled.csv'");
+  assert.equal(acledFileState(noBattles), "no-battles");
+  for (const broken of [missing, notAcled, unreadable]) assert.equal(acledFileState(broken), "unusable");
+  assert.equal(acledFileState(withWarnings()), null);
+  assert.equal(acledFileState(withWarnings(NO_FIGHTING_WARNING)), null);
+  // The distance came from the file: nothing to say.
+  assert.equal(acledFileState({ ...noBattles, accessSource: "acled" }), null);
+
+  assert.equal(accessMeaning(noBattles), "not measured here: no fires that look like fighting were found within 300 km, and the ACLED file has no battles within 300 km of this area, so every square counts as far from fighting (this does not make the land safe)");
+  assert.equal(notMeasuredReason(noBattles).clause, "safe access is not measured here (no fires that look like fighting were found within 300 km, and the ACLED file has no battles within 300 km of this area)");
+  assert.match(warNote(noBattles).line, /Safe access is not measured here: no fires that look like fighting were found within 300 km, and the ACLED file has no battles within 300 km of this area \(this does not make the land safe\)\.$/);
+  assert.match(ruleText("nearTerm", { gatePercentile: 30 }, noBattles), /and the ACLED file has no battles within 300 km of this area\), so nothing can be set aside for it\./);
+  assert.equal(accessMeaning(missing), "not measured here: no fires that look like fighting were found within 300 km, and the ACLED file could not be used, so every square counts as far from fighting (this does not make the land safe)");
+  for (const said of [noBattles, missing, notAcled, unreadable]) {
+    for (const text of [accessMeaning(said), notMeasuredReason(said).clause, warNote(said).line, ruleText("nearTerm", { gatePercentile: 30 }, said)]) {
+      assert.doesNotMatch(text, /there is no ACLED file/, text);
+    }
+    // Without the run's own line, Settings still never says to connect a file.
+    assert.doesNotMatch(noFightingNote(said), /An ACLED file of recorded fighting would measure it/);
+  }
+  assert.equal(noFightingNote(noBattles), "No fires that look like fighting were found within 300 km. Safe access is not measured here: every square counts as far from fighting, which does NOT make the land safe. Nor can ACLED: the ACLED file has no battles within 300 km of this area.");
+});
+
+test("safe access at peace, before the war, with an ACLED file and with fires that look like fighting reads as before", () => {
+  const listPeace = { ...run, conflict: null, conflictSource: "list", accessSource: "none" };
+  const teamPeace = { ...run, conflict: null, conflictSource: "area", accessSource: "none" };
+  const early = { ...run, month: "2025-12", conflict: { id: "area-x", name: "War (set for this area)", since: "2026-06-01", source: "area" }, conflictSource: "area", accessSource: "none" };
+  const fires = { ...run, conflict: lebanonWar, conflictSource: "list", accessSource: "fires" };
+  const acled = { ...fires, accessSource: "acled" };
+  for (const measuredRun of [fires, acled, { ...listPeace, accessSource: "acled" }]) {
+    assert.equal(noFightingFound(measuredRun), false);
+    assert.equal(accessMeasured(measuredRun), true);
+    assert.equal(setAsideNote(measuredRun), null);
+    assert.equal(longTermAccessNote(measuredRun), "");
+    assert.equal(notMeasuredReason(measuredRun), null);
+    assert.equal(noFightingNote(measuredRun), null);
+  }
+  assert.equal(accessMeaning(fires), "the distance to unusual fires (an estimate of where fighting is; no ACLED file), full at 100 km");
+  assert.equal(warNote(fires).line, "Israel–Hezbollah war (south Lebanon, northern Israel and the Golan Heights), since 8 October 2023: damage is counted from that day.");
+  // The weights panel's line, word for word as it was.
+  assert.equal(setAsideNote(listPeace), "No war recorded: nothing set aside");
+  assert.equal(setAsideNote(teamPeace), "Not at war (set by your team): nothing set aside");
+  assert.equal(setAsideNote(early), "Before the war: nothing set aside");
+  assert.equal(setAsideNote(null), null);
+  assert.deepEqual(notMeasuredReason(teamPeace), peaceReason(teamPeace));
+  assert.equal(notMeasuredReason(listPeace).note, "no war recorded");
+  assert.equal(longTermAccessNote(listPeace), " (access is full everywhere, so the order follows soil and damage)");
+  for (const quiet of [listPeace, teamPeace, early]) {
+    assert.equal(noFightingFound(quiet), false);
+    assert.equal(noFightingNote(quiet), null);
+  }
+  // Outside a war the peace words win, whatever the run says.
+  assert.equal(noFightingFound({ ...listPeace, accessSource: "fires-none" }), false);
+  assert.equal(accessMeaning({ ...listPeace, accessSource: "fires-none" }), accessMeaning(listPeace));
 });

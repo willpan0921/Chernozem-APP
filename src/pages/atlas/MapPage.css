@@ -598,7 +598,14 @@
     flex: 1;
   }
 
-  .mp-legend.is-folded .map-legend-body {
+  .mp-legend.is-folded .map-legend-body:not(.has-note) {
+    display: none;
+  }
+
+  /* Folded, the key keeps its "Safe access not measured here" line
+     (MapLegend accessKeyNote), so a phone still says why there is no
+     Access option. */
+  .mp-legend.is-folded .map-legend-body.has-note > :not(.map-legend-note) {
     display: none;
   }
 

@@ -131,6 +131,12 @@ test("the imagery window follows the area's latitude, and the war is stored", ()
   assert.deepEqual(told.imagery, { from: "2024-11", to: "2025-04", label: "November 2024 to April 2025" });
   assert.equal(told.accessSource, "none");
   assert.equal(run.accessSource, null);
+  // Every source a data source can give is kept, "fires-none" (inside a war,
+  // no fire looked like fighting: not measured) too; anything else is null.
+  for (const source of ["acled", "fires", "fires-none", "none"]) {
+    assert.equal(buildRun({ area: pampas, month: "2026-01", provider: "gee", readings: [reading("r0c0", 0)], cellSizeDeg: 0.5, cells: [cell], accessSource: source }).accessSource, source);
+  }
+  assert.equal(buildRun({ area: pampas, month: "2026-01", provider: "gee", readings: [reading("r0c0", 0)], cellSizeDeg: 0.5, cells: [cell], accessSource: "guess" }).accessSource, null);
   const war = buildRun({ ...makeArgs("2026-09"), conflict: { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24", countries: ["804"] } });
   assert.deepEqual(war.conflict, { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" });
   assert.equal(buildRun({ ...makeArgs("2026-09"), conflict: { id: "x" } }).conflict, null, "a war needs its start date");

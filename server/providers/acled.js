@@ -214,19 +214,31 @@ export function battlePoints(events, { bbox, month, bufferKm = 300, gridDeg = 0.
 
 // Everything for one area and month. Never throws: problems come back as
 // a warning so the run can carry on with the fire-based fallback.
-//   -> { points, warning|null, source: "acled"|null }
+//   -> { points, warning|null, source: "acled"|null, status }
+//   status  "none" (no file is set), "ok" (battles found), "no-battles"
+//           (the file has none within 300 km of the area in the 12
+//           months) or "unusable" (the file could not be used). The
+//           warnings of the last two are worded so the pages can tell them
+//           apart (src/lib/atlas/overview.js acledFileState): a run whose
+//           fires found no fighting must not say "there is no ACLED file"
+//           when one is connected.
+export const ACLED_NO_BATTLES_WARNING = "The ACLED file has no battles within 300 km of this area in the last 12 months.";
 export function acledBattlesFor({ csvPath, bbox, month }) {
-  if (!csvPath) return { points: [], warning: null, source: null };
+  if (!csvPath) return { points: [], warning: null, source: null, status: "none" };
   try {
     const events = loadAcledEvents(csvPath);
     const result = battlePoints(events, { bbox, month });
     if (!result.points.length) {
-      return { points: [], warning: "The ACLED file has no battles within 300 km of this area in the last 12 months.", source: null };
+      return { points: [], warning: ACLED_NO_BATTLES_WARNING, source: null, status: "no-battles" };
     }
     const warning = result.relaxed ? "No place near this area had 5 or more recorded battles; every recorded battle was used." : null;
-    return { points: result.points, warning, source: "acled" };
+    return { points: result.points, warning, source: "acled", status: "ok" };
   } catch (error) {
-    return { points: [], warning: error.message, source: null };
+    // loadAcledEvents says "ACLED file not found: ..." or "... does not
+    // look like an ACLED export ..."; anything else (a file that cannot be
+    // read) is said as the ACLED file's problem too.
+    const message = String(error?.message || error);
+    return { points: [], warning: /ACLED/.test(message) ? message : `The ACLED file could not be read: ${message}`, source: null, status: "unusable" };
   }
 }
 

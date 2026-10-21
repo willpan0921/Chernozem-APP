@@ -58,9 +58,10 @@ export function safetyNoteFor(run) {
 // ---------------------------------------------------------------------------
 // Each item: { id, name, what (one plain sentence), formula, source }. The
 // Atlas items may also say what they are at peace (whatPeace, formulaPeace;
-// whatTeamPeace where the team marked the area as not at war) and in a
-// month that ends before its war began (whatBeforeWar, formulaBeforeWar):
-// src/components/atlas/MapLegend.jsx picks them.
+// whatTeamPeace where the team marked the area as not at war), in a
+// month that ends before its war began (whatBeforeWar, formulaBeforeWar)
+// and, for safe access, in a war where no fire looked like fighting
+// (whatNoFighting): src/lib/atlas/mapColors.js methodsFor picks them.
 
 export const fieldMethods = {
   title: "How it's measured",
@@ -129,12 +130,20 @@ export const atlasMethods = {
       whatPeace: "No known war covers this area, so access is not measured (this does not make the land safe).",
       whatTeamPeace: "Your team marked this area as not at war, so access is not measured (this does not make the land safe).",
       whatBeforeWar: "This month ends before the war began, so distance to fighting is not measured (this does not make the land safe).",
+      // After "Not measured here: no fires that look like fighting were
+      // found within 300 km (inside the war's region), and there is no
+      // ACLED file (or what the connected one did)." (mapColors.js
+      // methodsFor, from overview.js notMeasuredReason).
+      whatNoFighting: "The fire rule needs fire as dense as at a front line and well above the place's normal years; scattered strikes do not reach it. Every square counts as far from fighting, which does NOT make the land safe: recorded fighting (an ACLED file that covers this area) or your team's knowledge is needed here.",
       formula: "Distance to the nearest fighting, capped at 100 km",
       source: "ACLED battles when connected, else unusual fire inside a known war",
     },
   ],
   note: "Near term sets aside the least safe places and ranks the rest by soil value and damage; the long view blends all three. The soil-health index is shown for context only.",
   notePeace: "Near term ranks by soil value and damage; the long view blends all three. The soil-health index is shown for context only.",
+  // In a war where no fire looked like fighting (src/lib/atlas/overview.js
+  // noFightingFound): safe access is not measured, so nothing is set aside.
+  noteNoFighting: "Safe access is not measured here, so Near term sets nothing aside and ranks by soil value and damage; the long view blends all three. The soil-health index is shown for context only.",
   // Added for a war that covers a whole-country area only in part, and
   // (notePartOfArea) a region, a box or a drawn area; notePartOtherWar
   // after it when some squares have the war's rules because another listed

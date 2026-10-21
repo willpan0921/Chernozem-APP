@@ -11,7 +11,11 @@
 //          offers the re-run that applies it (never started by itself)
 //   Data   Earth Engine status and the .env lines that connect it,
 //          "Re-run analysis" and the switch that analyzes every saved
-//          area automatically each month
+//          area automatically each month. Under the latest month, when it
+//          is in a war where no fire looked like fighting, the run's own
+//          line saying safe access is not measured there, and how an ACLED
+//          file would measure it (overview.js noFightingNote; "Connect one"
+//          only when none is connected: acledFileState)
 //   AI     Claude status (the key is tested by "Check connections") and
 //          the .env line that connects it
 //   Team   who has access: add, change role, remove
@@ -47,7 +51,7 @@ import { API_ROOT, ApiError, AUTH_REQUIRED_EVENT, listJobs } from "../../api/atl
 import { lineMarks } from "../../lib/atlas/analysisNotice.js";
 import { formatAreaSize, formatMonthYear } from "../../lib/format.js";
 import { EARLIEST_WAR_DAY, WAR_NAME_MAX, checkAreaWar } from "../../config/conflicts.js";
-import { analysisMonths, areaWar, conflictOf, keepsMonth, monthsWithOtherWar, warDay, warKey, warPartOf, warText } from "../../lib/atlas/overview.js";
+import { acledFileState, analysisMonths, areaWar, conflictOf, keepsMonth, monthsWithOtherWar, noFightingNote, warDay, warKey, warPartOf, warText } from "../../lib/atlas/overview.js";
 import "./SettingsPage.css";
 
 // Where people make a Claude API key.
@@ -709,6 +713,10 @@ function DataCard() {
     : area
       ? "Not analyzed yet"
       : "Choose an area first";
+  // The latest month is in a war where no fire looked like fighting: its
+  // own line saying safe access is not measured (the run's warning), with
+  // how to measure it. Null for any other month.
+  const accessNote = noFightingNote(latest);
 
   return (
     <Card className="aset-card" title="Data">
@@ -741,6 +749,23 @@ function DataCard() {
           meta={latestMeta}
           action={area ? <RerunButton rerun={rerun} primary={needsRealData} /> : null}
         />
+        {accessNote && (
+          <p className="aset-access-note" role="note">
+            <strong>Safe access not measured in {latest.label}.</strong> {accessNote}{" "}
+            {/* "Connect one" only when no ACLED file is connected: with one
+                that has no battles near the area, or cannot be used, the
+                run's line says what to do with it (overview.js acledFileState). */}
+            {acledFileState(latest) ? (
+              <>
+                The file is the one <code>ACLED_CSV_PATH</code> names in .env (see docs/CONNECT-DATA.md).
+              </>
+            ) : (
+              <>
+                Connect one with <code>ACLED_CSV_PATH</code> in .env (see docs/CONNECT-DATA.md).
+              </>
+            )}
+          </p>
+        )}
         {rerun.running && <AnalysisProgress job={job} compact />}
         <RerunResult rerun={rerun} />
         {/* The last monthly update's failure, while its months are missing

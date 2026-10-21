@@ -15,7 +15,9 @@
 //              began) there is no cutoff: the panel says why instead, "No
 //              war recorded: nothing set aside", "Not at war (set by your
 //              team): nothing set aside" or "Before the war: nothing set
-//              aside" (overview.js peaceReason).
+//              aside" (overview.js peaceReason); in a war where no fire
+//              looked like fighting, "Safe access is not measured here, so
+//              nothing can be set aside for it" (overview.js setAsideNote).
 //
 // A drag (or a run of arrow-key presses) is always worked out from the
 // weights it started from, so moving a slider and putting it back gives
@@ -36,7 +38,7 @@ import { useAtlasData, useTimeframe } from "../../state/AtlasData.jsx";
 import { isDefaultSettings } from "../../lib/atlas/method.js";
 import { WEIGHT_KEYS, rebalanceWeights } from "../../lib/atlas/weights.js";
 import { nearTermShares } from "../../lib/atlas/scoring.js";
-import { accessMeasured, peaceReason, timeframeOptions } from "../../lib/atlas/overview.js";
+import { accessMeasured, setAsideNote, timeframeOptions } from "../../lib/atlas/overview.js";
 import "./atlas.css";
 
 const LABELS = {
@@ -193,11 +195,13 @@ export default function WeightsPanel({ showTimeframe = true, className = "" }) {
           />
         ))}
 
-        {/* At peace with no ACLED file (or in a month before its war began)
-            nothing can be set aside: access is 100 everywhere, so the cutoff
-            slider would change nothing. The note says why: "No war
-            recorded", "Not at war (set by your team)", "Before the war". */}
-        {nearTerm && run && !accessMeasured(run) && <p className="weights-note">{peaceReason(run)?.short || "No war recorded"}: nothing set aside</p>}
+        {/* At peace with no ACLED file (or in a month before its war began,
+            or in a war where no fire looked like fighting) nothing can be
+            set aside: access is 100 everywhere, so the cutoff slider would
+            change nothing. The note says why: "No war recorded", "Not at
+            war (set by your team)", "Before the war", or that safe access
+            is not measured here (overview.js setAsideNote). */}
+        {nearTerm && run && !accessMeasured(run) && <p className="weights-note">{setAsideNote(run)}</p>}
         {nearTerm && (!run || accessMeasured(run)) && (
           <WeightRow
             id="weight-gate"

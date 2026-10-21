@@ -36,7 +36,7 @@ import RunPicker from "../../components/atlas/RunPicker.jsx";
 import WeightsPanel from "../../components/atlas/WeightsPanel.jsx";
 import { cellBounds, compassName, coordDigits, findFocus, labelParts, placesExtent } from "../../lib/atlas/hotspots.js";
 import { rankedCount } from "../../lib/atlas/mapColors.js";
-import { accessMeasured, recoveryCost } from "../../lib/atlas/overview.js";
+import { accessMeasured, noFightingFound, recoveryCost } from "../../lib/atlas/overview.js";
 import { COST_NOTE } from "../../lib/atlas/method.js";
 import { formatAreaSize, formatCoord, formatCount, formatHaShort } from "../../lib/format.js";
 import { haFixed } from "./overviewHelpers.js";
@@ -143,7 +143,10 @@ function TopAreas({ hotspots, headingRef, onPick, onHover }) {
 
 // ---------- Right panel: one picked place ----------
 
-function PlaceDetail({ detail, titleRef, onBack, onZoom, onAsk }) {
+//   accessUnknown  safe access is not measured in this run because no fire
+//                  looked like fighting (overview.js noFightingFound): its
+//                  bar says "Not measured", never a full 100 in a war zone
+function PlaceDetail({ detail, titleRef, onBack, onZoom, onAsk, accessUnknown = false }) {
   const tier = TIERS[detail.tier] || TIERS.notAnalyzed;
   const cost = recoveryCost(detail.blackSoilHa);
   const bars = [
@@ -175,6 +178,7 @@ function PlaceDetail({ detail, titleRef, onBack, onZoom, onAsk }) {
 
       <div className="mp-bars">
         {bars.map((bar) => {
+          if (bar.key === "access" && accessUnknown) return <ScoreBar key={bar.key} label={bar.label} tone={bar.tone} value={0} show="Not measured" valueText="Not measured here" />;
           const value = score100(detail[bar.key]);
           return <ScoreBar key={bar.key} label={bar.label} tone={bar.tone} value={(value ?? 0) / 100} show={value ?? "–"} />;
         })}
@@ -307,7 +311,8 @@ function MapView({ held }) {
   const [timeframe] = useTimeframe();
   const [chosenColor, setColorBy] = useColorBy();
   // At peace with no ACLED file safe access is 100 everywhere: there is no
-  // Access layer (an old ?color=access link shows Priority).
+  // Access layer (an old ?color=access link shows Priority). So too in a
+  // war where no fire looked like fighting (overview.js accessMeasured).
   const colorBy = chosenColor === "access" && !accessMeasured(run) ? "priority" : chosenColor;
   const [params, setParams] = useSearchParams();
   const [hoverIds, setHoverIds] = useState(null);
@@ -539,7 +544,7 @@ function MapView({ held }) {
 
       <aside ref={rightRef} className="mp-right" aria-label={detail ? "Selected place" : "Top areas"}>
         {detail ? (
-          <PlaceDetail detail={detail} titleRef={titleRef} onBack={() => setFocus(null)} onZoom={() => flyTo(detail.bounds)} onAsk={askAi} />
+          <PlaceDetail detail={detail} titleRef={titleRef} onBack={() => setFocus(null)} onZoom={() => flyTo(detail.bounds)} onAsk={askAi} accessUnknown={noFightingFound(run)} />
         ) : (
           <TopAreas hotspots={top} headingRef={headingRef} onPick={pickHotspot} onHover={setHoverIds} />
         )}

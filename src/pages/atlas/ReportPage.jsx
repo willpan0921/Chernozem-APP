@@ -10,7 +10,11 @@
 // this run (overview.js damageMeaning, accessMeaning): in a war, unusual
 // fire and radar change, and distance to fighting; at peace, the heavily
 // damaged share of the black soil, and "everywhere counts as safe to
-// reach" (never "distance to fighting").
+// reach" (never "distance to fighting"); in a war where no fire looked
+// like fighting (overview.js noFightingFound), that safe access is not
+// measured here: nothing is set aside, the tables' Access column shows
+// "–", and the CSV leaves safe access and distance empty, never a full
+// 100 (or 1) in a war zone.
 // Everything is worked out from the selected run and the team's current
 // weights, so it always matches what the map shows. The month is kept in
 // the address (?month=2026-09), so a shared link opens the same month. Top
@@ -22,7 +26,8 @@
 //
 // "Save as PDF" opens the browser's print window (pick "Save as PDF"
 // there). When printed, the sidebar and the buttons are hidden.
-// "Download CSV" saves every map square with its scores as a spreadsheet.
+// "Download CSV" saves every map square with its scores as a spreadsheet
+// (src/lib/atlas/reportCsv.js cellsCsv).
 //
 // WHO EDITS IT
 // Whoever changes what goes into the report.
@@ -31,10 +36,9 @@ import { useEffect, useMemo } from "react";
 import { ArrowLeft, Download, Printer } from "lucide-react";
 import { Button, Badge } from "../../components/ui/index.js";
 import { AtlasGate, useAtlasData, useTimeframe } from "../../state/AtlasData.jsx";
-import { placeLabel } from "../../lib/atlas/hotspots.js";
-import { accessMeaning, accessMeasured, alertPlaces, atPeace, damageMeaning, describeAlert, imageryText, kpis, nearTermSetAside, peaceReason, seasonWords, shownNewDamage, summarize, timeframeLabel } from "../../lib/atlas/overview.js";
+import { accessMeaning, accessMeasured, alertPlaces, atPeace, damageMeaning, describeAlert, imageryText, kpis, longTermAccessNote, nearTermSetAside, noFightingFound, notMeasuredReason, seasonWords, shownNewDamage, summarize, timeframeLabel } from "../../lib/atlas/overview.js";
+import { cellsCsv } from "../../lib/atlas/reportCsv.js";
 import { formatHaShort, listNames } from "../../lib/format.js";
-import { toCsv } from "../../lib/csv.js";
 import { atlasLink, haFixed, nameAreas, priorityIndex, useMonthInUrl, warNote, weightItems } from "./overviewHelpers.js";
 import "./ReportPage.css";
 
@@ -75,46 +79,6 @@ const INDICATOR_NAMES = {
 function madeOf(label, list = []) {
   const words = list.map((key) => INDICATOR_NAMES[key] || key);
   return words.length === 1 ? `${label} is ${words[0]}` : `${label} is the mean of ${listNames(words)}`;
-}
-
-const round = (value, digits) => (Number.isFinite(value) ? Number(value.toFixed(digits)) : "");
-
-// One spreadsheet row per map square: where it is, its hectares and
-// people, the three scores and both rankings, and the raw indicators.
-export function cellsCsv(places, cellSizeDeg) {
-  const rows = places.map((place) => ({
-    cell_id: place.id,
-    place: placeLabel(place, cellSizeDeg),
-    lat: place.lat,
-    lon: place.lon,
-    admin1: place.admin1 || "",
-    admin2: place.admin2 || "",
-    cropland_ha: round(place.croplandHa, 1),
-    black_soil_ha: round(place.blackSoilHa, 1),
-    heavy_damage_ha: round(place.heavyDamageHa, 1),
-    people: round(place.people, 0),
-    people_on_damaged_soil: round(place.peopleOnDamagedSoil, 0),
-    soil_value: round(place.soil, 4),
-    damage: round(place.damage, 4),
-    safe_access: round(place.access, 4),
-    near_term_rank: place.nearTerm.rank ?? "",
-    near_term_score: round(place.nearTerm.score, 4),
-    near_term_tier: place.nearTerm.tier,
-    postwar_rank: place.postwar.rank ?? "",
-    postwar_score: round(place.postwar.score, 4),
-    postwar_tier: place.postwar.tier,
-    wrb: place.wrb,
-    ag_output: place.agOutput,
-    firms: place.firms,
-    radar: place.radar,
-    chi: place.chi,
-    distance: place.distance,
-    population: place.population,
-    lights: place.lights,
-  }));
-  // Best Postwar rank first, unranked squares last.
-  rows.sort((a, b) => (a.postwar_rank || Infinity) - (b.postwar_rank || Infinity));
-  return toCsv(rows);
 }
 
 function downloadCsv(text, fileName) {
@@ -160,13 +124,18 @@ function Report() {
   const measured = accessMeasured(run);
   // Why nothing is set aside, in the run's own words: "no war recorded",
   // "not at war, set by your team" (never "no war recorded" over a war the
-  // team overrode) or "before the war, which began on 1 June 2026".
-  const quiet = peaceReason(run);
+  // team overrode), "before the war, which began on 1 June 2026", or, in a
+  // war where no fire looked like fighting, "safe access not measured here"
+  // (overview.js notMeasuredReason).
+  const quiet = notMeasuredReason(run);
   const nearTermWeights = weightItems(settings, "nearTerm")
     .filter((item) => measured || item.key !== "access")
     .map((item) => item.text)
     .concat(measured ? [] : [`nothing set aside (${quiet?.note || "no war recorded"})`])
     .join(" · ");
+  // Safe access not measured in a war (no fire looked like fighting): the
+  // tables show "–" for it, not 100.
+  const accessUnknown = noFightingFound(run);
 
   return (
     <div className="page rp-page">
@@ -175,7 +144,7 @@ function Report() {
           Overview
         </Button>
         <span className="rp-spacer" />
-        <Button icon={<Download size={14} />} onClick={() => downloadCsv(cellsCsv(scored.places, run.cellSizeDeg), `${fileBase}.csv`)}>
+        <Button icon={<Download size={14} />} onClick={() => downloadCsv(cellsCsv(scored.places, run.cellSizeDeg, { accessUnknown }), `${fileBase}.csv`)}>
           Download CSV
         </Button>
         <Button variant="primary" icon={<Printer size={14} />} onClick={() => window.print()}>
@@ -214,12 +183,12 @@ function Report() {
 
         <section className="rp-section">
           <h2>Top 10 · Near term</h2>
-          <TopTable list={nearTerm} />
+          <TopTable list={nearTerm} accessUnknown={accessUnknown} />
         </section>
 
         <section className="rp-section">
           <h2>Top 10 · {longTerm}</h2>
-          <TopTable list={postwar} />
+          <TopTable list={postwar} accessUnknown={accessUnknown} />
         </section>
 
         <section className="rp-section">
@@ -238,7 +207,7 @@ function Report() {
               <dt>{longTerm}</dt>
               <dd>
                 {weightItems(settings, "postwar").map((item) => item.text).join(" · ")}
-                {measured ? "" : " (access is full everywhere, so the order follows soil and damage)"}
+                {longTermAccessNote(run)}
               </dd>
             </div>
             <div>
@@ -278,7 +247,10 @@ function Report() {
             {nearTermSetAside(run, settings)}{" "}
             {longTerm} blends all three (weighted power mean, r = {settings.r}). The soil-health index (chi) is a diagnostic in the CSV, not part
             of the damage score. In the tables the three scores are shown 0–100, and priority is each area's score as a share of the best
-            square in that time frame (100 = the best). The exact scores are in the CSV.
+            square in that time frame (100 = the best).{" "}
+            {accessUnknown
+              ? "The exact scores are in the CSV, where safe access and distance to fighting are left empty: they are not measured here."
+              : "The exact scores are in the CSV."}
           </p>
           {/* A month before its war began keeps the deminers' line: the
               area is at war now, and the land may be mined since. */}
@@ -304,8 +276,9 @@ const outOf100 = (value) => (Number.isFinite(value) ? Math.round(value * 100) : 
 
 // One ranking: rank, area (name, then coordinates), black-soil hectares
 // with the group's size, damaged hectares, the three scores and the
-// priority, all 0–100.
-function TopTable({ list }) {
+// priority, all 0–100. accessUnknown: safe access is not measured in this
+// run (no fire looked like fighting), so its column shows "–".
+function TopTable({ list, accessUnknown = false }) {
   if (!list.length) return <p className="rp-line">No place qualifies with these settings.</p>;
   return (
     <div className="table-wrap">
@@ -337,7 +310,7 @@ function TopTable({ list }) {
               <td className="num">{haFixed(item.heavyDamageHa)}</td>
               <td className="num">{outOf100(item.soil)}</td>
               <td className="num">{outOf100(item.damage)}</td>
-              <td className="num">{outOf100(item.access)}</td>
+              <td className="num">{accessUnknown ? "–" : outOf100(item.access)}</td>
               <td className="num rp-score">{priorityIndex(item) ?? "–"}</td>
             </tr>
           ))}

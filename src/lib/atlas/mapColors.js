@@ -14,10 +14,16 @@
 // Damage and access use FIXED cut points (not "best = darkest"), so the
 // same colour means the same thing in every month and every area.
 //
+// Also the words of the map key (src/components/atlas/MapLegend.jsx): its
+// legend (legendFor), its note where safe access is not measured because
+// no fire looked like fighting (accessKeyNote), and its "How it's
+// measured" panel (methodsFor).
+//
 // WHO EDITS IT
 // Whoever changes how the map is coloured. Tested in mapColors.test.js.
 
-import { accessMeasured, beforeWar, warSetByTeam } from "./overview.js";
+import { atlasMethods } from "../../config/research.js";
+import { accessMeasured, atPeace, beforeWar, noFightingFound, notMeasuredReason, warInPart, warPartOf, warSetByTeam } from "./overview.js";
 
 export const COLOR_MODES = ["priority", "damage", "access"];
 
@@ -44,14 +50,86 @@ export const LEGENDS = {
 // Settings: run.conflictSource "area"), or the month ends before its war
 // began, and no ACLED file was used (overview.js accessMeasured), distance
 // to fighting is not measured: every square reads 100 km +, which is not
-// the same as safe.
+// the same as safe. Nor is it in a war where no fire looked like fighting
+// (overview.js noFightingFound): "Fires too sparse to tell", never a word
+// that reads as "no fighting".
 export function legendFor(colorBy, run) {
   const legend = LEGENDS[colorBy] || LEGENDS.priority;
   if (colorBy === "access" && run && !accessMeasured(run)) {
-    const high = beforeWar(run) ? "Before the war" : warSetByTeam(run) ? "Not at war (your team)" : "No war listed";
+    const high = noFightingFound(run) ? "Fires too sparse to tell" : beforeWar(run) ? "Before the war" : warSetByTeam(run) ? "Not at war (your team)" : "No war listed";
     return { ...legend, title: "Distance to fighting: not measured", high };
   }
   return legend;
+}
+
+// The map key's line where safe access is not measured because no fire
+// looked like fighting (overview.js noFightingFound): the key leaves the
+// Access colouring out (every square would read "100 km +", which in a war
+// zone is not safe to reach) and says why: "Safe access not measured here:
+// no fires that look like fighting were found within 300 km". Null for any
+// other run (at peace the key has no Access colouring either, and the
+// "How it's measured" panel says why).
+export function accessKeyNote(run) {
+  if (!noFightingFound(run)) return null;
+  const reason = notMeasuredReason(run);
+  return `${reason.short}: ${reason.found}`;
+}
+
+// The "How it's measured" panel's words for this run (src/config/
+// research.js atlasMethods):
+//   at peace           the damage score is the heavily damaged share, and
+//                      safe access is not measured unless an ACLED file is
+//                      (whatTeamPeace when the team marked the area as not
+//                      at war, Atlas Settings)
+//   before its war     the month ends before its war began: no war damage
+//                      is counted and distance is not measured
+//   no fighting found  in a war where no fire looked like fighting
+//                      (overview.js noFightingFound): the war's words, but
+//                      safe access is not measured (whatNoFighting) and
+//                      nothing is set aside (noteNoFighting)
+//   a war in part      a war that covers the area (a whole country, or a
+//                      region, box or drawn area) only in part: the note
+//                      says its rules apply in the squares that touch its
+//                      region (and those in another listed war, when there
+//                      are any: run.otherWarSquares), and the two peace
+//                      rules used elsewhere
+export function methodsFor(run) {
+  const peace = atPeace(run);
+  const before = beforeWar(run);
+  const measured = !run || accessMeasured(run);
+  const noFighting = noFightingFound(run);
+  // Where no fire looked like fighting: what was searched (inside the war's
+  // region, for a war in part of the area) and what the ACLED file did, as
+  // the key's note and the war line say it (overview.js notMeasuredReason).
+  const notMeasuredItems = () => {
+    const reason = notMeasuredReason(run);
+    const what = (item) => `Not measured here: ${reason.found}, and ${reason.acled}. ${item.whatNoFighting}`;
+    return atlasMethods.items.map((item) => (item.id === "access" && item.whatNoFighting ? { ...item, what: what(item) } : item));
+  };
+  const warNote = noFighting ? atlasMethods.noteNoFighting || atlasMethods.note : atlasMethods.note;
+  // A war in part of the area: the war's words, and where they apply.
+  if (warInPart(run)) {
+    const part = warPartOf(run.conflict) === "area" ? atlasMethods.notePartOfArea : atlasMethods.notePartOfCountry;
+    const other = run.otherWarSquares > 0 ? atlasMethods.notePartOtherWar : "";
+    return { ...atlasMethods, ...(noFighting ? { items: notMeasuredItems() } : {}), note: [warNote, part, other, atlasMethods.notePartElsewhere].filter(Boolean).join(" ") };
+  }
+  if (noFighting) return { ...atlasMethods, items: notMeasuredItems(), note: warNote };
+  if (!peace && !before && measured) return atlasMethods;
+  const team = warSetByTeam(run);
+  const words = (item) => {
+    if (item.id === "access") {
+      if (measured) return {};
+      return { what: (before && item.whatBeforeWar) || (team && item.whatTeamPeace) || item.whatPeace || item.what };
+    }
+    if (before && item.whatBeforeWar) return { what: item.whatBeforeWar, ...(item.formulaBeforeWar ? { formula: item.formulaBeforeWar } : {}) };
+    if (peace && item.whatPeace) return { what: item.whatPeace, ...(item.formulaPeace ? { formula: item.formulaPeace } : {}) };
+    return {};
+  };
+  return {
+    ...atlasMethods,
+    items: atlasMethods.items.map((item) => ({ ...item, ...words(item) })),
+    note: measured ? atlasMethods.note : atlasMethods.notePeace || atlasMethods.note,
+  };
 }
 
 function stepFromCuts(value, cuts) {

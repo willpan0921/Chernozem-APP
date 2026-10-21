@@ -185,6 +185,15 @@
   flex: 0 0 auto;
 }
 
+/* In a war where no fire looked like fighting: why the key has no Access
+   colouring and nothing is set aside (mapColors.js accessKeyNote). */
+.map-legend-note {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--c-amber-text);
+}
+
 /* ---------- WeightsPanel ---------- */
 
 .weights {

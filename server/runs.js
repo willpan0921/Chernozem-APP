@@ -104,10 +104,12 @@ export function beforeWarWarning(since, { accessMeasured = false } = {}) {
 }
 
 // Where the distance to fighting came from: "acled" (battles in the ACLED
-// file), "fires" (unusual fires inside a known war), "none" (no war, or a
-// month before its war began: nothing measured), or null when the data
+// file), "fires" (unusual fires inside a known war), "fires-none" (inside
+// a known war, but no fire within 300 km of any square looked like
+// fighting: nothing measured, server/providers/gee.js), "none" (no war, or
+// a month before its war began: nothing measured), or null when the data
 // source does not say.
-export const ACCESS_SOURCES = ["acled", "fires", "none"];
+export const ACCESS_SOURCES = ["acled", "fires", "fires-none", "none"];
 function cleanAccessSource(value) {
   return ACCESS_SOURCES.includes(value) ? value : null;
 }

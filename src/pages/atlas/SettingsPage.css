@@ -375,6 +375,24 @@
   color: var(--c-muted);
 }
 
+/* The latest month is in a war where no fire looked like fighting: safe
+   access is not measured there (overview.js noFightingNote). */
+.aset-access-note {
+  margin: 0 0 0 46px;
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--r-sm);
+  background: var(--c-amber-soft);
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--c-amber-text);
+  overflow-wrap: anywhere;
+}
+
+.aset-access-note code {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
 .aset-card .atlas-progress.is-compact {
   margin-left: 46px;
 }
@@ -511,6 +529,7 @@
 
   .aset-setup,
   .aset-war-controls,
+  .aset-access-note,
   .aset-card .atlas-progress.is-compact {
     margin-left: 0;
   }
