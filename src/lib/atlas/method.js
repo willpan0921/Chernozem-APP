@@ -305,8 +305,8 @@ export const METHOD_VERSION = "2026-10-19.3";
 //   "grid"    different square sizes
 //   "war"     one was made at war and the other at peace, or with another
 //             war start (run.conflict.since), or one with the war's rules
-//             all over a whole-country area and the other only in the
-//             squares that touch the war's region (partOfCountry): the
+//             all over the area and the other only in the war's squares
+//             (partOfCountry: server/conflicts.js warCellsFor): the
 //             damage window, the fire years, the war seasons and the rules
 //             differ (warKey). Happens when the team changes the area's war
 //             setting (Atlas Settings) or the app's list of wars changes,
@@ -322,9 +322,11 @@ export const NOT_COMPARABLE_WHY = {
   war: "different war setting",
 };
 // What decides a war's numbers: the day it began (the damage window, the
-// fire years and the war seasons follow it), and, for a war that covers a
-// whole-country area only in part (conflict.partOfCountry), that its rules
-// apply only in the squares that touch its region; null at peace,
+// fire years and the war seasons follow it), and, for a war that covers its
+// area only in part (conflict.partOfCountry, a whole country or any other
+// kind of area: server/conflicts.js listWarFor), that its rules apply only
+// in its squares (those that touch its region or lie in another listed
+// war: server/conflicts.js warCellsFor); null at peace,
 // undefined when not known. Two runs (or a run and a setting) with the same
 // key give the same numbers; the war's name does not matter.
 export function warKey(conflict) {

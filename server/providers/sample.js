@@ -31,12 +31,14 @@
 //   - a month that ends before its war began (a war set from a later day):
 //     no front either, and no fire or radar damage counted at all, as on
 //     Earth Engine (src/config/conflicts.js endsBeforeWar)
-//   - a whole-country area that holds its war only in part (Thailand,
-//     Russia...: conflict.partOfCountry): the made-up front runs through
-//     the squares that touch the war's boxes (src/config/conflicts.js
-//     warSquares), which get the war's readings; the other squares get the
-//     readings of peace, with their distance to that front (as Earth
-//     Engine: each reading says which, atWar)
+//   - an area that holds its war only in part (a whole country such as
+//     Thailand or Russia, or a region, box or drawn area across the edge
+//     of the war's boxes: conflict.partOfCountry): the made-up front runs
+//     through the war's squares (those that touch its boxes or lie in
+//     another listed war: server/conflicts.js warCellsFor), which get the
+//     war's readings; the other squares get the readings of peace, with
+//     their distance to that front (as Earth Engine: each reading says
+//     which, atWar)
 //   - alerts: the cells where damage or fires grew most since last month
 //
 // It returns the same shape as the Earth Engine source (gee.js), so the
@@ -47,9 +49,9 @@
 
 import { HEAVY_DAMAGE_CHI_DROP } from "../../src/lib/atlas/method.js";
 import { formatCoord } from "../geo.js";
-import { conflictForArea } from "../conflicts.js";
+import { conflictForArea, warCellsFor } from "../conflicts.js";
 import { NO_WAR_WARNING, beforeWarWarning, cleanConflict } from "../runs.js";
-import { endsBeforeWar, warSquares } from "../../src/config/conflicts.js";
+import { endsBeforeWar } from "../../src/config/conflicts.js";
 
 // The distance to fighting at peace: the most that is measured (as gee.js).
 const PEACE_KM = 300;
@@ -552,13 +554,15 @@ export function sampleReadings({ area, cells, month, cellSizeDeg, conflict: give
   const sampleWarning = "Sample data: made-up values for trying the app, not satellite measurements.";
   if (!cells.length) return { readings: [], alerts: [], warnings: [sampleWarning], conflict };
   const seed = hashString(String(area.id));
-  // A war that covers the area only in part: its squares (null: all).
-  const warCells = warSquares(conflict, cells, cellSizeDeg);
+  // A war that covers the area only in part: its squares (null: all),
+  // those that touch its boxes or lie in another listed war, as on Earth
+  // Engine.
+  const warCells = warCellsFor(conflict, cells, cellSizeDeg);
   const frame = makeFrame(area, cells, conflict, warCells ? cells.filter((cell) => warCells.has(cell.id)) : null);
   const statics = staticFields(area, cells, frame, seed);
   const cellKm = (cellSizeDeg || 0) * frame.kx;
   // Outside the war's squares: the readings of peace, with the distance to
-  // the front in the war's region (300 km when no square touches it). A
+  // the front in the war's squares (300 km when there are none). A
   // month before the war began has no war readings anywhere already.
   const fieldsFor = (m) => {
     const fields = monthFields(statics, frame, m, seed, cellKm);

@@ -18,6 +18,7 @@
 // Whoever changes what a run contains. Saved runs keep their numbers.
 
 import { COMPONENTS, METHOD_VERSION, SCALES, runsComparable, scaleIndicator } from "../src/lib/atlas/method.js";
+import { warSquares } from "../src/config/conflicts.js";
 import { cellSizeKm } from "./geo.js";
 import { imageryMonths } from "../src/lib/season.js";
 import { newId } from "./store.js";
@@ -114,14 +115,17 @@ function cleanAccessSource(value) {
 // The war stored on a run (or a field analysis): { id, name, since } or
 // null; a war the team set for the area (server/conflicts.js
 // conflictForArea) also keeps source: "area", and a war of the app's list
-// limited to boxes, on an area that is the whole country (so the war's
-// rules apply all over it: src/config/conflicts.js LIMITS), keeps
-// partOfCountry: true (server/jobs.js).
+// limited to boxes that covers the area only in part (its rules apply only
+// in the squares that touch the boxes or lie in another listed war:
+// server/conflicts.js listWarFor) keeps partOfCountry: true, and partOf:
+// "area" when the area is not a whole country (a region, a box or a drawn
+// area).
 export function cleanConflict(value) {
   if (!value || typeof value !== "object" || !value.id || !/^\d{4}-\d{2}-\d{2}$/.test(String(value.since || ""))) return null;
   const war = { id: String(value.id), name: String(value.name || value.id), since: String(value.since) };
   if (value.source === "area") return { ...war, source: "area" };
-  return value.partOfCountry === true ? { ...war, partOfCountry: true } : war;
+  if (value.partOfCountry !== true) return war;
+  return value.partOf === "area" ? { ...war, partOfCountry: true, partOf: "area" } : { ...war, partOfCountry: true };
 }
 
 // Who decided a run's war (or its peace): "area" when the team set it for
@@ -164,7 +168,10 @@ function providerId(provider) {
 // accessSource: where distance to fighting came from (ACCESS_SOURCES).
 // A reading may say atWar (true or false): for a war that covers the area
 // only in part, whether the square had the war's rules; the run then keeps
-// it on the cell and counts the war's squares (warSquares).
+// it on the cell and counts the war's squares (warSquares), and of them
+// those that had its rules because another listed war covers them, not
+// because they touch its boxes (otherWarSquares, when there are any:
+// server/conflicts.js warCellsFor; the pages and the AI then say so).
 // conflictSource: "area" when the team set the war (or the peace) for the
 // area, "list" (the default) when the app's list decided. At peace by the
 // team's choice the run says so (TEAM_PEACE_WARNING) instead of "no war in
@@ -222,7 +229,7 @@ export function buildRun({ area, month, provider, readings = [], alerts = [], wa
     if (raw.admin1) out.admin1 = String(raw.admin1);
     if (raw.admin2) out.admin2 = String(raw.admin2);
     // Which rules the square was read with, where the war covers the area
-    // only in part (conflict.partOfCountry): false outside the war's region
+    // only in part (conflict.partOfCountry): false outside the war's squares
     // (peace rules; scoring.js gives it the peace damage score).
     if (typeof raw.atWar === "boolean") out.atWar = raw.atWar;
     outCells.push(out);
@@ -257,8 +264,12 @@ export function buildRun({ area, month, provider, readings = [], alerts = [], wa
   const decidedBy = cleanConflictSource(conflictSource, war);
   const said = !war && decidedBy === "area" ? warnings.map((w) => (w === NO_WAR_WARNING ? TEAM_PEACE_WARNING : w)) : warnings;
   // A war that covers the area only in part: how many squares had its rules
-  // (the Overview's chip, the report and the AI say "in 12 of 340 squares").
+  // (the Overview's chip, the report and the AI say "in 12 of 340 squares"),
+  // and how many of them lie in another listed war without touching the
+  // war's boxes.
   const marked = war?.partOfCountry && outCells.some((cell) => typeof cell.atWar === "boolean");
+  const touching = marked ? warSquares(war, outCells, cellSizeDeg) : null;
+  const otherWar = touching ? outCells.filter((cell) => cell.atWar === true && !touching.has(cell.id)).length : 0;
 
   return {
     id: newId("run"),
@@ -277,6 +288,7 @@ export function buildRun({ area, month, provider, readings = [], alerts = [], wa
     cellSizeKm: Math.round(cellSizeKm(cellSizeDeg, midLat) * 1000) / 1000,
     cellCount: outCells.length,
     ...(marked ? { warSquares: outCells.filter((cell) => cell.atWar !== false).length } : {}),
+    ...(otherWar > 0 ? { otherWarSquares: otherWar } : {}),
     totals,
     newHeavyDamageHa: null,
     alertsCount: strongest.length,

@@ -40,9 +40,9 @@
 //                  HEAVY_DAMAGE), on the lasting radar change (reached in
 //                  at least two war seasons; with one season, that one):
 //                  3 dB or more, or 2 dB or more within 1 km of an unusual
-//                  fire; away from any known war (and in the squares of a
-//                  whole-country area outside its war's boxes) 3 dB or more
-//                  AND within 1 km of an unusual fire
+//                  fire; away from any known war (and in the squares of an
+//                  area outside the squares of a war that covers it only
+//                  in part) 3 dB or more AND within 1 km of an unusual fire
 //   firesPer100Km2 FIRMS (band T21) detections above the normal (2019-2021
 //                  count / 3) in the WORST war year of the damage window
 //                  (years from the war's start, not overlapping), the
@@ -109,14 +109,18 @@
 // src/lib/season.js), or from its latitude where that is not clear; cells
 // are measured in groups of the same season. The war, if any, comes from
 // the job (the team's choice for the area, else the app's list:
-// server/conflicts.js). A whole-country area that holds its war only in
-// part (conflict.partOfCountry) gets the war's rules square by square: in
-// the squares that touch the war's boxes (src/config/conflicts.js
-// warSquares), with unusual fires inside the boxes standing in for
+// server/conflicts.js). An area that holds its war only in part (a whole
+// country, or a region, box or drawn area across the edge of the war's
+// boxes: conflict.partOfCountry, server/conflicts.js listWarFor) gets the
+// war's rules square by square: in the squares that touch the war's boxes
+// or lie in another listed war (server/conflicts.js warCellsFor), with
+// unusual fires inside the boxes and those squares standing in for
 // fighting; elsewhere the peace rule for heavy damage (each reading says
-// which: atWar). The result says which war it used (`conflict`, or null at
-// peace), which season it compared (`imagery`) and where distance to
-// fighting came from (`accessSource`).
+// which: atWar). Every square keeps the war's dates (the damage window,
+// the fire years, the war seasons). The result
+// says which war it used (`conflict`, or null at peace), which season it
+// compared (`imagery`) and where distance to fighting came from
+// (`accessSource`).
 //
 // Nothing here runs until Earth Engine credentials are in .env (see
 // docs/CONNECT-DATA.md). `npm run gee:check` tries it on real data.
@@ -134,7 +138,7 @@ import { FIRE_YEARS, HEAVY_DAMAGE, fireYears } from "../../src/lib/atlas/method.
 import { blackSoilFloor } from "../../src/lib/atlas/scoring.js";
 import { areaDamageSeasons, baselineWindows, climateBand, damageSeasons, lastCompleteSeason, peakMonthFrom, sameWindowIn, windowLabel } from "../../src/lib/season.js";
 import { damageWindow, warBoxes, warSquares } from "../../src/config/conflicts.js";
-import { conflictForArea } from "../conflicts.js";
+import { conflictForArea, warCellsFor } from "../conflicts.js";
 import { acledBattlesFor, expandBbox } from "./acled.js";
 
 // ---------- Fixed choices ----------
@@ -218,6 +222,27 @@ export const ORBIT_PASSES = ["ASCENDING", "DESCENDING"];
 // Unusual fire for heavy damage: the fire density over this radius (m)
 // above the normal years' (the paper smooths fire over 5 km).
 export const FIRE_SMOOTH_M = 5000;
+// Small areas: the fire images (the 5 km smoothing) and the distance to
+// fighting are worked out on a 1 km grid (FIRE_GRID_M: EPSG:4326 at 1 km,
+// the grid the other fire counts here use) when the cells are measured
+// with pixels finer than FINE_SCALE_M, and the 1 km "unusual fire nearby"
+// ring is drawn around those 1 km fire pixels on a RING_GRID_M grid, so it
+// keeps its size (on the 1 km grid itself a 1 km circle is only the pixel
+// and its four neighbours). Without this Earth Engine does the smoothing
+// at the cells' own pixel size: at 46 m (1 km cells, a box of about 1,200
+// km²) each pixel's 5 km circle holds about 37,000 pixels, for every war
+// year. Real data, 2026-10-20: a 0.4° x 0.3° box in south Lebanon (1,200
+// cells of 1 km) ran over 30 minutes on one month, at war and at peace,
+// and failed; Lebanon (5 km cells, 231 m pixels) took 12 minutes; Kharkiv
+// oblast (11 km cells, 362 m pixels) took about 30 s. FIRMS detections are
+// 1 km footprints, so the fire maths loses no detail on the 1 km grid
+// (a fire pixel can land one grid step off). Cells of about 6 km or more
+// (measured at FINE_SCALE_M or coarser: Ukraine, Kenya, Kharkiv oblast and
+// the other saved areas) are computed exactly as before; small countries
+// such as Lebanon or Israel now take the 1 km grid too.
+export const FINE_SCALE_M = 300;
+export const FIRE_GRID_M = 1000;
+export const RING_GRID_M = 250;
 // Finding each place's growing season (src/lib/season.js): the mean MODIS
 // NDVI of each calendar month in 2019-2021 over the cell's cropland,
 // reduced at a pixel size between minScale and maxScale (m). At most
@@ -1101,15 +1126,24 @@ async function analyzeMonth(deps, { area, cells, month, cellSizeDeg, onProgress,
   const today = isoDay(deps.now());
   const conflict = cleanConflict(givenConflict !== undefined ? givenConflict : conflictForArea({ countryId: area.countryId, bbox, cells, war: area.war, areaId: area.id }));
   const shared = monthWindows(month, today, { lat: midLat, conflict });
-  // A whole-country area that holds its war only in part (Thailand, Russia,
-  // Ethiopia...: conflict.partOfCountry, server/jobs.js warFor): the war's
-  // rules apply in the squares that touch its boxes (warCells); the others
-  // are read at peace rules (heavy damage needs strong radar change AND an
-  // unusual fire; scoring.js gives them the peace damage score), and the
-  // fires that stand in for fighting are taken from inside the boxes only,
-  // so a wildfire far from the front is not read as fighting. Null: every
-  // square has the area's rules.
-  const warCells = warSquares(conflict, cells, cellSizeDeg);
+  // An area that holds its war only in part (a whole country such as
+  // Thailand, Russia or Ethiopia, or a region, box or drawn area across the
+  // edge of the war's boxes: conflict.partOfCountry, server/conflicts.js
+  // listWarFor): the war's rules apply in the squares that touch its boxes,
+  // and in those another listed war covers (warCells: server/conflicts.js
+  // warCellsFor; the Sumy side of a box over the Kursk front). The others
+  // keep the war's windows (monthWindows: the damage window, the fire
+  // years, the war seasons); only their heavy damage follows the peace
+  // rule (strong radar change AND an unusual fire; scoring.js gives them
+  // the peace damage score), and the fires that stand in for fighting are
+  // taken from inside the boxes and the war's squares of another listed
+  // war only, so a wildfire far from the front is not read as fighting.
+  // Null: every square has the area's rules.
+  const warCells = warCellsFor(conflict, cells, cellSizeDeg);
+  // Those of them that lie in another listed war without touching the
+  // boxes.
+  const touching = warCells ? warSquares(conflict, cells, cellSizeDeg) : null;
+  const otherWarCells = warCells ? cells.filter((cell) => warCells.has(cell.id) && !touching.has(cell.id)) : [];
   const chunkSize = chunkSizeFor(cellSizeDeg, midLat);
   let total = Math.ceil(cells.length / chunkSize) * 2 + 3;
   let done = 0;
@@ -1145,8 +1179,9 @@ async function analyzeMonth(deps, { area, cells, month, cellSizeDeg, onProgress,
   step("Checking satellite images");
   const bufferRegion = boxesGeometry(ee, cellBoxes(cells, cellSizeDeg, MAX_CONFLICT_M / 1000));
   // Where unusual fires stand in for fighting: within 300 km of the cells,
-  // or for a war that covers the area only in part, inside its boxes.
-  const fightRegion = warCells ? boxesGeometry(ee, warBoxes(conflict)) : bufferRegion;
+  // or for a war that covers the area only in part, inside its boxes and
+  // its squares that another listed war covers.
+  const fightRegion = warCells ? boxesGeometry(ee, [...warBoxes(conflict), ...squareRuns(otherWarCells, cellSizeDeg)]) : bufferRegion;
   const [have, asset, ...groupHave] = await Promise.all([
     preflight(ee, { region, bufferRegion: fightRegion, windows: shared, context }),
     checkChernozemAsset(ee, cfg.chernozemAsset, context),
@@ -1157,7 +1192,10 @@ async function analyzeMonth(deps, { area, cells, month, cellSizeDeg, onProgress,
   // 3. Build the images (nothing is computed until a request below).
   const cropland = croplandImage(ee);
   const chernozem = chernozemImage(ee, asset.assetId);
-  const fire = fireImages(ee, { region, windows: shared, have });
+  // Small areas: fire and distance on the 1 km grid (FINE_SCALE_M);
+  // otherwise every image as it is.
+  const onFireGrid = scale < FINE_SCALE_M ? (image, gridM = FIRE_GRID_M) => image.reproject({ crs: "EPSG:4326", scale: gridM }) : (image) => image;
+  const fire = fireImages(ee, { region, windows: shared, have, onFireGrid });
 
   // Distance to fighting: ACLED battles; else, inside a known war, unusual
   // fire detections; at peace, and in a month before its war began, not
@@ -1172,7 +1210,7 @@ async function analyzeMonth(deps, { area, cells, month, cellSizeDeg, onProgress,
   let accessSource = "none";
   if (acled.points.length) {
     const battles = ee.FeatureCollection(acled.points.map((point) => ee.Feature(ee.Geometry.Point(point))));
-    conflictM = battles.distance(MAX_CONFLICT_M).unmask(MAX_CONFLICT_M).rename("conflictM");
+    conflictM = onFireGrid(battles.distance(MAX_CONFLICT_M)).unmask(MAX_CONFLICT_M).rename("conflictM");
     accessSource = "acled";
   } else if (!conflict) {
     // Fires in peaceful farm country (harvest burning, wildfires) are not
@@ -1181,7 +1219,12 @@ async function analyzeMonth(deps, { area, cells, month, cellSizeDeg, onProgress,
   } else if (shared.beforeWar) {
     // Nothing to estimate fighting from before the war (said above).
   } else if (have.firmsYear > 0) {
-    warnings.push(`Distance to fighting is estimated from unusual fires of the last 12 months (far more than in ${BASELINE_FROM}-${BASELINE_YEAR}; no ACLED file)${warCells ? ` inside the war's region` : ""}, so treat safe access as rough.`);
+    // In a war's first year only the fires since the day it began count
+    // (monthWindows fightingSince).
+    const which = shared.fightingSince
+      ? `unusual fires since the war began on ${shared.fightingSince} (far more than on the same days of the normal years; no ACLED file)`
+      : `unusual fires of the last 12 months (far more than in ${BASELINE_FROM}-${BASELINE_YEAR}; no ACLED file)`;
+    warnings.push(`Distance to fighting is estimated from ${which}${warCells ? ` inside the war's region${otherWarCells.length ? " and its squares in another listed war" : ""}` : ""}, so treat safe access as rough.`);
     const fireBand = fightingFires(ee, fightRegion, shared).rename("fire");
     const fires = fireBand.stratifiedSample({
       numPoints: 3000,
@@ -1193,10 +1236,10 @@ async function analyzeMonth(deps, { area, cells, month, cellSizeDeg, onProgress,
       geometries: true,
       tileScale,
     });
-    conflictM = fires.distance(MAX_CONFLICT_M).unmask(MAX_CONFLICT_M).rename("conflictM");
+    conflictM = onFireGrid(fires.distance(MAX_CONFLICT_M)).unmask(MAX_CONFLICT_M).rename("conflictM");
     accessSource = "fires";
   } else {
-    warnings.push(`No conflict data and no recent fires ${warCells ? "in the war's region" : "near this area"}; every cell counts as 300 km or more from fighting.`);
+    warnings.push(`No conflict data and no recent fires ${warCells ? `in the war's region${otherWarCells.length ? " or its squares in another listed war" : ""}` : "near this area"}; every cell counts as 300 km or more from fighting.`);
     conflictM = ee.Image.constant(MAX_CONFLICT_M).rename("conflictM");
     accessSource = "fires";
   }
@@ -1273,7 +1316,7 @@ async function analyzeMonth(deps, { area, cells, month, cellSizeDeg, onProgress,
     let radarDb;
     let heavy;
     // The peace rule's heavy damage, for the squares outside the war's
-    // region of an area that holds it only in part (warCells).
+    // squares of an area that holds it only in part (warCells).
     let heavyOutside;
     if (seasonPass && measuredSeasons.length) {
       const before = mergedSentinel1(ee, group.region, group.windows.radarSeasonBaselines, seasonPass).median();
@@ -1322,7 +1365,7 @@ async function analyzeMonth(deps, { area, cells, month, cellSizeDeg, onProgress,
       ]);
     group.meanImage = meanImage(heavy);
     // The same images with the peace rule's heavy damage, for the group's
-    // squares outside the war's region (warCells).
+    // squares outside the war's squares (warCells).
     if (warCells) group.meanImageOutside = heavyOutside ? meanImage(heavyOutside) : group.meanImage;
   }
 
@@ -1419,9 +1462,9 @@ async function analyzeMonth(deps, { area, cells, month, cellSizeDeg, onProgress,
   const measureChunk = (part, meanImage, plan) =>
     retryTooMuchWork(async () => keep(await attempt(part, meanImage, plan)), { delays: deps.memoryRetryMs, lighter: () => lighter(part, meanImage, plan), onRetry: (error, tries, how) => context.retried?.("Measuring cells", how) });
   // A group of an area that holds its war only in part is sent as its
-  // squares inside the war's region (the war's rules) and those outside
-  // (the peace rules): a cell's reading does not depend on which cells
-  // share its request.
+  // war's squares (the war's rules: warCells) and the others (the peace
+  // rules): a cell's reading does not depend on which cells share its
+  // request.
   const work = groups.flatMap((group) => {
     if (!warCells) return chunk(group.cells, chunkSize).map((part) => ({ part, meanImage: group.meanImage }));
     const inside = group.cells.filter((cell) => warCells.has(cell.id));
@@ -1565,7 +1608,9 @@ export function seasonsLabel(seasons, fallback) {
 // only gains fires, so neither falls from one month to the next.
 //   month   detections in the month minus the same month's mean in
 //           2019-2021 (not clamped; alerts use the cell's total)
-function fireImages(ee, { region, windows, have }) {
+// onFireGrid(image, gridM): for small areas, the image worked out on the
+// 1 km grid, or on gridM (FINE_SCALE_M); otherwise the image as it is.
+function fireImages(ee, { region, windows, have, onFireGrid = (image) => image }) {
   const grid = (image) => image.setDefaultProjection("EPSG:4326", null, 1000);
   const count = (window) => grid(firms(ee, region, window).count().unmask(0));
   const zero = (name) => ee.Image.constant(0).rename(name);
@@ -1584,11 +1629,13 @@ function fireImages(ee, { region, windows, have }) {
       const yearExcess = smooth(inYear).subtract(normal);
       // A pixel that burned that year, in a neighbourhood above its normal.
       const unusual = inYear.gt(0).and(yearExcess.gt(0));
-      bands.push(yearExcess.rename(`fx${i}`));
+      bands.push(onFireGrid(yearExcess).rename(`fx${i}`));
       unusualAny = unusualAny ? unusualAny.or(unusual) : unusual;
     }
     years = ee.Image.cat(bands);
-    near = unusualAny.focal_max(HEAVY_DAMAGE.fireNearM, "circle", "meters").unmask(0).rename("fireNear");
+    // Small areas: the unusual fire pixels on the 1 km grid, the ring drawn
+    // around them on the RING_GRID_M grid (FINE_SCALE_M).
+    near = onFireGrid(onFireGrid(unusualAny).focal_max(HEAVY_DAMAGE.fireNearM, "circle", "meters"), RING_GRID_M).unmask(0).rename("fireNear");
   }
   let month = zero("firesMonth");
   if (have.firmsMonth > 0) {
@@ -1967,7 +2014,14 @@ export function monthBounds(month) {
 //              worst year's excess over fireNormal's count / 3
 //   lastYear   the 12 months up to the end of the month, and fireBaselines
 //              the same 12 months of each baseline year (distance to
-//              fighting, inside a known war only)
+//              fighting, inside a known war only). In a war's first year
+//              lastYear starts on the day the war began (fightingSince),
+//              and fireBaselines on the same days of each normal year, so
+//              fires from before the war never stand in for fighting
+//              (found in review, 2026-10-20, from these windows: a war
+//              since 1 June 2026 read September's fighting from fires since
+//              1 October 2025, 8 of its 12 months before the war)
+//   fightingSince  the war's first day when lastYear starts on it, else null
 //   viirsSearch the 6 months up to the end of the month (night lights are
 //              published with a delay)
 //   conflict   the war used ({ id, name, since }) or null
@@ -1994,6 +2048,10 @@ export function monthWindows(month, today = isoDay(new Date()), { lat, conflict 
   // The damage radar: every complete growing season inside the damage
   // window, against the same season of 2019-2021 (method.js FIRE_YEARS).
   const radarSeasons = !damage ? [] : Array.isArray(givenSeasons) ? givenSeasons.map((w) => ({ start: w.start, end: w.end })) : damageSeasons(Number.isFinite(lat) ? lat : 50, asOf, damage.start, peakMonth);
+  // The fires that stand in for fighting: the 12 months up to the end of
+  // the month, never from before the war began.
+  const yearStart = yearBefore(own.end);
+  const fightingSince = fighting && war.since > yearStart ? war.since : null;
   return {
     month: own,
     monthBaselines: BASELINE_YEARS.map((year) => sameWindowIn(own, year)),
@@ -2009,11 +2067,16 @@ export function monthWindows(month, today = isoDay(new Date()), { lat, conflict 
     fireYears: fireYears(damage, { anchor: war ? "start" : "end" }),
     conflict: war,
     beforeWar,
-    lastYear: stop({ start: yearBefore(own.end), end: own.end }),
+    lastYear: stop({ start: fightingSince || yearStart, end: own.end }),
     fireBaselines: BASELINE_YEARS.map((year) => {
       const end = sameDayIn(year, own.end);
-      return { start: yearBefore(end), end };
+      if (!fightingSince) return { start: yearBefore(end), end };
+      // The same days in each normal year: the war's first day moves back
+      // by as many years as the end does.
+      const back = Number(own.end.slice(0, 4)) - year;
+      return { start: sameDayIn(Number(fightingSince.slice(0, 4)) - back, fightingSince), end };
     }),
+    fightingSince,
     viirsSearch: stop({ start: `${addMonths(month, -5)}-01`, end: own.end }),
   };
 }
@@ -2053,6 +2116,40 @@ export function cellBoxes(cells, cellSizeDeg, padKm = 0) {
     const [west, south, east, north] = padKm > 0 ? expandBbox(box, padKm) : box;
     return [clampLon(west), clampLat(south), clampLon(east), clampLat(north)].map((v) => Number(v.toFixed(7)));
   });
+}
+
+// The squares of some cells exactly, as one box per run of neighbouring
+// squares in a row (cellBoxes instead spans every row of a run of columns,
+// so it would take in the squares between them): the war's squares in
+// another listed war, whose unusual fires stand in for fighting
+// (analyzeMonth fightRegion), without the peace squares around them.
+// -> [[west, south, east, north], ...], north to south, west to east
+export function squareRuns(cells, cellSizeDeg) {
+  const half = cellSizeDeg / 2;
+  const rows = new Map();
+  for (const cell of cells || []) {
+    if (!Number.isFinite(cell?.lat) || !Number.isFinite(cell?.lon)) continue;
+    const key = cell.lat.toFixed(6);
+    if (!rows.has(key)) rows.set(key, []);
+    rows.get(key).push(cell);
+  }
+  const boxOf = (first, last) => [first.lon - half, first.lat - half, last.lon + half, first.lat + half].map((v) => Number(v.toFixed(7)));
+  const boxes = [];
+  for (const row of [...rows.values()].sort((a, b) => b[0].lat - a[0].lat)) {
+    row.sort((a, b) => a.lon - b.lon);
+    let first = row[0];
+    let last = row[0];
+    for (const cell of row.slice(1)) {
+      // A gap of a square or more starts a new run.
+      if (cell.lon - last.lon > cellSizeDeg * 1.5) {
+        boxes.push(boxOf(first, last));
+        first = cell;
+      }
+      last = cell;
+    }
+    boxes.push(boxOf(first, last));
+  }
+  return boxes;
 }
 
 // A pixel size (m) for one reduction over some boxes: `minScale`, or
@@ -2135,7 +2232,8 @@ function yearBefore(day) {
 }
 
 // Fire detections that are not normal for the place (FIGHTING_FIRES): 1 on
-// 1 km pixels with an unusual fire in the last 12 months, masked elsewhere.
+// 1 km pixels with an unusual fire in the last 12 months (in a war's first
+// year, since the day it began: monthWindows lastYear), masked elsewhere.
 export function fightingFires(ee, region, windows) {
   const f = FIGHTING_FIRES;
   const count = (window) => firms(ee, region, window).count().unmask(0);
@@ -2143,7 +2241,11 @@ export function fightingFires(ee, region, windows) {
   const before = ee.ImageCollection(windows.fireBaselines.map(count)).mean();
   // On FIRMS's own 1 km grid (no resampling), so "per pixel" is per km².
   const density = (image) => image.setDefaultProjection("EPSG:4326", null, 1000).focal_mean(f.radiusM, "circle", "meters");
-  const unusual = density(recent).gte(density(before).multiply(f.timesPrewar)).and(density(recent).gte(f.minPerKm2));
+  // The floor is for 12 months; a war's first year has a shorter window
+  // (monthWindows fightingSince), so it gets the floor for its days.
+  const days = daysBetween(windows.lastYear.start, windows.lastYear.end);
+  const floor = f.minPerKm2 * Math.min(1, days / 365);
+  const unusual = density(recent).gte(density(before).multiply(f.timesPrewar)).and(density(recent).gte(floor));
   return recent.gt(0).and(unusual).selfMask();
 }
 

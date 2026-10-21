@@ -257,6 +257,12 @@
   white-space: nowrap;
 }
 
+/* "Analyzing…" or "Waiting": the area's place in the line of analyses. */
+.aset-saved-mark {
+  flex: 0 0 auto;
+  display: inline-flex;
+}
+
 /* ---------- War ---------- */
 
 /* The three choices and the "At war" day and name, under the row's text. */

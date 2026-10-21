@@ -18,7 +18,7 @@
 
 import { scorePlaces, ranking, nearTermShares } from "../../src/lib/atlas/scoring.js";
 import { COSTS, DEFAULT_SETTINGS, FIRE_YEARS, HEAVY_DAMAGE, METHOD_VERSION, PEACE_DAMAGE, checkSettings, runsComparable } from "../../src/lib/atlas/method.js";
-import { accessMeasured, accessSourceOf, alertPlaces, atPeace, beforeWar, conflictOf, outsideWar, peaceSquares, shownNewDamage, warInPart, warKey, warSetByTeam } from "../../src/lib/atlas/overview.js";
+import { accessMeasured, accessSourceOf, alertPlaces, atPeace, beforeWar, conflictOf, outsideWar, peaceSquares, seasonWords, shownNewDamage, warInPart, warKey, warPartOf, warSetByTeam } from "../../src/lib/atlas/overview.js";
 import { EARLIEST_WAR_DAY, TEAM_WAR_NAME, teamConflict } from "../../src/config/conflicts.js";
 import { listConflictForArea } from "../conflicts.js";
 import { NO_WAR_WARNING, TEAM_PEACE_WARNING } from "../runs.js";
@@ -273,10 +273,16 @@ async function safe(fn) {
 //                  beforeWar): no war damage is counted for it and distance
 //                  to fighting is not measured, so neither "Damage is counted
 //                  from that day" nor "recorded fighting" is said
-//   inPart         the war covers this whole-country area only in part
-//                  (run.conflict.partOfCountry): { warSquares, squares },
-//                  the squares that had its rules (run.warSquares) and all
-//                  of them; the others were read at peace rules
+//   inPart         the war covers this area only in part
+//                  (run.conflict.partOfCountry): { warSquares, squares, of,
+//                  otherWar }, the squares that had its rules
+//                  (run.warSquares), all of them, what the area is
+//                  ("country", or "area" for a region, a box or a drawn
+//                  area: overview.js warPartOf), and how many of the first
+//                  had them because another listed war covers them
+//                  (run.otherWarSquares: server/conflicts.js warCellsFor);
+//                  the others keep the war's dates but get the peace rule
+//                  for heavy damage and the peace damage score
 export function conflictLine(conflict, accessSource = null, { currentMethod = true, setByTeam = false, beforeWar = false, inPart = null } = {}) {
   if (conflict === undefined) return "";
   const notMeasured = (why) =>
@@ -311,12 +317,23 @@ export function conflictLine(conflict, accessSource = null, { currentMethod = tr
           : accessSource === "none"
             ? notMeasured("not measured for this month")
             : "Safe access: the distance to recorded fighting, full at 100 km.";
-    // A war in part of a whole-country area: where its rules apply, and
-    // what the other squares are (src/config/conflicts.js warSquares).
+    // A war in part of the area: where its rules apply (the squares that
+    // touch its region, and those another listed war covers:
+    // server/conflicts.js warCellsFor), and exactly what differs for the
+    // other squares. Their distance to fighting is said only without an
+    // ACLED file (with one, every square's is to its battles).
     const fullAt = Math.round(PEACE_DAMAGE.fullShare * 100);
     const counted = Number.isFinite(inPart?.warSquares) && Number.isFinite(inPart?.squares) ? ` (${inPart.warSquares} of ${inPart.squares} squares)` : "";
+    const otherWar = inPart?.otherWar > 0 ? inPart.otherWar : 0;
+    const elsewhere = otherWar
+      ? ` ${otherWar === 1 ? "1 of them lies" : `${otherWar} of them lie`} in another war of the app's list without touching this war's region: that is land at war too (counted with this war's dates).`
+      : "";
+    const fires =
+      accessSource === "acled"
+        ? ""
+        : ` Without an ACLED file, every square's distance to fighting is measured to the unusual fires inside the war's region${otherWar ? " and its squares in another listed war" : ""}; unusual fires in the other squares do not count as fighting (they are taken to have ordinary causes: harvest burning, wildfire).`;
     const part = inPart
-      ? ` This war covers only part of this country: its rules apply only in the map squares that touch the war's region${counted}, which have atWar true in their details. The other squares were read as at peace: there heavy damage needs radar change of ${HEAVY_DAMAGE.radarDb} dB or more AND an unusual fire within ${HEAVY_DAMAGE.fireNearM / 1000} km, the damage score is the heavily damaged share of the black soil (full at ${fullAt}%), and unusual fires there have ordinary causes (harvest burning, wildfire); their distance to fighting is measured to the unusual fires inside the war's region. Do not talk about fighting, a front line or demining for a place outside the war's region unless the user raises it.`
+      ? ` This war covers only part of this ${inPart.of === "area" ? "area" : "country"}: its rules apply only in the map squares that touch the war's region${otherWar ? " or lie in another listed war" : ""}${counted}, which have atWar true in their details.${elsewhere} The other squares (atWar false) keep the war's dates (damage counted from the day it began, its fire years and war seasons), but two things there follow the peace rules: heavy damage needs radar change of ${HEAVY_DAMAGE.radarDb} dB or more AND an unusual fire within ${HEAVY_DAMAGE.fireNearM / 1000} km, and the damage score is the heavily damaged share of the black soil (full at ${fullAt}%).${fires} Do not talk about fighting, a front line or demining for a place whose squares all have atWar false unless the user raises it.`
       : "";
     return `War: ${conflict.name || conflict.id}, since ${conflict.since}.${who} Damage is counted from that day. Damage score: the mean of unusual fire and radar change against the normal years 2019 to 2021. ${currentMethod ? damageOverTime() : OLDER_METHOD} ${warAccess}${part}`;
   }
@@ -354,12 +371,45 @@ export function warSettingNote(area, run) {
   const now = own !== undefined ? own : listConflictForArea(area);
   if (now === undefined || warKey(now) === made) return "";
   // The same start day: what changed is where the war's rules apply (all
-  // over a whole-country area, or only in its squares that touch the war's
-  // region: partOfCountry).
-  const where = (war) => (war?.since && now?.since === madeWith?.since ? (war.partOfCountry ? " (war rules only in the squares that touch the war's region)" : " (war rules all over the area)") : "");
-  const nowText = now ? `at war (${now.name}) since ${now.since}${where(now)}` : "not at war";
+  // over the area, or only in part of it: partOfCountry).
+  const where = (war) => (war?.since && now?.since === madeWith?.since ? (war.partOfCountry ? " (war rules only in part of the area)" : " (war rules all over the area)") : "");
+  // A war the team set without a name of its own is never called by the
+  // placeholder (TEAM_WAR_NAME), as in conflictLine.
+  const named = now?.name && now.name !== TEAM_WAR_NAME ? ` (${now.name})` : "";
+  const nowText = now ? `at war${named} since ${now.since}${where(now)}` : "not at war";
   const who = own !== undefined ? `the user's team has since marked this area ${nowText}` : now ? `the app's list now has this area ${nowText}` : "the app's list now has no war for this area";
   return `War setting changed: this month was made ${made ? `at war since ${madeWith.since}${where(madeWith)}` : "at peace"}, but ${who}. Its numbers follow the setting it was made with until the analysis is re-run (Atlas Settings, Re-run analysis).`;
+}
+
+// For a month whose damage radar took in a new growing season
+// (overview.js seasonWords): " This is the first month that counts the
+// radar images of the 2026 growing season: most of this month's new heavy
+// damage is older damage ..." when its new heavy damage is above 0 (the
+// one check the pages use too: seasonJump); otherwise the plain fact, and
+// why heavily damaged land can fall that month (never a "jump": real data,
+// Iowa, November 2025, 0 ha new). "" for any other month.
+export function newSeasonFact(run, runs) {
+  const season = seasonWords(run, runs);
+  if (!season) return "";
+  if (season.left) {
+    const first = ` This is the first month without the radar images of the ${season.name} (it left the two-year window)`;
+    if (season.jump) return `${first}: with fewer seasons compared, a change has to show in fewer seasons to count as heavy damage, so most of this month's new heavy damage is that change in what is compared, not damage done within this one month. Say so when you talk about this month's new damage.`;
+    return `${first}. Heavily damaged land is now measured over fewer seasons, so it can move this month; that alone does not mean land was damaged or recovered.`;
+  }
+  const first = ` This is the first month that counts the radar images of the ${season.name}`;
+  if (season.jump) return `${first}: most of this month's new heavy damage is older damage, radar change seen over that whole season, not damage done within this one month. Say so when you talk about this month's new damage.`;
+  return `${first}. No new heavy damage was found: ${fallWhy(season)}`;
+}
+
+// Why heavily damaged land can fall in the month a season joined (for the
+// AI): a change must now last over two seasons (the radar holds that many
+// for the first time: seasonWords lasting), or it is measured over other
+// seasons than the month before's (the new season can also change the
+// orbit direction compared). Never "because two seasons" otherwise.
+function fallWhy(season) {
+  return season.lasting
+    ? `with two complete seasons for the first time, a change must now last over both to count as heavy damage, so heavily damaged land can fall this month; that alone does not mean land recovered.`
+    : `heavily damaged land is now measured over other seasons than the month before's (the new season can also change the orbit direction the radar is compared from), so it can fall; that alone does not mean land recovered.`;
 }
 
 // How damage behaves from month to month in a war, for runs made with this
@@ -412,8 +462,9 @@ export function settingsLine(settings, run, scored, timeframe) {
   return `Weights as used: Near term ranks by soil value ${near.soil}% and damage ${near.damage}%; ${cutoff}. ${longName} blends soil value ${w.soil}%, damage ${w.damage}% and safe access ${w.access}% (weighted power mean, r = ${settings.r})${longNote}. The user is viewing ${viewing}.`;
 }
 
-// A top place outside the region of a war that covers the area only in
-// part: every one of its squares was read at peace rules (overview.js
+// A top place outside the squares of a war that covers the area only in
+// part: every one of its squares is outside them (atWar false), so heavy
+// damage and the damage score there follow the peace rules (overview.js
 // peaceSquares).
 const outsideWarRegion = (h, calm) => calm.size > 0 && h.cellIds.length > 0 && h.cellIds.every((id) => calm.has(id));
 
@@ -424,7 +475,7 @@ function hotspotLine(h, index, calm = new Set()) {
   const labelHasCoords = Boolean(h.coords && h.label?.endsWith(` · ${h.coords}`));
   const where = h.label === coords || labelHasCoords ? h.label : `${h.label} (${coords})`;
   const squares = h.cellIds.length;
-  const region = outsideWarRegion(h, calm) ? " (outside the war's region: read as at peace)" : "";
+  const region = outsideWarRegion(h, calm) ? " (outside the war's squares: heavy damage and the damage score by the peace rules)" : "";
   return `${index + 1}. ${where}, ${squares} ${squares === 1 ? "square" : "squares"}${region}: score ${score100(h.score)}/100, tier ${h.tier}, black-soil ${ha(h.blackSoilHa)}, heavily damaged ${ha(h.heavyDamageHa)}, soil ${score100(h.soil)} / damage ${score100(h.damage)} / access ${score100(h.access)}`;
 }
 
@@ -445,7 +496,7 @@ export function contextText({ workspace, area, run, summaries, scored, settings,
   const peace = conflictOf(run) === null;
   // How damage behaves over time is said only for a run made with this
   // method (older runs: fires over the whole window, the last season's radar).
-  const inPart = warInPart(run) ? { warSquares: run.warSquares, squares: run.cellCount ?? run.cells?.length } : null;
+  const inPart = warInPart(run) ? { warSquares: run.warSquares, squares: run.cellCount ?? run.cells?.length, of: warPartOf(run.conflict), otherWar: run.otherWarSquares } : null;
   const war = conflictLine(conflictOf(run), accessSourceOf(run), { currentMethod: run.method?.version === METHOD_VERSION, setByTeam: warSetByTeam(run), beforeWar: beforeWar(run), inPart });
   if (war) lines.push(war);
   const changed = warSettingNote(area, run);
@@ -454,7 +505,7 @@ export function contextText({ workspace, area, run, summaries, scored, settings,
   const t = run.totals || {};
   lines.push(
     `Totals: cropland ${ha(t.croplandHa)}, black-soil cropland ${ha(t.blackSoilHa)}, heavily damaged ${ha(t.heavyDamageHa)}, people on damaged land ${people(t.peopleOnDamagedSoil)}.` +
-      (Number.isFinite(shownNewDamage(run, summaries)) ? ` New heavy damage since the previous month: ${ha(run.newHeavyDamageHa)}.` : "")
+      (Number.isFinite(shownNewDamage(run, summaries)) ? ` New heavy damage since the previous month: ${ha(run.newHeavyDamageHa)}.${newSeasonFact(run, summaries)}` : "")
   );
   // The "no war" warning (or the team's "not at war") is said better by the
   // War line above (it still names distance to fighting, which is not part
@@ -491,8 +542,12 @@ export function contextText({ workspace, area, run, summaries, scored, settings,
     lines.push("", "History by month (newest first):");
     lines.push("(Months from different data sources, method versions or war settings are not comparable: never subtract them.)");
     for (const s of summaries.slice(0, 24)) {
+      // A month whose damage radar took in a new growing season says so
+      // (seasonWords), whatever its heavy damage did.
+      const season = seasonWords(s, summaries);
+      const joined = season ? ` (first month with the radar images of the ${season.season} growing season)` : "";
       lines.push(
-        `- ${s.month}: heavily damaged ${ha(s.totals?.heavyDamageHa)}, new ${Number.isFinite(shownNewDamage(s, summaries)) ? ha(s.newHeavyDamageHa) : "n/a"}, black-soil ${ha(s.totals?.blackSoilHa)}, people on damaged land ${people(s.totals?.peopleOnDamagedSoil)}, ${s.provider === "gee" ? "Earth Engine" : "sample"}`
+        `- ${s.month}: heavily damaged ${ha(s.totals?.heavyDamageHa)}, new ${Number.isFinite(shownNewDamage(s, summaries)) ? ha(s.newHeavyDamageHa) : "n/a"}${joined}, black-soil ${ha(s.totals?.blackSoilHa)}, people on damaged land ${people(s.totals?.peopleOnDamagedSoil)}, ${s.provider === "gee" ? "Earth Engine" : "sample"}`
       );
     }
   }
@@ -519,8 +574,9 @@ export function costNote(war) {
 }
 
 // A place's details for the AI. For a war that covers the area only in
-// part, a square read at peace rules (p.atWar false) says so, and its costs
-// are not "before demining".
+// part, a square outside its region (p.atWar false: the peace rules for
+// heavy damage and the damage score) says so, and its costs are not
+// "before demining".
 function placeDetail(p, war = true) {
   const atWarHere = war && p.atWar !== false;
   return {
@@ -701,16 +757,29 @@ export async function runAtlasTool(name, input = {}, data) {
       if (!summaries.length) return { error: "No months have been analyzed for this area yet." };
       return {
         area: area?.name,
-        months: summaries.map((s) => ({
-          month: s.month,
-          dataSource: s.provider,
-          heavyDamageHa: round(s.totals?.heavyDamageHa),
-          newHeavyDamageHa: round(shownNewDamage(s, summaries)),
-          blackSoilHa: round(s.totals?.blackSoilHa),
-          croplandHa: round(s.totals?.croplandHa),
-          peopleOnDamagedSoil: round(s.totals?.peopleOnDamagedSoil),
-          alerts: s.alertsCount ?? null,
-        })),
+        months: summaries.map((s) => {
+          // The month a new growing season joined the damage radar
+          // (seasonWords): most of its new heavy damage is older damage
+          // when there is any; else why heavily damaged land can fall.
+          const season = seasonWords(s, summaries);
+          return {
+            month: s.month,
+            dataSource: s.provider,
+            heavyDamageHa: round(s.totals?.heavyDamageHa),
+            newHeavyDamageHa: round(shownNewDamage(s, summaries)),
+            ...(season
+              ? {
+                  newGrowingSeason: season.jump
+                    ? `the radar images of the ${season.name} are counted from this month: most of this month's new heavy damage is older damage, radar change seen over that whole season, not damage done within the month`
+                    : `the radar images of the ${season.name} are counted from this month; no new heavy damage: ${fallWhy(season)}`,
+                }
+              : {}),
+            blackSoilHa: round(s.totals?.blackSoilHa),
+            croplandHa: round(s.totals?.croplandHa),
+            peopleOnDamagedSoil: round(s.totals?.peopleOnDamagedSoil),
+            alerts: s.alertsCount ?? null,
+          };
+        }),
       };
     }
     default:

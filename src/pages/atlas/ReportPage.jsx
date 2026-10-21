@@ -32,7 +32,7 @@ import { ArrowLeft, Download, Printer } from "lucide-react";
 import { Button, Badge } from "../../components/ui/index.js";
 import { AtlasGate, useAtlasData, useTimeframe } from "../../state/AtlasData.jsx";
 import { placeLabel } from "../../lib/atlas/hotspots.js";
-import { accessMeaning, accessMeasured, alertPlaces, atPeace, damageMeaning, describeAlert, imageryText, kpis, nearTermSetAside, peaceReason, shownNewDamage, summarize, timeframeLabel } from "../../lib/atlas/overview.js";
+import { accessMeaning, accessMeasured, alertPlaces, atPeace, damageMeaning, describeAlert, imageryText, kpis, nearTermSetAside, peaceReason, seasonWords, shownNewDamage, summarize, timeframeLabel } from "../../lib/atlas/overview.js";
 import { formatHaShort, listNames } from "../../lib/format.js";
 import { toCsv } from "../../lib/csv.js";
 import { atlasLink, haFixed, nameAreas, priorityIndex, useMonthInUrl, warNote, weightItems } from "./overviewHelpers.js";
@@ -206,6 +206,9 @@ function Report() {
         {shownNewDamage(run, runs) > 0 && (
           <p className="rp-line">
             New heavy damage this month: <strong className="rp-red">+{formatHaShort(run.newHeavyDamageHa)}</strong>
+            {/* The month a growing season joined the damage radar: most of
+                the increase is older damage (overview.js seasonWords). */}
+            {seasonWords(run, runs)?.jump && ` (mostly ${seasonWords(run, runs).jump.what}: ${seasonWords(run, runs).jump.why})`}
           </p>
         )}
 

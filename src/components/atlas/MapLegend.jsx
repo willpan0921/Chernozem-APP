@@ -29,7 +29,7 @@ import { Segmented } from "../ui/index.js";
 import HowMeasured from "../field/HowMeasured.jsx";
 import { LEGENDS, legendFor } from "../../lib/atlas/mapColors.js";
 import { atlasMethods } from "../../config/research.js";
-import { accessMeasured, atPeace, beforeWar, warInPart, warSetByTeam } from "../../lib/atlas/overview.js";
+import { accessMeasured, atPeace, beforeWar, warInPart, warPartOf, warSetByTeam } from "../../lib/atlas/overview.js";
 import "./atlas.css";
 
 // The panel's words for this run (src/config/research.js atlasMethods):
@@ -39,16 +39,22 @@ import "./atlas.css";
 //                      at war, Atlas Settings)
 //   before its war     the month ends before its war began: no war damage
 //                      is counted and distance is not measured
-//   a war in part      a war that covers the whole-country area only in
-//                      part: the note says its rules apply in the squares
-//                      that touch its region, peace rules elsewhere
+//   a war in part      a war that covers the area (a whole country, or a
+//                      region, box or drawn area) only in part: the note
+//                      says its rules apply in the squares that touch its
+//                      region (and those in another listed war, when there
+//                      are any: run.otherWarSquares), and the two peace
+//                      rules used elsewhere
 function methodsFor(run) {
   const peace = atPeace(run);
   const before = beforeWar(run);
   const measured = !run || accessMeasured(run);
-  // A war in part of a whole-country area: the war's words, and where they
-  // apply.
-  if (warInPart(run)) return { ...atlasMethods, note: `${atlasMethods.note} ${atlasMethods.notePartOfCountry}` };
+  // A war in part of the area: the war's words, and where they apply.
+  if (warInPart(run)) {
+    const part = warPartOf(run.conflict) === "area" ? atlasMethods.notePartOfArea : atlasMethods.notePartOfCountry;
+    const other = run.otherWarSquares > 0 ? atlasMethods.notePartOtherWar : "";
+    return { ...atlasMethods, note: [atlasMethods.note, part, other, atlasMethods.notePartElsewhere].filter(Boolean).join(" ") };
+  }
   if (!peace && !before && measured) return atlasMethods;
   const team = warSetByTeam(run);
   const words = (item) => {

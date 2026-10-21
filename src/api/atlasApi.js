@@ -151,7 +151,11 @@ export async function listAreas() {
 // -> the area with its outline (simplified unless full is true), its war
 //    setting (war: { mode: "war" | "peace", since?, name? }; none means
 //    "the app's list") and what the app's list says for it (listConflict:
-//    { id, name, since, partOfCountry? }, or null at peace)
+//    { id, name, since, partOfCountry?, partOf?, otherWarSquares? }, or null
+//    at peace: partOfCountry when the war covers the area only in part,
+//    partOf "area" when the area is not a whole country, otherWarSquares
+//    how many of its squares have the war's rules because another listed
+//    war covers them)
 export async function getArea(areaId, { full = false } = {}) {
   const { area } = await request("GET", `/areas/${id(areaId)}${full ? "?full=1" : ""}`);
   return area;

@@ -13,8 +13,9 @@
 //   atPeace(run)                 true when no war covers the run (the list's, or the team's peace)
 //   beforeWar(run)               true when the run's month ends before its war began
 //   outsideWar(run)              no war's rules in the run's month: atPeace or beforeWar
-//   warInPart(run)               the war covers the whole-country area only in part (its squares)
-//   peaceSquares(run)            the ids of the squares read at peace rules in such a run
+//   warInPart(run)               the war covers the area only in part (its squares)
+//   warPartOf(conflict)          "country" or "area": what such a war covers part of (null otherwise)
+//   peaceSquares(run)            the ids of the squares outside the war's region in such a run
 //   peaceReason(run)             why: "No war recorded", "Not at war (set by your team)", "Before the war"
 //   shownNewDamage(run, runs)    new heavy damage, or null when the month before is not comparable
 //   sourceBadge(runs)            the Data page's "Earth Engine · 11 earlier months are sample data"
@@ -32,7 +33,10 @@
 //   warKey(conflict)             what decides a war's numbers (its start, null at peace; method.js)
 //   areaWar(area)                the war an area's next analysis uses: the team's choice, else the app's list
 //   monthsWithOtherWar(area, runs)  saved months made with another war setting (to re-run)
-//   warText(conflict)            "at war since 24 Feb 2022" / "at peace"
+//   warText(conflict, now)       "at war since 24 Feb 2022" / "at peace", and where its rules applied
+//   seasonAdded(run, runs)       the growing season ("2026") that joined the damage radar in the run's month
+//   seasonJump(run, runs)        the same, only when the month's new heavy damage is above 0
+//   seasonWords(run, runs)       what the pages say about such a month ("Mostly older damage: ...")
 //   keepsMonth(old, options)     whether an analysis keeps a saved month (server/jobs.js uses it)
 //   analysisMonths(count)        the months an analysis of `count` months covers
 //
@@ -103,6 +107,137 @@ export function shownNewDamage(run, runs) {
   const before = previousMonthRun(run, runs);
   if (before && !runsComparable(before, run).comparable) return null;
   return run.newHeavyDamageHa;
+}
+
+// The growing season that joined the damage radar in the run's month, as
+// the year it ends in ("2026"), or null. The radar holds one more complete
+// season than the month before's (run.imagery.seasons, gee.js), or as many
+// with a later one (at peace the two-year window lets the oldest go as a
+// new one joins). Heavily damaged land is then measured over other seasons
+// than the month before's, so it moves in that one month: when it grows,
+// most of the increase is the new season's radar change, seen over the
+// whole season (older damage), not damage done in that month (seasonJump;
+// real data: Kharkiv oblast, September 2026, +64,904 ha when the 2026
+// season joined; Ukraine's joins in October 2026). It can also fall (real
+// data: Iowa, November 2025, 2,385 ha to 764 ha, when a change first had
+// to last over two seasons): the month still says which season joined,
+// never that a jump is older damage. Only for a month whose new damage is
+// shown (shownNewDamage: the month before is there and comparable).
+// `runs`: the area's runs or their summaries.
+export function seasonAdded(run, runs) {
+  if (!Number.isFinite(shownNewDamage(run, runs))) return null;
+  const now = run?.imagery;
+  const then = previousMonthRun(run, runs)?.imagery;
+  if (!now || !then) return null;
+  // A run without the count holds no complete war season (runs.js
+  // cleanImagery keeps only a count of 1 or more).
+  const count = (imagery) => (Number.isInteger(imagery.seasons) ? imagery.seasons : 0);
+  const year = String(now.to || "").slice(0, 4);
+  if (!count(now) || !/^\d{4}$/.test(year)) return null;
+  const more = count(now) > count(then);
+  const later = count(now) === count(then) && String(now.to) > String(then.to || "");
+  return more || later ? year : null;
+}
+
+// The growing season that LEFT the damage radar in the run's month, as
+// the year it began in ("2024"), or null: the radar holds fewer complete
+// seasons than the month before's. At peace the two-year window moves
+// every month, and the oldest season drops out before the next is
+// complete. With fewer seasons a change has to show in fewer of them to
+// count as heavy damage, so heavily damaged land can jump that month
+// (real data: Heilongjiang, April 2026, +12,300 ha when the 2024 season
+// left; Saskatchewan +920 ha, Iowa +412 ha). Only for a month whose new
+// damage is shown (shownNewDamage).
+export function seasonLeft(run, runs) {
+  if (!Number.isFinite(shownNewDamage(run, runs))) return null;
+  const now = run?.imagery;
+  const then = previousMonthRun(run, runs)?.imagery;
+  if (!now || !then) return null;
+  const count = (imagery) => (Number.isInteger(imagery.seasons) ? imagery.seasons : 0);
+  const year = String(then.from || "").slice(0, 4);
+  return count(then) > count(now) && /^\d{4}$/.test(year) ? year : null;
+}
+
+// The season that joined (seasonAdded), only when the month's new heavy
+// damage is above 0: the one check for every "mostly older damage" line,
+// on the pages and for the AI, so they never disagree (found in review,
+// 2026-10-20: Iowa's November 2025, with 0 ha of new damage, was called a
+// jump on the Data page and to the AI). Null otherwise.
+export function seasonJump(run, runs) {
+  return shownNewDamage(run, runs) > 0 ? seasonAdded(run, runs) : null;
+}
+
+// A growing season's name, from a run's imagery (from: the first month of
+// the radar's first war season; to: the last month of its newest one):
+// { short: "2026", full: "2026 growing season" } for a season inside one
+// calendar year; for one across the new year (the south: November to
+// April) { short: "2024/25", full: "November 2024 to April 2025 growing
+// season" }, never the year it ends in alone.
+function seasonName(imagery) {
+  const from = String(imagery?.from || "");
+  const to = String(imagery?.to || "");
+  const year = Number(to.slice(0, 4));
+  if (!(Number(from.slice(5, 7)) > Number(to.slice(5, 7)))) return { short: String(year), full: `${year} growing season` };
+  const short = `${year - 1}/${String(year).slice(2)}`;
+  return { short, full: `${formatMonthYear(`${year - 1}-${from.slice(5, 7)}`)} to ${formatMonthYear(to)} growing season` };
+}
+
+// What the pages say about the month a growing season joined the damage
+// radar (seasonAdded), or null for any other month:
+//   season  "2026" ("2024/25" across the new year: seasonName)
+//   name    "2026 growing season" ("November 2024 to April 2025 growing
+//           season")
+//   lasting true when the radar holds HEAVY_DAMAGE.persistSeasons complete
+//           seasons for the first time (a change must now last over two
+//           seasons to be heavy damage, so heavily damaged land can fall:
+//           real data, Iowa, November 2025)
+//   fact    "The 2026 season's radar images are counted from this month":
+//           with the month's heavy damage on the Data page's trend (its
+//           tooltip and line), whether it grew or fell
+//   jump    only when its new heavy damage is above 0 (seasonJump), else
+//           null:
+//     tag   "incl. 2026 season" (the Data page's table)
+//     note  "Mostly older damage: the 2026 season's radar images are
+//           counted for the first time" (the Overview, under "+64.9k ha
+//           this month")
+//     why   "radar change seen over the whole 2026 growing season,
+//           counted for the first time this month, not damage done in
+//           September 2026": why most of it is older damage (the note
+//           under the Data page's table, the report)
+export function seasonWords(run, runs) {
+  if (!seasonAdded(run, runs)) return seasonLeftWords(run, runs);
+  const { short, full } = seasonName(run.imagery);
+  const count = (imagery) => (Number.isInteger(imagery?.seasons) ? imagery.seasons : 0);
+  const lasting = count(previousMonthRun(run, runs)?.imagery) < HEAVY_DAMAGE.persistSeasons && count(run.imagery) >= HEAVY_DAMAGE.persistSeasons;
+  const jump = seasonJump(run, runs)
+    ? {
+        tag: `incl. ${short} season`,
+        note: `Mostly older damage: the ${short} season's radar images are counted for the first time`,
+        why: `radar change seen over the whole ${full}, counted for the first time this month, not damage done in ${formatMonthYear(run.month)}`,
+        what: "older damage",
+      }
+    : null;
+  return { season: short, name: full, lasting, fact: `The ${short} season's radar images are counted from this month`, jump };
+}
+
+// The same shape for the month a season left the damage radar
+// (seasonLeft), with left: true; null for any other month. jump.what says
+// what most of the new damage is ("a change in what is compared"), not
+// "older damage".
+function seasonLeftWords(run, runs) {
+  const year = seasonLeft(run, runs);
+  if (!year) return null;
+  const name = `${year} growing season`;
+  const jump =
+    shownNewDamage(run, runs) > 0
+      ? {
+          tag: `${year} season left`,
+          note: `Mostly a change in what is compared: the ${year} season left the two-year window`,
+          why: `the ${name} left the two-year window this month, so a radar change has to show in fewer seasons to count as heavy damage; not damage done in ${formatMonthYear(run.month)}`,
+          what: "a change in what is compared",
+        }
+      : null;
+  return { season: year, name, lasting: false, left: true, fact: `The ${year} season's radar images are no longer counted from this month (it left the two-year window)`, jump };
 }
 
 // The Data page's source badge: the latest month's source, and how many
@@ -208,17 +343,33 @@ export function outsideWar(run) {
   return atPeace(run) || beforeWar(run);
 }
 
-// True when the run's war covers its whole-country area only in part
-// (run.conflict.partOfCountry, server/jobs.js warFor): its rules apply in
-// the squares that touch the war's region, the others were read at peace
-// rules (cell.atWar false; server/providers/gee.js, scoring.js).
+// True when the run's war covers its area only in part
+// (run.conflict.partOfCountry, server/conflicts.js listWarFor: a whole
+// country, or a region, box or drawn area across the edge of the war's
+// boxes): its rules apply in the squares that touch the war's region, and
+// in those that lie in another listed war (run.otherWarSquares, when there
+// are any: server/conflicts.js warCellsFor). The other squares (cell.atWar
+// false) keep the war's dates, but get the peace rule for heavy damage and
+// the peace damage score; without an ACLED file their distance to fighting
+// is measured to the unusual fires in the war's region (and in its squares
+// in another listed war: server/providers/gee.js, scoring.js).
 export function warInPart(run) {
   return Boolean(run?.conflict?.partOfCountry) && !outsideWar(run);
 }
 
-// The ids of a run's squares read at peace rules because they lie outside
-// the region of a war that covers the area only in part (cell.atWar false).
-// Empty for any other run, and for a run summary (no cells).
+// What a war that covers its area only in part covers part of: "country"
+// for a whole-country area, "area" for a region, a box or a drawn area
+// (conflict.partOf "area"; runs saved before it existed were all whole
+// countries). Null for any other war, and at peace.
+export function warPartOf(conflict) {
+  if (!conflict?.partOfCountry) return null;
+  return conflict.partOf === "area" ? "area" : "country";
+}
+
+// The ids of a run's squares outside the region of a war that covers the
+// area only in part (cell.atWar false): heavy damage and the damage score
+// there follow the peace rules. Empty for any other run, and for a run
+// summary (no cells).
 export function peaceSquares(run) {
   return new Set(warInPart(run) ? (run.cells || []).filter((cell) => cell.atWar === false).map((cell) => cell.id) : []);
 }
@@ -229,6 +380,22 @@ function warSquaresText(run) {
   if (!Number.isFinite(run?.warSquares)) return "";
   const of = run.cellCount ?? run.cells?.length;
   return Number.isFinite(of) ? `in ${run.warSquares.toLocaleString("en-US")} of ${of.toLocaleString("en-US")} squares` : "";
+}
+
+// Where the rules of a war that covers the area only in part apply:
+// "the squares that touch the war's region", "... or lie in another listed
+// war" when some had them for that (run.otherWarSquares, server/runs.js;
+// a box over the Kursk front, with its squares in Ukraine). A run without
+// the count has no such squares.
+function warSquaresWhere(run) {
+  return `the squares that touch the war's region${run?.otherWarSquares > 0 ? " or lie in another listed war" : ""}`;
+}
+
+// Where the unusual fires that stand in for fighting came from in such a
+// run: "inside the war's region", "... and its squares in another listed
+// war" (server/providers/gee.js fightRegion).
+function warFiresWhere(run) {
+  return `inside the war's region${run?.otherWarSquares > 0 ? " and its squares in another listed war" : ""}`;
 }
 
 // True when the area's team set this run's war, or its peace, in Atlas
@@ -261,7 +428,7 @@ export function peaceReason(run) {
 }
 
 // What decides a war's numbers (its start day, and whether its rules apply
-// only in part of a whole-country area), null at peace: method.js warKey,
+// only in part of the area), null at peace: method.js warKey,
 // the key runsComparable compares.
 export { warKey };
 
@@ -291,10 +458,14 @@ export function warDay(since, style = "short") {
 //   a war the team counts from the earliest day allowed (EARLIEST_WAR_DAY):
 //     badge "War · damage from 1 Jan 2022 · set by your team", and the line
 //     says the war may be older (never "War since 1 Jan 2022")
-//   a war of the list on a whole-country area that holds it only in part
+//   a war of the list that covers the area only in part
 //     (run.conflict.partOfCountry): badge "War since 24 Jul 2025 · in part of
-//     the country", and the line says its rules apply in the squares that
-//     touch the war's region ("in 12 of 340 squares"), the others at peace
+//     the country" ("... of the area" for a region, a box or a drawn area:
+//     warPartOf), and the line says its rules apply in the squares that
+//     touch the war's region (or lie in another listed war:
+//     run.otherWarSquares) ("in 12 of 340 squares"), and what changes for
+//     the others (the peace rule for heavy damage and the damage score;
+//     they also count damage from the day the war began)
 // Runs saved before the field existed give null (nothing is shown).
 export function warNote(run) {
   const conflict = run?.conflict;
@@ -341,18 +512,25 @@ export function warNote(run) {
     const line = named ? `${conflict.name}, set by your team, since ${long}` : `War since ${long}, set by your team`;
     return { war: true, team, name: conflict.name, badge: `War since ${short} · set by your team`, line: `${line}: damage is counted from that day.` };
   }
-  // A war of the list limited to boxes, on an area that is the whole
-  // country (server/jobs.js warFor): its rules apply in the squares that
-  // touch its region; the other squares are read at peace rules.
+  // A war of the list limited to boxes that covers the area only in part
+  // (server/conflicts.js listWarFor): its rules apply in the squares that
+  // touch its region (or lie in another listed war); the other squares
+  // also count damage from the day it began, but get the peace rule for
+  // heavy damage and the peace damage score. Their distance to fighting is
+  // said only without an ACLED file: with one, every square's is to its
+  // battles.
   if (conflict.partOfCountry) {
     const squares = warSquaresText(run);
+    const where = warPartOf(conflict);
+    const fires = accessSourceOf(run) === "acled" ? "" : `, and their distance to fighting is measured to the unusual fires ${warFiresWhere(run)}`;
     return {
       war: true,
       team,
       partOfCountry: true,
+      partOf: where,
       name: conflict.name,
-      badge: `War since ${short} · in part of the country`,
-      line: `${conflict.name}, since ${long}: damage is counted from that day. The war covers only part of this country: its rules apply in the squares that touch the war's region${squares ? ` (${squares})` : ""}; the other squares are read as at peace (heavy damage needs strong radar change and an unusual fire), with their distance to fighting measured to the war's region.`,
+      badge: `War since ${short} · in part of the ${where}`,
+      line: `${conflict.name}, since ${long}: damage is counted from that day. The war covers only part of this ${where}: its rules apply in ${warSquaresWhere(run)}${squares ? ` (${squares})` : ""}. The other squares also count damage from that day, but use the peace rules for heavy damage (strong radar change and an unusual fire) and for the damage score${fires}.`,
     };
   }
   return { war: true, team, name: conflict.name, badge: `War since ${short}`, line: `${conflict.name}, since ${long}: damage is counted from that day.` };
@@ -387,9 +565,23 @@ export function monthsWithOtherWar(area, runs) {
   });
 }
 
-// A war setting in a few words: "at war since 24 Feb 2022", "at peace".
-export function warText(conflict) {
-  return conflict?.since ? `at war since ${warDay(conflict.since)}` : "at peace";
+// A war setting in a few words: "at war since 24 Feb 2022", "at war since 7
+// Oct 2023 in part of the country" (a war whose rules apply only in the
+// squares that touch its region: warPartOf), "at peace". Given the setting
+// now (`now`), a war that began on the same day but whose rules covered
+// another part of the area says where they applied, so the two never read
+// the same (Atlas Settings: "The saved months were made at war since 7 Oct
+// 2023, with its rules all over the country" next to "At war since 7 Oct
+// 2023" for an older run of Palestine, against the Gaza war's rules in
+// part of the country now).
+export function warText(conflict, now) {
+  if (!conflict?.since) return "at peace";
+  const text = `at war since ${warDay(conflict.since)}`;
+  const part = warPartOf(conflict);
+  if (now?.since === conflict.since && Boolean(now.partOfCountry) !== Boolean(conflict.partOfCountry)) {
+    return part ? `${text}, with its rules only in part of the ${part}` : `${text}, with its rules all over the ${warPartOf(now)}`;
+  }
+  return part ? `${text} in part of the ${part}` : text;
 }
 
 // Whether an analysis keeps a saved month as it is, or analyzes it again
@@ -464,7 +656,8 @@ export function accessMeasured(run) {
 //              before the war began on 1 June 2026, so the damage score is 0
 //              everywhere" (no war year of fires, no war season of radar)
 //   a war in part of the area (warInPart)  the war's meaning "in the squares
-//              that touch the war's region; elsewhere" the peace one
+//              that touch the war's region [or lie in another listed war];
+//              elsewhere" the peace one
 export function damageMeaning(run) {
   if (beforeWar(run)) return `not counted for this month: it ends before the war began on ${warDay(conflictOf(run).since, "long")}, so the damage score is 0 everywhere`;
   if (atPeace(run)) {
@@ -475,7 +668,7 @@ export function damageMeaning(run) {
       ? "unusual fire (the fires of the worst war year, in 12-month years from the day the war began, against a normal year) and lasting radar change (a change seen in at least two complete growing seasons since the war began, which need not include the latest; while only one is complete, that one) against the normal years 2019–2021"
       : "unusual fire and radar change against the normal years 2019–2021";
   // A war in part of the area: the other squares are scored at peace.
-  if (warInPart(run)) return `${war} in the squares that touch the war's region; elsewhere the heavily damaged share of the black soil (radar change backed by unusual fire), full at ${Math.round(PEACE_DAMAGE.fullShare * 100)}%`;
+  if (warInPart(run)) return `${war} in ${warSquaresWhere(run)}; elsewhere the heavily damaged share of the black soil (radar change backed by unusual fire), full at ${Math.round(PEACE_DAMAGE.fullShare * 100)}%`;
   return war;
 }
 
@@ -494,7 +687,7 @@ export function accessMeaning(run) {
     return `full everywhere: ${reason.clause}, so every square counts as safe to reach (this does not prove the land is safe)`;
   }
   if (accessSourceOf(run) === "acled") return `the distance to battles in the ACLED file, full at ${km} km`;
-  if (accessSourceOf(run) === "fires") return `the distance to unusual fires${warInPart(run) ? " inside the war's region" : ""} (an estimate of where fighting is; no ACLED file), full at ${km} km`;
+  if (accessSourceOf(run) === "fires") return `the distance to unusual fires${warInPart(run) ? ` ${warFiresWhere(run)}` : ""} (an estimate of where fighting is; no ACLED file), full at ${km} km`;
   return `the distance to recorded fighting, full at ${km} km`;
 }
 
@@ -528,7 +721,7 @@ export function heavyDamageRule(run) {
   const peace = `radar change of ${HEAVY_DAMAGE.radarDb} dB or more and an unusual fire within ${km} km`;
   if (atPeace(run)) return peace;
   const war = `radar change of ${HEAVY_DAMAGE.radarDb} dB or more, or of ${HEAVY_DAMAGE.radarWithFireDb} dB or more with an unusual fire within ${km} km`;
-  if (warInPart(run)) return `${war} in the squares that touch the war's region; elsewhere ${peace}`;
+  if (warInPart(run)) return `${war} in ${warSquaresWhere(run)}; elsewhere ${peace}`;
   return war;
 }
 
@@ -605,8 +798,8 @@ export function nextSteps({ run, hotspots = [], alerts = [] }) {
   // looks.
   const outside = outsideWar(run);
   // A war that covers the area only in part (warInPart): the war's words
-  // only for places that touch its region; places read at peace get the
-  // peace words.
+  // only for places that touch its region; places outside it (the peace
+  // rule for heavy damage and the damage score) get the peace words.
   const calm = peaceSquares(run);
   const peaceFor = (cellIds) => outside || (calm.size > 0 && (cellIds || []).length > 0 && cellIds.every((id) => calm.has(id)));
 

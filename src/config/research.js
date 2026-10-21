@@ -135,8 +135,15 @@ export const atlasMethods = {
   ],
   note: "Near term sets aside the least safe places and ranks the rest by soil value and damage; the long view blends all three. The soil-health index is shown for context only.",
   notePeace: "Near term ranks by soil value and damage; the long view blends all three. The soil-health index is shown for context only.",
-  // Added for a war that covers a whole-country area only in part.
-  notePartOfCountry: "The war covers only part of this country: its rules apply in the squares that touch its region. Elsewhere heavy damage needs strong radar change and an unusual fire, and the damage score is the heavily damaged share of the black soil.",
+  // Added for a war that covers a whole-country area only in part, and
+  // (notePartOfArea) a region, a box or a drawn area; notePartOtherWar
+  // after it when some squares have the war's rules because another listed
+  // war covers them (run.otherWarSquares), then notePartElsewhere. The
+  // other squares keep the war's dates; only these rules differ there.
+  notePartOfCountry: "The war covers only part of this country: its rules apply in the squares that touch its region.",
+  notePartOfArea: "The war covers only part of this area: its rules apply in the squares that touch its region.",
+  notePartOtherWar: "Squares that lie in another listed war have its rules too.",
+  notePartElsewhere: "Elsewhere damage is also counted from the day the war began, but heavy damage needs strong radar change and an unusual fire, and the damage score is the heavily damaged share of the black soil.",
   limits: "Scores show model priority, not proven results. Check the land on the ground before you act on it.",
   sources: "Processed in Google Earth Engine.",
 };

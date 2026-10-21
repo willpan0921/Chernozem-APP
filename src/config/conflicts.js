@@ -38,16 +38,27 @@
 // ends before its war began has no war damage counted (endsBeforeWar).
 //
 // LIMITS: a war is matched by COUNTRY (and its boxes) only, and an area has
-// one war: a drawn area with any of its land in a war counts as at war all
-// over. A whole-country area of a country that holds a war limited to boxes
-// (Russia, DR Congo, Ethiopia, Israel, Lebanon, South Sudan, Thailand,
-// Cambodia, and Palestine for the Gaza war) keeps the war's start day, but
-// its rules apply only in the squares that touch the boxes (warSquares
-// below; run.conflict.partOfCountry, with each square's atWar); the other
-// squares are read at peace rules, with their distance to fighting
-// measured to unusual fires inside the boxes. The Overview's chip, the
-// report and the AI say so. For numbers on the war's region alone, add it
-// (or draw it) as its own area. A war not listed
+// one war: a whole country has its country's war, any other area the war
+// that covers the most of the points looked at (one point is enough). When
+// an area's war covers whole countries (Ukraine, Sudan), it counts as at
+// war all over. For a war limited to boxes (Russia, DR Congo, Ethiopia,
+// Israel, Lebanon, South Sudan, Thailand, Cambodia, and Palestine for the
+// Gaza war), the war's rules apply in the squares that touch its boxes
+// and in those that lie in another listed war (server/conflicts.js
+// warCellsFor: the Sumy side of a box drawn over the Kursk front, in the
+// war in Ukraine, with the area's war's dates); an area with other squares
+// too (a whole country, or a region, box or drawn area across a box's
+// edge: server/conflicts.js listWarFor) holds the war in part
+// (run.conflict.partOfCountry, with each square's atWar). Every
+// square keeps the war's dates: damage is counted from the day it began,
+// with its fire years and war seasons. Only three things differ for the
+// other squares: heavy damage there needs strong radar change AND an
+// unusual fire (the peace rule), their damage score is the heavily
+// damaged share of the black soil (as at peace), and, without an ACLED
+// file, the unusual fires that stand in for fighting are taken only from
+// inside the boxes and the war's squares in another listed war. The
+// Overview's chip, the report and the AI say so. For numbers on the war's
+// region alone, add it (or draw it) as its own area. A war not listed
 // here counts as peace: damage there is still found from unusual fire and
 // radar change, but nothing is measured as distance to fighting, and that
 // does not mean the land is safe. Left out on purpose (checked 2026-10-19):
@@ -411,13 +422,19 @@ export function warBoxes(conflict) {
   return war?.areas?.length ? war.areas : null;
 }
 
-// The squares of a whole-country area that its war's rules apply to, when
-// the war covers the country only in part (conflict.partOfCountry: a war
-// of the list limited to boxes, server/jobs.js warFor): the ids of the
-// cells whose square (cellSizeDeg wide, around the cell's centre) overlaps
-// one of the war's boxes. A square that only touches a box counts: at
-// Russia's coarse grid no square's centre is inside the Kursk and Belgorod
-// boxes. The other squares are read at peace rules (server/providers/gee.js,
+// The squares of an area that touch its war's boxes, when the war covers
+// the area only in part (conflict.partOfCountry: a war of the list limited
+// to boxes that leave some of the area's squares outside, on any kind of
+// area: server/conflicts.js listWarFor): the ids of the cells whose square
+// (cellSizeDeg wide, around the cell's centre) overlaps one of the war's
+// boxes. A square that only touches a box counts: at Russia's coarse grid
+// no square's centre is inside the Kursk and Belgorod boxes. The war's
+// rules apply in them and in the squares that lie in another listed war
+// (server/conflicts.js warCellsFor, which the analyses use). The other
+// squares keep the war's dates (damage window, fire years, war seasons)
+// but get the peace rule for heavy damage and the peace damage score, and
+// the fires that stand in for fighting come from inside the boxes (and
+// the war's squares in another listed war) only (server/providers/gee.js,
 // sample.js; scoring.js). Null when every square has the war's rules (no
 // partOfCountry, or a war without boxes).
 export function warSquares(conflict, cells, cellSizeDeg) {
@@ -436,8 +453,9 @@ export function warSquares(conflict, cells, cellSizeDeg) {
 // The war that covers a country, or null. A war limited to boxes (areas)
 // counts for its whole country here: an Atlas area that is the whole of
 // that country holds the war zone (see LIMITS above), and its war's rules
-// apply in the squares that touch the boxes (warSquares). For one place use
-// conflictForPoint.
+// apply in the squares that touch the boxes (warSquares; and in any that
+// lie in another listed war: server/conflicts.js warCellsFor). For one
+// place use conflictForPoint.
 export function conflictForCountry(countryId) {
   if (!countryId) return null;
   return CONFLICTS.find((conflict) => (conflict.countries || []).includes(String(countryId))) || null;

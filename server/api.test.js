@@ -288,7 +288,8 @@ test("one area at a time: another area's analysis waits for the one running and 
     const busy = await call("DELETE", `/api/areas/${first.id}`);
     assert.equal(busy.status, 409);
     assert.equal(busy.json.error.code, "busy");
-    assert.match(busy.json.error.message, /Stop its analysis first/);
+    // A saved area that is not open shows no progress bar: open it first.
+    assert.equal(busy.json.error.message, "Line first is being analyzed right now. Open it and press Stop under its progress bar, then open another area and remove it from Saved areas.");
 
     // The analysis running is stopped (its month never answers here: the
     // job does not wait for it). Then the area can be removed.
@@ -306,6 +307,67 @@ test("one area at a time: another area's analysis waits for the one running and 
     open();
     sampleProvider.analyze = analyze;
   }
+});
+
+test("removing an area whose analysis is stopping says to wait a moment; the cancel route refuses a Field job (400)", async () => {
+  const area = (await call("POST", "/api/areas", { source: "bbox", name: "Stopping area", north: 48.25, south: 48.2, east: 2.55, west: 2.5 })).json.area;
+  // An analysis between its Stop and its end (jobs.js cancelAnalysis: the
+  // month in progress is being given up).
+  const jobsMap = globalThis.__chernozemJobs;
+  const stopping = { id: "job-api-stopping", kind: "atlas", areaId: area.id, areaName: area.name, status: "running", queued: false, stopping: true, done: 0, total: 1, message: "Stopping area: stopping…", runIds: [], startedAt: new Date().toISOString(), finishedAt: null };
+  jobsMap.set(stopping.id, stopping);
+  try {
+    const res = await call("DELETE", `/api/areas/${area.id}`);
+    assert.equal(res.status, 409);
+    assert.equal(res.json.error.code, "busy");
+    assert.equal(res.json.error.message, "Stopping area's analysis is stopping. Remove the area in a moment, once it has stopped.");
+  } finally {
+    jobsMap.delete(stopping.id);
+  }
+  assert.equal((await call("DELETE", `/api/areas/${area.id}`)).status, 200, "once it has stopped");
+
+  // A Field job is not stopped here.
+  const { startJob } = await import("./jobs.js");
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const field = startJob({ kind: "field-analyze", key: "api-cancel-test", run: () => gate });
+  try {
+    const res = await call("POST", `/api/jobs/${field.id}/cancel`);
+    assert.equal(res.status, 400);
+    assert.equal(res.json.error.code, "bad_request");
+    assert.equal(res.json.error.message, "Only an Atlas analysis can be cancelled here.");
+    assert.equal((await call("GET", `/api/jobs/${field.id}`)).json.job.status, "running", "nothing was cancelled");
+  } finally {
+    release();
+  }
+});
+
+test("an area whose last monthly update went wrong says so (monthlyProblem) until an analysis of it ends well", async () => {
+  const { startAnalysis } = await import("./jobs.js");
+  const { sampleProvider } = await import("./providers/sample.js");
+  const area = (await call("POST", "/api/areas", { source: "bbox", name: "Monthly trouble", north: 48.35, south: 48.3, east: 2.65, west: 2.6 })).json.area;
+  assert.equal(area.monthlyProblem, undefined);
+  const analyze = sampleProvider.analyze;
+  sampleProvider.analyze = () => Promise.reject(Object.assign(new Error("Earth Engine was too busy."), { code: "busy" }));
+  const [warn, errorLog] = [console.warn, console.error];
+  console.warn = () => {};
+  console.error = () => {};
+  try {
+    const monthly = await waitForJob((await startAnalysis({ areaId: area.id, months: 1, trigger: "monthly" })).id);
+    assert.equal(monthly.status, "error");
+    const problem = (await call("GET", `/api/areas/${area.id}`)).json.area.monthlyProblem;
+    assert.equal(problem.jobId, monthly.id);
+    assert.match(problem.text, /^The last monthly update could not analyze 1 month \(.+\): Earth Engine was too busy\. The next monthly check tries it again within 6 hours; to redo it now, run the analysis again from Atlas Settings\.$/);
+    assert.equal(problem.months.length, 1);
+  } finally {
+    console.warn = warn;
+    console.error = errorLog;
+    sampleProvider.analyze = analyze;
+  }
+  assert.equal((await waitForJob((await call("POST", "/api/analyze", { areaId: area.id, months: 1 })).json.job.id)).status, "done");
+  assert.equal((await call("GET", `/api/areas/${area.id}`)).json.area.monthlyProblem, undefined);
 });
 
 test("workspace settings are cleaned", async () => {

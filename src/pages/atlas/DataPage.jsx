@@ -27,13 +27,13 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeftRight, ArrowDownRight, ArrowUpRight, ChevronRight, ExternalLink, Info, TriangleAlert } from "lucide-react";
 import { PageHeader, Card, Badge, Button, Segmented } from "../../components/ui/index.js";
-import { AtlasGate, AnalysisProgress, useAtlasData } from "../../state/AtlasData.jsx";
+import { AtlasGate, AnalysisNotice, AnalysisProgress, useAtlasData } from "../../state/AtlasData.jsx";
 import { compareRuns } from "../../api/atlasApi.js";
 import { placeLabel } from "../../lib/atlas/hotspots.js";
 import { validation, citation } from "../../config/research.js";
 import { formatCount, formatHaShort, formatSigned } from "../../lib/format.js";
 import { runsComparable } from "../../lib/atlas/method.js";
-import { shownNewDamage, sourceBadge, warNote } from "../../lib/atlas/overview.js";
+import { seasonWords, shownNewDamage, sourceBadge, warNote } from "../../lib/atlas/overview.js";
 import "./DataPage.css";
 
 // The measures the chart can show. "get" reads the number from a month.
@@ -136,6 +136,9 @@ function DataArchive() {
           <AnalysisProgress job={job} compact />
         </div>
       )}
+      {/* After a Stop, months that failed, or a monthly update that went
+          wrong: what happened. */}
+      <AnalysisNotice />
 
       <TrendsCard />
 
@@ -179,7 +182,18 @@ function TrendsCard() {
 
   // New damage is hidden for a month whose month before is not comparable
   // (another data source, method, grid or war setting: method.js runsComparable).
-  const shown = useMemo(() => runs.map((run) => (shownNewDamage(run, runs) === run.newHeavyDamageHa ? run : { ...run, newHeavyDamageHa: null })), [runs]);
+  // The month a growing season joined the damage radar says so (season:
+  // overview.js seasonWords): which season, on the trend, and, when its new
+  // heavy damage is above 0, that most of it is older damage (the table).
+  const shown = useMemo(
+    () =>
+      runs.map((run) => {
+        const season = seasonWords(run, runs);
+        const kept = shownNewDamage(run, runs) === run.newHeavyDamageHa ? run : { ...run, newHeavyDamageHa: null };
+        return season ? { ...kept, season } : kept;
+      }),
+    [runs]
+  );
   const enough = shown.length >= 2;
   // Oldest month on the left.
   const chronological = useMemo(() => [...shown].reverse(), [shown]);
@@ -237,6 +251,9 @@ function MonthChange({ run, previous, measure, onOpen }) {
           {tone === "flat" ? "No change" : measure.change(change)} vs {shortLabel(previous)}
         </span>
       )}
+      {/* The month a growing season joined the damage radar: its heavy
+          damage is measured over other seasons than the month before's. */}
+      {run.season && measure.value !== "people" && <span className="dp-latest-season">{run.season.fact}</span>}
       {onOpen && (
         <button type="button" className="dp-latest-open" onClick={() => onOpen(run.id)}>
           Open month <ChevronRight size={14} aria-hidden="true" />
@@ -451,6 +468,7 @@ function TrendChart({ runs, measure, onOpen }) {
                 <span className="dp-tip-num">{Number.isFinite(item.get(hovered)) ? item.text(item.get(hovered)) : "–"}</span>
               </span>
             ))}
+            {hovered.season && <span className="dp-tip-note">{hovered.season.fact}</span>}
           </div>
         )}
       </div>
@@ -477,6 +495,11 @@ function MonthTable({ runs, onOpen }) {
   const { runSummary } = useAtlasData();
   const [all, setAll] = useState(false);
   const rows = all ? runs : runs.slice(0, TABLE_ROWS);
+  // The months shown whose new damage is mostly older damage, from a
+  // growing season that joined the damage radar ("incl. 2026 season"):
+  // said in full under the table, for phones that have no hover. Never for
+  // a month with no new damage (overview.js seasonWords jump).
+  const seasons = rows.filter((run) => run.season?.jump && run.newHeavyDamageHa != null);
   return (
     <div className="dp-table-block">
       <div className="table-wrap dp-table-wrap">
@@ -518,7 +541,14 @@ function MonthTable({ runs, onOpen }) {
                     <Fit full={run.label} short={shortLabel(run)} />
                   </td>
                   <td className="num">{haText(run.totals?.heavyDamageHa)}</td>
-                  <td className="num">{run.newHeavyDamageHa == null ? "–" : haText(run.newHeavyDamageHa)}</td>
+                  <td className="num">
+                    {run.newHeavyDamageHa == null ? "–" : haText(run.newHeavyDamageHa)}
+                    {run.season?.jump && run.newHeavyDamageHa != null && (
+                      <span className="dp-season" title={run.season.jump.note}>
+                        {run.season.jump.tag}
+                      </span>
+                    )}
+                  </td>
                   <td className="num dp-wide">{haText(run.totals?.blackSoilHa)}</td>
                   <td className="num">{formatCount(run.totals?.peopleOnDamagedSoil)}</td>
                   <td className="dp-wide">
@@ -540,6 +570,11 @@ function MonthTable({ runs, onOpen }) {
           </tbody>
         </table>
       </div>
+      {seasons.map((run) => (
+        <p key={run.id} className="dp-season-note">
+          {shortLabel(run)}: most of the new damage is {run.season.jump.what} ({run.season.jump.why}).
+        </p>
+      ))}
       {runs.length > TABLE_ROWS && (
         <button type="button" className="link-arrow dp-more" onClick={() => setAll((prev) => !prev)}>
           {all ? "Show fewer" : `Show all ${runs.length} months`}

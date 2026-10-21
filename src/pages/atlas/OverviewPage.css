@@ -58,6 +58,16 @@
   font-weight: 550;
 }
 
+/* "Mostly older damage: the 2026 season's radar images are counted for
+   the first time", under the new heavy damage of the month a season joined
+   the damage radar. */
+.ao-season-note {
+  display: block;
+  margin-top: 2px;
+  font-weight: 400;
+  color: var(--c-text-2);
+}
+
 /* ---------- Layout: main card and right column ---------- */
 
 .ao-grid {

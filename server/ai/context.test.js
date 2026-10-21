@@ -10,7 +10,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { buildAtlasContext, fallbackGroupHotspots, coordLabel, placeLabel, ATLAS_TOOLS, conflictLine, settingsLine, warSettingNote } from "./context.js";
+import { buildAtlasContext, fallbackGroupHotspots, coordLabel, placeLabel, ATLAS_TOOLS, conflictLine, settingsLine, warSettingNote, newSeasonFact } from "./context.js";
 import { scorePlaces } from "../../src/lib/atlas/scoring.js";
 import { METHOD_VERSION } from "../../src/lib/atlas/method.js";
 
@@ -468,14 +468,41 @@ test("a war the team set without a name is not called by the stand-in name", () 
   assert.doesNotMatch(unnamed, /its name and start date are the team's/);
 });
 
+test("the war-setting note never calls a war the team set without a name by the stand-in name (as the war line)", () => {
+  const geometry = { type: "Polygon", coordinates: [[[36, -1], [37, -1], [37, 0], [36, 0], [36, -1]]] };
+  const area = { id: "area-k", createdAt: "x", geometry, bbox: [36, -1, 37, 0], war: { mode: "war", since: "2026-06-01" } };
+  const madeAtPeace = { month: "2026-09", conflict: null, conflictSource: "list" };
+  const note = warSettingNote(area, madeAtPeace);
+  assert.equal(note, "War setting changed: this month was made at peace, but the user's team has since marked this area at war since 2026-06-01. Its numbers follow the setting it was made with until the analysis is re-run (Atlas Settings, Re-run analysis).");
+  assert.doesNotMatch(note, /War \(set for this area\)/);
+  // A name of its own is said.
+  assert.match(warSettingNote({ ...area, war: { mode: "war", since: "2026-06-01", name: "Fighting in the Rift" } }, madeAtPeace), /marked this area at war \(Fighting in the Rift\) since 2026-06-01\./);
+});
+
 test("a war that covers a whole-country area only in part: the AI is told where its rules apply, and which places and costs are outside it", async () => {
   const border = { id: "thailand-cambodia", name: "Cambodia–Thailand border conflict", since: "2025-07-24", partOfCountry: true };
-  // The strong corner (rows 0 and 1) touches the war's region; the rest was read at peace.
+  // The strong corner (rows 0 and 1) touches the war's region; the rest has the peace rules.
   const cells = gridCells().map((c) => ({ ...c, atWar: /^r[01]c/.test(c.id) }));
   const ctx = await buildAtlasContext({ store: fakeStore(cells, { conflict: border, conflictSource: "list", accessSource: "fires", warSquares: 12, method: { version: METHOD_VERSION } }) });
-  assert.match(ctx.text, /This war covers only part of this country: its rules apply only in the map squares that touch the war's region \(12 of 36 squares\), which have atWar true in their details\. The other squares were read as at peace: there heavy damage needs radar change of 3 dB or more AND an unusual fire within 1 km/);
-  assert.match(ctx.text, /Do not talk about fighting, a front line or demining for a place outside the war's region unless the user raises it\./);
-  assert.match(ctx.text, /\(outside the war's region: read as at peace\)/);
+  assert.match(ctx.text, /This war covers only part of this country: its rules apply only in the map squares that touch the war's region \(12 of 36 squares\), which have atWar true in their details\. The other squares \(atWar false\) keep the war's dates \(damage counted from the day it began, its fire years and war seasons\), but two things there follow the peace rules: heavy damage needs radar change of 3 dB or more AND an unusual fire within 1 km, and the damage score is the heavily damaged share of the black soil \(full at 20%\)\. Without an ACLED file, every square's distance to fighting is measured to the unusual fires inside the war's region; unusual fires in the other squares do not count as fighting/);
+  assert.doesNotMatch(ctx.text, /read as at peace/, "the other squares keep the war's dates: never 'read as at peace'");
+  assert.doesNotMatch(ctx.text, /another listed war/, "no square lies in another listed war");
+  assert.match(ctx.text, /Do not talk about fighting, a front line or demining for a place whose squares all have atWar false unless the user raises it\./);
+  assert.match(ctx.text, /\(outside the war's squares: heavy damage and the damage score by the peace rules\)/);
+  // A region (or a box, or a drawn area) across the edge of the war's
+  // boxes: "this area", not "this country".
+  const region = await buildAtlasContext({ store: fakeStore(cells, { conflict: { ...border, partOf: "area" }, conflictSource: "list", accessSource: "fires", warSquares: 12, method: { version: METHOD_VERSION } }) });
+  assert.match(region.text, /This war covers only part of this area: its rules apply only in the map squares that touch the war's region \(12 of 36 squares\)/);
+  assert.doesNotMatch(region.text, /part of this country/);
+  // Across a border, squares in another listed war have the war's rules
+  // too (run.otherWarSquares); with an ACLED file nothing is said of
+  // fires standing in for fighting (distance is to its battles).
+  const across = await buildAtlasContext({ store: fakeStore(cells, { conflict: { ...border, partOf: "area" }, conflictSource: "list", accessSource: "acled", warSquares: 12, otherWarSquares: 4, method: { version: METHOD_VERSION } }) });
+  assert.match(across.text, /its rules apply only in the map squares that touch the war's region or lie in another listed war \(12 of 36 squares\), which have atWar true in their details\. 4 of them lie in another war of the app's list without touching this war's region: that is land at war too \(counted with this war's dates\)\./);
+  assert.match(across.text, /Safe access: the distance to battles in the ACLED file/);
+  assert.doesNotMatch(across.text, /measured to the unusual fires|ordinary causes|three things/);
+  const acrossFires = await buildAtlasContext({ store: fakeStore(cells, { conflict: { ...border, partOf: "area" }, conflictSource: "list", accessSource: "fires", warSquares: 12, otherWarSquares: 4, method: { version: METHOD_VERSION } }) });
+  assert.match(acrossFires.text, /every square's distance to fighting is measured to the unusual fires inside the war's region and its squares in another listed war;/);
   const inside = await ctx.runTool("get_place", { cellId: "r0c0" });
   const outside = await ctx.runTool("get_place", { cellId: "r5c5" });
   assert.equal(inside.place.atWar, true);
@@ -488,5 +515,71 @@ test("a war that covers a whole-country area only in part: the AI is told where 
   assert.ok(ranking.places.some((p) => !p.outsideWarRegion && p.cellIds.includes("r0c0")));
   // A war over the whole area says nothing of the kind.
   const whole = await buildAtlasContext({ store: fakeStore(gridCells(), { conflict: { ...border, partOfCountry: undefined }, conflictSource: "list", accessSource: "fires" }) });
-  assert.doesNotMatch(whole.text, /covers only part|outside the war's region/);
+  assert.doesNotMatch(whole.text, /covers only part|outside the war's squares/);
+});
+
+test("the month a new growing season joins the damage radar: the AI is told most of the new damage is older damage (context text, history, get_history)", async () => {
+  // Kharkiv oblast, real data: September 2026 holds the 2026 season (5
+  // seasons), August 2026 did not (4): +64,904 ha.
+  const imagery = {
+    "2026-08": { from: "2022-03", to: "2025-08", label: "March to August of 2022 to 2025", seasons: 4 },
+    "2026-09": { from: "2022-03", to: "2026-08", label: "March to August of 2022 to 2026", seasons: 5 },
+  };
+  const base = fakeStore(gridCells(), { conflict: { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" }, conflictSource: "list", accessSource: "fires", method: { version: METHOD_VERSION } });
+  const withSeasons = (run) => (run ? { ...run, imagery: imagery[run.month] } : run);
+  const store = { ...base, getRun: async (id) => withSeasons(await base.getRun(id)), listRuns: async () => (await base.listRuns()).map(withSeasons) };
+  const ctx = await buildAtlasContext({ store });
+  assert.match(ctx.text, /New heavy damage since the previous month: 40 ha\. This is the first month that counts the radar images of the 2026 growing season: most of this month's new heavy damage is older damage, radar change seen over that whole season, not damage done within this one month\. Say so when you talk about this month's new damage\./);
+  assert.match(ctx.text, /- 2026-09: heavily damaged 680 ha, new 40 ha \(first month with the radar images of the 2026 growing season\),/);
+  assert.match(ctx.text, /- 2026-08: heavily damaged 640 ha, new 0 ha, black-soil/, "no month before it: no season joined");
+  const history = await ctx.runTool("get_history", {});
+  assert.match(history.months.find((m) => m.month === "2026-09").newGrowingSeason, /^the radar images of the 2026 growing season are counted from this month: most of this month's new heavy damage is older damage/);
+  assert.equal(history.months.find((m) => m.month === "2026-08").newGrowingSeason, undefined);
+
+  // The same seasons in both months: nothing is said.
+  const same = { ...base, getRun: async (id) => ({ ...(await base.getRun(id)), imagery: imagery["2026-09"] }), listRuns: async () => (await base.listRuns()).map((s) => ({ ...s, imagery: imagery["2026-09"] })) };
+  const plain = await buildAtlasContext({ store: same });
+  assert.doesNotMatch(plain.text, /radar images of the|first month that counts/);
+});
+
+test("a growing season that joins with no new heavy damage: the AI is told which season joined and why heavily damaged land can fall, never that most of it is older damage (real data: Iowa, November 2025)", async () => {
+  // Iowa, real data: the damage radar went from 1 season to 2 (2024 and
+  // 2025), heavy damage fell from 2,385 ha to 764 ha, 0 ha new.
+  const imagery = {
+    "2026-08": { from: "2024-04", to: "2024-09", label: "April to September 2024", seasons: 1 },
+    "2026-09": { from: "2024-04", to: "2025-09", label: "April to September of 2024 to 2025", seasons: 2 },
+  };
+  const base = fakeStore(gridCells(), { conflict: null, conflictSource: "list", accessSource: "none", method: { version: METHOD_VERSION } });
+  const fell = (run) => (run ? { ...run, imagery: imagery[run.month], ...(run.month === "2026-09" ? { newHeavyDamageHa: 0, totals: { ...run.totals, heavyDamageHa: 764 } } : { totals: { ...run.totals, heavyDamageHa: 2385 } }) } : run);
+  const store = { ...base, getRun: async (id) => fell(await base.getRun(id)), listRuns: async () => (await base.listRuns()).map(fell) };
+  const ctx = await buildAtlasContext({ store });
+  assert.match(ctx.text, /New heavy damage since the previous month: 0 ha\. This is the first month that counts the radar images of the 2025 growing season\. No new heavy damage was found: with two complete seasons for the first time, a change must now last over both to count as heavy damage, so heavily damaged land can fall this month; that alone does not mean land recovered\./);
+  assert.doesNotMatch(ctx.text, /older damage|most of this month's new heavy damage|Say so when you talk/);
+  assert.match(ctx.text, /- 2026-09: heavily damaged 764 ha, new 0 ha \(first month with the radar images of the 2025 growing season\),/);
+  const history = await ctx.runTool("get_history", {});
+  const sep = history.months.find((m) => m.month === "2026-09");
+  assert.equal(sep.newHeavyDamageHa, 0);
+  assert.equal(sep.newGrowingSeason, "the radar images of the 2025 growing season are counted from this month; no new heavy damage: with two complete seasons for the first time, a change must now last over both to count as heavy damage, so heavily damaged land can fall this month; that alone does not mean land recovered.");
+  // As many seasons, a later one (at peace the two-year window lets the
+  // oldest go: Kenya, January 2026), and no new damage: the general reason,
+  // never "two seasons".
+  const swap = {
+    "2026-08": { from: "2024-01", to: "2024-12", seasons: 1 },
+    "2026-09": { from: "2025-01", to: "2025-12", seasons: 1 },
+  };
+  const swapped = (run) => (run ? { ...run, imagery: swap[run.month], ...(run.month === "2026-09" ? { newHeavyDamageHa: 0 } : {}) } : run);
+  const kenya = await buildAtlasContext({ store: { ...base, getRun: async (id) => swapped(await base.getRun(id)), listRuns: async () => (await base.listRuns()).map(swapped) } });
+  assert.match(kenya.text, /This is the first month that counts the radar images of the 2025 growing season\. No new heavy damage was found: heavily damaged land is now measured over other seasons than the month before's \(the new season can also change the orbit direction the radar is compared from\), so it can fall;/);
+  assert.doesNotMatch(kenya.text, /two complete seasons|older damage/);
+});
+
+test("the AI is told when a season left the two-year window, and why heavy damage moved", () => {
+  const month = (m, imagery, more = {}) => ({ id: `run-${m}`, areaId: "admin1-gaul1-908", month: m, provider: "gee", conflict: null, method: { version: METHOD_VERSION }, imagery, newHeavyDamageHa: 0, ...more });
+  const mar = month("2026-03", { from: "2024-04", to: "2025-09", seasons: 2 });
+  const apr = month("2026-04", { from: "2025-04", to: "2025-09", seasons: 1 }, { newHeavyDamageHa: 12300 });
+  const fact = newSeasonFact(apr, [apr, mar]);
+  assert.match(fact, /first month without the radar images of the 2024 growing season \(it left the two-year window\)/);
+  assert.match(fact, /change in what is compared/);
+  assert.doesNotMatch(fact, /older damage/);
+  assert.equal(newSeasonFact(mar, [apr, mar]), "");
 });

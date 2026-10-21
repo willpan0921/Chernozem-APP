@@ -31,7 +31,21 @@
 // its turn comes, so a new name or war setting saved meanwhile is used. The
 // same area asked again gives back its job; a job that still waits takes
 // in the new request (a re-run, more months, a person's request over the
-// monthly one, which also moves it up the line).
+// monthly one, which also moves it up the line). The one exception: a
+// person's request while the monthly check is analyzing that very area
+// waits for it in line as a follow-up ("Waiting for this area's monthly
+// update (3 of 12 months) to finish"), so the re-run or the War card's
+// months a person asked for are done after it, never folded into the
+// monthly job, which adds the new month only (found in review, 2026-10-20:
+// a re-run clicked then ended "Updated · 1 month" with nothing redone).
+//
+// What went wrong in the last monthly update of an area is kept
+// (lastMonthlyProblem) until a later analysis of the area ends "done", so
+// the pages can say so although nobody watched it fail: "The last monthly
+// update could not analyze 1 month (September 2026): ... The next monthly
+// check tries it again within 6 hours; to redo it now, run the analysis
+// again from Atlas Settings." (server/app.js sends it with the area:
+// area.monthlyProblem).
 //
 // STOP: a job that still waits can be cancelled (status "cancelled", it
 // never ran). One that has started can be stopped (cancelAnalysis, Stop on
@@ -41,16 +55,22 @@
 // are kept, new damage is linked for them, and the job ends "cancelled"
 // ("Ukraine: stopped after 3 of 12 months ..."). The next job in line
 // starts then. Without it, one slow or huge area (a 24-month re-run of
-// Russia; one Ukraine month took 181 minutes while Earth Engine was slow)
-// held every other area back for hours, with no way out but a restart.
+// Russia; on a fake Earth Engine made 30 times slower than the real one,
+// one Ukraine month took 181 minutes: docs/METHODS.md) held every other
+// area back for hours, with no way out but a restart.
 //
 // The war of an area (where damage is counted from): the team's own choice
 // for it (area.war, Atlas Settings) first, else the app's list
 // (server/conflicts.js conflictForArea). The run keeps it (run.conflict)
 // and who decided (run.conflictSource: "area" or "list"); a war of the
-// list limited to boxes, on a whole-country area, is marked partOfCountry
-// (warFor): its rules then apply only in the squares that touch its boxes,
-// and the others are read at peace (src/config/conflicts.js warSquares).
+// list limited to boxes that leave some of the area's squares outside
+// (any kind of area) is marked partOfCountry (warFor): only the squares
+// that touch its boxes or lie in another listed war get its heavy-damage
+// rule and its damage score, and only the unusual fires inside the boxes
+// and those squares stand in for fighting; the other squares keep the
+// war's dates (damage counted from its start, its fire years and war
+// seasons) but get the peace rule and the peace damage score
+// (server/conflicts.js warCellsFor).
 // The setting is read again before every month, so one saved while the job
 // runs is used from the next month on (Atlas Settings then offers to redo
 // the months made before it).
@@ -92,7 +112,7 @@ import { getArea, getRun, listRuns, newId, saveRun } from "./store.js";
 import { planGrid } from "./geo.js";
 import { buildRun, latestCompleteMonth, linkNewDamage, monthLabel, monthsBack } from "./runs.js";
 import { getProvider, unavailableError } from "./providers/index.js";
-import { conflictForArea } from "./conflicts.js";
+import { listWarFor } from "./conflicts.js";
 import { teamConflict } from "../src/config/conflicts.js";
 import { METHOD_VERSION } from "../src/lib/atlas/method.js";
 import { keepsMonth, warKey } from "../src/lib/atlas/overview.js";
@@ -130,11 +150,66 @@ export function listJobs({ areaId, status, kind } = {}) {
     .map(publicJob);
 }
 
+// Finished jobs are forgotten after an hour, except each area's last
+// failed monthly job while nothing later of the area has ended "done"
+// (lastMonthlyProblem): one per area at most.
 function prune() {
   const now = Date.now();
+  const kept = new Set([...monthlyProblems().values()].map((job) => job.id));
   for (const [id, job] of jobs) {
-    if (job.status !== "running" && job.finishedAt && now - Date.parse(job.finishedAt) > KEEP_FINISHED_MS) jobs.delete(id);
+    if (job.status !== "running" && job.finishedAt && now - Date.parse(job.finishedAt) > KEEP_FINISHED_MS && !kept.has(id)) jobs.delete(id);
   }
+}
+
+// For each area: its last failed monthly job (status "error") when no
+// analysis of the area has ended "done" since. -> Map areaId -> job
+function monthlyProblems() {
+  const failed = new Map();
+  const doneAt = new Map();
+  for (const job of jobs.values()) {
+    if (job.kind !== "atlas" || !job.finishedAt) continue;
+    if (job.status === "done" && !(doneAt.get(job.areaId) >= job.finishedAt)) doneAt.set(job.areaId, job.finishedAt);
+    if (job.status === "error" && job.trigger === "monthly" && !(failed.get(job.areaId)?.finishedAt >= job.finishedAt)) failed.set(job.areaId, job);
+  }
+  for (const [areaId, job] of failed) if (doneAt.get(areaId) > job.finishedAt) failed.delete(areaId);
+  return failed;
+}
+
+// What went wrong in the area's last monthly update, while no analysis of
+// the area has ended "done" since (it is kept in memory: a restart forgets
+// it; the monthly check then analyzes the latest month again within
+// seconds if it is still missing, and an older one waits for a person):
+//   { jobId, text, months, finishedAt }
+//   text    "The last monthly update could not analyze 1 month (September
+//           2026): <why>. The next monthly check tries it again within 6
+//           hours; to redo it now, run the analysis again from Atlas
+//           Settings." (the monthly check starts the area again while its
+//           latest month is missing: server/scheduler.js); for older months
+//           only "... To fill it in, run the analysis again from Atlas
+//           Settings."; or, when it stopped at once (a bad key, a quota...),
+//           "The last monthly update stopped: <why>"
+//   months  the months it left without a run (the pages show the line while
+//           one of them still has no run made after finishedAt); [] when
+//           not known
+// Null when the last monthly update went well, or there was none.
+export function lastMonthlyProblem(areaId) {
+  const job = monthlyProblems().get(areaId);
+  if (!job) return null;
+  const failed = job.failedMonths || [];
+  const it = failed.length === 1 ? "it" : "them";
+  const count = failed.length === 1 ? "1 month" : `${failed.length} months`;
+  // Only a missing latest month starts the area again by itself (the
+  // monthly check, every 6 hours, then fills in every missing month of the
+  // last 12); an older one waits for someone (found in review,
+  // 2026-10-20: the line said "Re-run" on pages that have no Re-run).
+  const next = failed.includes(latestCompleteMonth())
+    ? `The next monthly check tries ${it} again within 6 hours; to redo ${it} now, run the analysis again from Atlas Settings.`
+    : `To fill ${it} in, run the analysis again from Atlas Settings.`;
+  const text = failed.length && job.errorDetail ? `The last monthly update could not analyze ${count}${job.errorDetail}. ${next}` : `The last monthly update stopped: ${job.error || "unknown error"}`;
+  // The months that failed (also a sample month Earth Engine could not
+  // redo) and those left without a run.
+  const months = [...new Set([...failed, ...(job.missingMonths || [])])].sort().reverse();
+  return { jobId: job.id, text, months, finishedAt: job.finishedAt };
 }
 
 const pause = () => new Promise((resolve) => setImmediate(resolve));
@@ -153,7 +228,7 @@ export function stopsJob(error) {
 
 // The error a job ends with when some months failed:
 //   "2 of 12 months could not be analyzed (July 2026, May 2026): <the error>.
-//    Run the analysis again to fill them in."
+//    Run the analysis again to fill them in." ("... fill it in." for one)
 // or, when the months failed for different reasons,
 //   "2 of 12 months could not be analyzed: July 2026 (<its error>); May 2026
 //    (<its error>). Run the analysis again to fill them in."
@@ -165,9 +240,12 @@ export function missingMonthsError(failed, total) {
   const detail = reasons.every((r) => r === reasons[0])
     ? ` (${failed.map((f) => monthLabel(f.month)).join(", ")}): ${reasons[0]}`
     : `: ${failed.map((f, i) => `${monthLabel(f.month)} (${reasons[i]})`).join("; ")}`;
-  const error = new Error(`${failed.length} of ${total} months could not be analyzed${detail}. Run the analysis again to fill them in.`);
+  const error = new Error(`${failed.length} of ${total} months could not be analyzed${detail}. Run the analysis again to fill ${failed.length === 1 ? "it" : "them"} in.`);
   error.code = first?.code || "months_missing";
   error.months = failed.map((f) => f.month);
+  // The months and why, for the monthly update's own line
+  // (lastMonthlyProblem).
+  error.detail = detail;
   return error;
 }
 
@@ -195,11 +273,15 @@ function analyzingNow() {
 //   "Waiting for Ukraine's analysis (3 of 12 months) and 2 others to finish"
 //   (how far the analysis running now is, once it has done a month; and
 //   the others in line before this one)
+//   "Waiting for this area's monthly update (3 of 12 months) to finish"
+//   (a person's request for an area the monthly check is analyzing:
+//   sameArea, with the trigger of the job running)
 //   busyProgress  e.g. "3 of 12 months" (optional)
-export function waitingText(busyName, othersAhead = 0, busyProgress = "") {
-  if (!busyName) return "Waiting to start";
+export function waitingText(busyName, othersAhead = 0, busyProgress = "", { sameArea = false, busyTrigger = null } = {}) {
+  if (!busyName && !sameArea) return "Waiting to start";
   const progress = busyProgress ? ` (${busyProgress})` : "";
   const others = othersAhead > 0 ? ` and ${othersAhead} ${othersAhead === 1 ? "other" : "others"}` : "";
+  if (sameArea) return `Waiting for this area's ${busyTrigger === "monthly" ? "monthly update" : "analysis"}${progress}${others} to finish`;
   return `Waiting for ${busyName}'s analysis${progress}${others} to finish`;
 }
 
@@ -229,7 +311,7 @@ function describeLine() {
   const busyProgress = busy?.done > 0 ? `${busy.done} of ${busy.total} months` : "";
   const waiting = line.ids.map((id) => jobs.get(id)).filter((job) => job && job.status === "running" && job.queued);
   waiting.forEach((job, i) => {
-    job.waiting = waitingText(busy?.areaName, i, busyProgress);
+    job.waiting = waitingText(busy?.areaName, i, busyProgress, { sameArea: Boolean(busy) && busy.areaId === job.areaId, busyTrigger: busy?.trigger });
     job.message = `${job.areaName}: ${lowerFirst(job.waiting)}`;
   });
 }
@@ -266,6 +348,8 @@ function begin(job) {
       job.status = "error";
       job.error = error.message || String(error);
       job.errorCode = error.code || null;
+      // The months and why, for the monthly update's line (lastMonthlyProblem).
+      if (error.detail) job.errorDetail = error.detail;
       // Months missing: the error already says what to do.
       job.message = error.months ? job.error : `Analysis stopped: ${job.error}`;
       job.waiting = null;
@@ -297,19 +381,25 @@ function joinRequest(job, { count, rerun, trigger }) {
 
 // Starts analyzing an area. Gives back the job right away; the work goes on
 // in the background, at once or when its turn comes (placeInLine). If the
-// area is already being analyzed (or waits), that job is given back
-// instead of starting a second one.
+// area already waits, that job takes in the request and is given back; if
+// it is being analyzed, that job is given back instead of starting a
+// second one, except for a person's request while the monthly check
+// analyzes the area: that one waits in line behind it (a follow-up, which
+// later requests for the area join).
 export async function startAnalysis({ areaId, months = 12, rerun = false, trigger = "manual" }) {
   const area = await getArea(areaId);
   if (!area) throw notFound("That area does not exist.");
   const count = Math.min(24, Math.max(1, Math.round(Number(months) || 12)));
   // From here to jobs.set nothing waits, so two requests at once cannot
   // both start a job for the same area.
-  const running = [...jobs.values()].find((job) => job.kind === "atlas" && job.areaId === areaId && job.status === "running");
-  if (running) {
-    if (running.queued && running.internal) joinRequest(running, { count, rerun: Boolean(rerun), trigger });
-    return publicJob(running);
+  const ofArea = [...jobs.values()].filter((job) => job.kind === "atlas" && job.areaId === areaId && job.status === "running");
+  const waiting = ofArea.find((job) => job.queued && job.internal);
+  if (waiting) {
+    joinRequest(waiting, { count, rerun: Boolean(rerun), trigger });
+    return publicJob(waiting);
   }
+  const running = ofArea.find((job) => !job.queued) || ofArea[0];
+  if (running && !(running.trigger === "monthly" && trigger !== "monthly" && !running.queued)) return publicJob(running);
 
   const job = {
     id: newId("job"),
@@ -375,18 +465,21 @@ export function cancelAnalysis(jobId) {
 // choice for it (area.war, Atlas Settings) first, else the app's list (by
 // its country, or its cells). It decides where damage is counted from and
 // whether distance to fighting means anything there
-// (src/config/conflicts.js). A war of the list limited to boxes, on an area
-// that is the whole country (Thailand, Russia, Ethiopia...), is marked
-// partOfCountry: the providers apply its rules only in the squares that
-// touch its boxes and read the others at peace (gee.js, sample.js), and
-// the Overview's chip, the report and the AI say so. (Found in review,
-// 2026-10-19: "Ethiopia" counted all of the country as at war since 1 Aug
-// 2023, so any lasting radar change anywhere was heavy damage.)
+// (src/config/conflicts.js). A war of the list limited to boxes whose
+// boxes leave some of the area's squares outside (a whole country such as
+// Thailand, Russia or Ethiopia, or a region, box or drawn area across a
+// box's edge) is marked partOfCountry (server/conflicts.js listWarFor, the
+// rule Atlas Settings reads too): the providers apply its rules only in
+// the squares that touch its boxes or lie in another listed war (gee.js,
+// sample.js: server/conflicts.js warCellsFor), and the Overview's chip,
+// the report and the AI say so. (Found in review, 2026-10-19:
+// "Ethiopia" counted all of the country as at war since 1 Aug 2023, so any
+// lasting radar change anywhere was heavy damage; 2026-10-20: the same for
+// a region or a drawn area that touched the boxes.)
 function warFor(area, grid) {
-  const conflict = conflictForArea({ countryId: area.countryId, bbox: area.bbox || grid.bbox, cells: grid.cells, war: area.war, areaId: area.id });
-  const conflictSource = teamConflict(area.war, area.id) !== undefined ? "area" : "list";
-  const partOfCountry = conflictSource === "list" && Boolean(area.countryId) && Boolean(conflict?.areas?.length);
-  return { conflict: partOfCountry ? { ...conflict, partOfCountry: true } : conflict, conflictSource };
+  const own = teamConflict(area.war, area.id);
+  if (own !== undefined) return { conflict: own, conflictSource: "area" };
+  return { conflict: listWarFor(area, grid), conflictSource: "list" };
 }
 
 // "Ukraine: stopped after 3 of 12 months. The months analyzed before are kept."
@@ -534,6 +627,9 @@ async function runJob(job, area, count, rerun) {
     job.monthProgress = 0;
     try {
       const summaries = await listRuns(area.id);
+      // The job's months that are left without a run (lastMonthlyProblem).
+      const have = new Set(summaries.map((summary) => summary.month));
+      job.missingMonths = months.filter((month) => !have.has(month));
       const full = (await Promise.all(summaries.map((summary) => getRun(summary.id)))).filter(Boolean);
       for (const run of linkNewDamage(full)) await saveRun(run);
     } catch (error) {

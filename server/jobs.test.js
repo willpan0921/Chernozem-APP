@@ -8,10 +8,16 @@
 // and can be cancelled while they wait); that a started analysis can be
 // stopped (the months done are kept, nothing more of its month is sent,
 // and the next one starts at once); which saved months a run redoes (an
-// older method, another war setting); and that a run's war follows the
+// older method, another war setting); that a run's war follows the
 // area's own war setting (area.war), also one saved while it runs and a
 // day after some of its months, on sample data and on the fake Earth
-// Engine. Run with:
+// Engine, and that a region or drawn area across a war's boxes holds it
+// only in part. Also the queue paths the 2026-10-20 review found untested:
+// the look at the line every 5 s (a job of an older copy of this file
+// ending), a monthly request joining a person's waiting job, a Stop during
+// the final linking; a person's request while the monthly update analyzes
+// the area (a follow-up), and the last monthly update's failure kept for
+// the pages. Run with:
 //   node --test server/jobs.test.js
 //
 // WHO EDITS IT
@@ -26,7 +32,7 @@ import path from "node:path";
 process.env.CHERNOZEM_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "chernozem-jobs-"));
 process.env.GEE_DISABLED = "1";
 
-const { startAnalysis, cancelAnalysis, getJob, listJobs, stopsJob, missingMonthsError, staleMethod, waitingText } = await import("./jobs.js");
+const { startAnalysis, cancelAnalysis, getJob, listJobs, stopsJob, missingMonthsError, staleMethod, waitingText, lastMonthlyProblem } = await import("./jobs.js");
 const { saveArea, listRuns, getRun, saveRun, updateArea, deleteArea } = await import("./store.js");
 const { METHOD_VERSION } = await import("../src/lib/atlas/method.js");
 const { sampleProvider } = await import("./providers/sample.js");
@@ -69,7 +75,7 @@ test("which errors stop a job, and the missing-months message", () => {
   assert.equal(stopsJob(Object.assign(new Error("Earth Engine error: Earth Engine capacity exceeded."), { code: "gee_error" })), false);
   assert.equal(stopsJob(Object.assign(new Error("timed out"), { code: "timeout" })), false);
   const error = missingMonthsError([{ month: "2026-07", error: Object.assign(new Error("Earth Engine error: Earth Engine capacity exceeded."), { code: "gee_error" }) }], 12);
-  assert.equal(error.message, "1 of 12 months could not be analyzed (July 2026): Earth Engine error: Earth Engine capacity exceeded. Run the analysis again to fill them in.");
+  assert.equal(error.message, "1 of 12 months could not be analyzed (July 2026): Earth Engine error: Earth Engine capacity exceeded. Run the analysis again to fill it in.");
   assert.deepEqual(error.months, ["2026-07"]);
   const two = missingMonthsError([
     { month: "2025-12", error: new Error("Earth Engine took longer than 120 seconds.") },
@@ -131,7 +137,7 @@ test("Earth Engine too busy ('Too many concurrent aggregations.') skips that mon
     assert.equal(job.done, 3, "the job went on with the other months");
     assert.deepEqual(job.failedMonths, [bad]);
     assert.equal(job.errorCode, "busy");
-    assert.equal(job.message, `1 of 3 months could not be analyzed (${monthLabel(bad)}): Measuring 98 cells: Earth Engine was too busy ("Too many concurrent aggregations."). Wait a few minutes and try again. Run the analysis again to fill them in.`);
+    assert.equal(job.message, `1 of 3 months could not be analyzed (${monthLabel(bad)}): Measuring 98 cells: Earth Engine was too busy ("Too many concurrent aggregations."). Wait a few minutes and try again. Run the analysis again to fill it in.`);
     assert.deepEqual((await listRuns(area.id)).map((run) => run.month).sort(), [addMonths(latest, -2), latest].sort());
     // A real quota stops the job at that month.
     error = quota;
@@ -787,4 +793,227 @@ test("a whole-country area whose war covers it only in part: the run says so, co
   // What the app's list says for the area gives the same war key, so Atlas
   // Settings asks to redo nothing.
   assert.equal(warKey(listConflictForArea(area)), warKey(run.conflict));
+});
+
+test("a region or a drawn area across the edge of a war's boxes holds it only in part, like a whole country (in part of the area); one inside the boxes has its rules all over", async () => {
+  const { listConflictForArea } = await import("./conflicts.js");
+  const { warKey, warNote, warInPart } = await import("../src/lib/atlas/overview.js");
+  // An Afar-like region along the east edge of the Amhara boxes (38.45 to
+  // 39.85° E): its west squares touch them, the others do not.
+  const region = boxArea("admin1-afar-edge", "Afar edge", box(39.6, 11.8, 40.4, 12.4), { kind: "admin1", source: "admin1", country: "Ethiopia" });
+  await saveArea(region);
+  const job = await finished((await startAnalysis({ areaId: region.id, months: 1 })).id);
+  assert.equal(job.status, "done", job.error);
+  const run = await getRun(job.runIds[0]);
+  assert.deepEqual(run.conflict, { id: "amhara", name: "War in Ethiopia's Amhara region", since: "2023-08-01", partOfCountry: true, partOf: "area" });
+  assert.equal(run.conflictSource, "list");
+  const inside = run.cells.filter((cell) => cell.atWar === true);
+  const outside = run.cells.filter((cell) => cell.atWar === false);
+  assert.ok(inside.length > 0 && outside.length > 0);
+  assert.equal(inside.length + outside.length, run.cells.length);
+  assert.equal(run.warSquares, inside.length);
+  assert.ok(inside.every((cell) => cell.lon - run.cellSizeDeg / 2 < 39.85), "only squares that touch the boxes");
+  assert.equal(outside.reduce((sum, cell) => sum + cell.heavyDamageHa, 0), 0, "the peace rule outside the boxes");
+  assert.equal(warInPart(run), true);
+  assert.equal(warNote(run).badge, "War since 1 Aug 2023 · in part of the area");
+  // Atlas Settings reads the same war key: nothing to redo.
+  assert.equal(warKey(listConflictForArea(region)), warKey(run.conflict));
+
+  // A drawn area inside one of the boxes: every square has the war's rules.
+  const drawn = boxArea("area-gondar-drawn", "Gondar drawn", box(37.3, 12.4, 37.5, 12.6), { source: "draw" });
+  await saveArea(drawn);
+  const whole = await getRun((await finished((await startAnalysis({ areaId: drawn.id, months: 1 })).id)).runIds[0]);
+  assert.deepEqual(whole.conflict, { id: "amhara", name: "War in Ethiopia's Amhara region", since: "2023-08-01" });
+  assert.ok(whole.cells.every((cell) => !("atWar" in cell)));
+  assert.equal(whole.warSquares, undefined);
+  assert.equal(warNote(whole).badge, "War since 1 Aug 2023");
+  assert.equal(warKey(listConflictForArea(drawn)), warKey(whole.conflict));
+});
+
+// ---------- Paths found untested in review (2026-10-20) ----------
+
+test("the line is looked at again every 5 seconds: when a job started by an older copy of jobs.js ends, the next one starts", async (t) => {
+  const area = { ...AREA, id: "area-after-older", name: "After older" };
+  await saveArea(area);
+  const jobsMap = globalThis.__chernozemJobs;
+  // A job an older copy of this file started (the dev server reloads code
+  // after an edit): this copy is never told when it ends.
+  const old = { id: "job-older-running", kind: "atlas", areaId: "area-older-copy", areaName: "Older copy", status: "running", done: 0, total: 1, message: "Analyzing Older copy…", runIds: [], startedAt: new Date().toISOString(), finishedAt: null };
+  jobsMap.set(old.id, old);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const job = await startAnalysis({ areaId: area.id, months: 1 });
+    assert.equal(job.queued, true);
+    assert.equal(job.waiting, "Waiting for Older copy's analysis to finish");
+    old.status = "done";
+    old.finishedAt = new Date().toISOString();
+    t.mock.timers.tick(4999);
+    assert.equal(getJob(job.id).queued, true, "nothing starts it before the next look at the line");
+    t.mock.timers.tick(1);
+    assert.equal(getJob(job.id).queued, false, "the look at the line 5 s later starts it");
+    t.mock.timers.reset();
+    assert.equal((await finished(job.id)).status, "done");
+  } finally {
+    t.mock.timers.reset();
+    jobsMap.delete(old.id);
+  }
+});
+
+test("a monthly request for an area whose person's analysis waits keeps it the person's: its trigger and its place before the monthly ones", async () => {
+  const busy = { ...AREA, id: "area-keep-busy", name: "Keep busy" };
+  const area = { ...AREA, id: "area-keep-person", name: "Keep person" };
+  const other = { ...AREA, id: "area-keep-monthly", name: "Keep monthly" };
+  for (const item of [busy, area, other]) await saveArea(item);
+  const held = holdAnalyses([busy.id]);
+  try {
+    const running = await startAnalysis({ areaId: busy.id, months: 1 });
+    const monthlyOther = await startAnalysis({ areaId: other.id, months: 1, trigger: "monthly" });
+    const person = await startAnalysis({ areaId: area.id, months: 1 });
+    const joined = await startAnalysis({ areaId: area.id, months: 2, trigger: "monthly" });
+    assert.equal(joined.id, person.id);
+    assert.equal(joined.trigger, "manual", "still the person's (a monthly job would keep older-method months as they are)");
+    assert.equal(joined.total, 2, "it takes in the larger number of months");
+    const ids = [running.id, person.id, monthlyOther.id];
+    assert.deepEqual(listJobs({ status: "running", kind: "atlas" }).map((job) => job.id).filter((id) => ids.includes(id)), ids);
+    held.open();
+    for (const id of ids) assert.equal((await finished(id)).status, "done");
+    assert.deepEqual(held.seen.order, [busy.id, area.id, other.id]);
+  } finally {
+    held.restore();
+  }
+});
+
+test("a Stop that comes once every month is done (while the new damage is linked) ends the job 'done', not 'cancelled'", async () => {
+  const area = { ...AREA, id: "area-stop-late", name: "Stop late" };
+  await saveArea(area);
+  const last = addMonths(latestCompleteMonth(), -1);
+  const analyze = sampleProvider.analyze;
+  let jobId = null;
+  const seen = {};
+  sampleProvider.analyze = async (input) => {
+    const result = await analyze(input);
+    // The last month's answer is in: the Stop comes while the job saves it
+    // and links the new damage.
+    if (input.month === last) setImmediate(() => (seen.stop = cancelAnalysis(jobId)));
+    return result;
+  };
+  try {
+    jobId = (await startAnalysis({ areaId: area.id, months: 2 })).id;
+    const job = await finished(jobId);
+    assert.equal(seen.stop?.stopping, true, "the Stop came while the job still ran");
+    assert.equal(job.status, "done");
+    assert.equal(job.stopping, false);
+    assert.equal(job.done, 2);
+    assert.equal(job.message, "Stop late: 2 months analyzed");
+    assert.equal((await listRuns(area.id)).length, 2);
+  } finally {
+    sampleProvider.analyze = analyze;
+  }
+});
+
+test("a person's request while the monthly update analyzes the area waits for it as a follow-up, then does what the person asked (here a re-run)", async () => {
+  const area = { ...AREA, id: "area-follow-up", name: "Follow-up" };
+  await saveArea(area);
+  const latest = latestCompleteMonth();
+  // The latest month is there already: the monthly job keeps it and
+  // analyzes the missing month before it.
+  assert.equal((await finished((await startAnalysis({ areaId: area.id, months: 1 })).id)).status, "done");
+  const held = holdMonth(area.id, addMonths(latest, -1));
+  try {
+    const monthly = await startAnalysis({ areaId: area.id, months: 2, trigger: "monthly" });
+    await until(() => held.seen.held, "the monthly job's second month");
+    const person = await startAnalysis({ areaId: area.id, months: 2, rerun: true });
+    assert.notEqual(person.id, monthly.id, "not folded into the monthly job");
+    assert.equal(person.queued, true);
+    assert.equal(person.trigger, "manual");
+    assert.equal(person.waiting, "Waiting for this area's monthly update (1 of 2 months) to finish");
+    assert.equal(person.message, "Follow-up: waiting for this area's monthly update (1 of 2 months) to finish");
+    // Asked again (another page): the follow-up takes it in; a monthly
+    // request too, and stays the person's.
+    assert.equal((await startAnalysis({ areaId: area.id, months: 3 })).id, person.id);
+    assert.equal((await startAnalysis({ areaId: area.id, months: 1, trigger: "monthly" })).id, person.id);
+    assert.equal(getJob(person.id).total, 3);
+    assert.equal(getJob(person.id).trigger, "manual");
+    assert.equal(getJob(monthly.id).trigger, "monthly", "the monthly job goes on as it was");
+    assert.equal(listJobs({ areaId: area.id, status: "running" }).length, 2);
+    held.open();
+    const ended = await finished(monthly.id);
+    assert.equal(ended.status, "done");
+    assert.equal(ended.analyzed, 1);
+    const followUp = await finished(person.id);
+    assert.equal(followUp.status, "done");
+    assert.equal(followUp.analyzed, 3, "the re-run redid every month, after the monthly update");
+    assert.equal(followUp.message, "Follow-up: 3 months analyzed");
+  } finally {
+    held.restore();
+  }
+});
+
+test("what went wrong in the last monthly update is kept for the pages (also past the hour) until an analysis of the area ends well", async () => {
+  const area = { ...AREA, id: "area-monthly-problem", name: "Monthly problem" };
+  await saveArea(area);
+  const latest = latestCompleteMonth();
+  const analyze = sampleProvider.analyze;
+  let fail = true;
+  sampleProvider.analyze = (input) => (fail && input.month === latest ? Promise.reject(Object.assign(new Error("Earth Engine was too busy."), { code: "busy" })) : analyze(input));
+  const [warn, errorLog] = [console.warn, console.error];
+  console.warn = () => {};
+  console.error = () => {};
+  try {
+    assert.equal(lastMonthlyProblem(area.id), null);
+    const monthly = await finished((await startAnalysis({ areaId: area.id, months: 2, trigger: "monthly" })).id);
+    assert.equal(monthly.status, "error");
+    const problem = lastMonthlyProblem(area.id);
+    assert.deepEqual(problem, {
+      jobId: monthly.id,
+      text: `The last monthly update could not analyze 1 month (${monthLabel(latest)}): Earth Engine was too busy. The next monthly check tries it again within 6 hours; to redo it now, run the analysis again from Atlas Settings.`,
+      months: [latest],
+      finishedAt: monthly.finishedAt,
+    });
+    // Finished jobs are forgotten after an hour; this one is kept.
+    const saved = globalThis.__chernozemJobs.get(monthly.id);
+    saved.finishedAt = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    listJobs();
+    assert.equal(lastMonthlyProblem(area.id)?.jobId, monthly.id);
+    // An analysis of the area that ends well clears it.
+    fail = false;
+    assert.equal((await finished((await startAnalysis({ areaId: area.id, months: 2 })).id)).status, "done");
+    assert.equal(lastMonthlyProblem(area.id), null);
+    listJobs();
+    assert.equal(getJob(monthly.id), null, "then it is forgotten like any job");
+    // An older month that failed: the monthly check does not start the
+    // area again for it (its latest month is there), so the line says to
+    // run the analysis.
+    const older = addMonths(latest, -1);
+    sampleProvider.analyze = (input) => (input.month === older ? Promise.reject(Object.assign(new Error("Earth Engine was too busy."), { code: "busy" })) : analyze(input));
+    const olderJob = await finished((await startAnalysis({ areaId: area.id, months: 2, rerun: true, trigger: "monthly" })).id);
+    assert.equal(olderJob.status, "error");
+    assert.deepEqual(lastMonthlyProblem(area.id), {
+      jobId: olderJob.id,
+      text: `The last monthly update could not analyze 1 month (${monthLabel(older)}): Earth Engine was too busy. To fill it in, run the analysis again from Atlas Settings.`,
+      months: [older],
+      finishedAt: olderJob.finishedAt,
+    });
+    // A monthly update stopped at once (a problem that fails every month).
+    // Its month still has its older run, so no month is left out.
+    sampleProvider.analyze = () => Promise.reject(Object.assign(new Error("Google rejected the key."), { code: "bad_key" }));
+    await finished((await startAnalysis({ areaId: area.id, months: 1, rerun: true, trigger: "monthly" })).id);
+    assert.equal(lastMonthlyProblem(area.id).text, "The last monthly update stopped: Google rejected the key.");
+    assert.deepEqual(lastMonthlyProblem(area.id).months, []);
+    // One stopped at once on an area that has no run of its month yet: the
+    // months it left without a run (job.missingMonths; none failed one by
+    // one), so the pages can hide the line once they are filled in.
+    const fresh = { ...AREA, id: "area-monthly-stopped", name: "Monthly stopped" };
+    await saveArea(fresh);
+    const stoppedJob = await finished((await startAnalysis({ areaId: fresh.id, months: 1, trigger: "monthly" })).id);
+    assert.equal(stoppedJob.status, "error");
+    assert.deepEqual(lastMonthlyProblem(fresh.id), { jobId: stoppedJob.id, text: "The last monthly update stopped: Google rejected the key.", months: [latest], finishedAt: stoppedJob.finishedAt });
+    // A person's analysis that fails does not count as the monthly one.
+    assert.equal((await finished((await startAnalysis({ areaId: "area-jobtest", months: 1, rerun: true })).id)).status, "error");
+    assert.equal(lastMonthlyProblem("area-jobtest"), null);
+  } finally {
+    console.warn = warn;
+    console.error = errorLog;
+    sampleProvider.analyze = analyze;
+  }
 });

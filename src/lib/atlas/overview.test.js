@@ -9,7 +9,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { scorePlaces } from "./scoring.js";
 import { groupHotspots } from "./hotspots.js";
-import { accessMeaning, accessMeasured, accessSourceOf, analysisMonths, areaWar, beforeWar, conflictOf, alertPlaces, atPeace, damageMeaning, describeAlert, keepsMonth, monthsWithOtherWar, nearTermSetAside, heavyDamageRule, imageryText, kpis, nextSteps, outsideWar, peaceReason, peaceSquares, recoveryCost, ruleText, shownNewDamage, sourceBadge, springPlan, summarize, timeframeLabel, timeframeOptions, warInPart, warKey, warNote, warSetByTeam, warText, weightsText } from "./overview.js";
+import { accessMeaning, accessMeasured, accessSourceOf, analysisMonths, areaWar, beforeWar, conflictOf, alertPlaces, atPeace, damageMeaning, describeAlert, keepsMonth, monthsWithOtherWar, nearTermSetAside, heavyDamageRule, imageryText, kpis, nextSteps, outsideWar, peaceReason, peaceSquares, recoveryCost, ruleText, seasonAdded, seasonJump, seasonLeft, seasonWords, shownNewDamage, sourceBadge, springPlan, summarize, timeframeLabel, timeframeOptions, warInPart, warKey, warNote, warPartOf, warSetByTeam, warText, weightsText } from "./overview.js";
 import { METHOD_VERSION, runsComparable } from "./method.js";
 import { makePlaces } from "./testPlaces.js";
 
@@ -330,7 +330,7 @@ test("a war the team counts from the earliest day allowed is not given that day 
 
 test("a war that covers a whole-country area only in part: its words only where its rules applied", () => {
   const border = { id: "thailand-cambodia", name: "Cambodia–Thailand border conflict", since: "2025-07-24", partOfCountry: true };
-  // Squares r0c* touch the war's region; the rest were read at peace.
+  // Squares r0c* to r2c* touch the war's region; the rest have the peace rules.
   const cells = places.map((place) => ({ id: place.id, atWar: /^r[0-2]c/.test(place.id) }));
   const inPart = { ...run, conflict: border, conflictSource: "list", accessSource: "fires", method: { version: METHOD_VERSION }, warSquares: cells.filter((c) => c.atWar).length, cellCount: cells.length, cells };
   assert.equal(warInPart(inPart), true);
@@ -341,8 +341,11 @@ test("a war that covers a whole-country area only in part: its words only where 
   assert.equal(note.badge, "War since 24 Jul 2025 · in part of the country");
   assert.equal(
     note.line,
-    `Cambodia–Thailand border conflict, since 24 July 2025: damage is counted from that day. The war covers only part of this country: its rules apply in the squares that touch the war's region (in ${inPart.warSquares} of ${cells.length} squares); the other squares are read as at peace (heavy damage needs strong radar change and an unusual fire), with their distance to fighting measured to the war's region.`
+    `Cambodia–Thailand border conflict, since 24 July 2025: damage is counted from that day. The war covers only part of this country: its rules apply in the squares that touch the war's region (in ${inPart.warSquares} of ${cells.length} squares). The other squares also count damage from that day, but use the peace rules for heavy damage (strong radar change and an unusual fire) and for the damage score, and their distance to fighting is measured to the unusual fires inside the war's region.`
   );
+  // With an ACLED file every square's distance is to its battles: nothing
+  // is said of the war's region for it.
+  assert.match(warNote({ ...inPart, accessSource: "acled" }).line, /for the damage score\.$/);
   assert.match(damageMeaning(inPart), /lasting radar change .* in the squares that touch the war's region; elsewhere the heavily damaged share of the black soil \(radar change backed by unusual fire\), full at 20%$/);
   assert.equal(heavyDamageRule(inPart), "radar change of 3 dB or more, or of 2 dB or more with an unusual fire within 1 km in the squares that touch the war's region; elsewhere radar change of 3 dB or more and an unusual fire within 1 km");
   assert.equal(accessMeaning(inPart), "the distance to unusual fires inside the war's region (an estimate of where fighting is; no ACLED file), full at 100 km");
@@ -385,4 +388,133 @@ test("which saved months an analysis keeps (the server and Atlas Settings use on
   assert.equal(keepsMonth({ ...current, conflict: undefined }, options), true, "a run that does not say its war is kept");
   assert.deepEqual(analysisMonths(3, new Date(2026, 9, 20)), ["2026-09", "2026-08", "2026-07"]);
   assert.deepEqual(analysisMonths(2, new Date(2026, 0, 5)), ["2025-12", "2025-11"]);
+});
+
+test("a war in part of a region, a box or a drawn area says 'in part of the area'; a whole country keeps 'in part of the country'", () => {
+  const amhara = { id: "amhara", name: "War in Ethiopia's Amhara region", since: "2023-08-01", partOfCountry: true, partOf: "area" };
+  const cells = places.map((place) => ({ id: place.id, atWar: /^r[0-2]c/.test(place.id) }));
+  const region = { ...run, conflict: amhara, conflictSource: "list", accessSource: "fires", method: { version: METHOD_VERSION }, warSquares: cells.filter((c) => c.atWar).length, cellCount: cells.length, cells };
+  assert.equal(warPartOf(amhara), "area");
+  assert.equal(warPartOf({ ...amhara, partOf: undefined }), "country", "runs saved before partOf were all whole countries");
+  assert.equal(warPartOf({ ...amhara, partOfCountry: undefined }), null);
+  assert.equal(warPartOf(null), null);
+  assert.equal(warInPart(region), true);
+  const note = warNote(region);
+  assert.equal(note.badge, "War since 1 Aug 2023 · in part of the area");
+  assert.equal(note.partOf, "area");
+  assert.match(note.line, /^War in Ethiopia's Amhara region, since 1 August 2023: damage is counted from that day\. The war covers only part of this area: its rules apply in the squares that touch the war's region \(in 36 of 144 squares\)\. The other squares also count damage from that day, but use the peace rules for heavy damage/);
+  assert.doesNotMatch(note.line, /another listed war/);
+  // Across a border, squares in another listed war have its rules too
+  // (run.otherWarSquares: a box over the Kursk front, with its squares in
+  // Ukraine), and every line that says where its rules apply says so.
+  const across = { ...region, otherWarSquares: 9 };
+  assert.match(warNote(across).line, /its rules apply in the squares that touch the war's region or lie in another listed war \(in 36 of 144 squares\)\. .* their distance to fighting is measured to the unusual fires inside the war's region and its squares in another listed war\.$/);
+  assert.match(damageMeaning(across), / in the squares that touch the war's region or lie in another listed war; elsewhere /);
+  assert.match(heavyDamageRule(across), / in the squares that touch the war's region or lie in another listed war; elsewhere /);
+  assert.equal(accessMeaning(across), "the distance to unusual fires inside the war's region and its squares in another listed war (an estimate of where fighting is; no ACLED file), full at 100 km");
+  assert.doesNotMatch(note.line, /country|read as at peace/);
+  assert.equal(warNote({ ...region, conflict: { ...amhara, partOf: undefined } }).badge, "War since 1 Aug 2023 · in part of the country");
+  // The same war with its rules all over (a drawn area inside its boxes).
+  const inside = warNote({ ...region, conflict: { id: "amhara", name: amhara.name, since: amhara.since } });
+  assert.equal(inside.badge, "War since 1 Aug 2023");
+  assert.doesNotMatch(inside.line, /part of/);
+  assert.equal(warText(amhara), "at war since 1 Aug 2023 in part of the area");
+});
+
+test("a war setting in words shows where its rules applied when that is what differs (old Palestine runs against the Gaza war in part of the country now)", () => {
+  const gazaNow = { id: "gaza-2023", name: "Gaza war", since: "2023-10-07", partOfCountry: true };
+  const gazaOld = { id: "gaza-2023", name: "Gaza war", since: "2023-10-07" };
+  assert.equal(warText(gazaNow), "at war since 7 Oct 2023 in part of the country");
+  assert.equal(warText(gazaOld), "at war since 7 Oct 2023");
+  // Against the setting now: the old months' rules were all over the country.
+  assert.equal(warText(gazaOld, gazaNow), "at war since 7 Oct 2023, with its rules all over the country");
+  assert.equal(warText(gazaNow, gazaOld), "at war since 7 Oct 2023, with its rules only in part of the country");
+  assert.equal(warText(gazaOld, { ...gazaNow, partOf: "area" }), "at war since 7 Oct 2023, with its rules all over the area");
+  // Another start day, or peace: the day (or the peace) is the difference.
+  assert.equal(warText(gazaOld, { ...gazaNow, since: "2024-01-01" }), "at war since 7 Oct 2023");
+  assert.equal(warText(null, gazaNow), "at peace");
+  assert.equal(warText(gazaOld, null), "at war since 7 Oct 2023");
+});
+
+test("the month a new growing season joins the damage radar: its new heavy damage says so (real data: Kharkiv oblast, September 2026)", () => {
+  const war = { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" };
+  const month = (m, imagery, more = {}) => ({ id: `run-${m}`, areaId: "admin1-gaul1-3154", month: m, provider: "gee", conflict: war, method: { version: METHOD_VERSION }, imagery, newHeavyDamageHa: 0, ...more });
+  const aug = month("2026-08", { from: "2022-03", to: "2025-08", label: "March to August of 2022 to 2025", seasons: 4 }, { newHeavyDamageHa: 4725 });
+  const sep = month("2026-09", { from: "2022-03", to: "2026-08", label: "March to August of 2022 to 2026", seasons: 5 }, { newHeavyDamageHa: 64904 });
+  const runs = [sep, aug];
+  assert.equal(seasonAdded(sep, runs), "2026");
+  assert.equal(seasonJump(sep, runs), "2026");
+  assert.deepEqual(seasonWords(sep, runs), {
+    season: "2026",
+    name: "2026 growing season",
+    lasting: false,
+    fact: "The 2026 season's radar images are counted from this month",
+    jump: {
+      tag: "incl. 2026 season",
+      note: "Mostly older damage: the 2026 season's radar images are counted for the first time",
+      why: "radar change seen over the whole 2026 growing season, counted for the first time this month, not damage done in September 2026",
+      what: "older damage",
+    },
+  });
+  assert.equal(seasonAdded(aug, runs), null, "no month before it");
+  // The same seasons as the month before: nothing to say.
+  const oct = month("2026-10", sep.imagery, { newHeavyDamageHa: 120 });
+  assert.equal(seasonWords(oct, [oct, sep, aug]), null);
+  // At peace the two-year window lets the oldest season go as a new one
+  // joins: as many seasons, a later one (Kenya, January 2026).
+  const kenyaDec = month("2025-12", { from: "2024-01", to: "2024-12", seasons: 1 }, { conflict: null });
+  const kenyaJan = month("2026-01", { from: "2025-01", to: "2025-12", seasons: 1 }, { conflict: null, newHeavyDamageHa: 84 });
+  assert.equal(seasonAdded(kenyaJan, [kenyaJan, kenyaDec]), "2025");
+  assert.equal(seasonWords(kenyaJan, [kenyaJan, kenyaDec]).lasting, false, "the same count: never the two-season reason");
+  // An old season leaving alone is not a new one (Iowa, April 2026).
+  const iowaMar = month("2026-03", { from: "2024-04", to: "2025-09", seasons: 2 }, { conflict: null });
+  const iowaApr = month("2026-04", { from: "2025-04", to: "2025-09", seasons: 1 }, { conflict: null, newHeavyDamageHa: 412 });
+  assert.equal(seasonAdded(iowaApr, [iowaApr, iowaMar]), null);
+  // ...but it is said: with fewer seasons compared, heavy damage can jump
+  // (Heilongjiang, Saskatchewan and Iowa, April 2026).
+  assert.equal(seasonLeft(iowaApr, [iowaApr, iowaMar]), "2024");
+  const left = seasonWords(iowaApr, [iowaApr, iowaMar]);
+  assert.equal(left.left, true);
+  assert.equal(left.fact, "The 2024 season's radar images are no longer counted from this month (it left the two-year window)");
+  assert.deepEqual(left.jump, {
+    tag: "2024 season left",
+    note: "Mostly a change in what is compared: the 2024 season left the two-year window",
+    why: "the 2024 growing season left the two-year window this month, so a radar change has to show in fewer seasons to count as heavy damage; not damage done in April 2026",
+    what: "a change in what is compared",
+  });
+  // No new damage that month: the fact, no jump.
+  const flat = { ...iowaApr, newHeavyDamageHa: 0 };
+  assert.equal(seasonWords(flat, [flat, iowaMar]).jump, null);
+  // A season joining is never also called a season leaving.
+  assert.equal(seasonLeft(sep, runs), null);
+  // A first complete season after none (no count: runs.js keeps only 1 or more).
+  const none = month("2025-12", { from: "2024-11", to: "2025-04" }, { conflict: null });
+  const first = month("2026-01", { from: "2024-11", to: "2025-04", seasons: 1 }, { conflict: null, newHeavyDamageHa: 8193 });
+  assert.equal(seasonAdded(first, [first, none]), "2025");
+  // A season across the new year (the south: Buenos Aires, January 2026)
+  // is named by both years and its months, never the year it ends in alone.
+  assert.equal(seasonWords(first, [first, none]).season, "2024/25");
+  assert.equal(seasonWords(first, [first, none]).name, "November 2024 to April 2025 growing season");
+  assert.equal(seasonWords(first, [first, none]).jump.tag, "incl. 2024/25 season");
+  assert.equal(seasonWords(first, [first, none]).jump.why, "radar change seen over the whole November 2024 to April 2025 growing season, counted for the first time this month, not damage done in January 2026");
+  assert.equal(seasonAdded(none, [none, month("2025-11", { from: "2024-11", to: "2025-04" }, { conflict: null })]), null, "still no season");
+  // Never where the new damage is not shown (the month before is not comparable).
+  assert.equal(seasonAdded(sep, [sep, { ...aug, provider: "sample" }]), null);
+  assert.equal(seasonAdded({ ...sep, newHeavyDamageHa: null }, runs), null);
+});
+
+test("a growing season that joins with no new heavy damage is named, never called mostly older damage (real data: Iowa, November 2025)", () => {
+  // The damage radar went from 1 season to 2 (2024 and 2025): heavy damage
+  // fell from 2,385 ha to 764 ha, 0 ha new.
+  const month = (m, imagery, more = {}) => ({ id: `run-${m}`, areaId: "admin1-iowa", month: m, provider: "gee", conflict: null, method: { version: METHOD_VERSION }, imagery, ...more });
+  const oct = month("2025-10", { from: "2024-04", to: "2024-09", seasons: 1 }, { totals: { heavyDamageHa: 2385 }, newHeavyDamageHa: null });
+  const nov = month("2025-11", { from: "2024-04", to: "2025-09", seasons: 2 }, { totals: { heavyDamageHa: 764 }, newHeavyDamageHa: 0 });
+  const runs = [nov, oct];
+  // The fact stays (the trend's line and tooltip explain the fall with it)...
+  assert.equal(seasonAdded(nov, runs), "2025");
+  assert.equal(seasonWords(nov, runs).fact, "The 2025 season's radar images are counted from this month");
+  assert.equal(seasonWords(nov, runs).lasting, true, "two complete seasons for the first time");
+  // ...but nothing says most of the new damage is older damage: there is none.
+  assert.equal(seasonJump(nov, runs), null);
+  assert.equal(seasonWords(nov, runs).jump, null);
 });

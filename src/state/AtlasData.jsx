@@ -29,9 +29,10 @@
 
 import { Suspense, createContext, lazy, useCallback, useContext, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useSearchParams } from "react-router-dom";
-import { Clock, Loader2, RefreshCw, TriangleAlert } from "lucide-react";
+import { Clock, Info, Loader2, RefreshCw, TriangleAlert, X } from "lucide-react";
 import * as api from "../api/atlasApi.js";
 import { DEFAULT_SETTINGS, checkSettings } from "../lib/atlas/method.js";
+import { analysisNotice } from "../lib/atlas/analysisNotice.js";
 import { scorePlaces } from "../lib/atlas/scoring.js";
 import { groupHotspots } from "../lib/atlas/hotspots.js";
 import { Button } from "../components/ui/index.js";
@@ -103,8 +104,12 @@ export function AtlasDataProvider({ children }) {
       // Weight changes not saved yet win over what the server sent.
       const settings = pendingSettings.current || workspace.settings;
       setBase({ status: "ready", error: null, serverStatus, workspace: { ...workspace, settings }, areas, area, runs });
-      const running = (serverStatus.jobs || []).find((item) => item.status === "running" && item.areaId === area?.id);
-      if (running) setJob((prev) => (prev?.id === running.id ? prev : running));
+      // An analysis of the area running or waiting. A page that follows one
+      // of them keeps it: a person's request while the monthly update
+      // analyzes the area waits behind it as a second job of the same area
+      // (server/jobs.js), and the page follows the person's.
+      const running = (serverStatus.jobs || []).filter((item) => item.status === "running" && item.areaId === area?.id);
+      if (running.length) setJob((prev) => (running.some((item) => item.id === prev?.id) ? prev : running[0]));
     } catch (error) {
       if (seq !== loadSeq.current) return;
       setBase((prev) => ({ ...prev, status: prev.workspace ? "ready" : "error", error }));
@@ -318,6 +323,9 @@ export function AtlasDataProvider({ children }) {
   // Follows the running analysis every second until it ends.
   const jobId = job?.id;
   const jobRunning = job?.status === "running";
+  // Its area, for the line said when the server has forgotten it.
+  const jobAreaId = useRef(null);
+  jobAreaId.current = job?.areaId ?? null;
   useEffect(() => {
     if (!jobId || !jobRunning) return;
     let stopped = false;
@@ -327,7 +335,11 @@ export function AtlasDataProvider({ children }) {
       setRunCache({});
       await load();
       if (stopped) return;
-      setJob(final);
+      // Another analysis of the same area that still runs (the monthly
+      // update a person's follow-up waited behind, or the follow-up behind
+      // it: load() just picked it) is followed next; else the page keeps
+      // the one that ended, so it can say how it ended (AnalysisNotice).
+      setJob((prev) => (prev && prev.id !== final.id && prev.status === "running" && prev.areaId === (final.areaId ?? jobAreaId.current) ? prev : final));
       for (const resolve of jobWaiters.current.get(jobId) || []) resolve(final);
       jobWaiters.current.delete(jobId);
     };
@@ -347,8 +359,9 @@ export function AtlasDataProvider({ children }) {
         }
       } catch (error) {
         if (stopped) return;
-        // The server restarted and forgot the job: show what was saved.
-        if (error.status === 404) await finish({ id: jobId, status: "error", error: "The analysis was interrupted. Run it again." });
+        // The server restarted and forgot the job: show what was saved,
+        // and say so on the area's pages (AnalysisNotice).
+        if (error.status === 404) await finish({ id: jobId, areaId: jobAreaId.current, status: "error", error: "The analysis was interrupted. Run it again." });
         else timer = setTimeout(tick, POLL_MS * 2);
       }
     };
@@ -574,6 +587,32 @@ function WaitingTurn({ job, compact }) {
   );
 }
 
+// What the last analysis of the area did when it did not end as asked
+// (src/lib/atlas/analysisNotice.js): after a Stop "Kharkiv oblast: stopped
+// after 3 of 12 months. The months analyzed before are kept.", the months
+// that could not be analyzed, or the last monthly update's failure ("The
+// last monthly update could not analyze 1 month (September 2026): ... The
+// next monthly check tries it again within 6 hours; to redo it now, run
+// the analysis again from Atlas Settings.") until those months are filled
+// in. The cross hides it until something else happens.
+//   followed  false: only the monthly update's line (Atlas Settings says
+//             how its own re-runs ended)
+export function AnalysisNotice({ followed = true, className = "" }) {
+  const { area, runs, job } = useAtlasData();
+  const [closed, setClosed] = useState(null);
+  const notice = analysisNotice({ area, runs, job, followed });
+  if (!notice || notice.key === closed) return null;
+  return (
+    <div className={["atlas-notice", notice.tone === "error" ? "is-error" : "", className].filter(Boolean).join(" ")} role="status">
+      {notice.tone === "error" ? <TriangleAlert size={14} aria-hidden="true" /> : <Info size={14} aria-hidden="true" />}
+      <p>{notice.text}</p>
+      <button type="button" className="atlas-notice-close" aria-label="Close this note" onClick={() => setClosed(notice.key)}>
+        <X size={14} aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
 // The first screen when there is no area yet.
 export function AreaSetup() {
   return (
@@ -643,7 +682,10 @@ export function AtlasGate({ children }) {
         </div>
       );
     }
-    const failed = job?.status === "error" && job.areaId === area.id ? job.error : null;
+    // Why there is nothing yet: a Stop before the first month was done
+    // ("Kenya: stopped before its first month was done."), the error, or
+    // the monthly update's failure (analysisNotice).
+    const said = analysisNotice({ area, runs, job });
     const start = async () => {
       setStarting(true);
       setStartError(null);
@@ -662,7 +704,7 @@ export function AtlasGate({ children }) {
             <h1>{area.name}</h1>
             <p className="muted">Not analyzed yet.</p>
           </div>
-          {(failed || startError) && <p className="atlas-error-text">{startError?.message || failed}</p>}
+          {startError ? <p className="atlas-error-text">{startError.message}</p> : said && <p className={said.tone === "error" ? "atlas-error-text" : "atlas-muted-text"}>{said.text}</p>}
           <div className="cluster">
             <Button variant="primary" size="lg" onClick={start} disabled={starting}>
               {starting ? "Starting…" : "Analyze 12 months"}

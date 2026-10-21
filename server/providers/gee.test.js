@@ -63,6 +63,10 @@ import {
   isTooMuchWorkError,
   isTransientError,
   isBusyError,
+  FINE_SCALE_M,
+  FIRE_GRID_M,
+  RING_GRID_M,
+  fightingFires,
   keepTokenFresh,
   evaluate,
   yieldStatus,
@@ -90,6 +94,7 @@ import {
   cleanCounts,
   DATASETS,
   NO_WAR_WARNING,
+  squareRuns,
 } from "./gee.js";
 import { createFakeEe } from "./fake-ee.js";
 import { createFieldGeeProvider } from "./field-gee.js";
@@ -265,6 +270,49 @@ test("radar, fire and night-light windows", () => {
     { start: "2020-02-01", end: "2021-02-01" },
   ]);
   assert.deepEqual(w.viirsSearch, { start: "2025-08-01", end: "2026-02-01" });
+});
+
+test("in a war's first year the fires that stand in for fighting start on the day it began, against the same days of 2019-2021 (a war the team set, and one of the list)", () => {
+  // A war the team set from 1 June 2026.
+  const team = { id: "area-kenya", name: "War (set for this area)", since: "2026-06-01", source: "area" };
+  const june = monthWindows("2026-06", TODAY, { lat: 0.5, conflict: team });
+  assert.deepEqual(june.lastYear, { start: "2026-06-01", end: "2026-07-01" });
+  assert.equal(june.fightingSince, "2026-06-01");
+  assert.deepEqual(june.fireBaselines, [
+    { start: "2019-06-01", end: "2019-07-01" },
+    { start: "2020-06-01", end: "2020-07-01" },
+    { start: "2021-06-01", end: "2021-07-01" },
+  ]);
+  const september = monthWindows("2026-09", TODAY, { lat: 0.5, conflict: team });
+  assert.deepEqual(september.lastYear, { start: "2026-06-01", end: "2026-10-01" });
+  assert.deepEqual(september.fireBaselines.map((w) => `${w.start}..${w.end}`), ["2019-06-01..2019-10-01", "2020-06-01..2020-10-01", "2021-06-01..2021-10-01"]);
+  // A month not over yet: up to today, on the same days of each normal year.
+  const october = monthWindows("2026-10", TODAY, { lat: 0.5, conflict: team });
+  assert.deepEqual(october.lastYear, { start: "2026-06-01", end: "2026-10-18" });
+  assert.deepEqual(october.fireBaselines.at(-1), { start: "2021-06-01", end: "2021-10-18" });
+  // Before the war began, and at peace: no war's first day (and no fires
+  // stand in for fighting: analyze measures no distance then).
+  assert.equal(monthWindows("2026-05", TODAY, { lat: 0.5, conflict: team }).fightingSince, null);
+  assert.equal(monthWindows("2026-09", TODAY, { lat: 0.5 }).fightingSince, null);
+
+  // The Cambodia–Thailand border conflict (since 24 July 2025), for an area
+  // analyzed now: December 2025 reads the fires since the war began, not
+  // those since 1 January 2025.
+  const thai = { id: "thailand-cambodia", name: "Cambodia–Thailand border conflict", since: "2025-07-24" };
+  const december = monthWindows("2025-12", TODAY, { lat: 14.4, conflict: thai });
+  assert.deepEqual(december.lastYear, { start: "2025-07-24", end: "2026-01-01" });
+  assert.deepEqual(december.fireBaselines, [
+    { start: "2018-07-24", end: "2019-01-01" },
+    { start: "2019-07-24", end: "2020-01-01" },
+    { start: "2020-07-24", end: "2021-01-01" },
+  ]);
+  assert.deepEqual(monthWindows("2026-06", TODAY, { lat: 14.4, conflict: thai }).lastYear, { start: "2025-07-24", end: "2026-07-01" });
+  // Once the war is a year old, the 12 months up to the end of the month
+  // again, as before.
+  const july = monthWindows("2026-07", TODAY, { lat: 14.4, conflict: thai });
+  assert.deepEqual(july.lastYear, { start: "2025-08-01", end: "2026-08-01" });
+  assert.equal(july.fightingSince, null);
+  assert.deepEqual(july.fireBaselines.map((w) => w.start), ["2018-08-01", "2019-08-01", "2020-08-01"]);
 });
 
 test("day arithmetic", () => {
@@ -847,8 +895,14 @@ test("analyze() on a 9-cell area gives every reading for every cell", async () =
   // Signed in like the deposit, once.
   assert.equal(ee.callsNamed("data.authenticateViaPrivateKey").length, 1);
   assert.deepEqual(ee.callsNamed("initialize")[0].args, ["test-proj"]);
-  // Nothing is re-projected; every per-cell reduction has a tileScale.
-  assert.equal(ee.calls.filter((c) => c.name.endsWith(".reproject")).length, 0);
+  // Every per-cell reduction has a tileScale. 1 km cells are measured
+  // with pixels finer than FINE_SCALE_M, so the fire images and the
+  // distance to fighting (and nothing else) are put on the 1 km grid, and
+  // the ring around an unusual fire on the RING_GRID_M grid.
+  const reprojects = ee.calls.filter((c) => c.name.endsWith(".reproject"));
+  assert.ok(reprojects.length > 0);
+  assert.ok(reprojects.every((c) => [FIRE_GRID_M, RING_GRID_M].includes(c.args[0]?.scale) && c.args[0]?.crs === "EPSG:4326"), JSON.stringify(reprojects.map((c) => c.args[0])));
+  assert.equal(reprojects.filter((c) => c.args[0]?.scale === RING_GRID_M).length, 1);
   for (const call of ee.callsNamed("Image.reduceRegions")) assert.ok(call.args[0].tileScale >= 4);
   // Small cells: population summed on WorldPop's own grid.
   const popCalls = ee.callsNamed("Image.reduceRegions").filter((c) => c.args[0].crs && typeof c.args[0].crs !== "string");
@@ -958,6 +1012,13 @@ test("a month that ends before its war began: no war damage, no distance to figh
   assert.equal(atWar.accessSource, "fires");
   assert.ok(during.ee.callsNamed("Image.stratifiedSample").length > 0);
   assert.ok(!atWar.warnings.includes(beforeWarWarning("2026-06-01")));
+  // Only the fires since the war began stand in for fighting (the war is
+  // 3 months old), against the same days of 2019-2021; and the run says so.
+  const fires = measuredWindows(during.ee, DATASETS.firms);
+  assert.ok(fires.has("2026-06-01..2026-09-01"), "the fires since the war began");
+  assert.equal(fires.has("2025-09-01..2026-09-01"), false, "not the 12 months before the end of the month");
+  for (const year of [2019, 2020, 2021]) assert.ok(fires.has(`${year}-06-01..${year}-09-01`), `the same days of ${year}`);
+  assert.ok(atWar.warnings.some((w) => w.startsWith("Distance to fighting is estimated from unusual fires since the war began on 2026-06-01 (far more than on the same days of the normal years; no ACLED file)")));
 });
 
 test("a war that covers a whole-country area only in part: its rules in the squares that touch its boxes, the peace rule elsewhere, and fighting estimated from fires inside the boxes", async () => {
@@ -998,7 +1059,15 @@ test("a war that covers a whole-country area only in part: its rules in the squa
   const run = buildRun({ area, month: "2026-08", provider: "gee", readings: result.readings, warnings: result.warnings, cellSizeDeg: 0.1, cells: cells.map((cell) => ({ ...cell, areaHa: 7000 })), conflict: result.conflict, accessSource: result.accessSource });
   assert.equal(run.conflict.partOfCountry, true);
   assert.equal(run.warSquares, 4);
+  assert.equal(run.otherWarSquares, undefined, "no square lies in another listed war");
   assert.deepEqual(run.cells.map((cell) => cell.atWar), [false, false, false, false, true, true, true, true]);
+
+  // A region or a drawn area across the boxes' edge (partOf "area"): the
+  // same rules square by square, and the war it gives back says so.
+  const regionFake = fakeProvider();
+  const region = await regionFake.provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.1, conflict: { ...kursk, partOf: "area" } });
+  assert.deepEqual(region.conflict, { ...kursk, partOf: "area" });
+  assert.deepEqual(Object.fromEntries(region.readings.map((reading) => [reading.id, reading.atWar])), atWar);
 
   // The same war without partOfCountry (an area inside its boxes): one
   // rule for every square, nothing marked.
@@ -1006,6 +1075,43 @@ test("a war that covers a whole-country area only in part: its rules in the squa
   const whole = await plain.provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.1, conflict: { ...kursk, partOfCountry: false } });
   assert.ok(whole.readings.every((reading) => !("atWar" in reading)));
   assert.notDeepEqual(plain.ee.nodeOf(plain.ee.callsNamed("Image.stratifiedSample")[0].args[0].region).args[0], warBoxes(kursk).map(ring));
+});
+
+test("a war in part of an area across a border: its squares in another listed war keep the war's rules, and their unusual fires stand in for fighting", async () => {
+  // Sixteen 0.1° squares over the Sumy-Kursk border, north-west of Sudzha
+  // (2026-10-20 review): T touch the Kursk box, U are in Ukraine (the war
+  // in Ukraine) without touching it, p are Russian squares in no war.
+  //   r0  U U U U
+  //   r1  U p p p
+  //   r2  U U T T
+  //   r3  U U T T
+  const { area, cells } = gridArea(4, 4, 0.1, 51.8, 34.0);
+  const kursk = { id: "russia-kursk-belgorod", name: "Fighting in Russia's Kursk and Belgorod border areas", since: "2022-02-24", partOfCountry: true, partOf: "area" };
+  const { ee, provider } = fakeProvider();
+  const result = await provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: 0.1, conflict: kursk });
+  const peace = ["r1c1", "r1c2", "r1c3"];
+  for (const reading of result.readings) assert.equal(reading.atWar, !peace.includes(reading.id), reading.id);
+  // The fires that stand in for fighting: inside the Kursk boxes and the
+  // Ukrainian squares, row by row, not the Russian squares between them.
+  const ring = ([w, s, e, n]) => [[[w, s], [e, s], [e, n], [w, n], [w, s]]];
+  const [sample] = ee.callsNamed("Image.stratifiedSample");
+  const ukraineRows = [
+    [34, 51.7, 34.4, 51.8],
+    [34, 51.6, 34.1, 51.7],
+    [34, 51.5, 34.2, 51.6],
+    [34, 51.4, 34.2, 51.5],
+  ];
+  assert.deepEqual(ee.nodeOf(sample.args[0].region).args[0], [...warBoxes(kursk), ...ukraineRows].map(ring));
+  assert.ok(result.warnings.some((w) => / inside the war's region and its squares in another listed war, so treat safe access as rough\.$/.test(w)));
+  // The run counts them: 13 squares with the war's rules, 9 of them for
+  // lying in another listed war.
+  const run = buildRun({ area, month: "2026-08", provider: "gee", readings: result.readings, warnings: result.warnings, cellSizeDeg: 0.1, cells: cells.map((cell) => ({ ...cell, areaHa: 7000 })), conflict: result.conflict, accessSource: result.accessSource });
+  assert.equal(run.warSquares, 13);
+  assert.equal(run.otherWarSquares, 9);
+  // Without such squares the run says nothing of them (the test above).
+  assert.equal(squareRuns([], 0.1).length, 0);
+  // A gap in a row starts a new box.
+  assert.deepEqual(squareRuns([{ lat: 50.05, lon: 30.05 }, { lat: 50.05, lon: 30.15 }, { lat: 50.05, lon: 30.45 }], 0.1), [[30, 50, 30.2, 50.1], [30.4, 50, 30.5, 50.1]]);
 });
 
 test("600 small cells are measured in chunks of 250, two at a time", async () => {
@@ -1697,6 +1803,7 @@ function pixelEvaluator(ee, { firesOn = [], vv = () => null, leaves = {} } = {})
       case "select":
       case "rename":
       case "setDefaultProjection":
+      case "reproject":
       case "focal_mean":
       case "focal_max":
         return p();
@@ -2767,4 +2874,111 @@ test("a farm's map description reads and a field's GeoTIFF link count as interac
   atlas2.answer(1);
   await atlas2Done;
   assert.deepEqual(yieldStatus(), { interactive: 0, waiting: 0 });
+});
+
+// The neighbourhood operations (5 km smoothing, the 1 km ring, distances)
+// a measuring request computes at the cells' own pixel size: every one not
+// reached through a reproject. For a small area there must be none: at
+// the cells' fine pixels they made a month run over 30 minutes (real data,
+// south Lebanon, 2026-10-20).
+function unpinnedNeighbourhoodOps(ee) {
+  const HEAVY = new Set(["focal_mean", "focal_max", "focal_min", "convolve", "reduceNeighborhood", "distance", "fastDistanceTransform"]);
+  let count = 0;
+  for (const request of ee.requests) {
+    if (!request.has("reduceRegions")) continue;
+    const seen = new Set();
+    const visit = (value) => {
+      if (value === null || value === undefined || typeof value === "function") return;
+      const node = ee.nodeOf(value) || (value && value.kind && value.op && !Array.isArray(value) ? value : null);
+      if (node) {
+        if (seen.has(node) || node.op === "reproject") return;
+        seen.add(node);
+        if (HEAVY.has(node.op)) count += 1;
+        visit(node.parent);
+        visit(node.body);
+        node.args.forEach(visit);
+        return;
+      }
+      if (Array.isArray(value)) value.forEach(visit);
+      else if (typeof value === "object") Object.values(value).forEach(visit);
+    };
+    visit(request.node);
+  }
+  return count;
+}
+
+test("small areas: no fire smoothing, ring or distance at the cells' fine pixels; from 300 m pixels everything as before", async () => {
+  const war = { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" };
+  const run = async (sizeDeg) => {
+    const ee = createFakeEe();
+    const provider = createGeeProvider({ ee, getConfig: () => TEST_CFG, now: () => new Date(`${TODAY}T12:00:00Z`), retryDelayMs: 0 });
+    const { area, cells } = gridArea(3, 3, sizeDeg, 50.15);
+    await provider.analyze({ area, cells, month: "2026-08", cellSizeDeg: sizeDeg, conflict: war });
+    return ee;
+  };
+  // Either side of FINE_SCALE_M at 50 N: 0.05 deg cells are measured at
+  // about 179 m (pinned), 0.1 deg cells at about 358 m (as before).
+  assert.ok(reduceScale(0.05, 50) < FINE_SCALE_M && reduceScale(0.1, 50) >= FINE_SCALE_M);
+  for (const size of [0.01, 0.05]) assert.equal(unpinnedNeighbourhoodOps(await run(size)), 0, `${size} deg cells`);
+  const coarse = await run(0.1);
+  assert.ok(unpinnedNeighbourhoodOps(coarse) > 0, "0.1 deg cells keep their graph");
+  assert.equal(coarse.requests.flatMap((r) => r.find("reproject")).filter((n) => [FIRE_GRID_M, RING_GRID_M].includes(n.args?.[0]?.scale)).length, 0);
+  // The ring around an unusual fire is drawn on the RING_GRID_M grid, around
+  // fire pixels worked out on the 1 km grid.
+  const small = await run(0.01);
+  const rings = small.requests.flatMap((r) => r.find("reproject")).filter((n) => n.args?.[0]?.scale === RING_GRID_M);
+  assert.ok(rings.length > 0);
+  assert.ok(rings.every((n) => (small.nodeOf(n.parent) || n.parent)?.op === "focal_max"), JSON.stringify(rings.map((n) => (small.nodeOf(n.parent) || n.parent)?.op)));
+});
+
+test("small areas: the fire images and the distance to fighting are worked out on the 1 km grid; bigger areas as before", async () => {
+  const war = { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" };
+  const pinned = (ee) =>
+    ee.requests
+      .filter((r) => r.find("reduceRegions").length > 0 && r.has("Dictionary"))
+      .flatMap((r) => r.find("reproject"))
+      .filter((n) => n.args?.[0]?.scale === FIRE_GRID_M && n.args?.[0]?.crs === "EPSG:4326");
+  // 1 km cells: measured at about 36 m, finer than FINE_SCALE_M.
+  assert.ok(reduceScale(0.01, 49.7) < FINE_SCALE_M);
+  const small = createFakeEe();
+  const smallProvider = createGeeProvider({ ee: small, getConfig: () => TEST_CFG, now: () => new Date(`${TODAY}T12:00:00Z`), retryDelayMs: 0 });
+  const tiny = gridArea(3, 3, 0.01);
+  const result = await smallProvider.analyze({ area: tiny.area, cells: tiny.cells, month: "2026-08", cellSizeDeg: 0.01, conflict: war });
+  assert.equal(result.readings.length, 9);
+  // Every fire-year band, the fire-nearby ring and the distance to fighting.
+  assert.ok(pinned(small).length >= 3, `pinned images: ${pinned(small).length}`);
+  // 0.1 deg cells (Kharkiv oblast): measured at about 360 m, unchanged.
+  assert.ok(reduceScale(0.1, 49.7) >= FINE_SCALE_M);
+  const big = createFakeEe();
+  const bigProvider = createGeeProvider({ ee: big, getConfig: () => TEST_CFG, now: () => new Date(`${TODAY}T12:00:00Z`), retryDelayMs: 0 });
+  const wide = gridArea(3, 3, 0.1);
+  await bigProvider.analyze({ area: wide.area, cells: wide.cells, month: "2026-08", cellSizeDeg: 0.1, conflict: war });
+  assert.equal(pinned(big).length, 0);
+});
+
+test("in a war's first year the fighting-fire floor is scaled to the shorter window", () => {
+  const floors = (lastYear) => {
+    const ee = createFakeEe();
+    const region = ee.Geometry.Rectangle([100, 13, 104, 15], null, false);
+    const image = fightingFires(ee, region, { lastYear, fireBaselines: [lastYear] });
+    // The gte against a plain number is the floor (the other gte compares two images).
+    const node = ee.nodeOf(image);
+    const seen = new Set();
+    const out = [];
+    const visit = (value) => {
+      const n = ee.nodeOf(value) || (value && value.kind && value.op ? value : null);
+      if (!n || seen.has(n)) return;
+      seen.add(n);
+      if (n.op === "gte" && typeof n.args?.[0] === "number") out.push(n.args[0]);
+      visit(n.parent);
+      n.args.forEach((a) => (Array.isArray(a) ? a.forEach(visit) : visit(a)));
+    };
+    visit(node);
+    return out;
+  };
+  // A whole year: the floor as it was (1 detection per km²).
+  assert.deepEqual(floors({ start: "2025-10-01", end: "2026-10-01" }), [1]);
+  // 100 days since the war began (Thailand-Cambodia, October 2025): 100/365.
+  const [young] = floors({ start: "2025-07-24", end: "2025-11-01" });
+  assert.ok(Math.abs(young - 100 / 365) < 1e-9, String(young));
 });

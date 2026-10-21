@@ -1,7 +1,8 @@
 // WHAT THIS FILE DOES
 // Checks that places are matched to the right country and war: the app's
 // list (each war with a point inside and one outside its boxes), the
-// squares of a whole-country area a war covers only in part, the months
+// squares of an area a war covers only in part (a whole country, a region,
+// a box or a drawn area across the edge of its boxes), the months
 // that end before a war began, and the team's own choice for an area
 // (Atlas Settings), which comes first.
 //
@@ -10,7 +11,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { conflictAt, conflictForArea, countryAt, listConflictForArea } from "./conflicts.js";
+import { conflictAt, conflictForArea, countryAt, listConflictForArea, listWarFor, warCellsFor } from "./conflicts.js";
 import { CONFLICTS, EARLIEST_WAR_DAY, TEAM_WAR_NAME, WAR_NAME_MAX, checkAreaWar, damageWindow, endsBeforeWar, teamConflict, warBoxes, warSquares } from "../src/config/conflicts.js";
 
 test("countries are found from a point", () => {
@@ -180,6 +181,108 @@ test("a whole country that holds a regional war has its war; the list says so fo
   assert.equal(listConflictForArea({ id: "area-iowa", geometry: box(-93.7, 42.0, -93.6, 42.1) }), null);
   // Without an outline it cannot be told.
   assert.equal(listConflictForArea({ id: "area-none" }), undefined);
+});
+
+test("a region, a box or a drawn area across the edge of a war's boxes holds it only in part, by the same rule as a whole country; one inside the boxes has it all over", async () => {
+  const { planGrid } = await import("./geo.js");
+  const { getCountry } = await import("./countries.js");
+  const box = (west, south, east, north) => ({ type: "Polygon", coordinates: [[[west, south], [east, south], [east, north], [west, north], [west, south]]] });
+  // An Afar-like region box (regions have no countryId): only the squares
+  // that touch the Amhara boxes get the war's rules.
+  const afar = { id: "admin1-afar-like", kind: "admin1", createdAt: "2026-10-20T00:00:00Z", geometry: box(39.9, 8.9, 42.4, 14.4) };
+  const afarGrid = planGrid(afar.geometry);
+  const afarWar = listWarFor(afar, afarGrid);
+  assert.equal(afarWar.id, "amhara");
+  assert.equal(afarWar.partOfCountry, true);
+  assert.equal(afarWar.partOf, "area");
+  const touching = warSquares(afarWar, afarGrid.cells, afarGrid.cellSizeDeg);
+  assert.ok(touching.size > 0 && touching.size < afarGrid.cells.length, `${touching.size} of ${afarGrid.cells.length} squares`);
+  assert.deepEqual(listConflictForArea(afar), { id: "amhara", name: "War in Ethiopia's Amhara region", since: "2023-08-01", partOfCountry: true, partOf: "area" });
+  // A Kursk-oblast-like box: Kursk city and the east are outside the boxes.
+  // Its squares in Ukraine (Sumy oblast, in the war in Ukraine) keep the
+  // war's rules, touching the boxes or not (warCellsFor).
+  const kursk = { id: "area-kursk-like", kind: "custom", source: "bbox", createdAt: "2026-10-20T00:00:00Z", geometry: box(34.1, 50.9, 38.5, 52.4) };
+  assert.deepEqual(listConflictForArea(kursk), { id: "russia-kursk-belgorod", name: "Fighting in Russia's Kursk and Belgorod border areas", since: "2022-02-24", partOfCountry: true, partOf: "area", otherWarSquares: 23 });
+  const kurskGrid = planGrid(kursk.geometry);
+  const kurskWar = listWarFor(kursk, kurskGrid);
+  const kurskSquares = warSquares(kurskWar, kurskGrid.cells, kurskGrid.cellSizeDeg);
+  assert.ok(kurskSquares.size > 0 && kurskSquares.size < kurskGrid.cells.length);
+  const kurskRuled = warCellsFor(kurskWar, kurskGrid.cells, kurskGrid.cellSizeDeg);
+  const inUkraine = kurskGrid.cells.filter((cell) => countryAt(cell.lat, cell.lon)?.id === "804");
+  assert.equal(inUkraine.length, 44);
+  assert.ok(inUkraine.every((cell) => kurskRuled.has(cell.id)), "every Ukrainian square has the war's rules");
+  assert.equal(inUkraine.filter((cell) => !kurskSquares.has(cell.id)).length, 23, "23 of them without touching the Kursk boxes");
+  assert.equal(kurskGrid.cells.filter((cell) => !kurskRuled.has(cell.id)).length, 535, "Kursk city and the east keep the peace rules");
+  assert.ok(kurskGrid.cells.filter((cell) => !kurskRuled.has(cell.id)).every((cell) => countryAt(cell.lat, cell.lon)?.id === "643" && !conflictAt(cell.lat, cell.lon)));
+  // A drawn area inside one of the Amhara boxes: every square at war, so
+  // nothing is "in part".
+  const drawn = { id: "area-gondar-like", kind: "custom", source: "draw", createdAt: "2026-10-20T00:00:00Z", geometry: box(37.2, 12.2, 37.6, 12.7) };
+  const drawnGrid = planGrid(drawn.geometry);
+  const drawnWar = listWarFor(drawn, drawnGrid);
+  assert.equal(drawnWar.id, "amhara");
+  assert.equal(drawnWar.partOfCountry, undefined);
+  assert.equal(warSquares({ ...drawnWar, partOfCountry: true }, drawnGrid.cells, drawnGrid.cellSizeDeg).size, drawnGrid.cells.length);
+  assert.deepEqual(listConflictForArea(drawn), { id: "amhara", name: "War in Ethiopia's Amhara region", since: "2023-08-01" });
+  // A whole country keeps "in part of the country" (no partOf), with or
+  // without its outline on the saved area.
+  const ethiopia = { id: "country-231", kind: "country", countryId: "231", createdAt: "2026-10-20T00:00:00Z", geometry: getCountry("231").geometry };
+  assert.deepEqual(listConflictForArea(ethiopia), { id: "amhara", name: "War in Ethiopia's Amhara region", since: "2023-08-01", partOfCountry: true });
+  assert.equal(listWarFor(ethiopia, planGrid(ethiopia.geometry)).partOf, undefined);
+  assert.deepEqual(listConflictForArea({ id: "country-231-no-outline", countryId: "231" }), { id: "amhara", name: "War in Ethiopia's Amhara region", since: "2023-08-01", partOfCountry: true });
+  // A war over whole countries is never "in part" (a Kharkiv-like box).
+  const kharkiv = { id: "area-kharkiv-like", createdAt: "x", geometry: box(35.5, 49.0, 37.5, 50.3) };
+  assert.deepEqual(listConflictForArea(kharkiv), { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" });
+  // At peace: null.
+  assert.equal(listWarFor({ id: "area-iowa" }, planGrid(box(-93.7, 42.0, -93.6, 42.1))), null);
+});
+
+test("land inside another listed war never gets the peace rules: a box over the Kursk front has the war's rules all over; one with Russian land in no war holds it in part, with its Ukrainian squares at war (warCellsFor)", async () => {
+  const { planGrid } = await import("./geo.js");
+  const { sampleReadings } = await import("./providers/sample.js");
+  const box = (west, south, east, north) => ({ type: "Polygon", coordinates: [[[west, south], [east, south], [east, north], [west, north], [west, south]]] });
+  // A box drawn over the Sudzha front (2026-10-20 review): 177 squares in
+  // the Kursk war, 103 in Sumy oblast (the war in Ukraine), 52 of them not
+  // touching the Kursk boxes. All of them are land at war: no "in part".
+  const sudzha = { id: "area-sudzha", kind: "custom", source: "bbox", createdAt: "2026-10-20T00:00:00Z", geometry: box(34.6, 50.8, 35.6, 51.5) };
+  const sudzhaGrid = planGrid(sudzha.geometry);
+  const sudzhaWar = listWarFor(sudzha, sudzhaGrid);
+  assert.equal(sudzhaWar.id, "russia-kursk-belgorod");
+  assert.equal(sudzhaWar.partOfCountry, undefined);
+  const sudzhaTouching = warSquares({ ...sudzhaWar, partOfCountry: true }, sudzhaGrid.cells, sudzhaGrid.cellSizeDeg);
+  assert.equal(sudzhaGrid.cells.length - sudzhaTouching.size, 52, "52 squares do not touch the boxes");
+  assert.equal(warCellsFor({ ...sudzhaWar, partOfCountry: true }, sudzhaGrid.cells, sudzhaGrid.cellSizeDeg).size, sudzhaGrid.cells.length);
+  assert.deepEqual(listConflictForArea(sudzha), { id: "russia-kursk-belgorod", name: "Fighting in Russia's Kursk and Belgorod border areas", since: "2022-02-24" });
+
+  // A box from Kharkiv oblast to Belgorod: its Russian squares outside the
+  // boxes are in no war, so it holds the war in part; its Ukrainian squares
+  // keep the war's rules, those that touch the boxes and those that do not.
+  const khb = { id: "area-kharkiv-belgorod", kind: "custom", source: "bbox", createdAt: "2026-10-20T00:00:00Z", geometry: box(36.0, 49.95, 37.0, 50.8) };
+  const grid = planGrid(khb.geometry);
+  const war = listWarFor(khb, grid);
+  assert.equal(war.id, "russia-kursk-belgorod");
+  assert.equal(war.partOfCountry, true);
+  assert.equal(war.partOf, "area");
+  const ruled = warCellsFor(war, grid.cells, grid.cellSizeDeg);
+  const touching = warSquares(war, grid.cells, grid.cellSizeDeg);
+  const ukraine = grid.cells.filter((cell) => countryAt(cell.lat, cell.lon)?.id === "804");
+  const russiaAtPeace = grid.cells.filter((cell) => countryAt(cell.lat, cell.lon)?.id === "643" && !conflictAt(cell.lat, cell.lon) && !touching.has(cell.id));
+  assert.ok(ukraine.length > 0 && ukraine.every((cell) => ruled.has(cell.id)));
+  assert.ok(ukraine.some((cell) => !touching.has(cell.id)), "some Ukrainian squares do not touch the Kursk boxes");
+  assert.ok(russiaAtPeace.length > 0 && russiaAtPeace.every((cell) => !ruled.has(cell.id)));
+  assert.equal(ruled.size + russiaAtPeace.length, grid.cells.length);
+  assert.deepEqual(listConflictForArea(khb), { id: "russia-kursk-belgorod", name: "Fighting in Russia's Kursk and Belgorod border areas", since: "2022-02-24", partOfCountry: true, partOf: "area", otherWarSquares: ruled.size - touching.size });
+  // The analysis reads them so (sample data; gee.js uses the same squares).
+  const result = sampleReadings({ area: { ...khb, bbox: grid.bbox }, cells: grid.cells, month: "2026-09", cellSizeDeg: grid.cellSizeDeg, conflict: war });
+  const atWar = new Map(result.readings.map((reading) => [reading.id, reading.atWar]));
+  assert.ok(ukraine.every((cell) => atWar.get(cell.id) === true));
+  assert.ok(russiaAtPeace.every((cell) => atWar.get(cell.id) === false));
+
+  // A whole country keeps its squares as they were: none of them lies in
+  // another listed war.
+  assert.equal(listConflictForArea({ id: "country-643-x", countryId: "643", createdAt: "x" }).otherWarSquares, undefined);
+  // No war in part: null.
+  assert.equal(warCellsFor(null, grid.cells, grid.cellSizeDeg), null);
+  assert.equal(warCellsFor({ ...war, partOfCountry: undefined }, grid.cells, grid.cellSizeDeg), null);
 });
 
 test("a war that covers a whole-country area only in part has its rules in the squares that touch its boxes (warSquares)", () => {

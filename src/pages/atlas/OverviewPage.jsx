@@ -24,11 +24,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Check, ChevronRight, FileText, Flame, Pencil, Radar, ShieldCheck, SlidersHorizontal, Sprout, TriangleAlert } from "lucide-react";
 import { PageHeader, Card, Stat, Button, Segmented, Badge } from "../../components/ui/index.js";
-import { AnalysisProgress, AtlasGate, useAtlasData, useTimeframe } from "../../state/AtlasData.jsx";
+import { AnalysisNotice, AnalysisProgress, AtlasGate, useAtlasData, useTimeframe } from "../../state/AtlasData.jsx";
 import AtlasMap from "../../components/atlas/AtlasMap.jsx";
 import MapLegend from "../../components/atlas/MapLegend.jsx";
 import RunPicker from "../../components/atlas/RunPicker.jsx";
-import { alertPlaces, describeAlert, kpis, shownNewDamage, springPlan, summarize, timeframeOptions } from "../../lib/atlas/overview.js";
+import { alertPlaces, describeAlert, kpis, seasonWords, shownNewDamage, springPlan, summarize, timeframeOptions } from "../../lib/atlas/overview.js";
 import { COST_NOTE } from "../../lib/atlas/method.js";
 import { dueLabel, formatHaShort, formatUsd, listNames, toDay } from "../../lib/format.js";
 import { areaOfAlert, atlasLink, haFixed, nameAreas, planSteps, useMonthInUrl, warNote, weightItems } from "./overviewHelpers.js";
@@ -121,6 +121,9 @@ function Overview() {
           <AnalysisProgress job={job} compact />
         </div>
       )}
+      {/* After a Stop, months that failed, or a monthly update that went
+          wrong: what happened (the bar alone would just go away). */}
+      <AnalysisNotice />
       {saveError && (
         <p className="ao-save-error" role="alert">
           <TriangleAlert size={14} /> Weights not saved: {saveError.message}
@@ -135,7 +138,7 @@ function Overview() {
             value={item.value}
             // Red only when there is damage to show: a red "0 ha" reads like an alarm.
             tone={item.id === "heavy-damage" && item.value === "0 ha" ? undefined : item.tone}
-            note={item.id === "heavy-damage" && shownNewDamage(run, runs) > 0 ? `+${formatHaShort(run.newHeavyDamageHa)} this month` : undefined}
+            note={item.id === "heavy-damage" && shownNewDamage(run, runs) > 0 ? <NewDamageNote run={run} runs={runs} /> : undefined}
           />
         ))}
       </div>
@@ -223,6 +226,19 @@ function Overview() {
         </div>
       </div>
     </div>
+  );
+}
+
+// "+64.9k ha this month", and in the month a new growing season joined the
+// damage radar "Mostly older damage: the 2026 season's radar images are
+// counted for the first time" (overview.js seasonWords).
+function NewDamageNote({ run, runs }) {
+  const season = seasonWords(run, runs)?.jump;
+  return (
+    <>
+      +{formatHaShort(run.newHeavyDamageHa)} this month
+      {season && <span className="ao-season-note">{season.note}</span>}
+    </>
   );
 }
 

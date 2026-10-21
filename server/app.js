@@ -7,9 +7,11 @@
 //   GET    /api/areas/search?q=         find a country (or a region, with Earth Engine)
 //   POST   /api/areas                   save an area (country, coordinates, box, drawn)
 //   GET    /api/areas                   saved areas
-//   GET    /api/areas/:id               one area with its outline, and
+//   GET    /api/areas/:id               one area with its outline,
 //                                       listConflict: what the app's list of
-//                                       wars says for it (null at peace)
+//                                       wars says for it (null at peace),
+//                                       and monthlyProblem when its last
+//                                       monthly update went wrong
 //   PATCH  /api/areas/:id               rename an area ({ name }) and/or set
 //                                       its war ({ war: { mode: "list" |
 //                                       "war" | "peace", since, name } }:
@@ -66,7 +68,7 @@ import {
 import { areaHa, bboxOf, displayTolerance, planGrid, simplifyGeometry, splitAntimeridian } from "./geo.js";
 import { getCountry, searchCountries } from "./countries.js";
 import { compareRuns, summarizeRun } from "./runs.js";
-import { cancelAnalysis, getJob, listJobs, startAnalysis } from "./jobs.js";
+import { cancelAnalysis, getJob, lastMonthlyProblem, listJobs, startAnalysis } from "./jobs.js";
 import { listConflictForArea } from "./conflicts.js";
 import { checkAreaWar } from "../src/config/conflicts.js";
 import { getProvider, providerStatus, withTimeout } from "./providers/index.js";
@@ -202,14 +204,18 @@ async function createArea(body) {
   throw bad('Unknown source. Use "country", "admin1", "coordinates", "bbox" or "draw".');
 }
 
-// The area as the pages get it: outline simplified for drawing, and what
-// the app's list of wars says for it (listConflict: { id, name, since,
-// partOfCountry? } or null; Atlas Settings shows it next to the team's own
-// war setting, area.war).
+// The area as the pages get it: outline simplified for drawing, what the
+// app's list of wars says for it (listConflict: { id, name, since,
+// partOfCountry?, partOf?, otherWarSquares? } or null: server/conflicts.js
+// listConflictForArea; Atlas Settings shows it next to the team's own war
+// setting, area.war), and, when its last monthly update went wrong and no
+// analysis of it has ended well since, what happened (monthlyProblem:
+// { jobId, text, months, finishedAt }, jobs.js lastMonthlyProblem).
 function areaForClient(area, { full = false } = {}) {
   if (!area) return null;
   const listConflict = listConflictForArea(area);
-  const withList = listConflict === undefined ? area : { ...area, listConflict };
+  const monthlyProblem = lastMonthlyProblem(area.id);
+  const withList = { ...area, ...(listConflict === undefined ? {} : { listConflict }), ...(monthlyProblem ? { monthlyProblem } : {}) };
   if (full || !area.geometry || !area.bbox) return withList;
   return { ...withList, geometry: simplifyGeometry(area.geometry, displayTolerance(area.bbox)) };
 }
@@ -472,8 +478,12 @@ async function route(req, res, url) {
       if (started?.stopping) {
         throw new HttpError(409, "busy", `${area.name}'s analysis is stopping. Remove the area in a moment, once it has stopped.`);
       }
+      // Only saved areas that are not open have a remove button (Atlas
+      // Settings), and they show no progress bar: the Stop is on the area's
+      // own pages, and once it is open its row (and its button) is gone
+      // from Saved areas until another area is opened.
       if (started) {
-        throw new HttpError(409, "busy", `${area.name} is being analyzed right now. Stop its analysis first (Stop, under the progress bar), then remove it.`);
+        throw new HttpError(409, "busy", `${area.name} is being analyzed right now. Open it and press Stop under its progress bar, then open another area and remove it from Saved areas.`);
       }
       // Its analysis has not started yet: it is taken out of line.
       for (const job of analyses) cancelAnalysis(job.id);

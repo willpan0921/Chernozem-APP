@@ -1,7 +1,9 @@
 // WHAT THIS FILE DOES
 // The Atlas Settings page (/atlas/settings). Five cards:
 //   Area   the area being analyzed, "New area" (country, GPS coordinates
-//          or a drawn shape) and the saved areas: open, rename, remove
+//          or a drawn shape) and the saved areas: open, rename, remove,
+//          with "Analyzing…" or "Waiting" while one is in the line of
+//          analyses (asked again every few seconds)
 //   War    whether the current area is at war, and from which day damage
 //          is counted: the app's list (src/config/conflicts.js), "At war"
 //          from a day the team picks, or "Not at war" (saved as area.war).
@@ -39,12 +41,13 @@ import {
   X,
 } from "lucide-react";
 import { PageHeader, Card, Badge, Button, Segmented, Toggle } from "../../components/ui/index.js";
-import { AnalysisProgress, AtlasGate, useAtlasData } from "../../state/AtlasData.jsx";
+import { AnalysisNotice, AnalysisProgress, AtlasGate, useAtlasData } from "../../state/AtlasData.jsx";
 import AreaPicker from "../../components/atlas/AreaPicker.jsx";
-import { API_ROOT, ApiError, AUTH_REQUIRED_EVENT } from "../../api/atlasApi.js";
+import { API_ROOT, ApiError, AUTH_REQUIRED_EVENT, listJobs } from "../../api/atlasApi.js";
+import { lineMarks } from "../../lib/atlas/analysisNotice.js";
 import { formatAreaSize, formatMonthYear } from "../../lib/format.js";
 import { EARLIEST_WAR_DAY, WAR_NAME_MAX, checkAreaWar } from "../../config/conflicts.js";
-import { analysisMonths, areaWar, conflictOf, keepsMonth, monthsWithOtherWar, warDay, warKey, warText } from "../../lib/atlas/overview.js";
+import { analysisMonths, areaWar, conflictOf, keepsMonth, monthsWithOtherWar, warDay, warKey, warPartOf, warText } from "../../lib/atlas/overview.js";
 import "./SettingsPage.css";
 
 // Where people make a Claude API key.
@@ -330,14 +333,58 @@ const initials = (name) =>
 
 // ---------- Area ----------
 
-function SavedArea({ item, busy, onOpen, opening }) {
+// Which saved areas are in the line of analyses (one area at a time,
+// server/jobs.js): Map areaId -> "analyzing" | "waiting" (lineMarks). It
+// starts from the jobs the page loaded with and asks the server again
+// every few seconds while the page is open (not while the tab is hidden),
+// so the marks never go stale.
+const LINE_POLL_MS = 5000;
+function useLineMarks() {
+  const { serverStatus } = useAtlasData();
+  const [jobs, setJobs] = useState(null);
+  useEffect(() => {
+    let stopped = false;
+    let timer;
+    const tick = async () => {
+      if (typeof document === "undefined" || !document.hidden) {
+        try {
+          const list = await listJobs();
+          if (!stopped) setJobs(list);
+        } catch {
+          // Asked again on the next tick.
+        }
+      }
+      if (!stopped) timer = setTimeout(tick, LINE_POLL_MS);
+    };
+    tick();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, []);
+  return lineMarks(jobs ?? serverStatus?.jobs ?? []);
+}
+
+// A saved area's place in the line: "Analyzing…" or "Waiting".
+const LINE_MARKS = {
+  analyzing: { tone: "blue", label: "Analyzing…" },
+  waiting: { tone: "outline", label: "Waiting" },
+};
+
+function SavedArea({ item, busy, onOpen, opening, mark }) {
   const { actions } = useAtlasData();
   const [error, setError] = useState(null);
   const kind = areaKind(item);
+  const line = LINE_MARKS[mark];
   return (
     <li className="aset-saved-row" data-area={item.id}>
       <kind.Icon size={15} className="aset-saved-icon" aria-hidden="true" />
       <AreaName area={item} className="aset-saved-name" onError={setError} />
+      {line && (
+        <span className="aset-saved-mark" title={mark === "analyzing" ? "Being analyzed now" : "Waiting for its turn: one area at a time"}>
+          <Badge tone={line.tone}>{line.label}</Badge>
+        </span>
+      )}
       <span className="aset-row-meta aset-saved-meta">
         {kind.label} · {formatAreaSize(item.areaHa)}
       </span>
@@ -368,6 +415,7 @@ function AreaCard() {
   const [switching, setSwitching] = useState(null);
   const [error, setError] = useState(null);
   const others = areas.filter((item) => item.id !== area?.id);
+  const marks = useLineMarks();
 
   const open = async (id) => {
     setSwitching(id);
@@ -435,6 +483,7 @@ function AreaCard() {
                 busy={Boolean(switching)}
                 opening={switching === item.id}
                 onOpen={open}
+                mark={marks.get(item.id)}
               />
             ))}
           </ul>
@@ -694,6 +743,9 @@ function DataCard() {
         />
         {rerun.running && <AnalysisProgress job={job} compact />}
         <RerunResult rerun={rerun} />
+        {/* The last monthly update's failure, while its months are missing
+            (how a re-run started here ended is said just above). */}
+        <AnalysisNotice followed={false} />
       </div>
 
       <div className="aset-block aset-auto">
@@ -815,8 +867,14 @@ function WarCard() {
     const own = war ? (area.war.name ? `${area.war.name}. ` : "") : "";
     meta = listText ? `${own}The app's list: ${listText}.` : own.trim() || null;
   } else if (now) {
+    // A war that covers the area only in part (a whole country, or a
+    // region, box or drawn area across the edge of its boxes: warPartOf),
+    // and in squares of another listed war too (list.otherWarSquares:
+    // server/conflicts.js listConflictForArea).
+    const part = warPartOf(list);
+    const otherWar = list?.otherWarSquares > 0 ? " or lie in another listed war" : "";
     meta = war
-      ? `${war.name}.${list?.partOfCountry ? " It covers part of this country: its rules apply in the squares that touch the war's region, the rest is read as at peace." : ""}`
+      ? `${war.name}.${part ? ` It covers part of this ${part}: its rules apply in the squares that touch the war's region${otherWar}. The other squares also count damage from the day it began, but use the peace rules for heavy damage and the damage score.` : ""}`
       : "No war in the app's list covers this area.";
   }
   // Which of them the re-run reaches (and the months it redoes in all, for
@@ -829,9 +887,12 @@ function WarCard() {
   const byMonth = new Map();
   for (const item of runs) if (!byMonth.has(item.month)) byMonth.set(item.month, item);
   const redo = rerunWindow.filter((month) => !keepsMonth(byMonth.get(month), { provider: serverStatus?.provider?.id || "sample", warNow: warKey(war) })).length;
+  // Against the setting now, so a war of the same day whose rules covered
+  // another part of the area never reads the same as the title ("made at
+  // war since 7 Oct 2023, with its rules all over the country").
   const madeWith = (months) => {
     const keys = new Set(months.map((item) => warKey(conflictOf(item))));
-    return keys.size === 1 ? `made ${warText(conflictOf(months[0]))}` : "made with another war setting";
+    return keys.size === 1 ? `made ${warText(conflictOf(months[0]), war)}` : "made with another war setting";
   };
   const staleCount =
     reached.length === runs.length ? (runs.length === 1 ? "The saved month was" : "The saved months were") : reached.length === 1 ? "1 saved month was" : `${reached.length} saved months were`;
