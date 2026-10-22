@@ -163,6 +163,8 @@ function Overview() {
             </Link>
           }
         >
+          {/* "steady": the map shows the whole area again when its frame
+              changes size (the menu folded, the window resized). */}
           <div className="ao-map">
             <AtlasMap
               ref={mapRef}
@@ -174,6 +176,7 @@ function Overview() {
               height="clamp(280px, 62vw, 380px)"
               highlightIds={hovered?.cellIds}
               onSelect={(place) => place && openOnMap(place.id)}
+              steady
               ariaLabel={`Map of ${area.name} coloured by priority`}
             />
           </div>

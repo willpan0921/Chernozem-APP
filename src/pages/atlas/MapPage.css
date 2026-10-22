@@ -5,6 +5,10 @@
   (top areas or the picked place) and the "Change area" dialog. Every class
   starts with "mp-" so it never clashes with another page.
 
+  On wider screens the side columns' widths are set by the page (they can
+  be dragged and hidden: src/components/ui/PanelEdge.jsx, styled in
+  src/styles/components.css); the widths below are their usual ones.
+
   WHO EDITS IT
   Whoever changes how the Atlas map page looks. Colours, fonts and spacing
   come from src/styles/tokens.css.
@@ -36,6 +40,15 @@
   width: 320px;
   border-left: 1px solid var(--c-border);
   overflow-x: hidden;
+  /* Its content can lay itself out for the column's width (dragged
+     narrower: "Right column narrower than usual", below). */
+  container: mp-right / inline-size;
+}
+
+/* Hidden with the tab on the map's edge: the map takes their room. */
+.mp-left[hidden],
+.mp-right[hidden] {
+  display: none;
 }
 
 .mp-map {
@@ -423,6 +436,60 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--s-2);
+}
+
+/* ---------- Right column narrower than usual ----------
+   Dragged narrower than its usual 320 px (down to 260), its 280 px on
+   screens 1180 px or narrower, or a scrollbar taking room. The width
+   measured is inside the column (its 1 px border and any scrollbar left
+   out), so the usual 320 px column (319 inside) keeps the layout above.
+   With three figures a row an 8-character figure ("15.3k ha") is cut to
+   "15.3…" from about 310 px inside (314 leaves a little room for other
+   fonts), and below about 276 px a top area's hectares run into its
+   coordinates. */
+@container mp-right (max-width: 314px) {
+  /* Black soil and Damaged side by side, People across the row below. */
+  .mp-figures {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mp-figures > div:last-child {
+    grid-column: 1 / -1;
+  }
+
+  /* A top area: the hectares move up to the name's line, so the
+     coordinates and the bar have the whole width under them. */
+  .mp-top-row {
+    grid-template-areas:
+      "rank name ha"
+      "rank coords coords"
+      "rank bar bar";
+    row-gap: 6px;
+  }
+
+  .mp-top-text {
+    display: contents;
+  }
+
+  .mp-top-rank {
+    grid-area: rank;
+  }
+
+  .mp-top-name {
+    grid-area: name;
+  }
+
+  .mp-top-coords {
+    grid-area: coords;
+  }
+
+  .mp-top-bar {
+    grid-area: bar;
+  }
+
+  .mp-top-ha {
+    grid-area: ha;
+  }
 }
 
 /* ---------- "Change area" dialog ---------- */

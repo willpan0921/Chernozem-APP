@@ -19,8 +19,25 @@
 //   height       a number (px) or any CSS height ("100%"); default 380
 //   drawMode     true: clicks add points (onDrawPoint([lat, lon])) instead
 //                of selecting; drawPoints are drawn as a shape
-//   children     anything to float over the map (legend, panels)
+//   satelliteOnly          true: "Satellite only" (below)
+//   onSatelliteOnlyChange  give it to show the "Satellite only" button under
+//                          the zoom buttons; called with true or false
+//   steady       true (the Atlas map page): when the map's box changes size
+//                (a side panel dragged or hidden, the menu folded) what is on
+//                screen stays put, and a map still showing the whole area
+//                fits it again to the new size (src/lib/mapResize.js)
+//   children     anything to float over the map (legend, panels); hidden
+//                while satelliteOnly
 //   ref          gives { zoomIn, zoomOut, fitArea, flyToBounds(bounds), getMap }
+//
+// "Satellite only": the base map becomes satellite imagery (Esri World
+// Imagery, as on the Field map) and the squares, the area's border, the
+// marks and the key are hidden, so only the picture shows. The zoom
+// buttons, the button itself and the credit of the tiles shown stay, and a
+// small "Satellite only · Show layers" chip in the top-left corner says why
+// the map is bare and turns it off. Clicks on the map then select nothing
+// (and do not clear the picked place). Turning it off brings back the grey
+// map, the squares and the key as they were.
 //
 // The container carries data-zoom="<zoom level>" so tests can check that
 // zooming worked. The colours come from CSS variables in tokens.css.
@@ -32,20 +49,20 @@
 import { useEffect, useImperativeHandle, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { Maximize, Minus, Plus } from "lucide-react";
+import { Layers, Maximize, Minus, Plus, Satellite } from "lucide-react";
 import { colorStep, colorVar, rankedCount, valueText } from "../../lib/atlas/mapColors.js";
 import { placeLabel } from "../../lib/atlas/hotspots.js";
+import { settleView, showsFit, watchMapSize } from "../../lib/mapResize.js";
+import { LIGHT_GREY, SATELLITE } from "../../config/maps.js";
 import "./atlas.css";
 
 // The base map under the squares: Esri's light grey canvas, free and with
-// no key. (CARTO's light map now shows "API KEY REQUIRED" on every tile
-// unless you have a CARTO key.) To use another base map, change these three.
-export const BASEMAP = {
-  url: "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
-  attribution: "Tiles © Esri — Esri, HERE, Garmin, © OpenStreetMap contributors",
-  maxNativeZoom: 16,
-};
+// no key; "Satellite only" swaps it for Esri World Imagery. Both are set in
+// src/config/maps.js.
+export const BASEMAP = LIGHT_GREY;
 const WORLD_VIEW = { center: [25, 15], zoom: 2 };
+// Room kept round the area when the map fits it.
+const AREA_PADDING = [24, 24];
 const CELL_OPACITY = 0.82;
 
 // Reads the map colours from tokens.css once.
@@ -92,22 +109,28 @@ export default function AtlasMap({
   drawMode = false,
   drawPoints,
   onDrawPoint,
+  satelliteOnly = false,
+  onSatelliteOnlyChange,
+  steady = false,
   ariaLabel = "Map",
   children,
   ref,
 }) {
   const wrapRef = useRef(null);
+  const satButtonRef = useRef(null);
   const mapDivRef = useRef(null);
   const mapRef = useRef(null);
   const colorsRef = useRef(null);
   const rendererRef = useRef(null);
   const layers = useRef({ outline: null, cells: null, cellIndex: new Map(), cellKey: "", marks: null, draw: null });
+  const tiles = useRef({ base: null, satellite: null });
+  const fitAreaNow = useRef(null);
   const [zoom, setZoom] = useState(null);
   const [hover, setHover] = useState(null);
 
   // The latest props, for the map's own event handlers.
   const latest = useRef({});
-  latest.current = { onSelect, onDrawPoint, drawMode, places, colorBy, timeframe, area };
+  latest.current = { onSelect, onDrawPoint, drawMode, places, colorBy, timeframe, area, satelliteOnly, steady, selectedId, size: run?.cellSizeDeg || 0 };
   const placesById = useRef(new Map());
 
   // ---------- Create the map once ----------
@@ -126,7 +149,8 @@ export default function AtlasMap({
       worldCopyJump: true,
     });
     map.attributionControl.setPrefix(false);
-    L.tileLayer(BASEMAP.url, { attribution: BASEMAP.attribution, maxNativeZoom: BASEMAP.maxNativeZoom, maxZoom: 20 }).addTo(map);
+    tiles.current.base = L.tileLayer(BASEMAP.url, { attribution: BASEMAP.attribution, maxNativeZoom: BASEMAP.maxNativeZoom, maxZoom: 20 });
+    if (!latest.current.satelliteOnly) tiles.current.base.addTo(map);
     map.setView(WORLD_VIEW.center, WORLD_VIEW.zoom);
     mapRef.current = map;
     colorsRef.current = readColors(wrapRef.current);
@@ -137,21 +161,44 @@ export default function AtlasMap({
     map.on("zoomend", syncZoom);
     map.on("click", (event) => {
       const now = latest.current;
+      // Satellite only: nothing on the map to pick (the picked place stays).
+      if (now.satelliteOnly) return;
       if (now.drawMode) now.onDrawPoint?.([round6(event.latlng.lat), round6(wrapLon(event.latlng.lng))]);
       else now.onSelect?.(null);
     });
     map.on("movestart zoomstart", () => setHover(null));
 
     // Keep the map the right size when its box changes (panels opening,
-    // the window resizing, the page laying itself out).
-    const observer = new ResizeObserver(() => map.invalidateSize({ pan: false }));
-    observer.observe(wrapRef.current);
+    // the window resizing, the page laying itself out). A steady map (the
+    // Atlas map page) keeps what is on screen in place, and fits the whole
+    // area again once a panel is resized or hidden if it was showing it
+    // all; else, when the change covered the picked square (the right
+    // column reopened by the click that picked it), brings it back on
+    // screen (src/lib/mapResize.js).
+    const areaBounds = () => {
+      const box = boxOf(latest.current.area?.bbox);
+      return box ? L.latLngBounds(box) : null;
+    };
+    const pickedBounds = () => {
+      const place = placesById.current.get(latest.current.selectedId);
+      return place && latest.current.size ? L.latLngBounds(squareBounds(place, latest.current.size)) : null;
+    };
+    const stopWatching = watchMapSize(map, wrapRef.current, {
+      steady: () => latest.current.steady,
+      snapshot: () => ({ fitted: showsFit(map, areaBounds(), { padding: AREA_PADDING }) }),
+      // The picked square as it is now: the click that picked it may be
+      // drawn after the column it reopened.
+      settle: (before) => settleView(map, before, { fit: () => fitAreaNow.current?.(true), pick: pickedBounds(), padding: [56, 56] }),
+    });
 
     return () => {
-      observer.disconnect();
+      stopWatching();
       // Take our shapes off first, while their canvas still exists: removing
       // the map first leaves a redraw queued on a canvas that is gone.
       for (const name of ["cells", "marks", "draw", "outline"]) layers.current[name]?.remove();
+      tiles.current.base?.remove();
+      tiles.current.satellite?.remove();
+      tiles.current = { base: null, satellite: null };
       // A zoom animation still running would finish on a map that is gone.
       map.stop();
       map._animatingZoom = false;
@@ -161,6 +208,22 @@ export default function AtlasMap({
       layers.current = { outline: null, cells: null, cellIndex: new Map(), cellKey: "", marks: null, draw: null };
     };
   }, []);
+
+  // ---------- Satellite only: the base map ----------
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const { base } = tiles.current;
+    if (satelliteOnly) {
+      tiles.current.satellite ??= L.tileLayer(SATELLITE.url, { attribution: SATELLITE.attribution, maxNativeZoom: SATELLITE.maxNativeZoom, maxZoom: 20 });
+      base?.remove();
+      tiles.current.satellite.addTo(map);
+    } else {
+      tiles.current.satellite?.remove();
+      if (base && !map.hasLayer(base)) base.addTo(map);
+    }
+    setHover(null);
+  }, [satelliteOnly]);
 
   // ---------- Turn interaction on or off ----------
   useEffect(() => {
@@ -191,8 +254,9 @@ export default function AtlasMap({
     const map = mapRef.current;
     const bounds = boxOf(latest.current.area?.bbox);
     if (!map || !bounds) return;
-    map.fitBounds(bounds, { padding: [24, 24], animate });
+    map.fitBounds(bounds, { padding: AREA_PADDING, animate });
   };
+  fitAreaNow.current = fitArea;
 
   useEffect(() => {
     fitArea(false);
@@ -231,6 +295,7 @@ export default function AtlasMap({
         }
         group.on("click", (event) => {
           const now = latest.current;
+          if (now.satelliteOnly) return;
           if (now.drawMode) {
             now.onDrawPoint?.([round6(event.latlng.lat), round6(wrapLon(event.latlng.lng))]);
             return;
@@ -238,7 +303,7 @@ export default function AtlasMap({
           now.onSelect?.(placesById.current.get(event.layer.atlasId) || null);
         });
         group.on("mousemove", (event) => {
-          if (latest.current.drawMode) return;
+          if (latest.current.drawMode || latest.current.satelliteOnly) return;
           const { x, y } = event.containerPoint;
           setHover({ id: event.layer.atlasId, x, y });
         });
@@ -333,12 +398,20 @@ export default function AtlasMap({
     getMap: () => mapRef.current,
   }));
 
-  const hoverPlace = hover ? placesById.current.get(hover.id) : null;
+  const hoverPlace = hover && !satelliteOnly ? placesById.current.get(hover.id) : null;
   const total = hoverPlace ? rankedCount(places || [], timeframe) : 0;
   const wrapWidth = wrapRef.current?.clientWidth || 0;
   const tipLeft = hover ? Math.min(hover.x + 14, Math.max(8, wrapWidth - 220)) : 0;
 
-  const classes = ["atlas-map", drawMode ? "is-drawing" : "", interactive ? "" : "is-static", className].filter(Boolean).join(" ");
+  // The "Satellite only · Show layers" chip turns it off. It goes away as it
+  // does, so keyboard focus moves to the Satellite only button (which now
+  // reads "off") instead of being lost.
+  const showLayers = (event) => {
+    if (event.currentTarget.contains(document.activeElement)) satButtonRef.current?.focus();
+    onSatelliteOnlyChange?.(false);
+  };
+
+  const classes = ["atlas-map", drawMode ? "is-drawing" : "", interactive ? "" : "is-static", satelliteOnly ? "is-satellite-only" : "", className].filter(Boolean).join(" ");
   return (
     <div
       ref={wrapRef}
@@ -349,19 +422,46 @@ export default function AtlasMap({
       <div ref={mapDivRef} className="atlas-map-canvas" role="region" aria-label={ariaLabel} />
 
       {interactive && (
-        <div className="atlas-map-zoom">
-          <button type="button" className="atlas-map-btn" aria-label="Zoom in" title="Zoom in" onClick={() => mapRef.current?.zoomIn()}>
-            <Plus size={16} />
-          </button>
-          <button type="button" className="atlas-map-btn" aria-label="Zoom out" title="Zoom out" onClick={() => mapRef.current?.zoomOut()}>
-            <Minus size={16} />
-          </button>
-          {area?.bbox && (
-            <button type="button" className="atlas-map-btn" aria-label="Fit the area" title="Fit the area" onClick={() => fitArea(true)}>
-              <Maximize size={14} />
+        <div className="atlas-map-controls">
+          <div className="atlas-map-zoom">
+            <button type="button" className="atlas-map-btn" aria-label="Zoom in" title="Zoom in" onClick={() => mapRef.current?.zoomIn()}>
+              <Plus size={16} />
+            </button>
+            <button type="button" className="atlas-map-btn" aria-label="Zoom out" title="Zoom out" onClick={() => mapRef.current?.zoomOut()}>
+              <Minus size={16} />
+            </button>
+            {area?.bbox && (
+              <button type="button" className="atlas-map-btn" aria-label="Fit the area" title="Fit the area" onClick={() => fitArea(true)}>
+                <Maximize size={14} />
+              </button>
+            )}
+          </div>
+          {onSatelliteOnlyChange && (
+            <button
+              ref={satButtonRef}
+              type="button"
+              className={satelliteOnly ? "atlas-map-btn atlas-map-sat is-on" : "atlas-map-btn atlas-map-sat"}
+              aria-label="Satellite only"
+              aria-pressed={satelliteOnly}
+              title={satelliteOnly ? "Show map layers" : "Satellite only"}
+              onClick={() => onSatelliteOnlyChange(!satelliteOnly)}
+            >
+              <Satellite size={16} />
             </button>
           )}
         </div>
+      )}
+
+      {/* Satellite only: says why the map is bare, and turns it off. */}
+      {interactive && satelliteOnly && onSatelliteOnlyChange && (
+        <button type="button" className="map-sat-chip" title="Show the squares, the area's border and the key again" onClick={showLayers}>
+          <Satellite size={14} aria-hidden="true" />
+          <span className="map-sat-chip-label">Satellite only</span>{" "}
+          <span className="map-sat-chip-action">
+            <Layers size={13} aria-hidden="true" />
+            Show layers
+          </span>
+        </button>
       )}
 
       {hoverPlace && (
@@ -371,7 +471,7 @@ export default function AtlasMap({
         </div>
       )}
 
-      {children}
+      {!satelliteOnly && children}
     </div>
   );
 }

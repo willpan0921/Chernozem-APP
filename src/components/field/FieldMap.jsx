@@ -21,6 +21,15 @@
 // "+" zooms in on the selected field when it is in view. Enter or Space
 // on a focused pill selects its field.
 //
+// "Satellite only" (the button under the zoom buttons, on the Fields page):
+// only the satellite picture is shown. Every field fill, pattern, outline,
+// name pill and stress circle is hidden, and so is whatever the page floats
+// on the map (the date chip, the legend); the zoom buttons, the button
+// itself and the imagery credit (Esri's terms ask for it) stay, and a small
+// "Satellite only · Show layers" chip in the top-left corner says why the
+// map is bare and turns it off. Clicks on the map then select nothing, and
+// "+" zooms in round the middle. Turning it off shows everything as it was.
+//
 // The one map layer is "Field condition" (method.js conditionScore); the
 // colours are the --fmap-* tokens in src/styles/tokens.css.
 //
@@ -45,8 +54,22 @@
 //   showLabels   false hides the name pills
 //   interactive  false turns off dragging, zooming and the buttons, and takes
 //                the map out of the Tab order (nothing to do there by keyboard)
-//   fitPadding   [x, y] px kept round the fields when the map fits them; default [36, 36]
-//   children     anything to float over the map (legend, date chip)
+//   fitPadding   [x, y] px kept round the fields when the map fits them; default
+//                [36, 36]. More at the bottom when the page floats something
+//                over the bottom of the map: a child marked
+//                data-map-cover="bottom" (the Fields page's legend) is
+//                measured each time the map fits, so the fields never sit
+//                under it (also while "Satellite only" hides it, so they do
+//                not when it comes back)
+//   satelliteOnly          true: only the satellite picture (see above)
+//   onSatelliteOnlyChange  give it to show the "Satellite only" button; called
+//                          with true or false
+//   steady       true (the Fields page): when the map's box changes size (a
+//                side panel dragged or hidden, the menu folded) what is on
+//                screen stays put, and a map still showing all the fields
+//                fits them again to the new size (src/lib/mapResize.js)
+//   children     anything to float over the map (legend, date chip); hidden
+//                (still laid out, so it can be measured) while satelliteOnly
 //   ref          gives { zoomIn, zoomOut, fit, flyToBounds(bounds), getMap }
 //
 // With nothing to show yet the map opens on the whole world (Chernozem
@@ -65,21 +88,24 @@
 import { useEffect, useImperativeHandle, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { Maximize, Minus, Plus } from "lucide-react";
+import { Layers, Maximize, Minus, Plus, Satellite } from "lucide-react";
 import { ANALYSING_LABEL, formatDay, mapLook } from "../../lib/field/format.js";
+import { settleView, showsFit, watchMapSize } from "../../lib/mapResize.js";
+import { SATELLITE } from "../../config/maps.js";
 import "./field.css";
 
-// Satellite pictures: Esri World Imagery, free with no key. The short
-// credit line in the corner is required by its terms.
-export const SATELLITE = {
-  url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-  attribution: "Imagery © Esri, Maxar, Earthstar Geographics",
-  maxNativeZoom: 18,
-};
+// Satellite pictures: Esri World Imagery, free with no key (src/config/maps.js).
+// The short credit line in the corner is required by its terms.
+export { SATELLITE };
 const MAX_ZOOM = 19;
 // The whole world, until there are fields or a place to show.
 const START_VIEW = { center: [25, 10], zoom: 3 };
 const FIT_PADDING = [36, 36];
+const FIT_MAX_ZOOM = 17; // fitting never zooms in further than this
+// Room between the fitted fields and what the page floats over the bottom of
+// the map (data-map-cover="bottom"), and the least height the fields keep.
+const COVER_GAP = 12;
+const MIN_FIT_ROOM = 80;
 const MIN_STRESS_PX = 11; // the smallest stress circle on screen (radius)
 
 // ---------- Colours (read once from tokens.css) ----------
@@ -309,12 +335,16 @@ export default function FieldMap({
   showLabels = true,
   interactive = true,
   fitPadding = FIT_PADDING,
+  satelliteOnly = false,
+  onSatelliteOnlyChange,
+  steady = false,
   className = "",
   ariaLabel = "Map of the fields",
   children,
   ref,
 }) {
   const wrapRef = useRef(null);
+  const satButtonRef = useRef(null);
   const mapDivRef = useRef(null);
   const mapRef = useRef(null);
   const tokensRef = useRef(null);
@@ -323,9 +353,12 @@ export default function FieldMap({
   const layers = useRef({ tiles: null, fields: null, fieldIndex: new Map(), candidates: null, extras: null });
   const [zoom, setZoom] = useState(null);
   const lastFitAt = useRef(0);
+  // The options of the last fit (its padding), so "is it still showing all
+  // the fields?" is asked with the padding it was fitted with.
+  const lastFit = useRef(null);
 
   const latest = useRef({});
-  latest.current = { onSelect, onToggleCandidate, onDrawPoint, onMapClick, drawMode, fields, candidates, boundary, drawPoints, pin, pinRadiusM, selectedId };
+  latest.current = { onSelect, onToggleCandidate, onDrawPoint, onMapClick, drawMode, fields, candidates, boundary, drawPoints, pin, pinRadiusM, selectedId, satelliteOnly, fitPadding, steady };
 
   // ---------- Create the map once ----------
   useEffect(() => {
@@ -367,6 +400,8 @@ export default function FieldMap({
     map.on("zoomend", syncZoom);
     map.on("click", (event) => {
       const now = latest.current;
+      // Satellite only: the map shows nothing to click.
+      if (now.satelliteOnly) return;
       const point = [round6(event.latlng.lat), round6(wrapLon(event.latlng.lng))];
       if (now.drawMode) now.onDrawPoint?.(point);
       else now.onMapClick?.(point);
@@ -374,15 +409,27 @@ export default function FieldMap({
 
     // Keep the map the right size when its box changes. A box that settles
     // just after the map fitted itself (the page laying itself out) fits
-    // again, so the fields are not left small in one corner.
-    const observer = new ResizeObserver(() => {
-      map.invalidateSize({ pan: false });
-      if (Date.now() - lastFitAt.current < 1500) fitNow.current?.(false);
+    // again, so the fields are not left small in one corner. A steady map
+    // (the Fields page) keeps what is on screen in place, and fits all the
+    // fields again once a panel is resized or hidden if it was showing them
+    // all; else, when the change covered the selected field (the panel
+    // reopened by the click that selected it), brings it back on screen
+    // (src/lib/mapResize.js).
+    const stopWatching = watchMapSize(map, wrapRef.current, {
+      steady: () => latest.current.steady,
+      snapshot: () => ({
+        fitted: showsFit(map, targetBounds(), lastFit.current || { padding: latest.current.fitPadding, maxZoom: FIT_MAX_ZOOM }),
+      }),
+      // The selected field as it is now: the click that selected it may be
+      // drawn after the panel it reopened.
+      settle: (before) => settleView(map, before, { fit: () => fitNow.current?.(true), pick: selectedBounds(), padding: [56, 56] }),
+      onResize: () => {
+        if (Date.now() - lastFitAt.current < 1500) fitNow.current?.(false);
+      },
     });
-    observer.observe(wrapRef.current);
 
     return () => {
-      observer.disconnect();
+      stopWatching();
       for (const name of ["fields", "candidates", "extras", "tiles"]) layers.current[name]?.remove();
       map.stop();
       map._animatingZoom = false;
@@ -449,6 +496,7 @@ export default function FieldMap({
       });
       shape.on("click", (event) => {
         const now = latest.current;
+        if (now.satelliteOnly) return;
         if (now.drawMode) {
           now.onDrawPoint?.([round6(event.latlng.lat), round6(wrapLon(event.latlng.lng))]);
           return;
@@ -503,7 +551,7 @@ export default function FieldMap({
             icon: L.divIcon({ className: "fm-label", html: `<span class="fm-pill">${escapeHtml(text)}</span>`, iconSize: null }),
           });
           marker.on("click", () => {
-            if (!latest.current.drawMode) latest.current.onSelect?.(field.id);
+            if (!latest.current.drawMode && !latest.current.satelliteOnly) latest.current.onSelect?.(field.id);
           });
           marker.on("add", () => {
             const el = marker.getElement();
@@ -518,7 +566,7 @@ export default function FieldMap({
             el.addEventListener("keydown", (event) => {
               if (event.key !== "Enter" && event.key !== " ") return;
               event.preventDefault();
-              if (!latest.current.drawMode) latest.current.onSelect?.(field.id);
+              if (!latest.current.drawMode && !latest.current.satelliteOnly) latest.current.onSelect?.(field.id);
             });
           });
           entry.parts.label = marker;
@@ -689,7 +737,7 @@ export default function FieldMap({
         fillOpacity: isChosen ? 0.42 : 0.12,
         lineJoin: "round",
       });
-      shape.on("click", () => latest.current.onToggleCandidate?.(candidate.id));
+      shape.on("click", () => !latest.current.satelliteOnly && latest.current.onToggleCandidate?.(candidate.id));
       shape.bindTooltip(`${Number(candidate.areaHa || 0).toFixed(1)} ha${isChosen ? " · chosen" : ""}`, { sticky: true, className: "fm-tip", direction: "top", offset: [0, -6] });
       group.addLayer(shape);
     }
@@ -751,12 +799,36 @@ export default function FieldMap({
     return bounds;
   }
 
+  // The box round the selected field (null when none is selected).
+  function selectedBounds() {
+    const entry = layers.current.fieldIndex.get(latest.current.selectedId);
+    return entry ? fieldsBounds([entry.field]) : null;
+  }
+
+  // How far up from the map's bottom edge the page's floating legend reaches
+  // (the child marked data-map-cover="bottom"; 0 when there is none, as on a
+  // phone where the legend sits under the map). Measured when the map fits.
+  function bottomCover() {
+    const wrap = wrapRef.current;
+    const cover = wrap?.querySelector('[data-map-cover="bottom"]');
+    const box = cover?.getBoundingClientRect();
+    if (!box?.height) return 0;
+    return Math.max(0, Math.round(wrap.getBoundingClientRect().bottom - box.top));
+  }
+
   const fit = (animate = true) => {
     const map = mapRef.current;
     const bounds = targetBounds();
     if (!map || !bounds) return;
     map.invalidateSize({ pan: false });
-    map.fitBounds(bounds, { padding: fitPadding, animate, maxZoom: 17 });
+    // fitPadding all round, and at the bottom at least the room the legend
+    // takes (always leaving the fields some height).
+    const { x, y } = L.point(fitPadding);
+    const cover = bottomCover();
+    const bottom = cover ? Math.min(Math.max(y, cover + COVER_GAP), Math.max(y, map.getSize().y - y - MIN_FIT_ROOM)) : y;
+    const options = { paddingTopLeft: [x, y], paddingBottomRight: [x, bottom], maxZoom: FIT_MAX_ZOOM };
+    lastFit.current = options;
+    map.fitBounds(bounds, { ...options, animate });
     lastFitAt.current = Date.now();
   };
   const fitNow = useRef(null);
@@ -785,10 +857,15 @@ export default function FieldMap({
   }, [focusKey]);
 
   // Zoom in: on the selected field when it is in view (so "+" never lands
-  // on empty ground), else round the middle of the map.
+  // on empty ground), else round the middle of the map. With "Satellite
+  // only" on no field is shown, so always round the middle.
   const zoomIn = () => {
     const map = mapRef.current;
     if (!map) return;
+    if (latest.current.satelliteOnly) {
+      map.zoomIn();
+      return;
+    }
     const entry = layers.current.fieldIndex.get(latest.current.selectedId);
     const box = entry && bboxOfGeometry(entry.field.geometry);
     const centre = box && L.latLng((box.south + box.north) / 2, (box.west + box.east) / 2);
@@ -805,7 +882,15 @@ export default function FieldMap({
   }));
 
   const canFit = fields.length > 0 || (candidates?.length || 0) > 0 || Boolean(boundary) || Boolean(pin);
-  const classes = ["fm-map", drawMode ? "is-drawing" : "", interactive ? "" : "is-static", className].filter(Boolean).join(" ");
+  // The "Satellite only · Show layers" chip turns it off. It goes away as it
+  // does, so keyboard focus moves to the Satellite only button (which now
+  // reads "off") instead of being lost.
+  const showLayers = (event) => {
+    if (event.currentTarget.contains(document.activeElement)) satButtonRef.current?.focus();
+    onSatelliteOnlyChange?.(false);
+  };
+
+  const classes = ["fm-map", drawMode ? "is-drawing" : "", interactive ? "" : "is-static", satelliteOnly ? "is-satellite-only" : "", className].filter(Boolean).join(" ");
   return (
     <div ref={wrapRef} className={classes} style={{ height: typeof height === "number" ? `${height}px` : height }} data-zoom={zoom ?? ""}>
       <div ref={mapDivRef} className="fm-canvas" role="region" aria-label={ariaLabel} />
@@ -822,9 +907,35 @@ export default function FieldMap({
               <Maximize size={15} />
             </button>
           )}
+          {onSatelliteOnlyChange && (
+            <button
+              ref={satButtonRef}
+              type="button"
+              className={satelliteOnly ? "fm-btn fm-sat is-on" : "fm-btn fm-sat"}
+              aria-label="Satellite only"
+              aria-pressed={satelliteOnly}
+              title={satelliteOnly ? "Show map layers" : "Satellite only"}
+              onClick={() => onSatelliteOnlyChange(!satelliteOnly)}
+            >
+              <Satellite size={17} />
+            </button>
+          )}
         </div>
       )}
-      {children}
+      {/* Satellite only: says why the map is bare, and turns it off. */}
+      {interactive && satelliteOnly && onSatelliteOnlyChange && (
+        <button type="button" className="map-sat-chip" title="Show the fields, their names and the legend again" onClick={showLayers}>
+          <Satellite size={14} aria-hidden="true" />
+          <span className="map-sat-chip-label">Satellite only</span>{" "}
+          <span className="map-sat-chip-action">
+            <Layers size={13} aria-hidden="true" />
+            Show layers
+          </span>
+        </button>
+      )}
+      {/* Hidden, not removed, in "Satellite only": still laid out, so a fit
+          keeps the fields clear of the legend for when it comes back. */}
+      <div className="fm-floats">{children}</div>
     </div>
   );
 }

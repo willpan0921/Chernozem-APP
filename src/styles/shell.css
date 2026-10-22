@@ -1,7 +1,9 @@
 /*
   WHAT THIS FILE DOES
   The frame around every page: the left sidebar and the main area the page
-  sits in. The sidebar is drawn by src/layout/Sidebar.jsx.
+  sits in. The sidebar is drawn by src/layout/Sidebar.jsx. On wider screens
+  it can be folded to a narrow rail of icons (".is-rail", the end of this
+  file); on a phone it sits above the page and never folds.
 
   WHO EDITS IT
   Whoever changes the sidebar or the overall page layout.
@@ -17,6 +19,9 @@
 .sidebar {
   position: sticky;
   top: 0;
+  /* Above the pages (their maps and map buttons), so the rail's tooltips
+     are never covered. */
+  z-index: 1200;
   flex: 0 0 var(--sidebar-w);
   width: var(--sidebar-w);
   height: 100vh;
@@ -29,10 +34,19 @@
   overflow-y: auto;
 }
 
+/* The logo and the button that folds the sidebar. */
+.sidebar-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
 .sidebar-brand {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
   padding: 2px 4px 6px;
   font-size: 15px;
   font-weight: 650;
@@ -47,11 +61,29 @@
 .sidebar-logo {
   display: grid;
   place-items: center;
+  flex: 0 0 auto;
   width: 26px;
   height: 26px;
   border-radius: 7px;
   background: var(--c-ink);
   color: var(--c-on-dark);
+}
+
+.sidebar-toggle {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  margin-bottom: 4px;
+  border-radius: var(--r-sm);
+  color: var(--c-muted);
+  transition: background 0.12s, color 0.12s;
+}
+
+.sidebar-toggle:hover {
+  background: var(--c-surface-3);
+  color: var(--c-text);
 }
 
 /* The Field / Atlas switch. */
@@ -269,6 +301,11 @@
     border-bottom: 1px solid var(--c-border);
   }
 
+  /* No folding on a phone: the sidebar sits above the page. */
+  .sidebar-toggle {
+    display: none;
+  }
+
   .sidebar-nav {
     flex-direction: row;
     flex-wrap: wrap;
@@ -281,5 +318,95 @@
   .page-full {
     height: auto;
     flex-direction: column;
+  }
+}
+
+/* ---------- The sidebar folded to a rail (wider screens) ----------
+   Icons only; each item's name is its aria-label and shows in a small
+   tooltip (.rail-tip) on hover or keyboard focus. */
+
+/* "width > 860px": exactly the screens the phone rules (max-width: 860px)
+   leave out, even at a fractional width when the page is zoomed. */
+@media (width > 860px) {
+  .sidebar.is-rail {
+    --sidebar-w: var(--sidebar-rail-w);
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .sidebar.is-rail .sidebar-label,
+  .sidebar.is-rail .scope-card-text,
+  .sidebar.is-rail .scope-card-chevron,
+  .sidebar.is-rail .sidebar-note {
+    display: none;
+  }
+
+  .sidebar.is-rail .sidebar-top {
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .sidebar.is-rail .sidebar-brand {
+    justify-content: center;
+    padding: 2px 0 0;
+  }
+
+  .sidebar.is-rail .sidebar-toggle {
+    width: 100%;
+    height: 30px;
+    margin: 0;
+  }
+
+  /* Field over Atlas, in smaller words. */
+  .sidebar.is-rail .product-switch {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar.is-rail .product-switch-option {
+    padding: 5px 0;
+    font-size: 11px;
+  }
+
+  .sidebar.is-rail .scope-card {
+    justify-content: center;
+    padding: 7px 0;
+  }
+
+  /* A grey pin, not the green of the page you are on. */
+  .sidebar.is-rail .scope-card-icon {
+    background: var(--c-surface-3);
+    color: var(--c-text-2);
+  }
+
+  .sidebar.is-rail .nav-item {
+    justify-content: center;
+    padding: 9px 0;
+  }
+
+  .sidebar.is-rail .sidebar-account {
+    justify-content: center;
+    padding: 8px 0;
+  }
+
+  .rail-tip {
+    position: fixed;
+    z-index: 1;
+    transform: translateY(-50%);
+    padding: 5px 9px;
+    border-radius: 7px;
+    background: var(--c-ink);
+    color: var(--c-on-dark);
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    pointer-events: none;
+    box-shadow: var(--shadow-pop);
+  }
+}
+
+/* The tooltips belong to the rail only. */
+@media (max-width: 860px) {
+  .rail-tip {
+    display: none;
   }
 }

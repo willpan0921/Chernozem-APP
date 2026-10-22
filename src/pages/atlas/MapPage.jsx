@@ -20,12 +20,26 @@
 // On screens 860 px or narrower the columns stack: area, map, weights, then
 // the top areas or the picked place.
 //
+// BIGGER MAP (wider screens): each side column's edge next to the map can
+// be dragged to make it wider or narrower (double-click: back to the usual
+// width; the edges are also focusable separators the arrow keys move), and
+// the tab on each side of the map hides that column so the map takes its
+// room (the same tab brings it back). Picking a square on the map, or
+// arriving from a link to a place (the Overview), opens the right column
+// again: the details are what the click asks for. Widths and hidden columns
+// are remembered by this browser (src/components/ui/PanelEdge.jsx). While
+// the map still shows the whole area it fits it again to its new size.
+//
+// "Satellite only" (the button under the zoom buttons) swaps the grey map
+// for satellite imagery and hides the squares, the area's border and the
+// key; also remembered (src/components/atlas/AtlasMap.jsx).
+//
 // WHO EDITS IT
 // Whoever changes how the Atlas map page looks or behaves. The map itself is
 // src/components/atlas/AtlasMap.jsx; the weights WeightsPanel.jsx.
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { startTransition, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useNavigationType, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Check, ChevronDown, ChevronUp, Crosshair, Loader2, MapPin, MessageSquare, X } from "lucide-react";
 import { Badge, Button, ScoreBar } from "../../components/ui/index.js";
 import { AnalysisProgress, AtlasGate, useAtlasData, useColorBy, useTimeframe } from "../../state/AtlasData.jsx";
@@ -34,6 +48,11 @@ import AreaPicker from "../../components/atlas/AreaPicker.jsx";
 import MapLegend from "../../components/atlas/MapLegend.jsx";
 import RunPicker from "../../components/atlas/RunPicker.jsx";
 import WeightsPanel from "../../components/atlas/WeightsPanel.jsx";
+import PanelEdge, { usePanel, useRoom } from "../../components/ui/PanelEdge.jsx";
+import { fitPanels } from "../../lib/panels.js";
+import { cleanBoolean } from "../../lib/prefs.js";
+import { useMedia } from "../../state/useMedia.js";
+import { usePref } from "../../state/usePref.js";
 import { cellBounds, compassName, coordDigits, findFocus, labelParts, placesExtent } from "../../lib/atlas/hotspots.js";
 import { rankedCount } from "../../lib/atlas/mapColors.js";
 import { accessMeasured, noFightingFound, recoveryCost } from "../../lib/atlas/overview.js";
@@ -45,6 +64,13 @@ import "./MapPage.css";
 // The width at which the columns stack (keep in step with MapPage.css).
 const NARROW = "(max-width: 860px)";
 const isNarrow = () => !!window.matchMedia?.(NARROW).matches;
+// Below this width the columns are narrower by default (MapPage.css).
+const COMPACT = "(max-width: 1180px)";
+// The side columns: how narrow and how wide they may be dragged
+// (src/lib/panels.js). Dragging never leaves the map narrower than MAP_MIN.
+const LEFT = { min: 260, maxPx: 560, share: 0.45 };
+const RIGHT = { min: 260, maxPx: 640, share: 0.45 };
+const MAP_MIN = 360;
 
 // How each tier is named and coloured on the badge.
 const TIERS = {
@@ -299,6 +325,8 @@ function ChangeAreaDialog({ open, onClose }) {
 //         ({ run, runSummary, scored, hotspots }), else null
 function MapView({ held }) {
   const navigate = useNavigate();
+  const navigationType = useNavigationType();
+  const rowRef = useRef(null);
   const mapRef = useRef(null);
   const rightRef = useRef(null);
   const mapBoxRef = useRef(null);
@@ -319,6 +347,26 @@ function MapView({ held }) {
   const [changing, setChanging] = useState(false);
   // On a phone the map key starts folded so it covers less of the map.
   const [keyOpen, setKeyOpen] = useState(() => !isNarrow());
+
+  // The side columns: dragged wider or narrower, or hidden (wider screens
+  // only; on a phone everything stacks as before).
+  const narrow = useMedia(NARROW);
+  const compact = useMedia(COMPACT);
+  const leftPanel = usePanel("atlas-left");
+  const rightPanel = usePanel("atlas-right");
+  const leftHidden = !narrow && leftPanel.hidden;
+  const rightHidden = !narrow && rightPanel.hidden;
+  const room = useRoom(rowRef, 0, !narrow);
+  const sizes = fitPanels({
+    room,
+    mapMin: MAP_MIN,
+    panels: [
+      { id: "left", ...LEFT, width: leftPanel.width, defaultWidth: compact ? 270 : 300, hidden: leftHidden },
+      { id: "right", ...RIGHT, width: rightPanel.width, defaultWidth: compact ? 280 : 320, hidden: rightHidden },
+    ],
+  });
+  const columnStyle = (width) => (narrow ? undefined : { flexBasis: width, width });
+  const [satelliteOnly, setSatelliteOnly] = usePref("chernozem.map.atlas.satelliteOnly", false, cleanBoolean);
 
   const focus = params.get("focus");
   const places = scored.places;
@@ -394,9 +442,12 @@ function MapView({ held }) {
       { replace: true }
     );
 
-  // Fly to the place in the address when the page opens.
+  // Fly to the place in the address when the page opens. Arriving from a
+  // link to it (the Overview), its details show even if the right column
+  // was hidden; a reload keeps the column as it was.
   useEffect(() => {
     if (detail) flyTo(detail.bounds);
+    if (focus && navigationType === "PUSH") rightPanel.show();
     // Only once, when the page opens; later picks fly on their own.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -478,8 +529,8 @@ function MapView({ held }) {
   const selectedId = picked?.kind === "cell" ? picked.place.id : null;
 
   return (
-    <div className="page-full mp">
-      <aside className="mp-left" aria-label="Area and weights">
+    <div ref={rowRef} className="page-full mp">
+      <aside id="mp-left" className="mp-left" aria-label="Area and weights" hidden={leftHidden} style={columnStyle(sizes.left.width)}>
         <div className="mp-head">
           <div className="mp-head-row">
             <h1 className="mp-area" title={area.name}>
@@ -514,6 +565,20 @@ function MapView({ held }) {
       </aside>
 
       <div ref={mapBoxRef} className="mp-map">
+        {/* The left column's edge comes first, so the keyboard meets it
+            right after that column. */}
+        {!narrow && (
+          <PanelEdge
+            side="left"
+            panelId="mp-left"
+            name="area and weights"
+            hidden={leftPanel.hidden}
+            onToggle={leftPanel.toggle}
+            limits={sizes.left}
+            onResize={leftPanel.setWidth}
+            onReset={leftPanel.reset}
+          />
+        )}
         <AtlasMap
           ref={mapRef}
           area={area}
@@ -523,7 +588,18 @@ function MapView({ held }) {
           timeframe={timeframe}
           selectedId={selectedId}
           highlightIds={highlightIds}
-          onSelect={(place) => setFocus(place ? place.id : null)}
+          onSelect={(place) => {
+            setFocus(place ? place.id : null);
+            // Its details are what the click asks for: the column opens if
+            // it was hidden, in the same update as the new ?focus= (the
+            // router applies that as a transition), so it opens already
+            // showing the place. Should the column cover the square, the
+            // map brings it back on screen (AtlasMap, "steady").
+            if (place) startTransition(() => rightPanel.show());
+          }}
+          satelliteOnly={satelliteOnly}
+          onSatelliteOnlyChange={setSatelliteOnly}
+          steady
           height="100%"
           ariaLabel={`Map of ${area.name}`}
         >
@@ -540,9 +616,28 @@ function MapView({ held }) {
             </button>
           </div>
         </AtlasMap>
+        {!narrow && (
+          <PanelEdge
+            side="right"
+            panelId="mp-right"
+            name={detail ? "place details" : "top areas"}
+            hidden={rightPanel.hidden}
+            onToggle={rightPanel.toggle}
+            limits={sizes.right}
+            onResize={rightPanel.setWidth}
+            onReset={rightPanel.reset}
+          />
+        )}
       </div>
 
-      <aside ref={rightRef} className="mp-right" aria-label={detail ? "Selected place" : "Top areas"}>
+      <aside
+        ref={rightRef}
+        id="mp-right"
+        className="mp-right"
+        aria-label={detail ? "Selected place" : "Top areas"}
+        hidden={rightHidden}
+        style={columnStyle(sizes.right.width)}
+      >
         {detail ? (
           <PlaceDetail detail={detail} titleRef={titleRef} onBack={() => setFocus(null)} onZoom={() => flyTo(detail.bounds)} onAsk={askAi} accessUnknown={noFightingFound(run)} />
         ) : (

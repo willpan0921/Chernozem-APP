@@ -5,6 +5,10 @@
   and the selected field's panel (name, the four tiles, season chart, Ask
   AI). Every class starts with "fp-" so it never clashes with another page.
 
+  On wider screens the panel's width is set by the page (it can be dragged
+  and hidden: src/components/ui/PanelEdge.jsx, styled in
+  src/styles/components.css); the widths below are its usual ones.
+
   WHO EDITS IT
   Whoever changes how the Fields page looks. Colours, fonts and spacing
   come from src/styles/tokens.css; the map, tiles and legend have their
@@ -84,12 +88,24 @@
   pointer-events: auto;
 }
 
+/* The edge you drag fills the gap between the map and the panel. */
+.fp-map .panel-handle {
+  --edge-hit: var(--s-4);
+  --edge-shift: calc(-1 * var(--s-4));
+}
+
 .fp-panel {
   flex: 0 0 400px;
   width: 400px;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  container: fp-panel / inline-size;
+}
+
+/* Hidden with the tab on the map's edge: the map takes all the room. */
+.fp-panel[hidden] {
+  display: none;
 }
 
 .fp-field {
@@ -209,6 +225,20 @@
 
 .fp-tiles .mt-line {
   align-self: start;
+}
+
+/* A panel dragged narrower than its usual width: one tile a row, so no
+   label is cut (wider screens only; phones keep two a row). */
+@media (width > 860px) {
+  @container fp-panel (max-width: 359px) {
+    .fp-tiles {
+      grid-template-columns: 1fr;
+    }
+
+    .fp-tiles .mt-tile {
+      min-height: 0;
+    }
+  }
 }
 
 /* ---------- Season chart ---------- */
@@ -453,4 +483,10 @@
     min-height: 120px;
     padding: 14px;
   }
+}
+
+/* "Satellite only" on a phone: the legend under the map is hidden but keeps
+   its room, so the page below does not jump when the button is pressed. */
+.fp-legend-below.is-hidden {
+  visibility: hidden;
 }

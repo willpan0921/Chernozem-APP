@@ -102,6 +102,40 @@
   outline-offset: 2px;
 }
 
+/* "Satellite only": its own button under the zoom buttons, dark while on. */
+.fm-btn.fm-sat {
+  margin-top: 8px;
+}
+
+.fm-btn.fm-sat.is-on {
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+}
+
+.fm-btn.fm-sat.is-on:hover {
+  background: var(--c-ink-2);
+}
+
+/* While it is on, only the satellite picture: every layer above the tiles
+   (fields, patterns, outlines, name pills, stress circles, tooltips) is
+   hidden, so nothing on it can be clicked or focused either. The zoom
+   buttons and the imagery credit stay. */
+.fm-map.is-satellite-only .leaflet-map-pane > .leaflet-pane:not(.leaflet-tile-pane) {
+  display: none;
+}
+
+/* What the page floats on the map (date chip, legend). The wrapper makes no
+   box of its own; "Satellite only" hides what is in it without taking it
+   out of the layout (FieldMap measures the legend when it fits). Hidden
+   this way it cannot be seen, clicked or focused. */
+.fm-floats {
+  display: contents;
+}
+
+.fm-map.is-satellite-only .fm-floats {
+  visibility: hidden;
+}
+
 /* Name pills. The marker element has no size; the pill is centred on it. */
 .leaflet-marker-icon.fm-label {
   width: 0 !important;

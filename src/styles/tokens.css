@@ -140,6 +140,7 @@
 
   /* ---- Layout ---- */
   --sidebar-w: 184px;
+  --sidebar-rail-w: 64px;     /* the sidebar folded to icons */
   --page-max: 1320px;
   --page-pad: 24px;
 }

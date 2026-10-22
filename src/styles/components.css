@@ -850,3 +850,170 @@
 .atlas-status-error .atlas-status-title {
   color: var(--c-red-text);
 }
+
+/* ---------- PanelEdge (src/components/ui/PanelEdge.jsx) ----------
+   The edge between a map and a side panel on the two map pages: a strip
+   you drag to resize the panel (a thin line shows on it when it is
+   pointed at, focused or dragged) and a small tab on the map's edge that
+   hides the panel and brings it back. Both are placed inside the map's
+   box; a page sets --edge-hit (how wide the strip is) and --edge-shift
+   (how far it reaches past the map's edge) to fit its own gap. */
+
+.panel-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 1100;
+  width: var(--edge-hit, 12px);
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.panel-handle.is-left {
+  left: var(--edge-shift, -6px);
+}
+
+.panel-handle.is-right {
+  right: var(--edge-shift, -6px);
+}
+
+.panel-handle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  border-radius: 2px;
+  background: transparent;
+  transition: background 0.15s ease 0s, width 0.15s ease;
+}
+
+/* A short wait before the line shows, so passing over it does not flash. */
+.panel-handle:hover::before {
+  background: color-mix(in srgb, var(--c-green) 55%, transparent);
+  transition-delay: 0.12s;
+}
+
+.panel-handle.is-dragging::before,
+.panel-handle:focus-visible::before {
+  width: 3px;
+  background: var(--c-green);
+  transition-delay: 0s;
+}
+
+/* Windows High Contrast (forced colours) paints every background in the
+   page colour, which would hide the line: draw it in the system highlight
+   colour there (a system colour is kept as it is). */
+@media (forced-colors: active) {
+  .panel-handle:hover::before,
+  .panel-handle.is-dragging::before,
+  .panel-handle:focus-visible::before {
+    background: Highlight;
+  }
+}
+
+/* While an edge is dragged: the resize arrow everywhere, no text selected. */
+html.is-resizing-panel,
+html.is-resizing-panel * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+.panel-tab {
+  position: absolute;
+  top: 50%;
+  z-index: 1101;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 48px;
+  margin-top: -24px;
+  background: var(--c-surface);
+  color: var(--c-text-2);
+  box-shadow: 0 2px 10px rgba(20, 20, 10, 0.2);
+  transition: background 0.12s, color 0.12s, width 0.12s;
+}
+
+.panel-tab.is-left {
+  left: 0;
+  border-radius: 0 10px 10px 0;
+}
+
+.panel-tab.is-right {
+  right: 0;
+  border-radius: 10px 0 0 10px;
+}
+
+.panel-tab:hover {
+  width: 28px;
+  background: var(--c-surface-2);
+  color: var(--c-text);
+}
+
+.panel-tab:focus-visible {
+  outline: 2px solid var(--c-green);
+  outline-offset: 2px;
+}
+
+/* ---------- "Satellite only" chip (src/components/field/FieldMap.jsx,
+   src/components/atlas/AtlasMap.jsx) ----------
+   While a map shows the satellite picture only, a small dark chip in its
+   top-left corner says so, so the bare map never looks like fields or
+   squares that failed to load; clicking it brings the layers back. */
+
+.map-sat-chip {
+  position: absolute;
+  top: var(--s-3);
+  left: var(--s-3);
+  z-index: 1000;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 88px);
+  padding: 5px 5px 5px 12px;
+  border-radius: 12px;
+  background: var(--c-ink);
+  color: var(--c-on-dark);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  box-shadow: 0 6px 18px rgba(20, 20, 10, 0.22);
+}
+
+.map-sat-chip svg {
+  flex: 0 0 auto;
+}
+
+/* On a narrow map the label gives way (cut short with "…"), so "Show
+   layers" always fits inside the chip (found in review: on maps under
+   about 330 px it ran past the chip, under the "+" button). */
+.map-sat-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.map-sat-chip-action {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--c-on-dark) 16%, transparent);
+  transition: background 0.12s;
+}
+
+.map-sat-chip:hover .map-sat-chip-action {
+  background: color-mix(in srgb, var(--c-on-dark) 28%, transparent);
+}
+
+.map-sat-chip:focus-visible {
+  outline: 2px solid var(--c-green);
+  outline-offset: 2px;
+}

@@ -35,6 +35,20 @@
 // the map if it is off screen. On screens 860 px or narrower the map sits
 // on top and the field below; clicking a field there scrolls to it.
 //
+// BIGGER MAP (wider screens): the panel's left edge can be dragged to make
+// it wider or narrower (double-click: back to the usual width; it is also a
+// focusable separator the arrow keys move), and the tab on the map's right
+// edge hides the panel so the map takes the whole page (the same tab brings
+// it back). Clicking a field on the map, or arriving from a link to one
+// field (the Overview's list), opens the panel again: its details are what
+// the click asks for. The width and hidden state are remembered by this
+// browser (src/components/ui/PanelEdge.jsx). While the map still shows all
+// the fields it fits them again to its new size.
+//
+// "Satellite only" (the button under the zoom buttons) hides every field,
+// label, the date chip and the legend, leaving the satellite picture; also
+// remembered (src/components/field/FieldMap.jsx).
+//
 // All numbers come from the real analyses in src/state/FieldData.jsx; the
 // rules (what is normal, stressed, ready) from src/lib/field/method.js, as
 // the server applied them; the wording helpers from src/lib/field/format.js.
@@ -43,8 +57,8 @@
 // Whoever changes how the Fields page looks. The map itself is
 // src/components/field/FieldMap.jsx; the rules are in src/lib/field/method.js.
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { startTransition, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigationType, useSearchParams } from "react-router-dom";
 import { ChevronLeft, ChevronRight, MessageSquare, ShieldAlert } from "lucide-react";
 import { Badge, Button } from "../../components/ui/index.js";
 import { FarmGate, FieldProgress, useFieldData } from "../../state/FieldData.jsx";
@@ -52,6 +66,11 @@ import FieldMap, { fieldsBounds } from "../../components/field/FieldMap.jsx";
 import ConditionLegend from "../../components/field/ConditionLegend.jsx";
 import MetricTile from "../../components/field/MetricTile.jsx";
 import HowMeasured from "../../components/field/HowMeasured.jsx";
+import PanelEdge, { usePanel, useRoom } from "../../components/ui/PanelEdge.jsx";
+import { fitPanels } from "../../lib/panels.js";
+import { cleanBoolean } from "../../lib/prefs.js";
+import { useMedia } from "../../state/useMedia.js";
+import { usePref } from "../../state/usePref.js";
 import { ANALYSING_LABEL, cropInfo, fieldTiles, formatArea, formatDay, formatIndex, mapMarks, statusOf } from "../../lib/field/format.js";
 import { BASELINE } from "../../lib/field/method.js";
 import { fieldMethods } from "../../config/research.js";
@@ -59,32 +78,43 @@ import "./FieldsPage.css";
 
 // The width at which the page stacks (keep in step with FieldsPage.css).
 const NARROW = "(max-width: 860px)";
+// Below this width the panel is narrower by default (FieldsPage.css).
+const COMPACT = "(max-width: 1180px)";
+// The field panel: its usual width (FieldsPage.css), and how narrow and how
+// wide it may be dragged (src/lib/panels.js). Dragging it never leaves the
+// map narrower than MAP_MIN.
+const DETAILS = { min: 300, maxPx: 640, share: 0.5 };
+const MAP_MIN = 360;
 // Room kept round the fields when the map fits them: little at the sides,
-// more at the top and bottom for the date chip and the legend.
+// more at the top and bottom for the date chip and the legend (and at the
+// bottom at least the legend's own height: FieldMap measures it, see
+// data-map-cover below).
 const FIT_PADDING = [18, 60];
-
-function useNarrow() {
-  const query = () => (typeof window !== "undefined" && window.matchMedia ? window.matchMedia(NARROW) : null);
-  const [narrow, setNarrow] = useState(() => !!query()?.matches);
-  useEffect(() => {
-    const media = query();
-    if (!media) return undefined;
-    const onChange = () => setNarrow(media.matches);
-    media.addEventListener("change", onChange);
-    return () => media.removeEventListener("change", onChange);
-  }, []);
-  return narrow;
-}
 
 // ---------- The page ----------
 
 function FieldsView() {
   const { farm, analyses, provider, job, weather, analysing, conflict, actions } = useFieldData();
   const [params, setParams] = useSearchParams();
-  const narrow = useNarrow();
+  const navigationType = useNavigationType();
+  const narrow = useMedia(NARROW);
+  const compact = useMedia(COMPACT);
   const mapApi = useRef(null);
+  const rowRef = useRef(null);
   const panelRef = useRef(null);
   const pickedOnMap = useRef(false);
+
+  // The field panel: dragged wider or narrower, or hidden (wider screens
+  // only; on a phone it sits under the map as before).
+  const details = usePanel("field-details");
+  const detailsHidden = !narrow && details.hidden;
+  const room = useRoom(rowRef, detailsHidden ? 0 : 1, !narrow);
+  const detailsSize = fitPanels({
+    room,
+    mapMin: MAP_MIN,
+    panels: [{ id: "details", ...DETAILS, width: details.width, defaultWidth: compact ? 360 : 400, hidden: detailsHidden }],
+  }).details;
+  const [satelliteOnly, setSatelliteOnly] = usePref("chernozem.map.field.satelliteOnly", false, cleanBoolean);
 
   const fields = farm.fields;
   const wanted = params.get("field");
@@ -98,15 +128,36 @@ function FieldsView() {
     next.set("field", id);
     setParams(next, { replace: true });
   };
-  const step = (by) => select(fields[(index + by + fields.length) % fields.length]?.id);
+  // Opens the panel if it was hidden, in the same update as the new field in
+  // the address (the router applies that as a transition), so the panel
+  // opens already showing the field asked for. (Should it ever be drawn
+  // first, the map still brings a field it covered back on screen.)
+  const showDetails = () => startTransition(() => details.show());
 
-  // A field picked on the map is already in view; on a phone, show its
-  // details (they are below the map).
+  // Stepping to another field shows its details (the panel opens if hidden).
+  const step = (by) => {
+    select(fields[(index + by + fields.length) % fields.length]?.id);
+    showDetails();
+  };
+
+  // A field picked on the map is already in view; its details are what the
+  // click asks for: the panel opens if it was hidden, and on a phone the
+  // page scrolls to them (they are below the map). Should the panel cover
+  // the field, the map brings it back on screen (FieldMap, "steady").
   const selectOnMap = (id) => {
     pickedOnMap.current = id !== selected?.id;
     select(id);
+    showDetails();
     if (narrow) requestAnimationFrame(() => panelRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }));
   };
+
+  // Arriving from a link to one field (the Overview's field list): show its
+  // details even if the panel was hidden. A reload keeps it as it was.
+  useEffect(() => {
+    if (navigationType === "PUSH" && wanted) details.show();
+    // Only when the page opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // An unknown ?field= id becomes the first field's, so the address
   // always names the field shown.
@@ -155,7 +206,7 @@ function FieldsView() {
   const legend = useMemo(() => mapMarks(fields, analyses), [fields, analyses]);
 
   return (
-    <div className="page-full fp">
+    <div ref={rowRef} className="page-full fp">
       <section className="fp-map" aria-label="Farm map">
         <FieldMap
           ref={mapApi}
@@ -166,6 +217,9 @@ function FieldsView() {
           onSelect={selectOnMap}
           fitKey={fitKey}
           fitPadding={FIT_PADDING}
+          satelliteOnly={satelliteOnly}
+          onSatelliteOnlyChange={setSatelliteOnly}
+          steady
           height="100%"
           ariaLabel={`Map of ${farm.name}`}
         >
@@ -181,21 +235,43 @@ function FieldsView() {
             )}
           </div>
           {/* On a phone the legend sits under the map, so it never hides a
-              field. */}
+              field. Here FieldMap keeps the fitted fields clear of it
+              (data-map-cover). */}
           {!narrow && (
-            <div className="fp-map-legend">
+            <div className="fp-map-legend" data-map-cover="bottom">
               <ConditionLegend recovery={Boolean(conflict) || legend.recovery} notSown={legend.notSown} />
             </div>
           )}
         </FieldMap>
+        {!narrow && (
+          <PanelEdge
+            side="right"
+            panelId="fp-details"
+            name="field details"
+            hidden={details.hidden}
+            onToggle={details.toggle}
+            limits={detailsSize}
+            onResize={details.setWidth}
+            onReset={details.reset}
+          />
+        )}
       </section>
+      {/* Under the map on a phone; hidden with the rest in "Satellite only",
+          but keeping its room, so the page below does not jump. */}
       {narrow && (
-        <div className="fp-legend-below">
+        <div className={`fp-legend-below${satelliteOnly ? " is-hidden" : ""}`}>
           <ConditionLegend compact recovery={Boolean(conflict) || legend.recovery} notSown={legend.notSown} />
         </div>
       )}
 
-      <aside ref={panelRef} className="fp-panel" aria-label={selected ? `${selected.name} details` : "Field details"}>
+      <aside
+        ref={panelRef}
+        id="fp-details"
+        className="fp-panel"
+        hidden={detailsHidden}
+        style={narrow ? undefined : { flexBasis: detailsSize.width, width: detailsSize.width }}
+        aria-label={selected ? `${selected.name} details` : "Field details"}
+      >
         {selected && (
           <FieldPanel
             key={selected.id}

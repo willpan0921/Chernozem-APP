@@ -72,7 +72,8 @@ const FieldMap = lazy(() => import("../../components/field/FieldMap.jsx"));
 
 const MAX_PHOTOS = 4;
 const ITEMS_SHOWN = 5;
-// The small satellite map: the farm fills the frame.
+// The small satellite map: the farm fills the frame (and fills it again
+// when the frame changes size, e.g. the menu folded: FieldMap "steady").
 const MAP_FIT_PADDING = [14, 14];
 
 export default function OverviewPage() {
@@ -189,6 +190,7 @@ function Overview() {
                 fitPadding={MAP_FIT_PADDING}
                 interactive={false}
                 showLabels={false}
+                steady
                 ariaLabel="Satellite map of your fields"
               />
             </Suspense>
