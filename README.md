@@ -3,7 +3,7 @@
 Chernozem turns free satellite data into decisions about farmland, for any place on Earth. It has two products that share one codebase, one server and one sidebar:
 
 - **Field**, for a farmer. Type a place, paste coordinates or draw your land, and the app **finds your fields** in the satellite images. Every field is then measured from real data: plant health, water in the plants, stress with its likely cause, pest and disease risk from the weather, harvest readiness, the crop it grows, damage and soil. Pages: Overview, Fields (map), AI, Data, Settings.
-- **Atlas**, for a regional office, a ministry or a funder. Pick a region or a country, and the app scores every map square on **soil value**, **damage** and **safe access**, then ranks where restoration should start, now and after the war. Pages: Overview, Atlas (map), AI, Data, Settings, and a printable report.
+- **Atlas**, for a regional office, a ministry or a funder. Pick a region or a country, and the app scores every map square on **value** (soil value), **damage** and **feasibility** (safe access: the distance to fighting), then ranks where restoration should start, now and after the war, square by square or state by state. Pages: Overview, Atlas (map), AI, Data, Settings, and a printable report.
 
 The data comes from Google Earth Engine (Sentinel-2, Sentinel-1, NASA FIRMS, ESA WorldCover and more) and Open-Meteo weather. The AI pages use Claude and answer from the app's own data. The method follows the owner's research on war-damaged black soil in Ukraine ([Harvard Dataverse, doi:10.7910/DVN/IYXPVS](https://doi.org/10.7910/DVN/IYXPVS)). Ukraine is the case study, not a limit: seasons follow each place's own calendar, and war rules apply only where a known war covers the land, or where the team marks an area as at war (Atlas Settings).
 
@@ -100,7 +100,7 @@ docs/                     METHODS.md, CONNECT-DATA.md
 | `/field/data` | History since 2019, satellite passes, downloads |
 | `/field/settings` | Farm, fields and crops, units, Earth Engine, AI |
 | `/atlas` | Atlas Overview: totals, top areas, next steps, budget |
-| `/atlas/map` | The map with priority, damage and access layers, and the weights |
+| `/atlas/map` | The map: weights, Squares or States, and four views (Priority, Value, Damage, Feasibility), with the states' borders and names, and the soil types of a picked square or state |
 | `/atlas/ai` | Atlas AI chat |
 | `/atlas/data` | Month-by-month history, comparisons, downloads, research checks |
 | `/atlas/settings` | Area, data source, schedule, team, AI |

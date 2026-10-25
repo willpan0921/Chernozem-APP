@@ -8,6 +8,10 @@
 //   areas/<id>.json   one file per area
 //   runs/<id>.json    one file per monthly run (with its grid cells)
 //   chats/<id>.json   one file per AI chat thread
+//   units/<areaId>.json  the area's states or districts with their borders
+//                     (FAO GAUL 2015, server/units.js), worked out once
+//   soil/<areaId>.json   the soil types of the area's squares and states
+//                     looked at so far (server/soil.js)
 //   farm.json, field-analysis/, field-history/, reports/, uploads/
 //                     the Field product (see the Field section at the end)
 //
@@ -200,8 +204,9 @@ export function updateArea(id, change) {
   });
 }
 
-// Removes an area and every monthly run made for it. Gives back how many
-// runs went with it. A missing area is not an error (gives back 0).
+// Removes an area and every monthly run made for it (and its saved states
+// and soil types). Gives back how many runs went with it. A missing area is
+// not an error (gives back 0).
 export function deleteArea(id) {
   return inAreaQueue(async () => {
     if (!isSafeId(id)) return 0;
@@ -212,8 +217,52 @@ export function deleteArea(id) {
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
     }
+    for (const kind of ["units", "soil"]) {
+      try {
+        await fs.unlink(fileFor(kind, id));
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+    }
     return runs.length;
   });
+}
+
+// ---------- States and regions, soil types (the Atlas map) ----------
+// Worked out from Earth Engine once and kept, so later reads are instant
+// (server/units.js, server/soil.js). Null when there is none yet.
+
+export async function getUnitsCache(areaId) {
+  if (!isSafeId(areaId)) return null;
+  return readFile(fileFor("units", areaId));
+}
+
+export async function saveUnitsCache(areaId, value) {
+  await writeFile(fileFor("units", areaId), value);
+  return value;
+}
+
+export async function getSoilCache(areaId) {
+  if (!isSafeId(areaId)) return null;
+  return readFile(fileFor("soil", areaId));
+}
+
+// Changes an area's soil file one request at a time (two squares looked at
+// together both stay). change(file) edits the file ({ cells, units }) in
+// place; gives back the saved file.
+const soilLock = (globalThis.__chernozemSoilLock ??= { chain: Promise.resolve() });
+export function updateSoilCache(areaId, change) {
+  const next = soilLock.chain.then(async () => {
+    assertSafeId(areaId);
+    const file = (await readFile(fileFor("soil", areaId))) || { areaId, cells: {}, units: {} };
+    file.cells ||= {};
+    file.units ||= {};
+    await change(file);
+    await writeFile(fileFor("soil", areaId), file);
+    return file;
+  });
+  soilLock.chain = next.catch(() => {});
+  return next;
 }
 
 // ---------- Runs ----------

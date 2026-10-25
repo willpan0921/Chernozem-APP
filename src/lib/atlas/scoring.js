@@ -199,6 +199,9 @@ export function peaceDamageScore(place) {
 //                          part, run.conflict.partOfCountry) is scored at
 //                          peace too, whatever the run's war
 //              cellSizeDeg the map squares' size, for blackSoilFloor
+//              minBlackSoilHa  the floor to use instead of blackSoilFloor
+//                          (whole states: src/lib/atlas/units.js passes 0,
+//                          because a state is ranked when its squares are)
 // A place with a blackSoilHa under blackSoilFloor is not ranked (reason
 // NO_BLACK_SOIL_REASON, tier "noBlackSoil"). Places without blackSoilHa
 // (the research regions) are ranked as they are.
@@ -221,7 +224,7 @@ export function scorePlaces(rows, options = {}) {
     const missing = SCORE_KEYS.filter((key) => scores[key] === null);
     let reason = null;
     if (excludedSet.has(row.id)) reason = "Not analyzed in this run";
-    else if (Number.isFinite(row.blackSoilHa) && row.blackSoilHa < blackSoilFloor(row, options.cellSizeDeg)) reason = NO_BLACK_SOIL_REASON;
+    else if (Number.isFinite(row.blackSoilHa) && row.blackSoilHa < (Number.isFinite(options.minBlackSoilHa) ? options.minBlackSoilHa : blackSoilFloor(row, options.cellSizeDeg))) reason = NO_BLACK_SOIL_REASON;
     else if (missing.length) reason = `Missing data for ${missing.join(", ")}`;
     const tier = reason === NO_BLACK_SOIL_REASON ? "noBlackSoil" : "notAnalyzed";
     return {

@@ -1,13 +1,14 @@
 // WHAT THIS FILE DOES
-// Tests for server/geo.js: areas, point-in-polygon, grid sizing and the
-// 180° line. Run with "npm test".
+// Tests for server/geo.js: areas, point-in-polygon, grid sizing, the
+// 180° line, and the shapes of states and regions (label points, outlines
+// of groups of squares). Run with "npm test".
 //
 // WHO EDITS IT
 // Whoever changes geo.js.
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { areaHa, bboxOf, chooseCellSize, planGrid, pointInGeometry, simplifyGeometry, splitAntimeridian, formatCoord } from "./geo.js";
+import { areaHa, bboxOf, chooseCellSize, distanceToGeometry, labelPoint, planGrid, pointInGeometry, roundGeometry, simplifyGeometry, splitAntimeridian, squaresOutline, formatCoord } from "./geo.js";
 import { getCountry } from "./countries.js";
 
 const square = (west, south, size) => ({
@@ -110,4 +111,75 @@ test("simplify keeps a valid outline with fewer points", () => {
 test("formatCoord", () => {
   assert.equal(formatCoord(49.621, 37.744), "49.62° N, 37.74° E");
   assert.equal(formatCoord(-1.29, -36.8), "1.29° S, 36.80° W");
+});
+
+// ---------- States and regions ----------
+
+test("a label point is inside the shape, also for a crescent whose box centre is outside it", () => {
+  const plain = square(30, 48, 2);
+  const [lon, lat] = labelPoint(plain);
+  assert.ok(Math.abs(lon - 31) < 0.05 && Math.abs(lat - 49) < 0.05, `${lon}, ${lat}`);
+  // A "C": the middle of its box is the empty bite.
+  const crescent = {
+    type: "Polygon",
+    coordinates: [[[0, 0], [3, 0], [3, 1], [1, 1], [1, 2], [3, 2], [3, 3], [0, 3], [0, 0]]],
+  };
+  const point = labelPoint(crescent);
+  assert.ok(pointInGeometry(point[0], point[1], crescent), JSON.stringify(point));
+  assert.ok(!pointInGeometry(1.5, 1.5, crescent), "the box centre is outside");
+  // A lake in the middle: the point is on land.
+  const lake = { type: "Polygon", coordinates: [square(0, 0, 4).coordinates[0], square(1, 1, 2).coordinates[0].slice().reverse()] };
+  const shore = labelPoint(lake);
+  assert.ok(pointInGeometry(shore[0], shore[1], lake), JSON.stringify(shore));
+  // The largest piece of a MultiPolygon gets the name.
+  const islands = { type: "MultiPolygon", coordinates: [square(0, 0, 0.1).coordinates, square(5, 5, 2).coordinates] };
+  const main = labelPoint(islands);
+  assert.ok(main[0] > 5 && main[1] > 5, JSON.stringify(main));
+  assert.equal(labelPoint(null), null);
+  assert.equal(labelPoint({ type: "Polygon", coordinates: [] }), null);
+});
+
+test("the outline of a group of squares drops their shared edges, keeps holes, and splits squares that touch only at a corner", () => {
+  const size = 0.25;
+  // Squares r0c0..r2c2 of a grid whose north-west corner is 30° E, 50° N.
+  const cell = (row, col) => ({ id: `r${row}c${col}`, lat: 50 - (row + 0.5) * size, lon: 30 + (col + 0.5) * size });
+  // A 3 x 3 block with its middle missing: one outline with one hole.
+  const ring = [];
+  for (let r = 0; r < 3; r += 1) for (let c = 0; c < 3; c += 1) if (r !== 1 || c !== 1) ring.push(cell(r, c));
+  const donut = squaresOutline(ring, size);
+  assert.equal(donut.type, "Polygon");
+  assert.equal(donut.coordinates.length, 2, "an outline and a hole");
+  assert.equal(donut.coordinates[0].length, 5, "four corners (closed): no corner along a straight side");
+  assert.deepEqual(bboxOf(donut), [30, 49.25, 30.75, 50]);
+  const expected = areaHa(square(30, 49.25, 0.75)) - areaHa(square(30.25, 49.5, 0.25));
+  assert.ok(Math.abs(areaHa(donut) - expected) < 1, `${areaHa(donut)} vs ${expected}`);
+  assert.ok(!pointInGeometry(30.375, 49.625, donut), "the missing middle square is a hole");
+  assert.ok(pointInGeometry(30.125, 49.875, donut));
+
+  // Two squares that touch only at a corner: two separate pieces.
+  const diagonal = squaresOutline([cell(0, 0), cell(1, 1)], size);
+  assert.equal(diagonal.type, "MultiPolygon");
+  assert.equal(diagonal.coordinates.length, 2);
+  // An L of three squares: one outline with six corners.
+  const ell = squaresOutline([cell(0, 0), cell(1, 0), cell(1, 1)], size);
+  assert.equal(ell.type, "Polygon");
+  assert.equal(ell.coordinates[0].length, 7);
+  // The same square twice counts once; nothing usable gives null.
+  assert.deepEqual(squaresOutline([cell(0, 0), cell(0, 0)], size), squaresOutline([cell(0, 0)], size));
+  assert.equal(squaresOutline([{ id: "x", lat: 1, lon: 1 }], size), null);
+  assert.equal(squaresOutline([], size), null);
+});
+
+test("the distance to a shape is 0 inside it and grows outside", () => {
+  const box = square(30, 48, 1);
+  assert.equal(distanceToGeometry(30.5, 48.5, box), 0);
+  const d = distanceToGeometry(31.1, 48.5, box);
+  assert.ok(d > 0.05 && d < 0.1, String(d));
+  assert.ok(distanceToGeometry(33, 48.5, box) > d);
+});
+
+test("rounding a geometry keeps its shape with shorter numbers", () => {
+  const shape = { type: "Polygon", coordinates: [[[30.123456789, 48.987654321], [31.1, 48.9], [31, 49.5], [30.123456789, 48.987654321]]] };
+  assert.deepEqual(roundGeometry(shape, 3).coordinates[0][0], [30.123, 48.988]);
+  assert.equal(roundGeometry({ type: "Point", coordinates: [1, 2] }), null);
 });

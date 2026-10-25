@@ -1,10 +1,16 @@
 // WHAT THIS FILE DOES
 // The report's "Download CSV" (src/pages/atlas/ReportPage.jsx): one
 // spreadsheet row per map square, with where it is, its hectares and
-// people, the three scores and both rankings, and the raw indicators.
+// people, the three scores (soil_value, damage, feasibility) and both
+// rankings, and the raw indicators.
+//
+// "feasibility" is the score the pages call Feasibility (safe access: the
+// distance to fighting, full at 100 km; the code's key "access"). Until
+// 2026-10-25 the column was called safe_access; nothing in the app reads
+// it back, so it was renamed in place (same position, same numbers).
 //
 // In a war where no fire looked like fighting (overview.js
-// noFightingFound: safe access is not measured there), safe_access and
+// noFightingFound: feasibility is not measured there), feasibility and
 // distance are left empty in every row, as the report's tables show "–"
 // and the Map page "Not measured": every square reads 1 (100 km or more
 // from fighting) there, which in a war zone is not "safe to reach". An
@@ -23,8 +29,8 @@ const round = (value, digits) => (Number.isFinite(value) ? Number(value.toFixed(
 
 //   places        the scored places (scoring.js scorePlaces(...).places)
 //   cellSizeDeg   the run's square size, for the place names
-//   accessUnknown safe access is not measured in this run (overview.js
-//                 noFightingFound): safe_access and distance are left empty
+//   accessUnknown feasibility is not measured in this run (overview.js
+//                 noFightingFound): feasibility and distance are left empty
 export function cellsCsv(places, cellSizeDeg, { accessUnknown = false } = {}) {
   const rows = places.map((place) => ({
     cell_id: place.id,
@@ -40,7 +46,7 @@ export function cellsCsv(places, cellSizeDeg, { accessUnknown = false } = {}) {
     people_on_damaged_soil: round(place.peopleOnDamagedSoil, 0),
     soil_value: round(place.soil, 4),
     damage: round(place.damage, 4),
-    safe_access: accessUnknown ? "" : round(place.access, 4),
+    feasibility: accessUnknown ? "" : round(place.access, 4),
     near_term_rank: place.nearTerm.rank ?? "",
     near_term_score: round(place.nearTerm.score, 4),
     near_term_tier: place.nearTerm.tier,

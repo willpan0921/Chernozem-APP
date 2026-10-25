@@ -82,7 +82,7 @@ function fakeStore(cells, more = {}) {
 test("the war line: a known war, no war, ACLED at peace, older runs", () => {
   const war = conflictLine({ id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" });
   assert.match(war, /^War: Full-scale invasion of Ukraine, since 2022-02-24\./);
-  assert.match(war, /distance to recorded fighting/);
+  assert.match(war, /Feasibility \(safe access: distance to fighting\): measured to recorded fighting, full at 100 km\./);
   const peace = conflictLine(null, "none");
   assert.match(peace, /none in the app's list covers this area/);
   assert.match(peace, /does NOT mean the land is safe/);
@@ -90,7 +90,7 @@ test("the war line: a known war, no war, ACLED at peace, older runs", () => {
   // At peace: the damage score as used, and never "distance to fighting" (10.6).
   assert.match(peace, /Damage score: the share of each place's black-soil cropland that is heavily damaged \(radar change of 3 dB or more backed by an unusual fire within 1 km/);
   assert.match(peace, /full at 20%/);
-  assert.match(peace, /Safe access: no war is recorded here, so it is full \(100\) everywhere/);
+  assert.match(peace, /Feasibility \(safe access\) is not measured here: no war is recorded for this area, so it reads full \(100\) everywhere and nothing is left out of the near-term ranking for it\./);
   assert.doesNotMatch(peace, /fighting/);
   assert.match(war, /Damage score: the mean of unusual fire and radar change/);
   // How damage behaves over time, as the current method does it.
@@ -107,15 +107,16 @@ test("the war line: a known war, no war, ACLED at peace, older runs", () => {
   const older = conflictLine({ id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" }, "fires", { currentMethod: false });
   assert.match(older, /This month was made with an older method \(fires over the whole window, the last season's radar\): its heavy damage could fall from month to month, and it is not comparable with months made with the current method \(2026-10-19\.3\)/);
   assert.doesNotMatch(older, /does not shrink|worst war year/);
-  assert.match(older, /distance to unusual fires/);
+  assert.match(older, /measured to unusual fires/);
   assert.doesNotMatch(peace, /safe to reach|counts as safe/i);
   const acled = conflictLine(null, "acled");
   assert.match(acled, /battles in the ACLED file/);
-  assert.doesNotMatch(acled, /nothing is set aside/);
+  assert.doesNotMatch(acled, /nothing is left out|not measured/);
+  assert.match(acled, /^War: none.*Feasibility \(safe access\): measured to the battles in the ACLED file, full at 100 km\./);
   assert.equal(conflictLine(undefined), "");
   // In a war with no ACLED file: unusual fires, an estimate, not "recorded fighting".
   const fires = conflictLine({ id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" }, "fires");
-  assert.match(fires, /distance to unusual fires \(an estimate of where fighting is; there is no ACLED file/);
+  assert.match(fires, /Feasibility \(safe access: distance to fighting\): measured to unusual fires \(an estimate of where fighting is; there is no ACLED file/);
   assert.doesNotMatch(fires, /recorded fighting,/);
 });
 
@@ -123,6 +124,8 @@ test("labels", () => {
   assert.equal(coordLabel(49.6234, 37.7412), "49.62° N, 37.74° E");
   assert.equal(coordLabel(-1.29, -36.8), "1.29° S, 36.80° W");
   assert.equal(placeLabel({ lat: 1, lon: 2, admin1: "A", admin2: "B" }), "B, A");
+  // The same display names as the pages.
+  assert.equal(placeLabel({ lat: 49.5, lon: 36.2, admin1: "Kharkivs'ka" }), "Kharkiv");
   assert.equal(placeLabel({ lat: 1, lon: 2 }), "1.00° N, 2.00° E");
 });
 
@@ -166,11 +169,12 @@ test("context text and tools over a run", async () => {
   assert.match(ctx.text, /2026-09/);
   assert.match(ctx.text, /SAMPLE DATA/);
   // The weights as each ranking uses them (10.6).
-  assert.match(ctx.text, /Near term ranks by soil value 43% and damage 57%; safe access is a cutoff, not a weight/);
-  assert.match(ctx.text, /Postwar blends soil value 30%, damage 40% and safe access 30%/);
+  assert.match(ctx.text, /Near term ranks by value 43% and damage 57%; feasibility is a cutoff there, not a weight \(the Feasibility cutoff\): the least feasible 30% of the black soil is left out of the near-term ranking for now/);
+  assert.match(ctx.text, /Post-crisis blends value 30%, damage 40% and feasibility 30%/);
+  assert.match(ctx.text, /value \d+ \/ damage \d+ \/ feasibility \d+$/m);
   assert.match(ctx.text, /1\. Bucha, Kyiv \([^)]*\), \d+ squares?:/);
   assert.match(ctx.text, /Top places, near term:/);
-  assert.match(ctx.text, /Top places, postwar:\n1\. Bucha, Kyiv/);
+  assert.match(ctx.text, /Top places, post-crisis:\n1\. Bucha, Kyiv/);
   assert.match(ctx.text, /History by month/);
   assert.match(ctx.text, /selected on the map/);
 
@@ -201,7 +205,11 @@ test("context text and tools over a run", async () => {
     assert.equal(item.counted, item.heavyDamageHa > 0 ? "heavily damaged hectares" : "black-soil cropland (no heavy damage found)");
     assert.ok(item.squares >= 1);
   }
-  assert.equal((await ctx.runTool("get_ranking", { timeframe: "nearTerm", limit: 2 })).weightsUsed.soil, 43);
+  const nearRanking = await ctx.runTool("get_ranking", { timeframe: "nearTerm", limit: 2 });
+  assert.deepEqual(nearRanking.weightsUsed, { value: 43, damage: 57, feasibility: "Feasibility cutoff, not a weight" });
+  assert.ok(Number.isInteger(nearRanking.leftOutForNowCells));
+  assert.deepEqual(ranking.weightsUsed, { value: 30, damage: 40, feasibility: 30 });
+  assert.deepEqual(Object.keys(byId.place.scores), ["value", "damage", "feasibility"]);
   assert.ok((await ctx.runTool("budget_coverage", { usd: -5 })).error);
 
   const history = await ctx.runTool("get_history", {});
@@ -315,25 +323,25 @@ test("the weights as used, in a war and at peace (10.6)", () => {
   const settings = { weights: { soil: 30, damage: 40, access: 30 }, gatePercentile: 30, r: 0.5 };
   const scored = { places: [{ nearTerm: { tier: "setAside" } }, { nearTerm: { tier: "high" } }] };
   const war = settingsLine(settings, { conflict: { id: "x", since: "2022-02-24" }, accessSource: "fires" }, scored, "nearTerm");
-  assert.match(war, /Near term ranks by soil value 43% and damage 57%/);
-  assert.match(war, /least safe 30% of the black soil is set aside first \(1 squares set aside\)|least safe 30% of the black soil is set aside first \(1 square/);
-  assert.match(war, /Postwar blends soil value 30%, damage 40% and safe access 30% \(weighted power mean, r = 0.5\)\./);
+  assert.match(war, /Near term ranks by value 43% and damage 57%/);
+  assert.match(war, /the least feasible 30% of the black soil is left out of the near-term ranking for now \(1 square left out; they show in the lowest priority shade on the map\)/);
+  assert.match(war, /Post-crisis blends value 30%, damage 40% and feasibility 30% \(weighted power mean, r = 0.5\)\./);
   assert.match(war, /viewing Near term/);
   const peace = settingsLine(settings, { conflict: null, accessSource: "none" }, scored, "postwar");
-  assert.match(peace, /nothing is set aside \(no war recorded\)/);
-  assert.match(peace, /Long term blends soil value 30%/);
+  assert.match(peace, /nothing is left out for feasibility \(no war recorded\)/);
+  assert.match(peace, /Post-crisis blends value 30%/);
   assert.match(peace, /changes no order: both rankings put the squares in the same order/);
-  assert.match(peace, /viewing Long term/);
-  assert.doesNotMatch(peace, /fighting|least safe/);
-  // With an ACLED file at peace, access is measured and can set land aside.
-  assert.match(settingsLine(settings, { conflict: null, accessSource: "acled" }, scored, "nearTerm"), /set aside first/);
+  assert.match(peace, /viewing Post-crisis/);
+  assert.doesNotMatch(peace, /fighting|least safe|least feasible/);
+  // With an ACLED file at peace, feasibility is measured and the cutoff can leave land out.
+  assert.match(settingsLine(settings, { conflict: null, accessSource: "acled" }, scored, "nearTerm"), /least feasible 30% of the black soil is left out/);
 });
 
 test("at peace both rankings really sort the same way (10.6)", async () => {
   const peace = await buildAtlasContext({ store: fakeStore(gridCells().map((c) => ({ ...c, distance: 1 })), { conflict: null, accessSource: "none" }) });
   const order = (tf) => peace.scored.places.filter((p) => Number.isFinite(p[tf].rank)).sort((a, b) => a[tf].rank - b[tf].rank).map((p) => p.id);
   assert.deepEqual(order("nearTerm"), order("postwar"));
-  assert.match(peace.text, /Top places, long term:/);
+  assert.match(peace.text, /Top places, post-crisis:/);
   assert.doesNotMatch(peace.text, /fighting/);
 });
 
@@ -345,7 +353,7 @@ test("at peace the data warnings do not repeat the no-war note or say 'fires onl
   const ctx = await buildAtlasContext({ store });
   assert.doesNotMatch(ctx.text, /distance to fighting|fires only/);
   assert.match(ctx.text, /5 of 36 cells had no radar reading on cropland; no heavy damage can be found there \(here it needs radar change\)/);
-  assert.equal((await ctx.runTool("get_ranking", { timeframe: "nearTerm", limit: 1 })).weightsUsed.safeAccess, "not used: full everywhere (no war recorded)");
+  assert.equal((await ctx.runTool("get_ranking", { timeframe: "nearTerm", limit: 1 })).weightsUsed.feasibility, "not used: full everywhere (no war recorded)");
 });
 
 test("the war line says when the user's team set the war, or marked the area as not at war", () => {
@@ -353,7 +361,7 @@ test("the war line says when the user's team set the war, or marked the area as 
   const set = conflictLine(team, "fires", { setByTeam: true });
   assert.match(set, /^War: Fighting in Amhara, since 2023-08-01\. This war was set by the user's team for this area in Atlas Settings \(its name and start date are the team's, not from the app's list of wars\); say so when you name it\. Damage is counted from that day\./);
   assert.doesNotMatch(set, /earliest day/);
-  assert.match(set, /distance to unusual fires/);
+  assert.match(set, /measured to unusual fires/);
   // Counted from the earliest day allowed: the war may be older.
   const earliest = conflictLine({ ...team, since: "2022-01-01" }, "fires", { setByTeam: true });
   assert.match(earliest, /That is the earliest day the app allows \(the normal years 2019 to 2021 must come before the war\): the war may have begun earlier, so damage before that day is not counted, and the normal years may already include the war\./);
@@ -422,7 +430,7 @@ test("an older Ukraine run (no conflict, no accessSource) still reads as the war
   };
   const ctx = await buildAtlasContext({ store });
   assert.match(ctx.text, /War: Full-scale invasion of Ukraine, since 2022-02-24/);
-  assert.match(ctx.text, /distance to unusual fires \(an estimate of where fighting is/);
+  assert.match(ctx.text, /measured to unusual fires \(an estimate of where fighting is/);
   assert.doesNotMatch(ctx.text, /distance to recorded fighting/);
 });
 
@@ -431,30 +439,30 @@ test("a month that ends before its war began: the AI is told no war damage is co
   const line = conflictLine(recent, "none", { setByTeam: true, beforeWar: true });
   assert.match(line, /^War: Recent war, since 2026-10-01\. This war was set by the user's team/);
   assert.match(line, /This month ends before the war began, so no war damage is counted for it \(no war year of fires, no war season of radar: the damage score is 0 everywhere\) and distance to fighting was not measured for it\./);
-  assert.match(line, /Safe access: not measured for this month, so it is full \(100\) everywhere and nothing is set aside for it\. That does NOT mean the land is safe/);
+  assert.match(line, /Feasibility \(safe access: distance to fighting\) is not measured here: this month ends before the war began, so it reads full \(100\) everywhere and nothing is left out of the near-term ranking for it\. That does NOT mean the land is safe/);
   assert.doesNotMatch(line, /Damage is counted from that day|recorded fighting|worst war year/);
   // In a war month, "none" (nothing measured) is not recorded fighting either.
   assert.doesNotMatch(conflictLine({ id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" }, "none"), /recorded fighting/);
 
   const ctx = await buildAtlasContext({ store: fakeStore(gridCells().map((c) => ({ ...c, distance: 1 })), { conflict: recent, conflictSource: "area", accessSource: "none" }) });
   assert.match(ctx.text, /This month ends before the war began/);
-  assert.match(ctx.text, /nothing is set aside \(this month ends before the war began on 2026-10-01\)/);
-  assert.match(ctx.text, /Long term blends/);
-  assert.match(ctx.text, /Top places, long term:/);
+  assert.match(ctx.text, /nothing is left out for feasibility \(this month ends before the war began on 2026-10-01\)/);
+  assert.match(ctx.text, /Post-crisis blends/);
+  assert.match(ctx.text, /Top places, post-crisis:/);
   assert.doesNotMatch(ctx.text, /recorded fighting|Damage is counted from that day/);
-  assert.equal((await ctx.runTool("get_ranking", { timeframe: "nearTerm", limit: 1 })).weightsUsed.safeAccess, "not used: full everywhere (this month ends before the war began on 2026-10-01)");
+  assert.equal((await ctx.runTool("get_ranking", { timeframe: "nearTerm", limit: 1 })).weightsUsed.feasibility, "not used: full everywhere (this month ends before the war began on 2026-10-01)");
 });
 
 test("a team's 'Not at war' is never 'no war recorded' for the AI: the war line, the weights, get_ranking and budget_coverage", async () => {
   const calm = conflictLine(null, "none", { setByTeam: true });
-  assert.match(calm, /Safe access: the user's team marked this area as not at war, so it is full \(100\) everywhere and nothing is set aside for it\. That does NOT mean the land is safe/);
+  assert.match(calm, /Feasibility \(safe access\) is not measured here: the user's team marked this area as not at war, so it reads full \(100\) everywhere and nothing is left out of the near-term ranking for it\. That does NOT mean the land is safe/);
   const settings = { weights: { soil: 30, damage: 40, access: 30 }, gatePercentile: 30, r: 0.5 };
   const teamPeaceRun = { conflict: null, conflictSource: "area", accessSource: "none" };
-  assert.match(settingsLine(settings, teamPeaceRun, { places: [] }, "nearTerm"), /nothing is set aside \(the user's team marked this area as not at war\)/);
+  assert.match(settingsLine(settings, teamPeaceRun, { places: [] }, "nearTerm"), /nothing is left out for feasibility \(the user's team marked this area as not at war\)/);
   const ctx = await buildAtlasContext({ store: fakeStore(gridCells().map((c) => ({ ...c, distance: 1 })), teamPeaceRun) });
   assert.doesNotMatch(ctx.text, /no war (is )?recorded/i);
   const ranking = await ctx.runTool("get_ranking", { timeframe: "nearTerm", limit: 1 });
-  assert.equal(ranking.weightsUsed.safeAccess, "not used: full everywhere (the user's team marked this area as not at war)");
+  assert.equal(ranking.weightsUsed.feasibility, "not used: full everywhere (the user's team marked this area as not at war)");
   const budget = await ctx.runTool("budget_coverage", { usd: 1000000 });
   assert.match(budget.note, /^Rough ranges for restoring damaged soil\. The user's team marked this area as not at war; this does not say the land is safe\./);
   // The app's own peace keeps its words.
@@ -499,7 +507,7 @@ test("a war that covers a whole-country area only in part: the AI is told where 
   // fires standing in for fighting (distance is to its battles).
   const across = await buildAtlasContext({ store: fakeStore(cells, { conflict: { ...border, partOf: "area" }, conflictSource: "list", accessSource: "acled", warSquares: 12, otherWarSquares: 4, method: { version: METHOD_VERSION } }) });
   assert.match(across.text, /its rules apply only in the map squares that touch the war's region or lie in another listed war \(12 of 36 squares\), which have atWar true in their details\. 4 of them lie in another war of the app's list without touching this war's region: that is land at war too \(counted with this war's dates\)\./);
-  assert.match(across.text, /Safe access: the distance to battles in the ACLED file/);
+  assert.match(across.text, /Feasibility \(safe access: distance to fighting\): measured to the battles in the ACLED file/);
   assert.doesNotMatch(across.text, /measured to the unusual fires|ordinary causes|three things/);
   const acrossFires = await buildAtlasContext({ store: fakeStore(cells, { conflict: { ...border, partOf: "area" }, conflictSource: "list", accessSource: "fires", warSquares: 12, otherWarSquares: 4, method: { version: METHOD_VERSION } }) });
   assert.match(acrossFires.text, /every square's distance to fighting is measured to the unusual fires inside the war's region and its squares in another listed war;/);
@@ -584,16 +592,16 @@ test("the AI is told when a season left the two-year window, and why heavy damag
   assert.equal(newSeasonFact(mar, [apr, mar]), "");
 });
 
-// ---------- Safe access in a war where no fire looked like fighting ----------
+// ---------- Feasibility (safe access) in a war where no fire looked like fighting ----------
 
 // The AI's line, word for word (ACCESS-SPEC, 2026-10-21).
 const NOT_MEASURED_LINE =
-  "Safe access: not measured here (no fires that look like fighting were found within 300 km, and there is no ACLED file); every square reads as far from fighting, which does not mean safe. Never call land safe; point to local authorities and an ACLED file.";
+  "Feasibility (safe access: distance to fighting) is not measured here (no fires that look like fighting were found within 300 km, and there is no ACLED file); every square reads as far from fighting, which does not mean safe. Never call land safe; point to local authorities and an ACLED file.";
 const NO_FIGHTING_WARNING =
   "No fires that look like fighting were found within 300 km in the last 12 months (the rule needs fire as dense as at a front line, about 1 detection per km² within 10 km and 3 times the normal years' rate; scattered strikes do not reach it). Safe access is not measured here: every square counts as far from fighting, which does NOT make the land safe. An ACLED file of recorded fighting would measure it.";
 const lebanonWar = { id: "israel-hezbollah", name: "Israel–Hezbollah war (south Lebanon, northern Israel and the Golan Heights)", since: "2023-10-08" };
 
-test("in a war where no fire looked like fighting, the AI is told safe access is not measured and never to call land safe", async () => {
+test("in a war where no fire looked like fighting, the AI is told Feasibility is not measured and never to call land safe", async () => {
   const line = conflictLine(lebanonWar, "fires-none");
   assert.ok(line.endsWith(NOT_MEASURED_LINE), line);
   assert.match(line, /^War: Israel–Hezbollah war .*, since 2023-10-08\. Damage is counted from that day\./);
@@ -601,8 +609,8 @@ test("in a war where no fire looked like fighting, the AI is told safe access is
   // A war in part of the area: only the fires inside its region counted,
   // none looked like fighting, and no square's distance "is measured".
   const inPart = conflictLine({ ...lebanonWar, partOfCountry: true }, "fires-none", { inPart: { warSquares: 12, squares: 36, of: "country", otherWar: 0 } });
-  assert.match(inPart, /Safe access: not measured here \(no fires that look like fighting were found within 300 km inside the war's region, and there is no ACLED file\)/);
-  assert.match(inPart, /Without an ACLED file, only the fires inside the war's region could stand in for fighting, and none of them looked like fighting, so safe access is not measured in any square;/);
+  assert.match(inPart, /Feasibility \(safe access: distance to fighting\) is not measured here \(no fires that look like fighting were found within 300 km inside the war's region, and there is no ACLED file\)/);
+  assert.match(inPart, /Without an ACLED file, only the fires inside the war's region could stand in for fighting, and none of them looked like fighting, so feasibility is not measured in any square;/);
   assert.doesNotMatch(inPart, /is measured to the unusual fires/);
   assert.match(conflictLine({ ...lebanonWar, partOfCountry: true }, "fires-none", { inPart: { warSquares: 12, squares: 36, of: "area", otherWar: 4 } }), /within 300 km inside the war's region and its squares in another listed war, and there is no ACLED file/);
 
@@ -610,27 +618,29 @@ test("in a war where no fire looked like fighting, the AI is told safe access is
   const settings = { weights: { soil: 30, damage: 40, access: 30 }, gatePercentile: 30, r: 0.5 };
   const scored = { places: [{ nearTerm: { tier: "high" } }] };
   const weights = settingsLine(settings, { conflict: lebanonWar, accessSource: "fires-none" }, scored, "postwar");
-  assert.match(weights, /Near term ranks by soil value 43% and damage 57%; nothing is set aside \(safe access is not measured here: no fires that look like fighting were found within 300 km, and there is no ACLED file\)\./);
-  assert.match(weights, /Postwar blends soil value 30%, damage 40% and safe access 30% \(weighted power mean, r = 0\.5\); safe access is not measured here \(it reads 100 everywhere, which does not mean safe\), so it changes no order/);
-  assert.doesNotMatch(weights, /no war recorded|least safe|Long term/);
+  assert.match(weights, /Near term ranks by value 43% and damage 57%; nothing is left out for feasibility \(feasibility is not measured here: no fires that look like fighting were found within 300 km, and there is no ACLED file\)\./);
+  assert.match(weights, /Post-crisis blends value 30%, damage 40% and feasibility 30% \(weighted power mean, r = 0\.5\); feasibility is not measured here \(it reads 100 everywhere, which does not mean safe\), so it changes no order/);
+  assert.doesNotMatch(weights, /no war recorded|least safe|Long term|Postwar/);
 
   // The whole context and the tools (the run carries the provider's warning).
   const base = fakeStore(gridCells().map((c) => ({ ...c, distance: 1 })), { conflict: lebanonWar, conflictSource: "list", accessSource: "fires-none" });
   const checks = { passed: 6, total: 6, warnings: [NO_FIGHTING_WARNING] };
   const ctx = await buildAtlasContext({ store: { ...base, getRun: async (id) => ({ ...(await base.getRun(id)), checks }) } });
   assert.ok(ctx.text.includes(NOT_MEASURED_LINE));
-  assert.ok(ctx.text.includes(`Data warnings: ${NO_FIGHTING_WARNING.replace(/\.$/, "")}.`));
-  assert.match(ctx.text, /soil \d+ \/ damage \d+ \/ access not measured$/m);
-  assert.doesNotMatch(ctx.text, /\/ access \d+/);
+  // The run's own warning, in the pages' words ("Feasibility (safe access)").
+  assert.ok(ctx.text.includes(`Data warnings: ${NO_FIGHTING_WARNING.replace(/\.$/, "").replace("Safe access is not measured here", "Feasibility (safe access) is not measured here")}.`));
+  assert.doesNotMatch(ctx.text, /Safe access is not measured/);
+  assert.match(ctx.text, /value \d+ \/ damage \d+ \/ feasibility not measured$/m);
+  assert.doesNotMatch(ctx.text, /\/ feasibility \d+/);
   assert.doesNotMatch(ctx.text, /distance to unusual fires|safe to reach/);
   const ranking = await ctx.runTool("get_ranking", { timeframe: "nearTerm", limit: 3 });
-  assert.equal(ranking.weightsUsed.safeAccess, "not used: safe access is not measured here: no fires that look like fighting were found within 300 km, and there is no ACLED file; it reads 100 everywhere, which does not mean safe, and nothing is set aside");
-  assert.equal(ranking.safeAccess, "not measured here (no fires that look like fighting were found within 300 km, and there is no ACLED file): every place's access of 100 only means nothing was found, not that it is safe");
-  assert.equal(ranking.setAsideCells, 0);
+  assert.equal(ranking.weightsUsed.feasibility, "not used: feasibility is not measured here: no fires that look like fighting were found within 300 km, and there is no ACLED file; it reads 100 everywhere, which does not mean safe, and nothing is left out");
+  assert.equal(ranking.feasibility, "not measured here (no fires that look like fighting were found within 300 km, and there is no ACLED file): every place's feasibility of 100 only means nothing was found, not that it is safe");
+  assert.equal(ranking.leftOutForNowCells, 0);
   const postwar = await ctx.runTool("get_ranking", { timeframe: "postwar", limit: 3 });
-  assert.equal(postwar.safeAccess, ranking.safeAccess);
+  assert.equal(postwar.feasibility, ranking.feasibility);
   const place = await ctx.runTool("get_place", { cellId: "r0c0" });
-  assert.equal(place.safeAccess, ranking.safeAccess);
+  assert.equal(place.feasibility, ranking.feasibility);
   assert.match(place.place.recoveryCostUsd.note, /before demining/, "still a war");
 
   // The place picked on the map ("Ask AI"): its access reads "not
@@ -639,9 +649,9 @@ test("in a war where no fire looked like fighting, the AI is told safe access is
   const selectedLine = picked.text.split("\n").find((line) => line.startsWith("The user has this cell selected on the map: "));
   const selected = JSON.parse(selectedLine.replace("The user has this cell selected on the map: ", ""));
   assert.equal(selected.cellId, "r0c0");
-  assert.equal(selected.scores.access, "not measured");
-  assert.equal(selected.safeAccess, ranking.safeAccess);
-  assert.doesNotMatch(picked.text, /"access":\d/);
+  assert.equal(selected.scores.feasibility, "not measured");
+  assert.equal(selected.feasibility, ranking.feasibility);
+  assert.doesNotMatch(picked.text, /"feasibility":\d/);
 });
 
 test("with an ACLED file connected but no battles near the area, the AI is never told there is no ACLED file", async () => {
@@ -650,14 +660,14 @@ test("with an ACLED file connected but no battles near the area, the AI is never
   const ctx = await buildAtlasContext({ store: { ...base, getRun: async (id) => ({ ...(await base.getRun(id)), checks: { passed: 6, total: 6, warnings } }) }, context: { selectedCellId: "r0c0" } });
   assert.ok(
     ctx.text.includes(
-      "Safe access: not measured here (no fires that look like fighting were found within 300 km, and the ACLED file has no battles within 300 km of this area); every square reads as far from fighting, which does not mean safe. Never call land safe; point to local authorities and ACLED data that covers this area (only battles count, not strikes).",
+      "Feasibility (safe access: distance to fighting) is not measured here (no fires that look like fighting were found within 300 km, and the ACLED file has no battles within 300 km of this area); every square reads as far from fighting, which does not mean safe. Never call land safe; point to local authorities and ACLED data that covers this area (only battles count, not strikes).",
     ),
     ctx.text,
   );
-  assert.match(ctx.text, /nothing is set aside \(safe access is not measured here: no fires that look like fighting were found within 300 km, and the ACLED file has no battles within 300 km of this area\)/);
+  assert.match(ctx.text, /nothing is left out for feasibility \(feasibility is not measured here: no fires that look like fighting were found within 300 km, and the ACLED file has no battles within 300 km of this area\)/);
   const ranking = await ctx.runTool("get_ranking", { timeframe: "nearTerm", limit: 2 });
-  assert.match(ranking.safeAccess, /^not measured here \(no fires that look like fighting were found within 300 km, and the ACLED file has no battles within 300 km of this area\)/);
-  for (const text of [ctx.text.replace(/Data warnings: .*$/m, ""), ranking.safeAccess, ranking.weightsUsed.safeAccess]) {
+  assert.match(ranking.feasibility, /^not measured here \(no fires that look like fighting were found within 300 km, and the ACLED file has no battles within 300 km of this area\)/);
+  for (const text of [ctx.text.replace(/Data warnings: .*$/m, ""), ranking.feasibility, ranking.weightsUsed.feasibility]) {
     assert.doesNotMatch(text, /there is no ACLED file/, text);
   }
   // A war in part of the area, with an ACLED file that could not be used.
@@ -667,20 +677,20 @@ test("with an ACLED file connected but no battles near the area, the AI is never
   assert.doesNotMatch(inPart, /there is no ACLED file|Without an ACLED file/);
 });
 
-test("with fires that look like fighting, an ACLED file or at peace, the AI's words on safe access are as before", async () => {
+test("with fires that look like fighting, an ACLED file or at peace, the AI says Feasibility (safe access) and what it is measured to", async () => {
   const fires = await buildAtlasContext({ store: fakeStore(gridCells(), { conflict: lebanonWar, conflictSource: "list", accessSource: "fires" }), context: { selectedCellId: "r0c0" } });
-  assert.match(fires.text, /Safe access: the distance to unusual fires \(an estimate of where fighting is; there is no ACLED file of recorded fighting\), full at 100 km\. Treat it as rough\./);
-  assert.match(fires.text, /\/ access \d+$/m);
+  assert.match(fires.text, /Feasibility \(safe access: distance to fighting\): measured to unusual fires \(an estimate of where fighting is; there is no ACLED file of recorded fighting\), full at 100 km\. Treat it as rough\./);
+  assert.match(fires.text, /\/ feasibility \d+$/m);
   assert.doesNotMatch(fires.text, /not measured/);
   // The selected place keeps its number, with no note.
-  assert.match(fires.text, /^The user has this cell selected on the map: \{"cellId":"r0c0",.*"access":\d+\}/m);
-  assert.doesNotMatch(fires.text, /"safeAccess"/);
+  assert.match(fires.text, /^The user has this cell selected on the map: \{"cellId":"r0c0",.*"feasibility":\d+\}/m);
+  assert.doesNotMatch(fires.text, /"feasibility":"not measured/);
   const firesRanking = await fires.runTool("get_ranking", { timeframe: "nearTerm", limit: 3 });
-  assert.equal(firesRanking.weightsUsed.safeAccess, "cutoff, not a weight");
-  assert.equal("safeAccess" in firesRanking, false);
-  assert.equal("safeAccess" in (await fires.runTool("get_place", { cellId: "r0c0" })), false);
-  assert.match(conflictLine(lebanonWar, "acled"), /Safe access: the distance to battles in the ACLED file, full at 100 km\.$/);
+  assert.equal(firesRanking.weightsUsed.feasibility, "Feasibility cutoff, not a weight");
+  assert.equal("feasibility" in firesRanking, false);
+  assert.equal("feasibility" in (await fires.runTool("get_place", { cellId: "r0c0" })), false);
+  assert.match(conflictLine(lebanonWar, "acled"), /Feasibility \(safe access: distance to fighting\): measured to the battles in the ACLED file, full at 100 km\.$/);
   const peace = await buildAtlasContext({ store: fakeStore(gridCells(), { conflict: null, conflictSource: "list", accessSource: "none" }) });
-  assert.match(peace.text, /Safe access: no war is recorded here, so it is full \(100\) everywhere and nothing is set aside for it\./);
-  assert.equal("safeAccess" in (await peace.runTool("get_ranking", { timeframe: "nearTerm", limit: 1 })), false);
+  assert.match(peace.text, /Feasibility \(safe access\) is not measured here: no war is recorded for this area, so it reads full \(100\) everywhere and nothing is left out of the near-term ranking for it\./);
+  assert.equal("feasibility" in (await peace.runTool("get_ranking", { timeframe: "nearTerm", limit: 1 })), false);
 });

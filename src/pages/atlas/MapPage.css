@@ -122,6 +122,18 @@
   font-size: 15px;
 }
 
+/* The left column's three sections: Weights, Detail, Map. */
+.mp-weights {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+}
+
+.mp-weights > .map-section {
+  padding-top: var(--s-5);
+  border-top: 1px solid var(--c-border);
+}
+
 .mp-save-error {
   margin-top: var(--s-3);
   font-size: 12px;
@@ -359,6 +371,122 @@
 
 .mp-bars .score-bar-value {
   min-width: 26px;
+}
+
+/* A place the Feasibility cutoff leaves out for now, or a state that is
+   not ranked: why, under its badge. */
+.mp-left-out {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--c-text-2);
+}
+
+/* The States view's list: notes and its two lower groups. */
+.mp-units-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--c-muted);
+}
+
+.mp-units-sub {
+  margin-top: var(--s-2);
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--c-text-2);
+}
+
+.mp-top-rank.is-muted {
+  background: var(--c-surface-3);
+  color: var(--c-muted);
+}
+
+/* The soil types of a picked square or state. */
+.mp-soil {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.mp-soil h3 {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.mp-soil-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mp-soil-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: var(--s-2);
+  row-gap: 3px;
+  --soil: #b49a72;
+}
+
+.mp-soil-item.is-black {
+  --soil: var(--map-priority-4);
+}
+
+.mp-soil-name {
+  font-size: 13px;
+  font-weight: 600;
+  min-width: 0;
+}
+
+.mp-soil-share {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.mp-soil-bar {
+  grid-column: 1 / -1;
+  height: 5px;
+  border-radius: var(--r-pill);
+  background: var(--c-surface-3);
+  overflow: hidden;
+}
+
+.mp-soil-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--soil);
+}
+
+.mp-soil-groups {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--c-muted);
+}
+
+.mp-soil-note,
+.mp-soil-wait {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--c-muted);
+}
+
+.mp-soil-wait {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mp-soil-source {
+  margin: 0;
+  font-size: 11px;
+  color: var(--c-muted);
 }
 
 .mp-figures {
@@ -654,7 +782,7 @@
     font-size: 12px;
   }
 
-  /* The key folds down to just the Priority | Damage | Access switch. */
+  /* The key folds down to just its title. */
   .mp-legend {
     display: flex;
     align-items: flex-start;
@@ -665,14 +793,14 @@
     flex: 1;
   }
 
-  .mp-legend.is-folded .map-legend-body:not(.has-note) {
+  .mp-legend.is-folded .map-legend-body:not(.has-note) > :not(.map-legend-title) {
     display: none;
   }
 
-  /* Folded, the key keeps its "Safe access not measured here" line
+  /* Folded, the key keeps its "Feasibility not measured here" line
      (MapLegend accessKeyNote), so a phone still says why there is no
-     Access option. */
-  .mp-legend.is-folded .map-legend-body.has-note > :not(.map-legend-note) {
+     Feasibility colouring. */
+  .mp-legend.is-folded .map-legend-body.has-note > :not(.map-legend-note):not(.map-legend-title) {
     display: none;
   }
 

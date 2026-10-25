@@ -213,7 +213,7 @@
   padding-left: var(--s-2);
 }
 
-/* "Safe access not measured here: ..." takes the place of "Set aside". */
+/* "Feasibility not measured here: ..." takes the place of the lowest-shade line. */
 .ao-legend .map-legend-note {
   grid-area: aside;
   max-width: 38ch;
@@ -597,7 +597,7 @@
     display: none;
   }
 
-  /* The key: just the ramp and its two ends, with "Set aside" under it. */
+  /* The key: just the ramp and its two ends, with the lowest-shade line under it. */
   .ao-legend .map-legend-body {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:

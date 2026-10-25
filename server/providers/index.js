@@ -37,6 +37,31 @@ function resolveGee(mod, env) {
   return provider;
 }
 
+// The Earth Engine provider built from the gee.js loaded now: the saved one
+// while gee.js is the same module, else a new one from the current module
+// (see getProvider).
+async function currentGee(env) {
+  const build = state.geeBuild;
+  let mod;
+  try {
+    mod = await import("./gee.js");
+  } catch {
+    return build.provider;
+  }
+  if (mod === build.module) return build.provider;
+  try {
+    const provider = resolveGee(mod, env);
+    // Only if nothing else replaced the saved provider meanwhile.
+    if (state.geeBuild === build && state.provider === build.provider) {
+      state.geeBuild = { provider, module: mod };
+      state.provider = provider;
+    }
+    return provider;
+  } catch {
+    return build.provider;
+  }
+}
+
 function sampleDetail(env) {
   if (env.geeDisabled) return "Sample data (GEE_DISABLED=1 in .env).";
   if (env.geeCredentialsError) return `Sample data. Earth Engine key problem: ${env.geeCredentialsError}`;
@@ -51,7 +76,16 @@ export async function getProvider() {
   const fresh = state.key === key && state.provider && !(state.fallback && Date.now() - state.checkedAt > RETRY_MS);
   // The saved choice outlives dev-server reloads, so for sample data hand back
   // this module's copy: edits to sample.js then reach the running server.
-  if (fresh) return state.provider.id === "sample" ? sampleProvider : state.provider;
+  // So too for Earth Engine: a provider this file built from an older copy
+  // of gee.js (the dev server reloaded it after an edit or a merge) is
+  // built again from the current one, so new methods (the states' borders,
+  // the soil types) reach the running server. No new sign-in: gee.js keeps
+  // its connection on globalThis. A provider put there by a test is kept.
+  if (fresh) {
+    if (state.provider.id === "sample") return sampleProvider;
+    if (state.provider.id === "gee" && state.geeBuild?.provider === state.provider) return currentGee(env);
+    return state.provider;
+  }
 
   // Only one connection attempt at a time.
   if (state.pending && state.pendingKey === key) return state.pending;
@@ -67,6 +101,7 @@ export async function getProvider() {
         const status = await gee.status();
         if (!status || !status.ok) throw new Error(status?.detail || "Earth Engine did not answer.");
         provider = gee;
+        state.geeBuild = { provider: gee, module: mod };
         detail = status.detail || "Connected to Earth Engine.";
       } catch (error) {
         fallback = true;
@@ -157,7 +192,7 @@ export async function providerStatus() {
 
 // Forget the cached choice (used after .env changes are detected or in tests).
 export function resetProvider() {
-  Object.assign(state, { key: null, provider: null, detail: null, fallback: false, checkedAt: 0 });
+  Object.assign(state, { key: null, provider: null, detail: null, fallback: false, checkedAt: 0, geeBuild: null });
 }
 
 // ---------- The Field product's data source ----------

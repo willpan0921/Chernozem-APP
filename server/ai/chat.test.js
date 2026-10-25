@@ -737,3 +737,11 @@ test("Try again after a failed answer does not save the question twice", async (
   await runChat({ product: "atlas", threadId, message: "Where first?" }, collector().send);
   assert.equal(store.chats.get(threadId).messages.filter((m) => m.role === "user").length, 2);
 });
+
+test("the Atlas AI calls the safe-access score Feasibility, and never calls land safe", () => {
+  assert.match(ATLAS_SYSTEM, /Feasibility \(safe access: distance to fighting\)/);
+  assert.match(ATLAS_SYSTEM, /the Feasibility cutoff/);
+  assert.match(ATLAS_SYSTEM, /Never say land is safe or cleared\. Feasibility \(safe access\) is an estimate of the distance to fighting, never a safety check\./);
+  assert.doesNotMatch(ATLAS_SYSTEM, /sets aside|least safe/);
+  assert.doesNotMatch(ATLAS_SYSTEM, /\{|\d{4}-\d{2}/, "no dates or placeholders: the prompt stays cacheable");
+});

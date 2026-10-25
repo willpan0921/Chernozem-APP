@@ -25,6 +25,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Check, ChevronRight, FileText, Flame, Pencil, Radar, ShieldCheck, SlidersHorizontal, Sprout, TriangleAlert } from "lucide-react";
 import { PageHeader, Card, Stat, Button, Segmented, Badge } from "../../components/ui/index.js";
 import { AnalysisNotice, AnalysisProgress, AtlasGate, useAtlasData, useTimeframe } from "../../state/AtlasData.jsx";
+import { useAreaUnits } from "../../state/useUnits.js";
 import AtlasMap from "../../components/atlas/AtlasMap.jsx";
 import MapLegend from "../../components/atlas/MapLegend.jsx";
 import RunPicker from "../../components/atlas/RunPicker.jsx";
@@ -51,6 +52,8 @@ export default function OverviewPage() {
 function Overview() {
   const navigate = useNavigate();
   const { area, run, runs, scored, hotspots, settings, job, saveError } = useAtlasData();
+  // The states' (or districts') borders and names over the squares.
+  const units = useAreaUnits(area?.id, run?.id);
   const [timeframe, setTimeframe] = useTimeframe();
   const [hovered, setHovered] = useState(null);
   const mapRef = useRef(null);
@@ -175,6 +178,7 @@ function Overview() {
               timeframe={timeframe}
               height="clamp(280px, 62vw, 380px)"
               highlightIds={hovered?.cellIds}
+              units={units.data?.units || null}
               onSelect={(place) => place && openOnMap(place.id)}
               steady
               ariaLabel={`Map of ${area.name} coloured by priority`}

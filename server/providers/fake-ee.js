@@ -53,7 +53,18 @@
 //              trace (e.g. a broken whole-globe shape, as real Earth
 //              Engine once sent)
 //   gaul2      the FAO GAUL level 2 rows place names come from (default
-//              one district of Kharkiv oblast)
+//              one district of Kharkiv oblast); a row with a `box`
+//              ([west, south, east, north]) has that outline
+//   gaul1      the FAO GAUL level 1 rows (default: Kharkiv and Kyiv
+//              oblasts, Mazowieckie), each with a `box`
+//   clipBoxes  Geometry.intersection of two boxes gives their overlap
+//              (an empty box when they do not meet), as real Earth Engine
+//              does; off by default (any other shape keeps its outline)
+//   histograms (ctx) => { "<class value>": count }: what a
+//              Reducer.frequencyHistogram reduceRegion gives per band
+//              (ctx: { band, masked }: masked when the image went through
+//              an updateMask, e.g. the soil map over cropland only); the
+//              default gives a few USDA great groups (Hapludolls most)
 //   values     { outputName: number | (u, { date, lat, id }) => number }: fixed
 //              answers for some reduced values (e.g. { fires: 8 }), used
 //              before the made-up ones
@@ -346,7 +357,7 @@ function feature(geometry, properties) {
 }
 
 export function createFakeEe(options = {}) {
-  const { sizes = {}, assets = {}, authError = null, fail = null, delayMs = 1, assetDelayMs = 0, nestedCollections = "describe", downloadError = null, parcelGrid = 3, extraParcels = [], gaul2 = GAUL2, values = null, samplePoints = 3 } = options;
+  const { sizes = {}, assets = {}, authError = null, fail = null, delayMs = 1, assetDelayMs = 0, nestedCollections = "describe", downloadError = null, parcelGrid = 3, extraParcels = [], gaul2 = GAUL2, gaul1 = GAUL1, clipBoxes = false, histograms = null, values = null, samplePoints = 3 } = options;
   const calls = [];
   const requests = [];
   const stats = { evaluations: 0, active: 0, peakActive: 0 };
@@ -526,6 +537,7 @@ export function createFakeEe(options = {}) {
       first: reducer("first"),
       count: reducer("count"),
       countEvery: reducer("countEvery"),
+      frequencyHistogram: reducer("frequencyHistogram"),
     },
     Filter: filter,
     Join: {
@@ -730,8 +742,8 @@ export function createFakeEe(options = {}) {
       case "FeatureCollection.load": {
         const source = node.args[0];
         if (Array.isArray(source)) return { type: "FeatureCollection", features: resolve(source, scope) };
-        if (source === "FAO/GAUL/2015/level1") return { type: "FeatureCollection", features: GAUL1.map(({ box, ...p }) => feature(boxPolygon(box), p)) };
-        if (source === "FAO/GAUL/2015/level2") return { type: "FeatureCollection", features: gaul2.map((p) => feature(null, p)) };
+        if (source === "FAO/GAUL/2015/level1") return { type: "FeatureCollection", features: gaul1.map(({ box, ...p }) => feature(boxPolygon(box), p)) };
+        if (source === "FAO/GAUL/2015/level2") return { type: "FeatureCollection", features: gaul2.map(({ box, ...p }) => feature(box ? boxPolygon(box) : null, p)) };
         return { type: "FeatureCollection", features: [] };
       }
     }
@@ -843,6 +855,14 @@ export function createFakeEe(options = {}) {
         if (!a || !b) return g;
         const [aw, as, ae, an] = ringBox(a);
         const [bw, bs, be, bn] = ringBox(b);
+        if (clipBoxes) {
+          // Two boxes: their overlap (an empty box when they do not meet).
+          const w = Math.max(aw, bw);
+          const e = Math.min(ae, be);
+          const south = Math.max(as, bs);
+          const n = Math.min(an, bn);
+          return w < e && south < n ? boxPolygon([w, south, e, n]) : boxPolygon([w, south, w, south]);
+        }
         return aw <= bw && as <= bs && ae >= be && an >= bn ? other : g;
       }
       default:
@@ -988,6 +1008,17 @@ export function createFakeEe(options = {}) {
     const ring = outerRings(f.geometry)[0];
     const lat = ring ? (ringBox(ring)[1] + ringBox(ring)[3]) / 2 : f.geometry?.type === "Point" ? f.geometry.coordinates[1] : undefined;
     const out = {};
+    if (reducerName === "frequencyHistogram") {
+      // Like reduceRegion in real Earth Engine: one histogram per band,
+      // named after the band.
+      let masked = false;
+      for (let n = imageNode; n; n = n.parent) if (n.op === "updateMask") masked = true;
+      for (const band of bands) {
+        if (band.empty) continue;
+        out[band.name] = histograms ? histograms({ band: band.name, masked, id }) : masked ? { 290: 70.4, 271: 20, 18: 9.6 } : { 290: 60, 271: 15, 18: 15, 143: 10 };
+      }
+      return out;
+    }
     bands.forEach((band, i) => {
       const name = outputs ? outputs[i] : bands.length === 1 && reducerName !== "first" ? reducerName : band.name;
       if (!name || band.empty) return; // no pixels: Earth Engine leaves the value out

@@ -751,7 +751,7 @@ function DataCard() {
         />
         {accessNote && (
           <p className="aset-access-note" role="note">
-            <strong>Safe access not measured in {latest.label}.</strong> {accessNote}{" "}
+            <strong>Feasibility not measured in {latest.label}.</strong> {accessNote}{" "}
             {/* "Connect one" only when no ACLED file is connected: with one
                 that has no battles near the area, or cannot be used, the
                 run's line says what to do with it (overview.js acledFileState). */}

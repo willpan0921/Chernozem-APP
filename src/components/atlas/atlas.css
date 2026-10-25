@@ -145,6 +145,45 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The states' and regions' names over the map (AtlasMap.jsx): bold, dark,
+   with a light halo so they read on every green. The anchor is a point;
+   the name is centred on it. Names that do not fit at the zoom are hidden
+   (is-hidden) until the map is zoomed in. */
+.atlas-unit-label {
+  width: 0 !important;
+  height: 0 !important;
+  background: none;
+  border: 0;
+}
+
+.atlas-unit-name {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: 0.01em;
+  color: var(--map-unit-label);
+  text-shadow:
+    0 0 2px var(--map-unit-halo),
+    0 0 2px var(--map-unit-halo),
+    0 0 3px var(--map-unit-halo),
+    0 0 4px var(--map-unit-halo);
+  pointer-events: none;
+}
+
+.atlas-unit-name.is-hidden {
+  visibility: hidden;
+}
+
+.atlas-map.is-unit-view .atlas-unit-name {
+  font-size: 12.5px;
+}
+
 /* Something floating over the map (pages put legends and panels here). */
 .atlas-map-float {
   position: absolute;
@@ -222,15 +261,125 @@
   height: 12px;
   border-radius: 3px;
   flex: 0 0 auto;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
 }
 
-/* In a war where no fire looked like fighting: why the key has no Access
-   colouring and nothing is set aside (mapColors.js accessKeyNote). */
+/* Not ranked, or no reading: hatched, as on the map (AtlasMap.jsx). */
+.map-legend-swatch.is-hatched {
+  background: repeating-linear-gradient(135deg, var(--map-nodata-hatch) 0 1.1px, var(--map-nodata) 1.1px 5.6px);
+}
+
+/* In a war where no fire looked like fighting: why the map has no
+   Feasibility colouring and nothing is left out (mapColors.js accessKeyNote). */
 .map-legend-note {
   margin: 0;
   font-size: 11px;
   line-height: 1.35;
   color: var(--c-amber-text);
+}
+
+/* ---------- The Map page's Detail and Map sections (MapTabs.jsx) ---------- */
+
+.map-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+.map-section-title {
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.map-section .segmented {
+  display: flex;
+}
+
+.map-section .segmented-option {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-section-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--c-muted);
+}
+
+.map-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.map-tab {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px 10px 9px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+  background: var(--c-surface);
+  text-align: left;
+  color: var(--c-text);
+}
+
+.map-tab:hover:not(:disabled) {
+  border-color: var(--c-border-strong);
+  background: var(--c-surface-2);
+}
+
+.map-tab.is-active {
+  border-color: var(--c-ink);
+  box-shadow: inset 0 0 0 1px var(--c-ink);
+}
+
+.map-tab:disabled {
+  cursor: not-allowed;
+  color: var(--c-muted);
+  background: var(--c-surface-2);
+}
+
+.map-tab:disabled .map-tab-ramp {
+  opacity: 0.35;
+}
+
+.map-tab-ramp {
+  display: flex;
+  width: 100%;
+  height: 6px;
+  border-radius: var(--r-pill);
+  overflow: hidden;
+  margin-bottom: 3px;
+}
+
+.map-tab-ramp > span {
+  flex: 1;
+}
+
+.map-tab-label {
+  font-size: 13px;
+  font-weight: 650;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-tab-hint {
+  font-size: 11px;
+  color: var(--c-muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---------- WeightsPanel ---------- */
@@ -305,6 +454,11 @@
 
 .weights-row.is-muted {
   opacity: 0.45;
+}
+
+.weights-hint {
+  font-size: 12px;
+  color: var(--c-muted);
 }
 
 .weights-row-head {

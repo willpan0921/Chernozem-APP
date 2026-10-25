@@ -66,8 +66,8 @@ The six wars added on **2026-10-19** were each checked by two checkers that day 
 - fire: the worst **war year**, in 12-month years from that day (at peace: the worse of the two 12-month years up to the end of the analysed month);
 - radar: every complete **war season** since that day, the change that lasts (at peace: the complete seasons of the last two years);
 - heavy damage: 3 dB, or 2 dB next to an unusual fire, in a war; 3 dB **and** an unusual fire at peace, where the damage score is the heavily damaged share of the black soil;
-- safe access: the distance to unusual fire (or to ACLED battles) in a war; at peace not measured unless an ACLED file is connected, so full everywhere and nothing set aside; in a war where no fire looks like fighting, not measured either (see [Safe access](#safe-access));
-- the words: demining and "Postwar" in a war, "Long term" and no war talk at peace.
+- feasibility (safe access): the distance to unusual fire (or to ACLED battles) in a war; at peace not measured unless an ACLED file is connected, so full everywhere and nothing left out; in a war where no fire looks like fighting, not measured either (see [Feasibility (safe access)](#feasibility-safe-access));
+- the words: demining in a war, no war talk at peace; the second time frame is "Post-crisis" everywhere.
 
 The saved months keep the setting they were made with. Months made with another setting read **"Not comparable: different war setting"**, and Settings shows "Re-run the analysis to apply this" with a re-run button. That re-run redoes only the months made with another setting (and fills in the missing months between them, and months made with an older method or from sample data), not every month: on Earth Engine or for a big area it first asks "Redo 2 months", and it ends with "Updated · 2 months". It reaches back 24 months at most; older months keep the setting they were made with, and the card says so. Nothing is re-run by itself; an analysis already running uses a new setting from its next month on. A war the team set reads as such everywhere it shows: "War since 3 Aug 2023 · set by your team" on the Overview (for a war counted from 1 January 2022, the earliest day allowed: "War · damage from 1 Jan 2022 · set by your team", never "War since"), the report's line, and the AI's context. The Field uses the app's list for the farm's place; the team's choice is for Atlas areas.
 
@@ -317,12 +317,14 @@ An area (a drawn shape, a region, a country) is cut into a grid of squares: as s
 
 | Number | Source and resolution | How it is worked out | Updates |
 | --- | --- | --- | --- |
-| Soil value | OpenLandMap USDA soil classes, 250 m; ESA WorldCover, 10 m | Mean of black-soil share and cropland share | Monthly |
+| Value (soil value) | OpenLandMap USDA soil classes, 250 m; ESA WorldCover, 10 m | Mean of black-soil share and cropland share | Monthly |
 | Damage | FIRMS fire, 1 km; Sentinel-1 VV radar, 10 m | In a war: mean of unusual fire (worst war year) and lasting radar change (two war seasons). At peace (and in the squares outside the war's squares, where a war covers the area only in part): heavily damaged share of the black soil, full at 20 % | Monthly |
 | Heavily damaged hectares | Same | Black-soil cropland pixels with strong lasting radar change (or clear change with fire) | Monthly |
 | Soil health index (CHI) | Sentinel-2, 10 to 20 m | Five-index blend, this season vs normal | Monthly, diagnostic only |
-| Safe access | ACLED battles, or FIRMS unusual fire | Distance to fighting, full at 100 km. At peace without ACLED: full everywhere. In a war where no fire looks like fighting: not measured | Monthly |
-| Priority, rank, tier | The three scores | Near term and Postwar formulas | Instantly when weights change |
+| Feasibility (safe access) | ACLED battles, or FIRMS unusual fire | Distance to fighting, full at 100 km. At peace without ACLED: full everywhere. In a war where no fire looks like fighting: not measured | Monthly |
+| Priority, rank, tier | The three scores | Near term and Post-crisis formulas | Instantly when weights change |
+| States and regions | FAO GAUL 2015, level 1 or 2 | Borders and names; a state's scores are the black-soil-weighted means of its ranked squares, then the same priority method across the states | Borders once per area; scores instantly |
+| Soil type of a square or a state | OpenLandMap USDA great groups, 250 m; ESA WorldCover, 10 m | Share of each soil class in its cropland, in plain words | On demand, once per square |
 | People, night lights | WorldPop 100 m (2020); VIIRS 500 m | Sum and median | Monthly, context only |
 | Alerts | Sentinel-1 VV; FIRMS | This month vs the same month of 2019 to 2021 (radar alerts only in ranked squares) | Monthly |
 
@@ -398,9 +400,9 @@ Runs made before this change have an older method version (this one is `2026-10-
 
 All five months use the war seasons 2022 to 2025 (2026 joins in October). From month to month no square lost any hectare and every square's radar indicator stayed exactly the same; the growth (+1,662, +10,960, +73,814, +23,256 ha) is fire near clear radar change in the 2026 war year, mostly August harvest-season fires. Where it sits (September): Donetsk 18 %, Kharkiv 13 %, Zaporizhzhia 13 %, Dnipropetrovsk 12 %, Kherson 11 %, Luhansk 10 %, Mykolaiv 4 %: **80 %** in these seven eastern and southern oblasts, against the paper's 83.7 % in the east; 1.78 million ha against the paper's 2.23 million ha (our black-soil map is broader, see above). Lviv oblast: 1,960 ha. At peace (a 1° box around Ames, Iowa, September 2026, one season): 267 ha of 628,879 ha of black-soil cropland (0.04 %).
 
-### Safe access
+### Feasibility (safe access)
 
-Safe access = distance to the nearest recorded fighting ÷ 100 km, held at 1 (100 km or more scores full access, 1.0; this does not make the land safe: a satellite cannot see mines or unexploded ordnance).
+Feasibility: how safe it is to reach and work the land now, measured as the distance to fighting. Feasibility = distance to the nearest recorded fighting ÷ 100 km, held at 1 (100 km or more scores full feasibility, 1.0; this does not make the land safe: a satellite cannot see mines or unexploded ordnance). It was called "Safe access" until 2026-10-25 (same numbers); the code and the saved months keep the key `access`, and the report's CSV calls the column `feasibility` (before: `safe_access`).
 - With an **ACLED** export (optional): distance to battles of the last 12 months.
 - Without it, **inside a known war**: distance to unusual fire, meaning a fire of the last 12 months where the fire density within 10 km is at least 3 times the same months of 2019 to 2021 and at least 1 per km². In a war's first year only the fires since the day it began count, against the same days of the three normal years (2018 to 2020 for days that cross a new year), with the 1 per km² floor scaled to the shorter window, so fires from before the war are never read as fighting and a young war is not held to a whole year's count (found in the 2026-10-20 review from the app's date windows: a war since 1 June 2026 read September's fighting from fires since 1 October 2025). For a war that covers the area only in part, only the unusual fires inside its boxes and in its squares that lie in another listed war count, so a wildfire far from the front is not read as fighting.
 - **At peace** without ACLED (and in a month before its war began): not measured. Every square counts as safe to reach (full access), the run and the report say so, nothing is set aside, and access then changes no order: Near term and Long term rank the squares the same way (their top areas can still group differently, which is why each shows its size). A full score is not a safety check.
@@ -408,14 +410,14 @@ Safe access = distance to the nearest recorded fighting ÷ 100 km, held at 1 (10
 
 **Cannot see:** mines, checkpoints, roads or legal access. Far from fighting does not mean safe.
 
-### Priority: Near term and Postwar
+### Priority: Near term and Post-crisis
 
-Weights default to soil value 30, damage 40, safe access 30 (they always add up to 100 and can be changed in the app).
+Weights default to value (soil value) 30, damage 40, feasibility 30 (they always add up to 100 and can be changed in the app).
 
-- **Near term**: the least safe squares, holding **30 %** of the black soil, are set aside (counted by rank; squares 100 km or more from fighting are never set aside). Just above that line, scores fade in over a **0.2** ramp of safe access. The rest are ranked by a weighted power mean of soil value and damage.
-- **Postwar** (called **Long term** at peace, and in a month before its war began): all three scores blended with a weighted power mean, no set-aside.
+- **Near term** (the paper's gated aggregation): the least feasible squares, holding **30 %** of the black soil, are left out of the near-term ranking for now: the **Feasibility cutoff** (counted by rank; squares 100 km or more from fighting are never left out). Just above that line, scores fade in over a **0.2** ramp of feasibility. The rest are ranked by a weighted power mean of value and damage. The squares left out are drawn in the lowest priority shade on the map.
+- **Post-crisis** (the same name at war, after a natural disaster and at peace): all three scores blended with a weighted power mean, no set-aside.
 
-Near term uses only soil value and damage, so its weights are their shares of 100 (30 and 40 become 43 and 57) and safe access is the cutoff. The report's "Settings used" and the Atlas AI give the weights this way, per time frame.
+Near term uses only value and damage, so its weights are their shares of 100 (30 and 40 become 43 and 57) and feasibility is the cutoff. The report's "Settings used" and the Atlas AI give the weights this way, per time frame.
 
 **Top areas** are groups of touching squares: the best square not yet used takes in neighbours (up to 3 squares away) that score at least 70 % of it. Each top area is named by its district, else by where it sits ("North-west"), with its starting point and its size ("12 squares") under the name. The Near term and Long term lists can start at the same square and still be different groups, so the size is always shown.
 
@@ -423,7 +425,31 @@ Weighted power mean = (Σ wᵢ · xᵢʳ)^(1/r) with the weights made to add up 
 
 **Tiers** are cut by rank: the top 25 % "highest", the next 25 % "high", the next 20 % "medium", the rest "lower".
 
+**The map's four views** (the Map page's tabs on the left, the same for squares and for states): **Priority** (the time frame's ranking; by rank: the top 10 % darkest green, then 25, 50 and 75 %), **Value** (soil value, fixed steps at 0.2, 0.4, 0.6 and 0.8), **Damage** (fixed steps at 0.05, 0.15, 0.3 and 0.5) and **Feasibility** (distance to fighting, steps at 20, 40, 60 and 80 km). Fixed steps mean a colour means the same in every month and area (`src/lib/atlas/mapColors.js`). Where feasibility is not measured (at peace without ACLED, before the war, or in a war where no fire looks like fighting) the Feasibility tab says "Not measured here" instead of showing a flat map. There is no grey: the places the Feasibility cutoff leaves out share the lowest Priority shade, and the key says "Lowest priority, or left out for now (least feasible)"; a picked place says "Left out of the near-term ranking for now: among the least feasible 30% (Feasibility cutoff)". Places with no score on the map shown (not ranked: no black-soil cropland, or a state with no map square; or no reading on the Value, Damage or Feasibility map) are hatched, never a shade of a score, and the key adds a hatched line ("Not ranked: no black-soil cropland", "No reading") only when there are some. A picked place reads "Not measured here" for Feasibility wherever the tab does, at peace too. A state is left out (or ranked) by its own average, so some of its squares can still rank in Squares view; its details say how many and name the best. A state's Feasibility hover gives its score and the distance from its nearest square to fighting ("Feasibility 75 / 100 · nearest fighting about 3 km"), never one mean distance for the whole state. State names are placed by importance (the picked state, then the ten best-ranked, then the biggest); a name that does not fit tries other spots inside its state and a slightly smaller size before it is hidden, and never sits under the map's buttons, the key or the panels' tabs.
+
 **No black soil, no rank.** A square where less than 0.5 % of its area is black-soil cropland (about 250 ha for a country-sized square of 50,000 ha; a fraction of a hectare for a farm-sized square; 100 ha when the square's size is unknown) has next to nothing for the method to restore. It is shown as "No black soil" and left out of the ranking, the top areas, the next steps and the budget (`BLACK_SOIL_MIN`).
+
+### States and regions
+
+The Map can rank whole states (or districts) as well as squares, and draws their borders and names over the squares. The borders are **FAO GAUL 2015** in Earth Engine, worked out once per area and saved (`server/.data/units/<area>.json`, with the source and the date):
+
+- a **country** gets its GAUL level-1 units (states, provinces, oblasts): those at least half inside the country's outline (the outlines differ a little at the borders);
+- a **region** gets its level-2 units (districts, counties). GAUL 2015 has no named districts for Ukraine's oblasts (one unit per oblast, "Administrative unit not available"), so Kharkiv oblast is one unit, and the app says so;
+- a **box or a drawn area** gets level 1 cut to it, or level 2 when level 1 gives fewer than 3 units; slivers under 0.5 % of the area go.
+
+Borders are simplified to about 1/2000 of the area's size for drawing, and each unit has a point well inside it for its name. Names are GAUL's, with a short list of friendlier display names where GAUL's are awkward (Ukraine's adjectival oblast names: "Kharkivs'ka" reads "Kharkiv", "Krym" reads "Crimea"; `src/lib/atlas/placeNames.js`); no name is made up (a unit GAUL gives no name only takes the name of the GAUL country it lies in, such as Kenya's "Ilemi triangle"). The squares' own place names use the same display names.
+
+Each square goes in one unit: the one its own place name names (so a square and its state agree), else the one its centre is in, else the nearest within one square. Real data, 2026-10-25: Ukraine, 25 oblasts: 1,168 of 1,176 squares are in the oblast their own place name gives, and the other 8 (squares GAUL names after a neighbouring country, or not at all) in the oblast they lie in or touch; Iowa, 99 counties: all 400 squares in their own county. Loading the borders took 3.5 s for Ukraine (with signing in) and 1.3 s for Iowa; after that they are read from the saved file.
+
+A unit's three scores are the **black-soil-weighted mean of its ranked squares** (squares not ranked at all, with too little black-soil cropland, are left out; a unit with no ranked square is not ranked, and its scores for the maps are the cropland-weighted mean of its squares). Its priority is then worked out **across the units with the same method as the squares**: Near term leaves out the least feasible units holding the Feasibility cutoff's share of the black soil, Postwar blends all three, with ranks and tiers as for squares (`src/lib/atlas/units.js`). With one square per unit the units get exactly the squares' scores (tested).
+
+Without Earth Engine (sample data, or Earth Engine down) the units are made from the squares' own place names, their borders following the squares, marked approximate and not saved.
+
+### Soil type of a square
+
+When a square (or a state) is picked, the app reads the soil classes in it from the same soil map the black-soil share comes from (OpenLandMap USDA great groups, 250 m): the share of each class in the square's **cropland** (ESA WorldCover; the whole square when it has almost no cropland: fewer than 4 pixels or 2 % of it), one Earth Engine request, saved per square (`server/.data/soil/<area>.json`, the pixel counts; the names are worked out when read). The great groups are named by their USDA order and suborder in everyday words with the WRB name: "Black soil (chernozem type: Mollisol, Udolls)", "Wet black soil (... Aquolls)", "Steppe black soil (... Ustolls)", "Grey forest soil (luvisol type: Alfisol)", "Cracking clay (vertisol)", "Young soil (Inceptisol)" and so on (`server/soil-names.js`). Only the Mollisols the black-soil share counts are called black soil (the cold Cryolls and the bleached Albolls are "Cold dark soil" and "Bleached dark soil"). The top 3 are shown, with the exact great groups in small print. Without Earth Engine nothing is made up: the app says the soil type needs Earth Engine.
+
+Real data, 2026-10-25 (first read, then instant): a square near Kharkiv, 2.1 s with signing in: wet black soil 57 %, black soil 29 %, steppe black soil 7 % (the square's black-soil share 97 %); Kharkiv oblast as a whole, 0.4 s: 53 %, 29 %, 8 %; a square in Rivne oblast: grey forest soil 52 %; Bremer county, Iowa, 0.3 s: black soil 92 %, grey forest soil 8 %.
 
 ### People, night lights and alerts
 
@@ -484,12 +510,12 @@ The paper finds 2.23 million ha of heavily damaged chernozem, 83.7 % of it in th
 | Sentinel-1 radar (`COPERNICUS/S1_GRD`, IW, VV and VH) | 10 m pixels | 6 to 12 days | Damage, radar alerts, radar harvest, corn vs soybean |
 | NASA FIRMS active fire (`FIRMS`, band T21) | 1 km | daily | Unusual fire, distance to fighting |
 | ESA WorldCover 2021 (`ESA/WorldCover/v200`) | 10 m | one map | Cropland |
-| OpenLandMap USDA great groups (`OpenLandMap/SOL/SOL_GRTGROUP_USDA-SOILTAX_C/v01`) | 250 m | one map | Black soil |
+| OpenLandMap USDA great groups (`OpenLandMap/SOL/SOL_GRTGROUP_USDA-SOILTAX_C/v01`) | 250 m | one map | Black soil; the soil type of a square or a state |
 | SoilGrids organic carbon (`projects/soilgrids-isric/soc_mean`) | 250 m | one map | Black-soil stand-in where the map has no data |
 | MODIS NDVI (`MODIS/061/MOD13A2`) | 1 km | 16 days | Each place's season (2019 to 2021) |
 | WorldPop (`WorldPop/GP/100m/pop`, 2020) | 100 m | one map | People |
 | VIIRS night lights (`NASA/VIIRS/002/VNP46A2`) | 500 m | daily | Night lights |
-| FAO GAUL 2015 (`FAO/GAUL/2015/level1`, `level2`) | boundaries | one map | Region names |
+| FAO GAUL 2015 (`FAO/GAUL/2015/level1`, `level2`) | boundaries | one map | Region names; the Map's states and regions (borders, names) |
 | USDA Cropland Data Layer (`USDA/NASS/CDL`) | 30 m | yearly, US only | Checking crop detection (not used in the app's numbers) |
 | Open-Meteo forecast and archive | weather models, about 1 to 25 km | hourly | Weather, rain, heat units, pest and disease risk |
 | OpenStreetMap Nominatim | — | — | Place search |
@@ -509,7 +535,9 @@ The paper finds 2.23 million ha of heavily damaged chernozem, 83.7 % of it in th
 | Wars and their areas; when a war covers an area only in part (`listWarFor`) and the squares it covers there (`warSquares`, and `warCellsFor` with the squares in another listed war); months before a war began (`endsBeforeWar`); the team's own choice for an area (`checkAreaWar`, `teamConflict`) | `src/config/conflicts.js`, `server/conflicts.js` |
 | One Atlas analysis at a time, a person's before the monthly check's (and after the monthly update of the same area); Stop; the last monthly update's failure (`lastMonthlyProblem`); which saved months an analysis redoes (`keepsMonth`, `src/lib/atlas/overview.js`); the monthly check of every saved area; what the pages say afterwards (`src/lib/atlas/analysisNotice.js`) | `server/jobs.js`, `server/scheduler.js` |
 | Research results | `src/config/research.js` |
-| Safe access not measured in a war where no fire looks like fighting: when (`farFromAnyFighting`, `accessSource` "fires-none") and the run's warning (`noFightingFiresWarning`); what the pages and the AI say (`noFightingFound`, `accessMeasured`, `accessMeaning`; `acledFileState` when an ACLED file is connected; the CSV: `cellsCsv`) | `server/providers/gee.js`, `server/providers/acled.js`, `src/lib/atlas/overview.js`, `src/lib/atlas/mapColors.js`, `src/lib/atlas/reportCsv.js`, `server/ai/context.js` |
+| States and regions: the level rule, GAUL borders, the fallback from the squares' names, which square is in which (`server/units.js`); their scores (`src/lib/atlas/units.js`); display names (`src/lib/atlas/placeNames.js`) | `server/units.js`, `src/lib/atlas/units.js`, `src/lib/atlas/placeNames.js` |
+| Soil type of a square or a state: the 250 m histogram, the saved counts (`server/soil.js`), the plain names (`server/soil-names.js`) | `server/soil.js`, `server/soil-names.js` |
+| Feasibility (safe access) not measured in a war where no fire looks like fighting: when (`farFromAnyFighting`, `accessSource` "fires-none") and the run's warning (`noFightingFiresWarning`); what the pages and the AI say (`noFightingFound`, `accessMeasured`, `accessMeaning`; `acledFileState` when an ACLED file is connected; the CSV: `cellsCsv`) | `server/providers/gee.js`, `server/providers/acled.js`, `src/lib/atlas/overview.js`, `src/lib/atlas/mapColors.js`, `src/lib/atlas/reportCsv.js`, `server/ai/context.js` |
 | The same rules as Earth Engine image arithmetic | `server/providers/gee.js` (Atlas), `server/providers/field-gee.js` (Field) |
 
 Each of these has tests next to it (`*.test.js`, run with `npm test`). The Earth Engine code is tested against a stand-in (`server/providers/fake-ee.js`) and checked on real data with `npm run gee:check`.

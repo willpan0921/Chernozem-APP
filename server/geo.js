@@ -10,6 +10,10 @@
 //   planGrid(geometry)            the grid cells (squares) whose centre is inside
 //   simplifyGeometry(g, tol)      fewer points, for drawing the outline
 //   formatCoord(lat, lon)         "49.62° N, 37.74° E"
+//   labelPoint(g)                 [lon, lat] well inside a shape, for its name
+//   squaresOutline(cells, size)   one outline around a group of map squares
+//   distanceToGeometry(lon, lat, g)  how far a point is from a shape (0 inside)
+//   roundGeometry(g, digits)      the same shape with shorter numbers
 //
 // Plain arithmetic, tested in geo.test.js.
 //
@@ -345,4 +349,236 @@ export function formatCoord(lat, lon, digits = 2) {
   const ns = lat >= 0 ? "N" : "S";
   const ew = lon >= 0 ? "E" : "W";
   return `${Math.abs(lat).toFixed(digits)}° ${ns}, ${Math.abs(lon).toFixed(digits)}° ${ew}`;
+}
+
+// ---------- States and regions (server/units.js) ----------
+
+// Signed area of a ring in plain degrees (positive: anticlockwise, with
+// longitude to the right and latitude up). Only its sign and size relative
+// to other rings are used.
+function signedArea(ring) {
+  let total = 0;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) total += (ring[j][0] - ring[i][0]) * (ring[j][1] + ring[i][1]);
+  return total / 2;
+}
+
+// Distance from a point to a segment, squared.
+function segmentDistance2(px, py, [ax, ay], [bx, by]) {
+  let x = ax;
+  let y = ay;
+  let dx = bx - x;
+  let dy = by - y;
+  if (dx !== 0 || dy !== 0) {
+    const t = ((px - x) * dx + (py - y) * dy) / (dx * dx + dy * dy);
+    if (t > 1) {
+      x = bx;
+      y = by;
+    } else if (t > 0) {
+      x += dx * t;
+      y += dy * t;
+    }
+  }
+  dx = px - x;
+  dy = py - y;
+  return dx * dx + dy * dy;
+}
+
+// Distance from a point to the nearest edge of a polygon (rings in plain
+// x, y): positive inside, negative outside.
+function polygonDistance(x, y, rings) {
+  let inside = false;
+  let best = Infinity;
+  for (const ring of rings) {
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) {
+      const a = ring[i];
+      const b = ring[j];
+      if (a[1] > y !== b[1] > y && x < ((b[0] - a[0]) * (y - a[1])) / (b[1] - a[1]) + a[0]) inside = !inside;
+      best = Math.min(best, segmentDistance2(x, y, a, b));
+    }
+  }
+  return (inside ? 1 : -1) * Math.sqrt(best);
+}
+
+// The distance (in degrees, east-west shrunk by the latitude) from a point
+// to a geometry's nearest edge: 0 inside it. For squares just outside every
+// state (the area's outline and the borders do not quite meet).
+export function distanceToGeometry(lon, lat, geometry) {
+  const k = Math.cos(rad(lat));
+  let best = Infinity;
+  for (const polygon of polygonsOf(geometry)) {
+    if (pointInPolygon(lon, lat, polygon)) return 0;
+    for (const ring of polygon) {
+      for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) {
+        best = Math.min(best, segmentDistance2(lon * k, lat, [ring[i][0] * k, ring[i][1]], [ring[j][0] * k, ring[j][1]]));
+      }
+    }
+  }
+  return Math.sqrt(best);
+}
+
+// A point well inside a shape, for its name on the map: the point farthest
+// from every edge (the "pole of inaccessibility", Mapbox's polylabel
+// method), in its largest polygon. Unlike the centre of the box, it is
+// always inside, also for a crescent or a shape with a lake.
+//   precision  how close to the best point is close enough, in degrees
+//              (default: 1/100 of the shape's size)
+// Gives back [lon, lat], or null for an empty geometry.
+export function labelPoint(geometry, precision) {
+  const polygons = polygonsOf(geometry).filter((polygon) => polygon[0]?.length >= 3);
+  if (!polygons.length) return null;
+  const size = (polygon) => Math.abs(signedArea(polygon[0])) - polygon.slice(1).reduce((sum, ring) => sum + Math.abs(signedArea(ring)), 0);
+  const polygon = polygons.reduce((best, next) => (size(next) > size(best) ? next : best));
+  const [west, south, east, north] = bboxOf({ type: "Polygon", coordinates: polygon });
+  // East-west degrees are shorter away from the equator: work in a frame
+  // where both are the same length, then go back.
+  const k = Math.max(0.05, Math.cos(rad((south + north) / 2)));
+  const rings = polygon.map((ring) => ring.map(([lon, lat]) => [lon * k, lat]));
+  const minX = west * k;
+  const maxX = east * k;
+  const width = maxX - minX;
+  const height = north - south;
+  const cellSize = Math.min(width, height);
+  if (!(cellSize > 0)) return [west, south];
+  const tolerance = Number.isFinite(precision) && precision > 0 ? precision : Math.max(width, height) / 100;
+  const cell = (x, y, h) => {
+    const d = polygonDistance(x, y, rings);
+    return { x, y, h, d, max: d + h * Math.SQRT2 };
+  };
+  const queue = [];
+  for (let x = minX; x < maxX; x += cellSize) {
+    for (let y = south; y < north; y += cellSize) queue.push(cell(x + cellSize / 2, y + cellSize / 2, cellSize / 2));
+  }
+  // Start from the shape's centre of mass (a good guess for a plain shape).
+  let best = (() => {
+    const ring = rings[0];
+    let area = 0;
+    let cx = 0;
+    let cy = 0;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) {
+      const f = ring[i][0] * ring[j][1] - ring[j][0] * ring[i][1];
+      cx += (ring[i][0] + ring[j][0]) * f;
+      cy += (ring[i][1] + ring[j][1]) * f;
+      area += f * 3;
+    }
+    return area === 0 ? cell(ring[0][0], ring[0][1], 0) : cell(cx / area, cy / area, 0);
+  })();
+  const box = cell(minX + width / 2, south + height / 2, 0);
+  if (box.d > best.d) best = box;
+  let steps = 0;
+  while (queue.length && steps < 20000) {
+    steps += 1;
+    // The cell that could hold the best point (a short list: fine to scan).
+    let pick = 0;
+    for (let i = 1; i < queue.length; i += 1) if (queue[i].max > queue[pick].max) pick = i;
+    const next = queue[pick];
+    queue[pick] = queue[queue.length - 1];
+    queue.pop();
+    if (next.d > best.d) best = next;
+    if (next.max - best.d <= tolerance) continue;
+    const h = next.h / 2;
+    queue.push(cell(next.x - h, next.y - h, h), cell(next.x + h, next.y - h, h), cell(next.x - h, next.y + h, h), cell(next.x + h, next.y + h, h));
+  }
+  return [best.x / k, best.y];
+}
+
+// The outline of a group of map squares (cells with ids like "r12c40" and
+// their centres), as one Polygon or MultiPolygon: the squares' shared edges
+// are dropped, so it is drawn as one shape with the group's outer border
+// (and holes where squares are missing inside it). For the approximate
+// states and regions made from the squares' own place names when Earth
+// Engine cannot give the real borders (server/units.js).
+// Gives back null when no cell has a usable id.
+export function squaresOutline(cells, sizeDeg) {
+  const grid = [];
+  for (const cell of cells || []) {
+    const match = /^r(-?\d+)c(-?\d+)$/.exec(cell?.id || "");
+    if (match && Number.isFinite(cell.lat) && Number.isFinite(cell.lon)) grid.push({ row: Number(match[1]), col: Number(match[2]), lat: cell.lat, lon: cell.lon });
+  }
+  if (!grid.length || !(sizeDeg > 0)) return null;
+  // The grid's corner, from one square (every square of a run shares it).
+  const west = grid[0].lon - (grid[0].col + 0.5) * sizeDeg;
+  const north = grid[0].lat + (grid[0].row + 0.5) * sizeDeg;
+  const digits = sizeDeg < 0.001 ? 7 : 6;
+  const point = (row, col) => [round(west + col * sizeDeg, digits), round(north - row * sizeDeg, digits)];
+  // Each square's edges, anticlockwise; an edge two squares share comes
+  // once each way and both go.
+  const edges = new Map();
+  const add = (r1, c1, r2, c2) => {
+    const back = `${r2},${c2}>${r1},${c1}`;
+    if (edges.has(back)) edges.delete(back);
+    else edges.set(`${r1},${c1}>${r2},${c2}`, [r1, c1, r2, c2]);
+  };
+  const seen = new Set();
+  for (const { row, col } of grid) {
+    if (seen.has(`${row},${col}`)) continue;
+    seen.add(`${row},${col}`);
+    add(row + 1, col, row + 1, col + 1);
+    add(row + 1, col + 1, row, col + 1);
+    add(row, col + 1, row, col);
+    add(row, col, row + 1, col);
+  }
+  const outgoing = new Map();
+  for (const edge of edges.values()) {
+    const key = `${edge[0]},${edge[1]}`;
+    if (!outgoing.has(key)) outgoing.set(key, []);
+    outgoing.get(key).push(edge);
+  }
+  // Walk the edges into rings. Where two squares meet only at a corner,
+  // the walk turns left, so each keeps its own ring.
+  const used = new Set();
+  const rings = [];
+  for (const start of edges.values()) {
+    if (used.has(start)) continue;
+    const ring = [];
+    let edge = start;
+    while (edge && !used.has(edge)) {
+      used.add(edge);
+      ring.push([edge[0], edge[1]]);
+      const choices = (outgoing.get(`${edge[2]},${edge[3]}`) || []).filter((next) => !used.has(next));
+      if (choices.length <= 1) {
+        edge = choices[0];
+        continue;
+      }
+      // Direction in (east, north) terms: rows count down.
+      const dir = (e) => [e[3] - e[1], -(e[2] - e[0])];
+      const [ix, iy] = dir(edge);
+      edge = choices.reduce((best, next) => {
+        const [x, y] = dir(next);
+        const [bx, by] = dir(best);
+        // Left turn: cross product > 0.
+        return ix * y - iy * x > ix * by - iy * bx ? next : best;
+      });
+    }
+    // Drop the corners along straight runs.
+    const corners = ring.filter((p, i) => {
+      const a = ring[(i - 1 + ring.length) % ring.length];
+      const b = ring[(i + 1) % ring.length];
+      return (p[0] - a[0]) * (b[1] - p[1]) !== (p[1] - a[1]) * (b[0] - p[0]);
+    });
+    if (corners.length >= 3) rings.push(corners.map(([r, c]) => point(r, c)));
+  }
+  // Anticlockwise rings are outlines, clockwise ones holes; each hole goes
+  // in the smallest outline around it.
+  const outers = [];
+  const holes = [];
+  for (const ring of rings) (signedArea(ring) > 0 ? outers : holes).push(ring);
+  const polygons = outers.sort((a, b) => signedArea(a) - signedArea(b)).map((ring) => [ring]);
+  for (const hole of holes) {
+    const [ax, ay] = hole[0];
+    const [bx, by] = hole[1];
+    // Just to the left of the hole's first edge: on the squares around it.
+    const probeX = (ax + bx) / 2 - (by - ay) * 0.01;
+    const probeY = (ay + by) / 2 + (bx - ax) * 0.01;
+    const home = polygons.find((polygon) => pointInRing(probeX, probeY, polygon[0]));
+    if (home) home.push(hole);
+  }
+  const closed = polygons.map((polygon) => polygon.map((ring) => [...ring, [...ring[0]]]));
+  return closed.length === 1 ? { type: "Polygon", coordinates: closed[0] } : { type: "MultiPolygon", coordinates: closed };
+}
+
+// A geometry with its coordinates rounded (smaller to send).
+export function roundGeometry(geometry, digits = 5) {
+  const polygons = polygonsOf(geometry).map((polygon) => polygon.map((ring) => ring.map(([lon, lat]) => [round(lon, digits), round(lat, digits)])));
+  if (!polygons.length) return null;
+  return polygons.length === 1 ? { type: "Polygon", coordinates: polygons[0] } : { type: "MultiPolygon", coordinates: polygons };
 }

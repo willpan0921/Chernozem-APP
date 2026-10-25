@@ -147,7 +147,9 @@ export function planSteps({ run, hotspots = [], alerts = [], isLatest = false })
 
 // ---------- The weights in one line ----------
 
-// Gives back [{ key: "soil" | "damage" | "access", text }], in that order.
+// Gives back [{ key: "soil" | "damage" | "access", text }], in that order:
+// "Value 43", "Damage 57", "Feasibility cutoff 30%" (Near term) or
+// "Value 30", "Damage 40", "Feasibility 30" (Postwar).
 // "key" picks the colour dot; for Near term the "access" item is the cutoff.
 // With a run at peace and no ACLED file (overview.js accessMeasured) nothing
 // is set aside, so Near term has no cutoff item.
@@ -156,16 +158,16 @@ export function weightItems(settings, timeframe, run = null) {
   if (timeframe === "nearTerm") {
     const shares = nearTermShares(weights);
     const items = [
-      { key: "soil", text: `Soil ${shares.soil}` },
+      { key: "soil", text: `Value ${shares.soil}` },
       { key: "damage", text: `Damage ${shares.damage}` },
     ];
-    if (!run || accessMeasured(run)) items.push({ key: "access", text: `Cutoff ${settings?.gatePercentile ?? 0}%` });
+    if (!run || accessMeasured(run)) items.push({ key: "access", text: `Feasibility cutoff ${settings?.gatePercentile ?? 0}%` });
     return items;
   }
   return [
-    { key: "soil", text: `Soil ${weights.soil}` },
+    { key: "soil", text: `Value ${weights.soil}` },
     { key: "damage", text: `Damage ${weights.damage}` },
-    { key: "access", text: `Access ${weights.access}` },
+    { key: "access", text: `Feasibility ${weights.access}` },
   ];
 }
 

@@ -9,7 +9,12 @@
 //     and Near term / Postwar are changed: area, month, ranking, data
 //     source, weights (and the place, with an x to stop using it)
 //   - /atlas/ai?about=<square or top-area id> puts "Tell me about <place>"
-//     in the message box (the x empties the box again if it is unchanged)
+//     in the message box (the x empties the box again if it is unchanged);
+//     /atlas/ai?state=<name>&facts=<the map's numbers for it> (a state's
+//     "Ask AI" on the map) puts "Tell me about the squares in <name>. On the
+//     map's States view it is ranked 3 of 20 by state (near term), value
+//     72, ..." there: the AI's data has the squares, not the states'
+//     ranking, so the question carries the page's own numbers
 //   - the "Try asking" questions suit the size of the area: a farm gets
 //     farm questions, a region or country gets budget and donor questions
 //
@@ -68,6 +73,11 @@ function AtlasAi() {
   const [timeframe, setTimeframe] = useTimeframe();
   const [params, setParams] = useSearchParams();
   const about = params.get("about");
+  // A state or district from the map's States view: only its name is
+  // passed (short, as typed by the page).
+  const stateName = (params.get("state") || "").slice(0, 120).trim();
+  const stateFacts = (params.get("facts") || "").slice(0, 240).trim();
+  const stateDraft = stateName ? `Tell me about the squares in ${stateName}.${stateFacts ? ` On the map's States view it is ${stateFacts} (black-soil-weighted means of its squares).` : ""}` : "";
 
   // The place from the map's "Ask AI" (a square, or a top area "h-<id>").
   const place = useMemo(() => {
@@ -134,7 +144,7 @@ function AtlasAi() {
         text={text}
         suggestions={suggestions}
         using={using}
-        initialDraft={place ? `Tell me about ${place.label}` : ""}
+        initialDraft={place ? `Tell me about ${place.label}` : stateDraft}
       />
     </div>
   );

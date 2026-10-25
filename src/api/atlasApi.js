@@ -13,6 +13,11 @@
 //   analyze({ areaId, months, rerun }) / getJob(id) / listJobs(areaId)
 //   cancelJob(id)                    take an analysis still waiting for its turn out of line, or stop one
 //   listRuns(areaId) / getRun(id) / compareRuns(a, b)
+//   getUnits(areaId, { runId })      the area's states or districts with their
+//                                    borders, and which square is in which
+//   getSoil({ areaId, cellId | unitId, runId })  the soil types of a square
+//                                    or a state ({ available: false } without
+//                                    Earth Engine)
 //   streamChat({ ...body, onEvent })  the AI, streamed as it is written
 //   listChats(product) / getChat(id) / deleteChat(id)
 //   getAuthStatus() / signIn(code) / signOut()   the optional access code
@@ -254,6 +259,29 @@ export async function getRun(runId) {
 // -> { a, b, deltas: { croplandHa, blackSoilHa, heavyDamageHa, peopleOnDamagedSoil },
 //      changedCells: [{ id, lat, lon, heavyDamageHaA, heavyDamageHaB, delta }] }
 export const compareRuns = (a, b) => request("GET", `/runs/compare${query({ a, b })}`);
+
+// ---------- States and regions, soil types (the Map page) ----------
+
+// -> { areaId, runId, level: 1 | 2, label: "States" | "Districts", one, many,
+//      tooltip, source: "gaul" | "squares", sourceLabel, approximate, reason?,
+//      message?, note, computedAt,
+//      units: [{ id, name, displayName, level, code, parent, parentDisplayName,
+//                country, areaKm2, bbox, labelPoint: { lat, lon }, geometry }],
+//      cellUnit: { cellId: unitId } }   (server/units.js)
+// The first call for an area can take a few seconds (Earth Engine); later
+// ones are instant.
+export const getUnits = (areaId, { runId, signal } = {}) => request("GET", `/areas/${id(areaId)}/units${query({ runId })}`, undefined, { signal });
+
+// -> the soil of one square ({ areaId, cellId, runId? }) or one state
+//    ({ areaId, unitId }): { available: true, over: "cropland" | "all",
+//    top: [{ name, short, share, order, suborder, wrb, blackSoil,
+//    greatGroups: [{ value, name, share }] }], otherShare, blackSoilShare,
+//    summary, pixels, source, computedAt, ... } or { available: false,
+//    reason, message } without Earth Engine (server/soil.js)
+export async function getSoil({ areaId, cellId, unitId, runId, signal } = {}) {
+  const { soil } = await request("GET", `/soil${query({ areaId, cellId, unitId, runId })}`, undefined, { signal });
+  return soil;
+}
 
 // ---------- AI ----------
 

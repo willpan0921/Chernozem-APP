@@ -12,9 +12,10 @@
 // damaged share of the black soil, and "everywhere counts as safe to
 // reach" (never "distance to fighting"); in a war where no fire looked
 // like fighting (overview.js noFightingFound), that safe access is not
-// measured here: nothing is set aside, the tables' Access column shows
-// "–", and the CSV leaves safe access and distance empty, never a full
-// 100 (or 1) in a war zone.
+// measured here: nothing is left out, and the CSV leaves feasibility and
+// distance empty, never a full 100 (or 1) in a war zone. Wherever
+// feasibility is not measured (at peace too) the tables' Feasibility
+// column shows "–", as the map's Feasibility tab says "Not measured here".
 // Everything is worked out from the selected run and the team's current
 // weights, so it always matches what the map shows. The month is kept in
 // the address (?month=2026-09), so a shared link opens the same month. Top
@@ -131,10 +132,11 @@ function Report() {
   const nearTermWeights = weightItems(settings, "nearTerm")
     .filter((item) => measured || item.key !== "access")
     .map((item) => item.text)
-    .concat(measured ? [] : [`nothing set aside (${quiet?.note || "no war recorded"})`])
+    .concat(measured ? [] : [`Feasibility not measured here (${quiet?.note || "no war recorded"}): nothing is left out`])
     .join(" · ");
-  // Safe access not measured in a war (no fire looked like fighting): the
-  // tables show "–" for it, not 100.
+  // Feasibility not measured in a war (no fire looked like fighting): the
+  // CSV leaves it empty, not 1. (The tables show "–" wherever it is not
+  // measured, at peace too: !measured.)
   const accessUnknown = noFightingFound(run);
 
   return (
@@ -183,12 +185,12 @@ function Report() {
 
         <section className="rp-section">
           <h2>Top 10 · Near term</h2>
-          <TopTable list={nearTerm} accessUnknown={accessUnknown} />
+          <TopTable list={nearTerm} accessUnknown={!measured} />
         </section>
 
         <section className="rp-section">
           <h2>Top 10 · {longTerm}</h2>
-          <TopTable list={postwar} accessUnknown={accessUnknown} />
+          <TopTable list={postwar} accessUnknown={!measured} />
         </section>
 
         <section className="rp-section">
@@ -199,7 +201,7 @@ function Report() {
               <dd>
                 {nearTermWeights}
                 {measured && settings.gatePercentile > 0 && Math.round((scored.setAsideShare ?? 0) * 100) !== settings.gatePercentile
-                  ? ` (${Math.round((scored.setAsideShare ?? 0) * 100)}% of black soil set aside in practice)`
+                  ? ` (${Math.round((scored.setAsideShare ?? 0) * 100)}% of black soil left out in practice)`
                   : ""}
               </dd>
             </div>
@@ -242,14 +244,14 @@ function Report() {
         <section className="rp-section rp-method">
           <h2>Method</h2>
           <p>
-            {madeOf("Soil value", comp.soil)}. Damage is {damageMeaning(run)}. Safe access is {accessMeaning(run)}. Each is scaled 0–1 on fixed
+            {madeOf("Value (soil value)", comp.soil)}. Damage is {damageMeaning(run)}. Feasibility (safe access) is {accessMeaning(run)}. Each is scaled 0–1 on fixed
             scales.{" "}
             {nearTermSetAside(run, settings)}{" "}
             {longTerm} blends all three (weighted power mean, r = {settings.r}). The soil-health index (chi) is a diagnostic in the CSV, not part
             of the damage score. In the tables the three scores are shown 0–100, and priority is each area's score as a share of the best
             square in that time frame (100 = the best).{" "}
             {accessUnknown
-              ? "The exact scores are in the CSV, where safe access and distance to fighting are left empty: they are not measured here."
+              ? "The exact scores are in the CSV, where feasibility and distance to fighting are left empty: they are not measured here."
               : "The exact scores are in the CSV."}
           </p>
           {/* A month before its war began keeps the deminers' line: the
@@ -276,8 +278,9 @@ const outOf100 = (value) => (Number.isFinite(value) ? Math.round(value * 100) : 
 
 // One ranking: rank, area (name, then coordinates), black-soil hectares
 // with the group's size, damaged hectares, the three scores and the
-// priority, all 0–100. accessUnknown: safe access is not measured in this
-// run (no fire looked like fighting), so its column shows "–".
+// priority, all 0–100. accessUnknown: feasibility is not measured in this
+// run (at peace, before the war, or no fire looked like fighting), so its
+// column shows "–".
 function TopTable({ list, accessUnknown = false }) {
   if (!list.length) return <p className="rp-line">No place qualifies with these settings.</p>;
   return (
@@ -289,9 +292,9 @@ function TopTable({ list, accessUnknown = false }) {
             <th>Area</th>
             <th className="num">Black soil</th>
             <th className="num">Heavily damaged</th>
-            <th className="num">Soil</th>
+            <th className="num">Value</th>
             <th className="num">Damage</th>
-            <th className="num">Access</th>
+            <th className="num">Feasibility</th>
             <th className="num">Priority</th>
           </tr>
         </thead>

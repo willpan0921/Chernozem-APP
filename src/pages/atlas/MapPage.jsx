@@ -1,13 +1,24 @@
 // WHAT THIS FILE DOES
 // The Atlas map page (/atlas/map). Three columns:
-//   left    the area name, the month, "Change area", and the weights
-//           (soil value / damage / safe access) that rank the map
-//   middle  the real map, coloured by Priority, Damage or Access (the switch
-//           on the map's key), with working zoom buttons and scroll zoom
-//   right   the top areas, or the details of the square or top area you
-//           picked: scores, hectares, people, recovery cost, "Ask AI"
+//   left    the area name, the month, "Change area", then three sections:
+//             Weights  Near term | Postwar and the weights (Value / Damage /
+//                      Feasibility; in Near term the Feasibility cutoff)
+//             Detail   Squares | States (or Districts, for a region area):
+//                      the map and the list by square, or by whole state
+//             Map      four tabs, Priority, Value, Damage, Feasibility,
+//                      that colour the map (src/components/atlas/MapTabs.jsx)
+//           (the tab and the detail level are remembered by this browser)
+//   middle  the real map with the states' (or districts') borders and names
+//           on top of the squares (FAO GAUL, GET /api/areas/:id/units), or
+//           in the States view the states themselves filled by their
+//           scores; working zoom buttons and scroll zoom; the key at the
+//           bottom (colour scale and "How it's measured")
+//   right   the top areas (in the States view: the states ranked), or the
+//           details of the square, top area or state you picked: scores,
+//           soil types (GET /api/soil), hectares, people, recovery cost,
+//           "Ask AI"
 //
-// "?focus=<top area id or square id>" in the address picks that place and
+// "?focus=<top area id, square id or state id>" in the address picks that place and
 // flies the map to it (the Overview links here that way). Picking a place
 // on the page puts it in the address too, so a link opens the same view.
 //
@@ -42,20 +53,24 @@ import { startTransition, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useNavigationType, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Check, ChevronDown, ChevronUp, Crosshair, Loader2, MapPin, MessageSquare, X } from "lucide-react";
 import { Badge, Button, ScoreBar } from "../../components/ui/index.js";
-import { AnalysisProgress, AtlasGate, useAtlasData, useColorBy, useTimeframe } from "../../state/AtlasData.jsx";
+import { AnalysisProgress, AtlasGate, useAtlasData, useColorBy, useDetailLevel, useTimeframe } from "../../state/AtlasData.jsx";
+import { useAreaUnits, useScoredUnits, useSoil } from "../../state/useUnits.js";
 import AtlasMap from "../../components/atlas/AtlasMap.jsx";
 import AreaPicker from "../../components/atlas/AreaPicker.jsx";
 import MapLegend from "../../components/atlas/MapLegend.jsx";
 import RunPicker from "../../components/atlas/RunPicker.jsx";
 import WeightsPanel from "../../components/atlas/WeightsPanel.jsx";
+import { DetailSwitch, MapTabs } from "../../components/atlas/MapTabs.jsx";
 import PanelEdge, { usePanel, useRoom } from "../../components/ui/PanelEdge.jsx";
 import { fitPanels } from "../../lib/panels.js";
 import { cleanBoolean } from "../../lib/prefs.js";
 import { useMedia } from "../../state/useMedia.js";
 import { usePref } from "../../state/usePref.js";
 import { cellBounds, compassName, coordDigits, findFocus, labelParts, placesExtent } from "../../lib/atlas/hotspots.js";
-import { rankedCount } from "../../lib/atlas/mapColors.js";
-import { accessMeasured, noFightingFound, recoveryCost } from "../../lib/atlas/overview.js";
+import { leftOutText, rankedCount, unrankedNote } from "../../lib/atlas/mapColors.js";
+import { accessMeasured, recoveryCost, setAsideNote } from "../../lib/atlas/overview.js";
+import { placeNames } from "../../lib/atlas/placeNames.js";
+import { unitRanking } from "../../lib/atlas/units.js";
 import { COST_NOTE } from "../../lib/atlas/method.js";
 import { formatAreaSize, formatCoord, formatCount, formatHaShort } from "../../lib/format.js";
 import { haFixed } from "./overviewHelpers.js";
@@ -78,7 +93,7 @@ const TIERS = {
   high: { label: "High priority", tone: "green" },
   medium: { label: "Medium priority", tone: "amber" },
   lower: { label: "Lower priority", tone: "outline" },
-  setAside: { label: "Set aside", tone: "ink" },
+  setAside: { label: "Left out for now", tone: "outline" },
   notAnalyzed: { label: "No data", tone: "outline" },
   noBlackSoil: { label: "No black soil", tone: "outline" },
 };
@@ -108,7 +123,7 @@ const score100 = (value) => (Number.isFinite(value) ? Math.round(value * 100) : 
 // the area ("North-west"), named the same way as the top areas. The
 // coordinates go underneath.
 function nameOf(place, { extent, size }) {
-  const names = [place.admin2, place.admin1].filter(Boolean);
+  const names = placeNames(place);
   return {
     name: names.length ? names.join(", ") : compassName(place.lat, place.lon, extent),
     coords: formatCoord(place.lat, place.lon, coordDigits(size)),
@@ -167,24 +182,174 @@ function TopAreas({ hotspots, headingRef, onPick, onHover }) {
   );
 }
 
+// ---------- Right panel: the states ranked (States view) ----------
+
+//   units     the scored units (src/lib/atlas/units.js scoreUnits(...).units)
+//   timeframe "nearTerm" | "postwar"
+//   many      what the units are called ("states", "districts")
+//   areaName  the area's name: a unit's parent is not repeated when it is
+//             the area itself (Iowa's counties)
+//   one       what one unit is called ("state", "district")
+//   onPick(unit), onHover(unitId | null)
+//   limit     show only this many rows of each list at first, with a "Show
+//             all" button (on a phone, so 99 counties do not make the page
+//             metres long); null shows all
+function UnitList({ units, timeframe, one = "state", many, areaName, headingRef, onPick, onHover, note, limit = null }) {
+  const [all, setAll] = useState(false);
+  const parentOf = (unit) => (unit.parentDisplayName && unit.parentDisplayName.toLowerCase() !== String(areaName || "").toLowerCase() ? unit.parentDisplayName : null);
+  const ranked = unitRanking(units, timeframe);
+  const leftOut = units.filter((unit) => unit[timeframe]?.tier === "setAside").sort((a, b) => (b.blackSoilHa || 0) - (a.blackSoilHa || 0));
+  const unranked = units.filter((unit) => !unit.analyzed && unit[timeframe]?.tier !== "setAside").sort((a, b) => (b.squares || 0) - (a.squares || 0));
+  const title = `${many.charAt(0).toUpperCase()}${many.slice(1)} ranked`;
+  const total = ranked.length + leftOut.length + unranked.length;
+  const cut = limit && !all && total > limit;
+  const first = (list, room) => (cut ? list.slice(0, Math.max(0, room)) : list);
+  const shownRanked = first(ranked, limit);
+  const shownLeftOut = first(leftOut, (limit || 0) - shownRanked.length);
+  const shownUnranked = first(unranked, (limit || 0) - shownRanked.length - shownLeftOut.length);
+  const row = (unit, rank) => (
+    <li key={unit.id}>
+      <button
+        type="button"
+        className="mp-top-row"
+        data-unit={unit.id}
+        onClick={() => onPick(unit)}
+        onMouseEnter={() => onHover(unit.id)}
+        onMouseLeave={() => onHover(null)}
+        onFocus={() => onHover(unit.id)}
+        onBlur={() => onHover(null)}
+      >
+        <span className={rank ? "mp-top-rank" : "mp-top-rank is-muted"}>{rank || "–"}</span>
+        <span className="mp-top-text">
+          <span className="mp-top-name">{unit.displayName || "No name in FAO GAUL"}</span>
+          <span className="mp-top-coords">
+            {parentOf(unit) && <span className="mp-top-part">{parentOf(unit)} · </span>}
+            <span className="mp-top-part">
+              {unit.squares.toLocaleString("en-US")} {unit.squares === 1 ? "square" : "squares"}
+            </span>
+          </span>
+          {rank ? (
+            <span className="mp-top-bar" aria-hidden="true">
+              <span style={{ width: `${Math.round((unit[timeframe]?.share || 0) * 100)}%` }} />
+            </span>
+          ) : null}
+        </span>
+        <span className="mp-top-ha">{haFixed(unit.blackSoilHa)}</span>
+      </button>
+    </li>
+  );
+  return (
+    <div className="mp-panel-body">
+      <h2 ref={headingRef} className="mp-panel-title" tabIndex={-1}>
+        {title}
+      </h2>
+      {note && <p className="mp-units-note">{note}</p>}
+      {ranked.length === 0 ? <p className="mp-empty">No {many} ranked with these weights.</p> : <ol className="mp-top">{shownRanked.map((unit) => row(unit, unit[timeframe].rank))}</ol>}
+      {shownLeftOut.length > 0 && (
+        <>
+          <h3 className="mp-units-sub">Left out for now · least feasible</h3>
+          <p className="mp-units-note">
+            Judged on each {one}&rsquo;s average Feasibility: some of its squares can still rank near the top in Squares view.
+          </p>
+          <ul className="mp-top">{shownLeftOut.map((unit) => row(unit, null))}</ul>
+        </>
+      )}
+      {shownUnranked.length > 0 && (
+        <>
+          <h3 className="mp-units-sub">Not ranked</h3>
+          <ul className="mp-top">{shownUnranked.map((unit) => row(unit, null))}</ul>
+        </>
+      )}
+      {cut && (
+        <Button size="sm" className="mp-units-more" onClick={() => setAll(true)}>
+          Show all {total.toLocaleString("en-US")} {many}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+// ---------- Right panel: the soil types of a picked square or state ----------
+
+const percent = (share) => (share >= 0.995 ? "100%" : share > 0 && share < 0.01 ? "<1%" : `${Math.round(share * 100)}%`);
+
+//   state  useSoil(): { status, soil, error }
+//   what   "square" | "state" | "district"
+function SoilTypes({ state, what }) {
+  const { status, soil, error } = state;
+  let body;
+  if (status === "loading" || status === "idle") {
+    body = (
+      <p className="mp-soil-wait" role="status">
+        <Loader2 size={13} className="atlas-spin" aria-hidden="true" /> Reading the soil types…
+      </p>
+    );
+  } else if (status === "error") {
+    body = <p className="mp-soil-note">The soil types could not be read: {error?.message || "try again later"}.</p>;
+  } else if (!soil?.available) {
+    body = <p className="mp-soil-note">{soil?.message || "The soil type needs Earth Engine."}</p>;
+  } else if (!soil.top?.length) {
+    body = <p className="mp-soil-note">No soil class is mapped here.</p>;
+  } else {
+    body = (
+      <>
+        <ul className="mp-soil-list">
+          {soil.top.map((item) => (
+            <li key={item.name} className={item.blackSoil ? "mp-soil-item is-black" : "mp-soil-item"}>
+              <span className="mp-soil-name" title={item.wrb ? `${item.name} · WRB: ${item.wrb}` : item.name}>
+                {item.short || item.name}
+              </span>
+              <span className="mp-soil-share">{percent(item.share)}</span>
+              <span className="mp-soil-bar" aria-hidden="true">
+                <span style={{ width: `${Math.max(2, Math.round(item.share * 100))}%` }} />
+              </span>
+              <span className="mp-soil-groups">
+                {[item.suborder && item.order ? `${item.suborder} (${item.order.replace(/s$/, "")})` : null, (item.greatGroups || []).map((group) => `${group.name} ${percent(group.share)}`).join(", ")]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
+            </li>
+          ))}
+        </ul>
+        {soil.otherShare >= 0.01 && <p className="mp-soil-note">Other soils {percent(soil.otherShare)}</p>}
+        <p className="mp-soil-source">
+          {soil.over === "cropland" ? `In the ${what}'s cropland` : `Over the whole ${what} (no cropland mapped)`}, USDA great groups, 250 m
+          {soil.approximateBorders ? " · borders approximate" : ""}
+        </p>
+      </>
+    );
+  }
+  return (
+    <div className="mp-soil">
+      <h3>Soil types</h3>
+      {body}
+    </div>
+  );
+}
+
 // ---------- Right panel: one picked place ----------
 
-//   accessUnknown  safe access is not measured in this run because no fire
-//                  looked like fighting (overview.js noFightingFound): its
-//                  bar says "Not measured", never a full 100 in a war zone
-function PlaceDetail({ detail, titleRef, onBack, onZoom, onAsk, accessUnknown = false }) {
+//   accessUnknown  feasibility is not measured in this run (overview.js
+//                  accessMeasured false: at peace, before the war, or in a
+//                  war where no fire looked like fighting): its bar says
+//                  "Not measured", as the Feasibility tab does, never a full
+//                  100
+//   soil           useSoil() for a square or a state, or null (a top area)
+//   gate           the Feasibility cutoff (%), for a place it leaves out
+//   backLabel      the back button's words ("Top areas", "States ranked")
+function PlaceDetail({ detail, titleRef, onBack, onZoom, onAsk, accessUnknown = false, soil = null, gate = null, backLabel = "Top areas" }) {
   const tier = TIERS[detail.tier] || TIERS.notAnalyzed;
   const cost = recoveryCost(detail.blackSoilHa);
   const bars = [
-    { key: "soil", label: "Soil value", tone: "green" },
+    { key: "soil", label: "Value", tone: "green" },
     { key: "damage", label: "Damage", tone: "red" },
-    { key: "access", label: "Safe access", tone: "blue" },
+    { key: "access", label: "Feasibility", tone: "blue" },
   ];
   return (
     <div className="mp-panel-body">
       <div className="mp-detail-nav">
         <button type="button" className="mp-back" onClick={onBack}>
-          <ArrowLeft size={14} /> Top areas
+          <ArrowLeft size={14} /> {backLabel}
         </button>
         <button type="button" className="mp-close" onClick={onBack} aria-label="Close">
           <X size={16} />
@@ -200,6 +365,9 @@ function PlaceDetail({ detail, titleRef, onBack, onZoom, onAsk, accessUnknown = 
           <Badge tone={tier.tone}>{tier.label}</Badge>
           {detail.rankText && <span className="mp-rank">{detail.rankText}</span>}
         </div>
+        {detail.tier === "setAside" && <p className="mp-left-out">{leftOutText(gate)}</p>}
+        {detail.tier === "setAside" && detail.wholeText && <p className="mp-left-out">{detail.wholeText}</p>}
+        {detail.kind === "unit" && detail.reason && detail.tier === "notAnalyzed" && <p className="mp-left-out">{detail.reason}</p>}
       </div>
 
       <div className="mp-bars">
@@ -209,6 +377,8 @@ function PlaceDetail({ detail, titleRef, onBack, onZoom, onAsk, accessUnknown = 
           return <ScoreBar key={bar.key} label={bar.label} tone={bar.tone} value={(value ?? 0) / 100} show={value ?? "–"} />;
         })}
       </div>
+
+      {soil && <SoilTypes state={soil} what={detail.what || "square"} />}
 
       <dl className="mp-figures">
         <div>
@@ -224,6 +394,7 @@ function PlaceDetail({ detail, titleRef, onBack, onZoom, onAsk, accessUnknown = 
           <dd>{formatCount(detail.people)}</dd>
         </div>
       </dl>
+      {detail.squaresText && <p className="mp-units-note">{detail.squaresText}</p>}
 
       <div className="mp-cost">
         <h3>Recovery cost</h3>
@@ -333,17 +504,29 @@ function MapView({ held }) {
   const titleRef = useRef(null);
   const headingRef = useRef(null);
   const live = useAtlasData();
-  const { area, job, saveError } = live;
+  const { area, job, saveError, settings } = live;
   const { run, runSummary, scored, hotspots } = held || live;
   const loadingMonth = !!held;
   const [timeframe] = useTimeframe();
   const [chosenColor, setColorBy] = useColorBy();
-  // At peace with no ACLED file safe access is 100 everywhere: there is no
-  // Access layer (an old ?color=access link shows Priority). So too in a
-  // war where no fire looked like fighting (overview.js accessMeasured).
-  const colorBy = chosenColor === "access" && !accessMeasured(run) ? "priority" : chosenColor;
+  // At peace with no ACLED file feasibility is 100 everywhere: there is no
+  // Feasibility map (its tab says "Not measured here"; an old ?color=access
+  // link shows Priority). So too in a war where no fire looked like
+  // fighting (overview.js accessMeasured).
+  const measured = accessMeasured(run);
+  const colorBy = chosenColor === "access" && !measured ? "priority" : chosenColor;
   const [params, setParams] = useSearchParams();
   const [hoverIds, setHoverIds] = useState(null);
+  // The states (or districts) of the area: their borders and names over
+  // the squares, and in the States view the ranking by state.
+  const [detailLevel, setDetailLevel] = useDetailLevel();
+  const unitsAnswer = useAreaUnits(area.id, run.id);
+  const scoredUnits = useScoredUnits(unitsAnswer.data, scored, null);
+  const unitList = scoredUnits?.units || null;
+  const unitsUsable = unitsAnswer.status === "ready" && (unitsAnswer.data?.units?.length ?? 0) >= 2 && !!unitList;
+  const unitView = detailLevel === "units" && unitsUsable;
+  const unitsPending = detailLevel === "units" && unitsAnswer.status === "loading";
+  const [hoverUnit, setHoverUnit] = useState(null);
   const [changing, setChanging] = useState(false);
   // On a phone the map key starts folded so it covers less of the map.
   const [keyOpen, setKeyOpen] = useState(() => !isNarrow());
@@ -372,6 +555,7 @@ function MapView({ held }) {
   const places = scored.places;
   const size = run.cellSizeDeg;
   const extent = useMemo(() => placesExtent(places), [places]);
+  const placesById = useMemo(() => new Map(places.map((place) => [place.id, place])), [places]);
 
   // The top areas, with the names every page uses (from hotspots.js):
   // the name, then the coordinates on a second line.
@@ -384,11 +568,70 @@ function MapView({ held }) {
     [hotspots, timeframe]
   );
 
-  // What ?focus= points at, worked out again whenever the weights change.
-  const picked = useMemo(() => findFocus(focus, { places, hotspots: top }), [focus, places, top]);
+  // What ?focus= points at, worked out again whenever the weights change:
+  // a state (States view), else a top area or a square.
+  const pickedUnit = useMemo(() => (unitView && focus ? unitList.find((unit) => unit.id === focus) || null : null), [unitView, focus, unitList]);
+  const picked = useMemo(() => (pickedUnit ? null : findFocus(focus, { places, hotspots: top })), [pickedUnit, focus, places, top]);
+  const one = unitsAnswer.data?.one || "state";
+  const many = unitsAnswer.data?.many || "states";
+  const listTitle = `${many.charAt(0).toUpperCase()}${many.slice(1)} ranked`;
 
   // The numbers the right panel shows for the picked place.
   const detail = useMemo(() => {
+    if (pickedUnit) {
+      const u = pickedUnit;
+      const entry = u[timeframe] || {};
+      const ranked = rankedCount(unitList, timeframe);
+      const [west, south, east, north] = u.bbox || [];
+      const kind = `${one.charAt(0).toUpperCase()}${one.slice(1)}`;
+      const count = (n) => n.toLocaleString("en-US");
+      const squares = `${count(u.squares)} map ${u.squares === 1 ? "square" : "squares"}`;
+      // Its squares by where they stand in this time frame's ranking (Near
+      // term: those in the ranking, those its cutoff leaves out, and those
+      // not ranked at all), so the numbers never overlap.
+      const own = (u.cellIds || []).map((id) => placesById.get(id)).filter(Boolean);
+      const inRanking = own.filter((p) => Number.isFinite(p[timeframe]?.rank));
+      const leftOutSquares = timeframe === "nearTerm" ? own.filter((p) => p.nearTerm?.tier === "setAside").length : 0;
+      const notRanked = own.length - inRanking.length - leftOutSquares;
+      const parts =
+        timeframe === "nearTerm"
+          ? [`${count(inRanking.length)} in the near-term ranking`, leftOutSquares > 0 ? `${count(leftOutSquares)} left out for now` : null, notRanked > 0 ? `${count(notRanked)} not ranked` : null]
+          : [`${count(inRanking.length)} ranked`, notRanked > 0 ? `${count(notRanked)} not ranked` : null];
+      // A state left out as a whole: judged on its average, so some of its
+      // squares can still rank (in Squares view); name the best of them.
+      let wholeText = null;
+      if (entry.tier === "setAside") {
+        const ids = new Set(u.cellIds || []);
+        const bestArea = top.find((hotspot) => (hotspot.cellIds || []).some((id) => ids.has(id)));
+        const bestSquare = inRanking.reduce((best, p) => (!best || p.nearTerm.rank < best.nearTerm.rank ? p : best), null);
+        const best = bestArea ? ` (best: Top area ${bestArea.rank})` : bestSquare ? ` (best square rank ${count(bestSquare.nearTerm.rank)})` : "";
+        const whole = `It is left out as a whole, judged on its average Feasibility.`;
+        wholeText = inRanking.length
+          ? `${whole} ${count(inRanking.length)} of its ${count(own.length)} squares still rank in Squares view${best}.`
+          : `${whole} None of its squares rank on their own either.`;
+      }
+      return {
+        id: u.id,
+        kind: "unit",
+        what: one,
+        name: u.displayName || "No name in FAO GAUL",
+        coords: u.parentDisplayName && u.parentDisplayName.toLowerCase() !== area.name.toLowerCase() ? `${kind} · ${u.parentDisplayName}` : `${kind} · ${area.name}`,
+        tier: entry.tier,
+        rankText: Number.isFinite(entry.rank) ? `Rank ${entry.rank} of ${ranked}` : null,
+        analyzed: u.analyzed,
+        reason: u.reason,
+        soil: u.soil,
+        damage: u.damage,
+        access: u.access,
+        blackSoilHa: u.blackSoilHa,
+        heavyDamageHa: u.heavyDamageHa,
+        people: u.people,
+        squaresText: u.squares ? `${squares}: ${parts.filter(Boolean).join(", ")}. Scores are black-soil-weighted means of its ranked squares.` : null,
+        wholeText,
+        bounds: Number.isFinite(west) ? [[south, west], [north, east]] : null,
+        cellIds: null,
+      };
+    }
     if (!picked) return null;
     if (picked.kind === "hotspot") {
       const h = picked.hotspot;
@@ -406,6 +649,7 @@ function MapView({ held }) {
         people: h.people,
         bounds: padBounds(h.bounds, size * 2),
         cellIds: h.cellIds,
+        kind: "hotspot",
       };
     }
     const p = picked.place;
@@ -424,12 +668,18 @@ function MapView({ held }) {
       people: p.people,
       bounds: padBounds(cellBounds(p, size), size * 4),
       cellIds: null,
+      kind: "cell",
+      what: "square",
     };
-  }, [picked, timeframe, places, size, extent]);
+  }, [pickedUnit, unitList, one, area.name, picked, timeframe, places, placesById, top, size, extent]);
+
+  // The soil types of the picked square or state, read when it is picked
+  // (GET /api/soil; saved by the server once read).
+  const soilState = useSoil(pickedUnit ? { areaId: area.id, unitId: pickedUnit.id } : picked?.kind === "cell" ? { areaId: area.id, cellId: picked.place.id, runId: run.id } : {});
 
   // Flies the map to a box. The map's own flyToBounds stops at zoom 14,
   // which is wider than a farm, so this asks Leaflet directly.
-  const flyTo = (bounds) => mapRef.current?.getMap()?.flyToBounds(bounds, { padding: [48, 48], maxZoom: 17, duration: 0.6 });
+  const flyTo = (bounds) => bounds && mapRef.current?.getMap()?.flyToBounds(bounds, { padding: [48, 48], maxZoom: 17, duration: 0.6 });
 
   const setFocus = (id) =>
     setParams(
@@ -455,10 +705,11 @@ function MapView({ held }) {
   // A ?focus= that points at nothing in this area (an old or mistyped
   // link) is taken out of the address.
   useEffect(() => {
-    if (focus && !picked && !loadingMonth && places.length) setFocus(null);
+    // (While the states load, a state's id may still be found.)
+    if (focus && !picked && !pickedUnit && !unitsPending && !loadingMonth && places.length) setFocus(null);
     // setFocus only wraps setParams.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focus, picked, loadingMonth, places.length]);
+  }, [focus, picked, pickedUnit, unitsPending, loadingMonth, places.length]);
 
   // A new area has other squares: forget the picked place.
   const shownArea = useRef(area.id);
@@ -499,7 +750,8 @@ function MapView({ held }) {
       if (!before) openedFrom.current = pickedFrom.current;
       if (lost) titleRef.current?.focus({ preventScroll: true });
     } else if (lost) {
-      const row = openedFrom.current && panel?.querySelector(`[data-hotspot="${CSS.escape(openedFrom.current)}"]`);
+      const id = openedFrom.current && CSS.escape(openedFrom.current);
+      const row = id && panel?.querySelector(`[data-hotspot="${id}"], [data-unit="${id}"]`);
       (row || headingRef.current)?.focus({ preventScroll: true });
       openedFrom.current = null;
     }
@@ -518,11 +770,36 @@ function MapView({ held }) {
     if (isNarrow()) mapBoxRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
+  // A state from its row in the list: as a top area.
+  const pickUnit = (unit) => {
+    setHoverUnit(null);
+    pickedFrom.current = unit.id;
+    setFocus(unit.id);
+    const [west, south, east, north] = unit.bbox || [];
+    if (Number.isFinite(west)) flyTo([[south, west], [north, east]]);
+    if (isNarrow()) mapBoxRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   const askAi = () => {
-    const query = new URLSearchParams({ about: detail.id });
+    // A state: the question names it and gives the page's own numbers for
+    // it (the AI's data has its squares, not the states' ranking).
+    let query;
+    if (detail.kind === "unit") {
+      query = new URLSearchParams({ state: `${detail.name} (${detail.what}${pickedUnit?.parentDisplayName ? `, ${pickedUnit.parentDisplayName}` : ""})` });
+      const facts = [
+        detail.rankText ? `${detail.rankText.replace(/^Rank/, "ranked")} by ${detail.what} (${timeframe === "postwar" ? "postwar" : "near term"})` : detail.tier === "setAside" ? "left out of the near-term ranking by state for now (least feasible)" : null,
+        ...[["value", detail.soil], ["damage", detail.damage], ["feasibility", measured ? detail.access : null]].filter(([, v]) => Number.isFinite(v)).map(([k, v]) => `${k} ${Math.round(v * 100)}`),
+      ].filter(Boolean);
+      if (facts.length) query.set("facts", facts.join(", "));
+    } else {
+      query = new URLSearchParams({ about: detail.id });
+    }
     if (timeframe === "postwar") query.set("view", "postwar");
     navigate(`/atlas/ai?${query}`);
   };
+
+  // The key's line for the hatched places on the map shown, if any.
+  const unranked = useMemo(() => unrankedNote(unitView ? unitList : places, colorBy, timeframe), [unitView, unitList, places, colorBy, timeframe]);
 
   const running = job?.status === "running" && job.areaId === area.id;
   const highlightIds = hoverIds || detail?.cellIds || undefined;
@@ -530,7 +807,7 @@ function MapView({ held }) {
 
   return (
     <div ref={rowRef} className="page-full mp">
-      <aside id="mp-left" className="mp-left" aria-label="Area and weights" hidden={leftHidden} style={columnStyle(sizes.left.width)}>
+      <aside id="mp-left" className="mp-left" aria-label="Area, weights and map" hidden={leftHidden} style={columnStyle(sizes.left.width)}>
         <div className="mp-head">
           <div className="mp-head-row">
             <h1 className="mp-area" title={area.name}>
@@ -558,9 +835,14 @@ function MapView({ held }) {
           {running && <AnalysisProgress job={job} compact />}
         </div>
 
+        {/* Three sections: Weights, Detail (Squares | States), Map (the four tabs). */}
         <div className="mp-weights">
-          <WeightsPanel />
-          {saveError && <p className="mp-save-error">Couldn’t save the weights. They will be tried again.</p>}
+          <div>
+            <WeightsPanel />
+            {saveError && <p className="mp-save-error">Couldn’t save the weights. They will be tried again.</p>}
+          </div>
+          <DetailSwitch value={detailLevel} onChange={setDetailLevel} units={unitsAnswer.data} status={unitsAnswer.status} />
+          <MapTabs value={colorBy} onChange={setColorBy} measured={measured} why={setAsideNote(run)} />
         </div>
       </aside>
 
@@ -571,7 +853,7 @@ function MapView({ held }) {
           <PanelEdge
             side="left"
             panelId="mp-left"
-            name="area and weights"
+            name="area, weights and map"
             hidden={leftPanel.hidden}
             onToggle={leftPanel.toggle}
             limits={sizes.left}
@@ -588,6 +870,14 @@ function MapView({ held }) {
           timeframe={timeframe}
           selectedId={selectedId}
           highlightIds={highlightIds}
+          units={unitList || unitsAnswer.data?.units || null}
+          unitView={unitView}
+          selectedUnitId={pickedUnit?.id || null}
+          highlightUnitId={hoverUnit}
+          onSelectUnit={(unit) => {
+            setFocus(unit ? unit.id : null);
+            if (unit) startTransition(() => rightPanel.show());
+          }}
           onSelect={(place) => {
             setFocus(place ? place.id : null);
             // Its details are what the click asks for: the column opens if
@@ -604,7 +894,7 @@ function MapView({ held }) {
           ariaLabel={`Map of ${area.name}`}
         >
           <div className={["atlas-map-float", "mp-legend", keyOpen ? "" : "is-folded"].filter(Boolean).join(" ")}>
-            <MapLegend colorBy={colorBy} timeframe={timeframe} run={run} onColorByChange={setColorBy} />
+            <MapLegend colorBy={colorBy} timeframe={timeframe} run={run} howMeasured unitView={unitView} unitWords={{ one, many }} unranked={unranked} />
             <button
               type="button"
               className="mp-legend-toggle"
@@ -620,7 +910,7 @@ function MapView({ held }) {
           <PanelEdge
             side="right"
             panelId="mp-right"
-            name={detail ? "place details" : "top areas"}
+            name={detail ? "place details" : unitView ? many : "top areas"}
             hidden={rightPanel.hidden}
             onToggle={rightPanel.toggle}
             limits={sizes.right}
@@ -634,12 +924,35 @@ function MapView({ held }) {
         ref={rightRef}
         id="mp-right"
         className="mp-right"
-        aria-label={detail ? "Selected place" : "Top areas"}
+        aria-label={detail ? "Selected place" : unitView ? listTitle : "Top areas"}
         hidden={rightHidden}
         style={columnStyle(sizes.right.width)}
       >
         {detail ? (
-          <PlaceDetail detail={detail} titleRef={titleRef} onBack={() => setFocus(null)} onZoom={() => flyTo(detail.bounds)} onAsk={askAi} accessUnknown={noFightingFound(run)} />
+          <PlaceDetail
+            detail={detail}
+            titleRef={titleRef}
+            onBack={() => setFocus(null)}
+            onZoom={() => flyTo(detail.bounds)}
+            onAsk={askAi}
+            accessUnknown={!measured}
+            soil={detail.kind === "hotspot" ? null : soilState}
+            gate={settings?.gatePercentile}
+            backLabel={unitView ? listTitle : "Top areas"}
+          />
+        ) : unitView ? (
+          <UnitList
+            units={unitList}
+            timeframe={timeframe}
+            one={one}
+            many={many}
+            limit={narrow ? 15 : null}
+            areaName={area.name}
+            headingRef={headingRef}
+            onPick={pickUnit}
+            onHover={setHoverUnit}
+            note={unitsAnswer.data?.approximate ? unitsAnswer.data.message : unitsAnswer.data?.note}
+          />
         ) : (
           <TopAreas hotspots={top} headingRef={headingRef} onPick={pickHotspot} onHover={setHoverIds} />
         )}

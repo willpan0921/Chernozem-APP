@@ -12,7 +12,8 @@
 // HOW A PAGE USES IT
 //   const { status, workspace, area, runs, run, scored, hotspots, job, actions } = useAtlasData();
 //   const [timeframe, setTimeframe] = useTimeframe();   // ?view=postwar
-//   const [colorBy, setColorBy] = useColorBy();         // ?color=damage
+//   const [colorBy, setColorBy] = useColorBy();         // ?color=damage, remembered by this browser
+//   const [detail, setDetail] = useDetailLevel();       // "squares" | "units", remembered by this browser
 //   <AtlasGate> ...page... </AtlasGate>
 //
 // <AtlasGate> shows, instead of the page: a loading skeleton, an error box
@@ -36,6 +37,7 @@ import { analysisNotice } from "../lib/atlas/analysisNotice.js";
 import { scorePlaces } from "../lib/atlas/scoring.js";
 import { groupHotspots } from "../lib/atlas/hotspots.js";
 import { Button } from "../components/ui/index.js";
+import { usePref } from "./usePref.js";
 import "../components/atlas/atlas.css";
 
 // The area picker shows a map, so it (and the map library) is only
@@ -482,10 +484,32 @@ export function useTimeframe() {
   return [view, setView];
 }
 
-// How the map is coloured, kept as ?color=damage.
-//   const [colorBy, setColorBy] = useColorBy();   // "priority" | "damage" | "access"
+// How the map is coloured (the Map page's four tabs), kept as ?color=damage
+// so a link opens the same map, and remembered by this browser for the next
+// visit (src/state/usePref.js). "access" is the Feasibility tab.
+//   const [colorBy, setColorBy] = useColorBy();   // "priority" | "value" | "damage" | "access"
+const COLOR_CHOICES = ["priority", "value", "damage", "access"];
+const cleanColorBy = (value) => (COLOR_CHOICES.includes(value) ? value : undefined);
 export function useColorBy() {
-  return useParamChoice("color", ["priority", "damage", "access"], "priority");
+  const [remembered, remember] = usePref("chernozem.map.atlas.colorBy", "priority", cleanColorBy);
+  const [value, setValue] = useParamChoice("color", COLOR_CHOICES, remembered);
+  const choose = useCallback(
+    (next) => {
+      const clean = cleanColorBy(next) || "priority";
+      remember(clean);
+      setValue(clean);
+    },
+    [remember, setValue]
+  );
+  return [value, choose];
+}
+
+// The Map page's detail level: every square ("squares") or whole states,
+// provinces or districts ("units"), remembered by this browser.
+//   const [detail, setDetail] = useDetailLevel();
+const cleanDetail = (value) => (value === "squares" || value === "units" ? value : undefined);
+export function useDetailLevel() {
+  return usePref("chernozem.map.atlas.detail", "squares", cleanDetail);
 }
 
 // ---------- What shows before the page can ----------

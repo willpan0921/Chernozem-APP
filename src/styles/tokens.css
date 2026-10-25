@@ -46,13 +46,13 @@
   --c-amber: #e3a23a;         /* warnings, "to watch" */
   --c-amber-soft: #fbf3d9;
   --c-amber-text: #8a5a12;
-  --c-blue: #3b6fb6;          /* safe access */
+  --c-blue: #3b6fb6;          /* feasibility (safe access) */
   --c-blue-soft: #e6eef8;
   --c-blue-text: #2c5a9a;
   --c-yellow-avatar: #e7b83a; /* farmer avatar "MF" */
 
   /* ---- Priority scale, lightest to darkest (Atlas maps, score bars) ---- */
-  --c-scale-0: #e9eee8;       /* set aside / not analysed */
+  --c-scale-0: #e9eee8;       /* not analysed */
   --c-scale-1: #d4e3d6;       /* lower */
   --c-scale-2: #a9c9b1;       /* medium */
   --c-scale-3: #5f9a74;       /* high */
@@ -62,14 +62,21 @@
   /* ---- Atlas map colour ramps, lightest (1) to darkest (5) ----
      Used by src/components/atlas/AtlasMap.jsx and MapLegend.jsx. Change a
      ramp here and the map, the legend and the bars all follow.
-       priority  green: higher = start recovery here first
+       priority  green: higher = start recovery here first (places the
+                 Feasibility cutoff leaves out for now share step 1)
+       value     yellow-green: higher = more black soil and cropland
        damage    red:   higher = more fire and soil-health damage
-       access    blue:  higher = farther from the fighting (safer)        */
+       access    blue:  Feasibility, higher = farther from the fighting  */
   --map-priority-1: #e3ece2;
   --map-priority-2: #b9d5bd;
   --map-priority-3: #7fb08e;
   --map-priority-4: #3f8159;
   --map-priority-5: #1b4a31;
+  --map-value-1: #eef1dc;
+  --map-value-2: #d3dfa6;
+  --map-value-3: #a3c172;
+  --map-value-4: #6a9646;
+  --map-value-5: #3b6526;
   --map-damage-1: #f6e9de;
   --map-damage-2: #f0c4a6;
   --map-damage-3: #e2906a;
@@ -80,10 +87,13 @@
   --map-access-3: #84a9d8;
   --map-access-4: #4b7cc0;
   --map-access-5: #23518f;
-  --map-setaside: #c9c6bd;   /* set aside in Near term (little safe access) */
-  --map-nodata: #ecebe6;     /* no reading */
+  --map-nodata: #ecebe6;     /* no reading, or not ranked: drawn hatched */
+  --map-nodata-hatch: #a9a79e; /* the hatch lines over it */
   --map-outline: #1c1c1a;    /* the area's border (dashed) */
   --map-selected: #1c1c1a;   /* border of the selected square */
+  --map-unit-line: #262622;  /* borders of the states / districts over the squares */
+  --map-unit-label: #1c1c1a; /* their names (with a light halo) */
+  --map-unit-halo: #ffffff;
   --map-highlight: #e3a23a;  /* border of a highlighted top area */
   --map-draw: #3b6fb6;       /* points and lines while drawing an area */
 

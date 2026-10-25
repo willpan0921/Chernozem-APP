@@ -13,6 +13,13 @@
 //                               signal: a person's Stop, server/jobs.js)
 //   searchAdmin1(q)        regions (provinces, oblasts, states) by name
 //   admin1Boundary(id)     one of those regions: { id, name, country, geometry }
+//   adminUnits({ geometry, level, adm1Code, clip, toleranceM })
+//                          the FAO GAUL 2015 states or districts of an area,
+//                          with their borders (server/units.js)
+//   soilHistogram({ geometry })
+//                          the USDA great groups in a square or a state:
+//                          pixel counts per class, over its cropland and over
+//                          all of it (server/soil.js)
 //
 // What each reading comes from (dataset ids are Earth Engine catalog ids):
 //   chernozem      GEE_CHERNOZEM_ASSET band b1 / 89 (SoilGrids WRB Chernozem
@@ -505,6 +512,8 @@ export function createGeeProvider(options = {}) {
     searchAdmin1: (q) => searchAdmin1(deps, q),
     admin1Boundary: (id) => admin1Details(deps, id),
     admin1Details: (id) => admin1Details(deps, id),
+    adminUnits: (input) => adminUnits(deps, input),
+    soilHistogram: (input) => soilHistogram(deps, input),
     probePoint: (point) => readPoint(deps, point),
     connect: deps.connect,
   };
@@ -2021,6 +2030,117 @@ async function admin1Details(deps, id) {
   const geometry = toPolygonal(result?.geometry);
   if (!result?.count || !geometry) throw new GeeError("not_found", `No region with id ${id}.`);
   return { id: `gaul1-${code}`, name: cleanName(result.names?.[0]), country: cleanName(result.countries?.[0]), geometry };
+}
+
+// ---------- States and regions, soil classes (the Atlas map) ----------
+
+// The FAO GAUL 2015 units of one level that lie in an area, with their
+// borders simplified for drawing, in one request (server/units.js picks
+// the level and keeps the units that belong to the area).
+//   geometry    the area's outline (GeoJSON Polygon or MultiPolygon)
+//   level       1 (states, provinces, oblasts) or 2 (districts, counties)
+//   adm1Code    only the level-2 units of this level-1 unit (a region area:
+//               nothing is cut or measured, they are all inside it)
+//   clip        cut each unit to the outline (a box or a drawn area)
+//   toleranceM  how far a simplified border may stray, in metres
+// Gives back [{ code, name, adm1Code, adm1Name, adm0Name, areaKm2,
+// insideKm2, geometry }]: insideKm2 is the part inside the outline (the
+// whole unit for adm1Code). Names as GAUL writes them; a unit GAUL has no
+// name for has none (cleanName). Every value is from GAUL: no null is sent.
+async function adminUnits(deps, { geometry, level = 1, adm1Code = null, clip = false, toleranceM = 1000 } = {}) {
+  if (!geometry) throw new GeeError("bad_request", "The area has no outline.");
+  const cfg = deps.getConfig();
+  const ee = await deps.connect(cfg);
+  const two = level === 2;
+  const region = ee.Geometry(geometry);
+  const maxError = Math.max(10, Math.round(toleranceM));
+  let units = ee.FeatureCollection(two ? DATASETS.gaul2 : DATASETS.gaul1).filterBounds(region);
+  if (adm1Code !== null && adm1Code !== undefined) units = units.filter(ee.Filter.eq("ADM1_CODE", Number(adm1Code)));
+  const measure = adm1Code === null || adm1Code === undefined;
+  const rows = units.map((feature) => {
+    const shape = feature.geometry().simplify(maxError);
+    const inside = measure ? shape.intersection(region, maxError) : shape;
+    return ee.Feature(clip ? inside : shape, {
+      code: feature.get(two ? "ADM2_CODE" : "ADM1_CODE"),
+      name: feature.get(two ? "ADM2_NAME" : "ADM1_NAME"),
+      adm1Code: feature.get("ADM1_CODE"),
+      adm1Name: feature.get("ADM1_NAME"),
+      adm0Name: feature.get("ADM0_NAME"),
+      areaKm2: shape.area(maxError).divide(1e6),
+      insideKm2: inside.area(maxError).divide(1e6),
+    });
+  });
+  const result = await retryTransient(
+    () => evaluate(rows, { timeoutMs: 3 * 60 * 1000, what: `Loading the borders of the ${two ? "districts" : "states"}`, context: contextOf(cfg) }),
+    deps.retryDelayMs,
+    contextOf(cfg),
+  );
+  return (result?.features || [])
+    .map((feature) => {
+      const p = feature.properties || {};
+      return {
+        code: numberOr(p.code, null),
+        name: cleanName(p.name) ?? null,
+        adm1Code: numberOr(p.adm1Code, null),
+        adm1Name: cleanName(p.adm1Name) ?? null,
+        adm0Name: cleanName(p.adm0Name) ?? null,
+        areaKm2: numberOr(p.areaKm2, 0),
+        insideKm2: numberOr(p.insideKm2, 0),
+        geometry: toPolygonal(feature.geometry),
+      };
+    })
+    .filter((unit) => unit.code !== null && unit.geometry);
+}
+
+// The soil classes of a square or a state: how many 250 m pixels of each
+// USDA great group (DATASETS.blackSoil, band grtgroup) lie in its cropland
+// (ESA WorldCover class 40) and in all of it, in one request. Counts are
+// Earth Engine's (a pixel cut by the edge counts in part).
+//   geometry  GeoJSON Polygon or MultiPolygon
+// Gives back { cropland: { "<class value>": count }, all: { ... },
+// classes: [{ value, name }] } (the map's own class list, or [] when it
+// could not be read: the names are then looked up by value in
+// server/soil-names.js).
+export const SOIL_SCALE_M = 250;
+async function soilHistogram(deps, { geometry } = {}) {
+  if (!geometry) throw new GeeError("bad_request", "Nothing to measure: no outline.");
+  const cfg = deps.getConfig();
+  const ee = await deps.connect(cfg);
+  const context = contextOf(cfg);
+  const region = ee.Geometry(geometry);
+  const soil = ee.Image(DATASETS.blackSoil).select(BANDS.blackSoil);
+  const cropland = ee.ImageCollection(DATASETS.worldCover).first().select(BANDS.worldCover).eq(CROPLAND_CLASS);
+  const histogram = (image) =>
+    image.reduceRegion({ reducer: ee.Reducer.frequencyHistogram(), geometry: region, scale: SOIL_SCALE_M, maxPixels: MAX_PIXELS_PER_CELL, tileScale: 2 });
+  const answer = ee.Dictionary({ cropland: histogram(soil.updateMask(cropland)), all: histogram(soil) });
+  const [result, classes] = await Promise.all([
+    retryTransient(() => evaluate(answer, { timeoutMs: 2 * 60 * 1000, what: "Reading the soil classes", context }), deps.retryDelayMs, context),
+    soilClassList(ee, context),
+  ]);
+  const counts = (part) => {
+    const raw = part?.[BANDS.blackSoil];
+    return raw && typeof raw === "object" ? Object.fromEntries(Object.entries(raw).filter(([, n]) => Number.isFinite(n) && n > 0)) : {};
+  };
+  return { cropland: counts(result?.cropland), all: counts(result?.all), classes, scaleM: SOIL_SCALE_M };
+}
+
+// The soil map's class list [{ value, name }], read once per Earth Engine
+// connection; [] when it cannot be read (not remembered: tried again next
+// time).
+const soilClassesByEe = new WeakMap();
+async function soilClassList(ee, context) {
+  if (soilClassesByEe.has(ee)) return soilClassesByEe.get(ee);
+  try {
+    const properties = (await getAsset(ee, DATASETS.blackSoil, context))?.properties;
+    const values = properties?.grtgroup_class_values;
+    const names = properties?.grtgroup_class_names;
+    if (!Array.isArray(values) || !Array.isArray(names) || values.length !== names.length) return [];
+    const classes = values.map((value, i) => ({ value, name: String(names[i]) }));
+    soilClassesByEe.set(ee, classes);
+    return classes;
+  } catch {
+    return [];
+  }
 }
 
 // For the gee:check script: the raw soil values at one point, to confirm

@@ -33,7 +33,7 @@ import { placeLabel } from "../../lib/atlas/hotspots.js";
 import { validation, citation } from "../../config/research.js";
 import { formatCount, formatHaShort, formatSigned } from "../../lib/format.js";
 import { runsComparable } from "../../lib/atlas/method.js";
-import { seasonWords, shownNewDamage, sourceBadge, warNote } from "../../lib/atlas/overview.js";
+import { seasonWords, shownNewDamage, sourceBadge, warNote, warningWords } from "../../lib/atlas/overview.js";
 import "./DataPage.css";
 
 // The measures the chart can show. "get" reads the number from a month.
@@ -555,7 +555,7 @@ function MonthTable({ runs, onOpen }) {
                     <span className="dp-source">
                       {sourceName(run.provider)}
                       {warnings && (
-                        <span className="dp-warn" title={run.checks.warnings.join(" ")} aria-label={`${run.checks.total - run.checks.passed} checks failed`}>
+                        <span className="dp-warn" title={run.checks.warnings.map(warningWords).join(" ")} aria-label={`${run.checks.total - run.checks.passed} checks failed`}>
                           <TriangleAlert size={13} />
                         </span>
                       )}

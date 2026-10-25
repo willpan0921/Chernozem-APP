@@ -16,6 +16,12 @@
 //                                       its war ({ war: { mode: "list" |
 //                                       "war" | "peace", since, name } }:
 //                                       src/config/conflicts.js checkAreaWar)
+//   GET    /api/areas/:id/units?runId=  the area's states or districts with
+//                                       their borders (FAO GAUL 2015, saved
+//                                       once worked out; from the squares'
+//                                       place names without Earth Engine)
+//                                       and which square is in which
+//                                       (server/units.js)
 //   DELETE /api/areas/:id               remove an area and its runs (not while
 //                                       it is being analyzed: stop that
 //                                       first; an analysis still waiting
@@ -38,6 +44,10 @@
 //   GET    /api/runs?areaId=            monthly runs, newest first
 //   GET    /api/runs/compare?a=&b=      what changed between two runs
 //   GET    /api/runs/:id                one run with its cells and alerts
+//   GET    /api/soil?areaId=&cellId=    the soil types of one square (or
+//          /api/soil?areaId=&unitId=    of one state or district, or of
+//          /api/soil?lat=&lon=&sizeDeg= any square), saved once read
+//                                       (server/soil.js)
 //   /api/chat, /api/chats...            the AI (server/ai/chat.js)
 //   /api/farm..., /api/geocode          the Field product (server/field/routes.js)
 //   /api/auth/status, login, logout     the optional access code (server/auth.js)
@@ -76,6 +86,8 @@ import { schedulerStatus } from "./scheduler.js";
 import { checkSettings } from "../src/lib/atlas/method.js";
 import { handleAuth } from "./auth.js";
 import { handleFieldRoutes } from "./field/routes.js";
+import { unitsForArea } from "./units.js";
+import { soilFor } from "./soil.js";
 
 const MIN_AREA_HA = 0.5;
 const MAX_CUSTOM_AREA_HA = 3000000 * 100; // 3,000,000 km²
@@ -454,6 +466,11 @@ async function route(req, res, url) {
       if (!area) throw notFound("That area does not exist.");
       return sendJson(res, 200, { area: areaForClient(area, { full: q.get("full") === "1" }) });
     }
+    if (second && third === "units" && parts.length === 3 && method === "GET") {
+      const runId = q.get("runId") || null;
+      if (runId !== null && !isSafeId(runId)) throw bad("That is not a month's id.");
+      return sendJson(res, 200, await unitsForArea(second, { runId }));
+    }
     if (second && !third && method === "PATCH") {
       if (!(await getArea(second))) throw notFound("That area does not exist.");
       const changes = areaChanges(await readJson(req));
@@ -558,9 +575,16 @@ async function route(req, res, url) {
     }
   }
 
+  if (first === "soil" && !second && method === "GET") {
+    return sendJson(res, 200, await soilFor(q));
+  }
+
   // A known path with the wrong method, or an unknown path. The number is
   // how many parts after /api/ the route can have (/api/runs/:id = 2).
-  const known = { status: 1, areas: 2, workspace: 1, team: 2, analyze: 1, jobs: 2, runs: 2 };
+  const known = { status: 1, areas: 2, workspace: 1, team: 2, analyze: 1, jobs: 2, runs: 2, soil: 1 };
+  if (first === "areas" && second && third === "units" && parts.length === 3) {
+    throw new HttpError(405, "method_not_allowed", `${method} is not supported on ${url.pathname}.`);
+  }
   if (known[first] && parts.length <= known[first]) {
     throw new HttpError(405, "method_not_allowed", `${method} is not supported on ${url.pathname}.`);
   }

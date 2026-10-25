@@ -32,7 +32,7 @@ export const validation = {
   ],
   openNote: {
     lead: "Still open.",
-    text: "The rankings are not yet tested against real recovery results, and Postwar has no outside check so far.",
+    text: "The rankings are not yet tested against real recovery results, and Post-crisis has no outside check so far.",
   },
 };
 
@@ -60,8 +60,11 @@ export function safetyNoteFor(run) {
 // Atlas items may also say what they are at peace (whatPeace, formulaPeace;
 // whatTeamPeace where the team marked the area as not at war), in a
 // month that ends before its war began (whatBeforeWar, formulaBeforeWar)
-// and, for safe access, in a war where no fire looked like fighting
+// and, for feasibility, in a war where no fire looked like fighting
 // (whatNoFighting): src/lib/atlas/mapColors.js methodsFor picks them.
+// The Atlas's three scores are named as the Map page's tabs name them
+// (2026-10-25): Value (soil value), Damage and Feasibility (safe access:
+// the distance to fighting; the code's key is still "access").
 
 export const fieldMethods = {
   title: "How it's measured",
@@ -104,11 +107,16 @@ export const fieldMethods = {
 export const atlasMethods = {
   title: "How it's measured",
   intro: "Each map square gets three scores from 0 to 1 on fixed scales, so places and months compare fairly.",
+  // For the States (or Districts) view of the Map page
+  // (src/lib/atlas/units.js).
+  // "{one}" and "{many}" are the units' own words ("district", "districts"):
+  // mapColors.js unitsNote.
+  noteUnits: "A {one}'s value, damage and feasibility are the black-soil-weighted means of its ranked squares; its priority is then worked out across the {many} the same way as for squares. A {one} is judged by its average, so some of its squares can still rank near the top in Squares view, even when the {one} as a whole is left out for now.",
   items: [
     {
       id: "soil",
-      name: "Soil value",
-      what: "How much of the square is black soil, and how much is farmed.",
+      name: "Value",
+      what: "Soil value: how much of the square is black soil, and how much is farmed.",
       formula: "Mean of black-soil share and cropland share",
       source: "OpenLandMap USDA soil classes (Mollisols), 250 m · ESA WorldCover cropland, 10 m",
     },
@@ -125,11 +133,11 @@ export const atlasMethods = {
     },
     {
       id: "access",
-      name: "Safe access",
-      what: "Distance to fighting: ACLED battles when a file is connected, else unusual fires (a rough estimate). 100 km or more scores full access (1.0); this does not make the land safe.",
-      whatPeace: "No known war covers this area, so access is not measured (this does not make the land safe).",
-      whatTeamPeace: "Your team marked this area as not at war, so access is not measured (this does not make the land safe).",
-      whatBeforeWar: "This month ends before the war began, so distance to fighting is not measured (this does not make the land safe).",
+      name: "Feasibility",
+      what: "How safe it is to reach and work the land now, measured as the distance to fighting: battles in an ACLED file, or fires that look like fighting (a rough estimate); full at 100 km. This does not make the land safe.",
+      whatPeace: "Feasibility not measured here: no known war covers this area (this does not make the land safe).",
+      whatTeamPeace: "Feasibility not measured here: your team marked this area as not at war (this does not make the land safe).",
+      whatBeforeWar: "Feasibility not measured here: this month ends before the war began (this does not make the land safe).",
       // After "Not measured here: no fires that look like fighting were
       // found within 300 km (inside the war's region), and there is no
       // ACLED file (or what the connected one did)." (mapColors.js
@@ -139,11 +147,11 @@ export const atlasMethods = {
       source: "ACLED battles when connected, else unusual fire inside a known war",
     },
   ],
-  note: "Near term sets aside the least safe places and ranks the rest by soil value and damage; the long view blends all three. The soil-health index is shown for context only.",
-  notePeace: "Near term ranks by soil value and damage; the long view blends all three. The soil-health index is shown for context only.",
+  note: "Near term leaves the least feasible places out for now (the Feasibility cutoff; they show in the lowest priority shade) and ranks the rest by value and damage; the long view blends all three. The soil-health index is shown for context only.",
+  notePeace: "Near term ranks by value and damage; the long view blends all three. The soil-health index is shown for context only.",
   // In a war where no fire looked like fighting (src/lib/atlas/overview.js
-  // noFightingFound): safe access is not measured, so nothing is set aside.
-  noteNoFighting: "Safe access is not measured here, so Near term sets nothing aside and ranks by soil value and damage; the long view blends all three. The soil-health index is shown for context only.",
+  // noFightingFound): feasibility is not measured, so nothing is left out.
+  noteNoFighting: "Feasibility not measured here, so Near term leaves nothing out and ranks by value and damage; the long view blends all three. The soil-health index is shown for context only.",
   // Added for a war that covers a whole-country area only in part, and
   // (notePartOfArea) a region, a box or a drawn area; notePartOtherWar
   // after it when some squares have the war's rules because another listed

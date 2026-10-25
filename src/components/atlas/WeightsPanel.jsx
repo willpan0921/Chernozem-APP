@@ -1,23 +1,28 @@
 // WHAT THIS FILE DOES
-// The weights control on the left of the Atlas map: how much soil value,
-// damage and safe access count, plus the Near term | Postwar switch.
-// Every change recolours the map at once and is saved for the team.
+// The weights control on the left of the Atlas map: how much value (soil
+// value), damage and feasibility (safe access: the distance to fighting)
+// count, plus the Near term | Postwar switch. Every change recolours the
+// map at once and is saved for the team. The blue control is Feasibility
+// in both time frames:
 //
-//   Postwar    three sliders, Soil value / Damage / Safe access, that
-//              always add up to 100: moving one shares the rest between
-//              the other two.
-//   Near term  safe access works as a cutoff instead of a weight (the least
-//              safe land is set aside), so the panel shows Soil value and
-//              Damage as shares of 100 that trade with each other (30 / 40
-//              shows as 43% / 57%), and the cutoff "Set aside least safe
-//              30%". The Postwar safe-access weight is kept as it is.
-//              At peace with no ACLED file (and in a month before its war
-//              began) there is no cutoff: the panel says why instead, "No
-//              war recorded: nothing set aside", "Not at war (set by your
-//              team): nothing set aside" or "Before the war: nothing set
-//              aside" (overview.js peaceReason); in a war where no fire
-//              looked like fighting, "Safe access is not measured here, so
-//              nothing can be set aside for it" (overview.js setAsideNote).
+//   Postwar    three sliders, Value / Damage / Feasibility, that always
+//              add up to 100: moving one shares the rest between the other
+//              two.
+//   Near term  feasibility works as a cutoff instead of a weight: the
+//              "Feasibility cutoff" ("Leave out the least feasible 30% for
+//              now"; the paper's gate, same maths), so the panel shows Value
+//              and Damage as shares of 100 that trade with each other
+//              (30 / 40 shows as 43% / 57%). The Postwar feasibility weight
+//              is kept as it is. Where feasibility is not measured, the
+//              Postwar Feasibility slider stays (the weights are one saved
+//              set) with a line under it: "Feasibility is not measured
+//              here: it is full everywhere, so the order follows value and
+//              damage". At peace with no ACLED file (and in a
+//              month before its war began) there is no cutoff: the panel
+//              says why instead, "Feasibility not measured here (no war
+//              recorded): nothing is left out" and so on; in a war where no
+//              fire looked like fighting, "Feasibility not measured here, so
+//              nothing can be left out for it" (overview.js setAsideNote).
 //
 // A drag (or a run of arrow-key presses) is always worked out from the
 // weights it started from, so moving a slider and putting it back gives
@@ -38,23 +43,31 @@ import { useAtlasData, useTimeframe } from "../../state/AtlasData.jsx";
 import { isDefaultSettings } from "../../lib/atlas/method.js";
 import { WEIGHT_KEYS, rebalanceWeights } from "../../lib/atlas/weights.js";
 import { nearTermShares } from "../../lib/atlas/scoring.js";
-import { accessMeasured, setAsideNote, timeframeOptions } from "../../lib/atlas/overview.js";
+import { accessMeasured, longTermAccessNote, setAsideNote, timeframeOptions } from "../../lib/atlas/overview.js";
 import "./atlas.css";
 
 const LABELS = {
-  soil: { label: "Soil value", tone: "green" },
+  soil: { label: "Value", tone: "green" },
   damage: { label: "Damage", tone: "red" },
-  access: { label: "Safe access", tone: "blue" },
+  access: { label: "Feasibility", tone: "blue" },
 };
 
 // The Near term | Postwar switch ("Long term" where no war is listed): timeframeOptions(run).
+
+// longTermAccessNote(run) reads " (feasibility is not measured here: ...)";
+// as a line of its own, without the brackets and with a capital.
+function longTermNote(run) {
+  const text = longTermAccessNote(run).trim().replace(/^\(/, "").replace(/\)$/, "");
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : null;
+}
 
 const clamp = (value, low, high) => Math.min(high, Math.max(low, value));
 
 // One slider row: name, big percentage (also typeable) and the slider.
 //   onBegin(fresh)  a drag or typing starts (fresh: a new mouse/touch drag)
 //   onEnd()         the control lost focus
-function WeightRow({ id, label, tone, value, onChange, max = 100, onBegin, onEnd, disabled = false }) {
+//   hint            a line under the slider (optional)
+function WeightRow({ id, label, tone, value, onChange, max = 100, onBegin, onEnd, disabled = false, hint = null }) {
   // What is typed in the number box, while it is being typed. An empty box
   // is not applied as 0; it waits for a number.
   const [draft, setDraft] = useState(null);
@@ -108,6 +121,7 @@ function WeightRow({ id, label, tone, value, onChange, max = 100, onBegin, onEnd
         onBlur={() => onEnd?.()}
         onChange={(event) => onChange(Number(event.target.value))}
       />
+      {hint && <span className="weights-hint">{hint}</span>}
     </div>
   );
 }
@@ -152,8 +166,14 @@ export default function WeightsPanel({ showTimeframe = true, className = "" }) {
   };
 
   const shownKeys = nearTerm ? ["soil", "damage"] : WEIGHT_KEYS;
+  // Postwar (Long term) where feasibility is not measured: its weight stays
+  // (one saved set for both time frames) but changes no order, and the
+  // line under it says so, in the report's words (overview.js
+  // longTermAccessNote): "Feasibility is not measured here: it is full
+  // everywhere, so the order follows value and damage".
+  const accessHint = !nearTerm && run && !accessMeasured(run) ? longTermNote(run) : null;
 
-  // The share of black soil the cutoff really sets aside. In a small area
+  // The share of black soil the cutoff really leaves out. In a small area
   // with few squares it can differ a little from the slider; then it shows.
   const asidePercent = Math.round((scored?.setAsideShare ?? 0) * 100);
   const showAside = nearTerm && (!run || accessMeasured(run)) && scored?.settings.gatePercentile > 0 && asidePercent !== scored.settings.gatePercentile;
@@ -192,27 +212,29 @@ export default function WeightsPanel({ showTimeframe = true, className = "" }) {
             onBegin={(fresh) => begin(key, fresh)}
             onEnd={end}
             onChange={(value) => setWeight(key, value)}
+            hint={key === "access" ? accessHint : null}
           />
         ))}
 
         {/* At peace with no ACLED file (or in a month before its war began,
             or in a war where no fire looked like fighting) nothing can be
-            set aside: access is 100 everywhere, so the cutoff slider would
-            change nothing. The note says why: "No war recorded", "Not at
-            war (set by your team)", "Before the war", or that safe access
-            is not measured here (overview.js setAsideNote). */}
+            left out: feasibility is 100 everywhere, so the cutoff slider
+            would change nothing. The note says why: "Feasibility not
+            measured here (no war recorded)" and so on (overview.js
+            setAsideNote). */}
         {nearTerm && run && !accessMeasured(run) && <p className="weights-note">{setAsideNote(run)}</p>}
         {nearTerm && (!run || accessMeasured(run)) && (
           <WeightRow
             id="weight-gate"
-            label="Set aside least safe"
+            label="Feasibility cutoff"
             tone="blue"
             value={settings.gatePercentile}
             max={60}
+            hint={`Leave out the least feasible ${settings.gatePercentile}% for now`}
             onChange={(value) => actions.updateSettings({ gatePercentile: value })}
           />
         )}
-        {showAside && <p className="weights-note">{asidePercent}% set aside in practice</p>}
+        {showAside && <p className="weights-note">{asidePercent}% left out in practice</p>}
       </div>
     </section>
   );

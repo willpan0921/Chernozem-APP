@@ -15,7 +15,8 @@
 //     bounds: [[south, west], [north, east]], cellIds, blackSoilHa,
 //     heavyDamageHa, people, score, share, tier, soil, damage, access }
 // "label" is the one name every page uses for the group:
-//   "District, Region" when the run has place names ("Bakhmut, Donetsk"),
+//   "District, Region" when the run has place names ("Bakhmut, Donetsk";
+//   the display names of placeNames.js: "Kharkivs'ka" reads "Kharkiv"),
 //   else where it sits in the area: "North-west", "East", "Centre"...
 // When two groups in the list would get the same name, both get their
 // coordinates added: "West · 47.98° N, 24.76° E".
@@ -35,6 +36,7 @@
 
 import { ranking } from "./scoring.js";
 import { formatCoord } from "../format.js";
+import { placeNames } from "./placeNames.js";
 
 // How far a group may reach from its starting square, in squares.
 export const HOTSPOT_RADIUS = 3;
@@ -57,11 +59,12 @@ export function coordDigits(cellSizeDeg) {
   return 2;
 }
 
-// The name of a square: "Bakhmut, Donetsk" or "48.59° N, 38.00° E".
+// The name of a square: "Bakhmut, Donetsk" or "48.59° N, 38.00° E"
+// (display names: placeNames.js).
 //   cellSizeDeg - the run's square size, for the number of decimals (optional)
 export function placeLabel(place, cellSizeDeg) {
   if (!place) return "";
-  const names = [place.admin2, place.admin1].filter(Boolean);
+  const names = placeNames(place);
   return names.length ? names.join(", ") : formatCoord(place.lat, place.lon, coordDigits(cellSizeDeg));
 }
 
@@ -96,7 +99,7 @@ export function compassName(lat, lon, extent) {
 
 // The name of a top area: its place names, else its compass part.
 function areaName(place, extent) {
-  const names = [place.admin2, place.admin1].filter(Boolean);
+  const names = placeNames(place);
   return names.length ? names.join(", ") : compassName(place.lat, place.lon, extent);
 }
 

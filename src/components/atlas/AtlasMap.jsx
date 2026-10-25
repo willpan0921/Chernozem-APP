@@ -7,8 +7,23 @@
 //                dashed and the map fits to it whenever it changes
 //   run          the run ({ id, cellSizeDeg }), for the size of the squares
 //   places       the scored squares (useAtlasData().scored.places)
-//   colorBy      "priority" | "damage" | "access"
+//   colorBy      "priority" | "value" | "damage" | "access" (Feasibility)
 //   timeframe    "nearTerm" | "postwar" (for priority colours)
+//   units        the area's states or districts (GET /api/areas/:id/units,
+//                scored by src/lib/atlas/units.js when unitView is on):
+//                their borders are drawn over the squares, dark, with their
+//                names in bold: the picked unit's always, then by rank in
+//                the time frame, then the biggest; a name that does not fit
+//                tries other spots inside its unit and a smaller size, and
+//                is hidden until zoomed in only when none fits (never under
+//                the buttons, the key or the panels' tabs)
+//   unitView     true: the States view: the squares are hidden and each
+//                unit is filled by its own score (same colour scales),
+//                with bold outlines; hover highlights it, a click calls
+//                onSelectUnit(unit)
+//   selectedUnitId     the picked unit (bold dark outline)
+//   highlightUnitId    a unit to outline (a row of the list hovered)
+//   onSelectUnit       called with the clicked unit (States view)
 //   selectedId   the id of the selected square (drawn with a dark border)
 //   onSelect     called with the clicked place, or null for empty map
 //   highlightIds square ids to outline (e.g. a top area's squares)
@@ -39,6 +54,11 @@
 // (and do not clear the picked place). Turning it off brings back the grey
 // map, the squares and the key as they were.
 //
+// Layers, bottom to top: the base map, the squares (or, in the States
+// view, the units' fills), the units' borders, the marks (picked and
+// highlighted squares or units), the units' names. Only the squares and the
+// fills take clicks; the panes above them let clicks through.
+//
 // The container carries data-zoom="<zoom level>" so tests can check that
 // zooming worked. The colours come from CSS variables in tokens.css.
 //
@@ -50,8 +70,9 @@ import { useEffect, useImperativeHandle, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { Layers, Maximize, Minus, Plus, Satellite } from "lucide-react";
-import { colorStep, colorVar, rankedCount, valueText } from "../../lib/atlas/mapColors.js";
+import { COLOR_MODES, colorStep, colorVar, rankedCount, valueText } from "../../lib/atlas/mapColors.js";
 import { placeLabel } from "../../lib/atlas/hotspots.js";
+import { placeLabels, pointInGeometry } from "../../lib/atlas/labels.js";
 import { settleView, showsFit, watchMapSize } from "../../lib/mapResize.js";
 import { LIGHT_GREY, SATELLITE } from "../../config/maps.js";
 import "./atlas.css";
@@ -64,16 +85,59 @@ const WORLD_VIEW = { center: [25, 15], zoom: 2 };
 // Room kept round the area when the map fits it.
 const AREA_PADDING = [24, 24];
 const CELL_OPACITY = 0.82;
+const UNIT_OPACITY = 0.86;
+// The panes over the squares (Leaflet's overlay pane is 400): the States
+// view's fills take clicks; the borders, marks and names let them through.
+const PANES = [
+  ["atlasUnitFill", 405, true],
+  ["atlasUnitLines", 420, false],
+  ["atlasMarks", 430, false],
+  ["atlasUnitLabels", 440, false],
+];
+
 
 // Reads the map colours from tokens.css once.
 function readColors(element) {
   const style = getComputedStyle(element);
-  const names = ["--map-setaside", "--map-nodata", "--map-outline", "--map-selected", "--map-highlight", "--map-draw"];
-  for (const mode of ["priority", "damage", "access"]) for (let step = 1; step <= 5; step++) names.push(`--map-${mode}-${step}`);
+  const names = ["--map-nodata", "--map-outline", "--map-selected", "--map-highlight", "--map-draw", "--map-unit-line"];
+  for (const mode of COLOR_MODES) for (let step = 1; step <= 5; step++) names.push(`--map-${mode}-${step}`);
+  names.push("--map-nodata-hatch");
   const colors = {};
   for (const name of names) colors[name] = style.getPropertyValue(name).trim() || "#999999";
+  colors.hatch = hatchPattern(colors["--map-nodata"], colors["--map-nodata-hatch"]);
   return colors;
 }
+
+// Places with no score (not ranked: no black-soil cropland, no map square;
+// or no reading on the Value, Damage or Feasibility map) are hatched, so
+// they never pass for the lightest shade of a score. A canvas pattern of
+// thin diagonal lines over the no-data colour; the plain colour where a
+// canvas is not available.
+function hatchPattern(background, line) {
+  try {
+    const tile = document.createElement("canvas");
+    tile.width = 8;
+    tile.height = 8;
+    const ctx = tile.getContext("2d");
+    if (!ctx) return background;
+    ctx.fillStyle = background;
+    ctx.fillRect(0, 0, 8, 8);
+    ctx.strokeStyle = line;
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    for (const shift of [-8, 0, 8]) {
+      ctx.moveTo(shift - 1, 9);
+      ctx.lineTo(shift + 9, -1);
+    }
+    ctx.stroke();
+    return ctx.createPattern(tile, "repeat") || background;
+  } catch {
+    return background;
+  }
+}
+
+// The fill for a colour step's variable: the hatch for no score.
+const fillOf = (colors, name) => (name === "--map-nodata" ? colors.hatch : colors[name]);
 
 // Leaflet's canvas can run one last queued redraw after the map is gone
 // (when a map is removed right after it drew), which throws. This canvas
@@ -90,6 +154,96 @@ const boxOf = (bbox) => (bbox && bbox.length === 4 ? [[bbox[1], bbox[0]], [bbox[
 function squareBounds(place, size) {
   const half = size / 2;
   return [[place.lat - half, place.lon - half], [place.lat + half, place.lon + half]];
+}
+
+// A unit as a GeoJSON feature (its id in the properties).
+const unitFeature = (unit) => ({ type: "Feature", properties: { id: unit.id }, geometry: unit.geometry });
+
+// The name shown for a unit, or null (GAUL has none: no label, never an
+// invented one).
+const unitName = (unit) => unit?.displayName ?? null;
+
+// The spots tried for a name besides its label point, as shares of its
+// unit's width and height on screen (each kept only if it lies inside the
+// unit).
+const LABEL_SHIFTS = [
+  [0, -0.12], [0, 0.12], [-0.12, 0], [0.12, 0],
+  [0, -0.22], [0, 0.22], [-0.22, 0], [0.22, 0],
+  [-0.18, -0.18], [0.18, -0.18], [-0.18, 0.18], [0.18, 0.18],
+  [-0.3, 0], [0.3, 0], [0, -0.34], [0, 0.34],
+  [-0.3, -0.12], [0.3, -0.12], [-0.3, 0.12], [0.3, 0.12],
+];
+// The best-ranked units are named first; after them, the biggest.
+const LABEL_TOP_RANKS = 10;
+
+// What names may not cover: the map's own buttons, the floating key and
+// panels, and the side columns' tabs on the map's edges.
+const LABEL_WALLS = ".atlas-map-controls, .atlas-map-float, .map-sat-chip, .panel-tab";
+
+// Shows the units' names that fit (src/lib/atlas/labels.js placeLabels), in
+// order of importance: the picked unit first (always named), then the ten
+// best-ranked in the time frame shown, then the biggest. A name that does not fit at
+// its label point tries other spots inside its unit, then a smaller size,
+// before it is hidden; none covers the map's buttons or the panels' tabs.
+//   now  { units: Map id -> scored unit, timeframe, selectedUnitId }
+function layoutLabels(map, labels, now = {}) {
+  if (!map || !labels.length) return;
+  const container = map.getContainer();
+  const origin = container.getBoundingClientRect();
+  const local = (box) => ({ left: box.left - origin.left, top: box.top - origin.top, right: box.right - origin.left, bottom: box.bottom - origin.top });
+  const scoredUnits = now.units || new Map();
+  const timeframe = now.timeframe || "nearTerm";
+  const rankOf = (unit) => {
+    const rank = (scoredUnits.get(unit.id) || unit)?.[timeframe]?.rank;
+    return Number.isFinite(rank) && rank <= LABEL_TOP_RANKS ? rank : Infinity;
+  };
+  const ordered = [...labels].sort(
+    (a, b) =>
+      Number(b.unit.id === now.selectedUnitId) - Number(a.unit.id === now.selectedUnitId) ||
+      rankOf(a.unit) - rankOf(b.unit) ||
+      (b.unit.areaKm2 || 0) - (a.unit.areaKm2 || 0)
+  );
+  const items = [];
+  for (const { marker, unit } of ordered) {
+    const el = marker.getElement()?.firstChild;
+    if (!el) continue;
+    // Measured where it would sit at its label point, full size.
+    el.style.transform = "";
+    const rect = local(el.getBoundingClientRect());
+    let unitRect = null;
+    const anchors = [];
+    if (Array.isArray(unit.bbox) && unit.bbox.length === 4) {
+      const [w, s, e, n] = unit.bbox;
+      const a = map.latLngToContainerPoint([s, w]);
+      const b = map.latLngToContainerPoint([n, e]);
+      unitRect = { left: Math.min(a.x, b.x), right: Math.max(a.x, b.x), top: Math.min(a.y, b.y), bottom: Math.max(a.y, b.y) };
+      const cx = (rect.left + rect.right) / 2;
+      const cy = (rect.top + rect.bottom) / 2;
+      const uw = unitRect.right - unitRect.left;
+      const uh = unitRect.bottom - unitRect.top;
+      for (const [fx, fy] of LABEL_SHIFTS) {
+        const dx = Math.round(fx * uw);
+        const dy = Math.round(fy * uh);
+        if (!dx && !dy) continue;
+        const at = map.containerPointToLatLng([cx + dx, cy + dy]);
+        if (pointInGeometry(at.lng, at.lat, unit.geometry)) anchors.push({ dx, dy });
+      }
+    }
+    items.push({ id: unit.id, el, rect, unitRect, anchors, always: unit.id === now.selectedUnitId });
+  }
+  const blocked = [];
+  const scope = container.closest(".atlas-map")?.parentElement || container;
+  for (const wall of scope.querySelectorAll(LABEL_WALLS)) {
+    const box = wall.getBoundingClientRect();
+    if (box.width > 0 && box.height > 0) blocked.push(local(box));
+  }
+  const size = map.getSize();
+  const shown = placeLabels(items, { view: { width: size.x, height: size.y }, blocked });
+  for (const item of items) {
+    const spot = shown.get(item.id);
+    item.el.classList.toggle("is-hidden", !spot);
+    if (spot && (spot.dx || spot.dy || spot.scale !== 1)) item.el.style.transform = `translate(calc(-50% + ${spot.dx}px), calc(-50% + ${spot.dy}px)) scale(${spot.scale})`;
+  }
 }
 
 export default function AtlasMap({
@@ -112,6 +266,11 @@ export default function AtlasMap({
   satelliteOnly = false,
   onSatelliteOnlyChange,
   steady = false,
+  units = null,
+  unitView = false,
+  selectedUnitId = null,
+  highlightUnitId = null,
+  onSelectUnit,
   ariaLabel = "Map",
   children,
   ref,
@@ -122,7 +281,8 @@ export default function AtlasMap({
   const mapRef = useRef(null);
   const colorsRef = useRef(null);
   const rendererRef = useRef(null);
-  const layers = useRef({ outline: null, cells: null, cellIndex: new Map(), cellKey: "", marks: null, draw: null });
+  const layers = useRef({ outline: null, cells: null, cellIndex: new Map(), cellKey: "", marks: null, draw: null, unitLines: null, unitFill: null, unitFillIndex: new Map(), unitLabels: null, labelList: [], unitKey: "" });
+  const renderers = useRef({ fill: null, lines: null, marks: null });
   const tiles = useRef({ base: null, satellite: null });
   const fitAreaNow = useRef(null);
   const [zoom, setZoom] = useState(null);
@@ -130,8 +290,9 @@ export default function AtlasMap({
 
   // The latest props, for the map's own event handlers.
   const latest = useRef({});
-  latest.current = { onSelect, onDrawPoint, drawMode, places, colorBy, timeframe, area, satelliteOnly, steady, selectedId, size: run?.cellSizeDeg || 0 };
+  latest.current = { onSelect, onSelectUnit, onDrawPoint, drawMode, places, colorBy, timeframe, area, satelliteOnly, steady, selectedId, selectedUnitId, unitView, size: run?.cellSizeDeg || 0 };
   const placesById = useRef(new Map());
+  const unitsById = useRef(new Map());
 
   // ---------- Create the map once ----------
   useEffect(() => {
@@ -155,6 +316,16 @@ export default function AtlasMap({
     mapRef.current = map;
     colorsRef.current = readColors(wrapRef.current);
     rendererRef.current = renderer;
+    for (const [name, zIndex, takesClicks] of PANES) {
+      const pane = map.createPane(name);
+      pane.style.zIndex = String(zIndex);
+      if (!takesClicks) pane.style.pointerEvents = "none";
+    }
+    renderers.current = {
+      fill: new SafeCanvas({ padding: 0.4, pane: "atlasUnitFill" }),
+      lines: new SafeCanvas({ padding: 0.4, pane: "atlasUnitLines" }),
+      marks: new SafeCanvas({ padding: 0.4, pane: "atlasMarks" }),
+    };
 
     const syncZoom = () => setZoom(Math.round(map.getZoom() * 100) / 100);
     syncZoom();
@@ -167,6 +338,14 @@ export default function AtlasMap({
       else now.onSelect?.(null);
     });
     map.on("movestart zoomstart", () => setHover(null));
+    // The units' names: which fit is worked out again after every move.
+    let labelFrame = 0;
+    const relayout = () => {
+      cancelAnimationFrame(labelFrame);
+      labelFrame = requestAnimationFrame(() => layoutLabels(map, layers.current.labelList, { units: unitsById.current, timeframe: latest.current.timeframe, selectedUnitId: latest.current.selectedUnitId }));
+    };
+    map.on("zoomend moveend resize", relayout);
+    layers.current.relayout = relayout;
 
     // Keep the map the right size when its box changes (panels opening,
     // the window resizing, the page laying itself out). A steady map (the
@@ -195,7 +374,7 @@ export default function AtlasMap({
       stopWatching();
       // Take our shapes off first, while their canvas still exists: removing
       // the map first leaves a redraw queued on a canvas that is gone.
-      for (const name of ["cells", "marks", "draw", "outline"]) layers.current[name]?.remove();
+      for (const name of ["cells", "marks", "draw", "outline", "unitFill", "unitLines", "unitLabels"]) layers.current[name]?.remove();
       tiles.current.base?.remove();
       tiles.current.satellite?.remove();
       tiles.current = { base: null, satellite: null };
@@ -205,7 +384,7 @@ export default function AtlasMap({
       map.off();
       map.remove();
       mapRef.current = null;
-      layers.current = { outline: null, cells: null, cellIndex: new Map(), cellKey: "", marks: null, draw: null };
+      layers.current = { outline: null, cells: null, cellIndex: new Map(), cellKey: "", marks: null, draw: null, unitLines: null, unitFill: null, unitFillIndex: new Map(), unitLabels: null, labelList: [], unitKey: "" };
     };
   }, []);
 
@@ -250,6 +429,12 @@ export default function AtlasMap({
     }
   }, [area?.id, area?.geometry]);
 
+  // In the States view the area's border is bold and solid, like the
+  // units' outlines.
+  useEffect(() => {
+    layers.current.outline?.setStyle(unitView ? { weight: 2.6, opacity: 1, dashArray: null } : { weight: 1.5, opacity: 0.85, dashArray: "5 5" });
+  }, [unitView, area?.id, area?.geometry]);
+
   const fitArea = (animate = true) => {
     const map = mapRef.current;
     const bounds = boxOf(latest.current.area?.bbox);
@@ -286,7 +471,7 @@ export default function AtlasMap({
             renderer: rendererRef.current,
             stroke: false,
             fillOpacity: CELL_OPACITY,
-            fillColor: colorsRef.current["--map-nodata"],
+            fillColor: colorsRef.current.hatch,
             bubblingMouseEvents: false,
           });
           square.atlasId = place.id;
@@ -308,7 +493,7 @@ export default function AtlasMap({
           setHover({ id: event.layer.atlasId, x, y });
         });
         group.on("mouseout", () => setHover(null));
-        group.addTo(map);
+        if (!latest.current.unitView) group.addTo(map);
         layers.current.cells = group;
       }
     }
@@ -319,10 +504,123 @@ export default function AtlasMap({
     for (const place of list) {
       const square = layers.current.cellIndex.get(place.id);
       if (!square) continue;
-      const fillColor = colors[colorVar(colorBy, colorStep(place, colorBy, timeframe, total))];
+      const fillColor = fillOf(colors, colorVar(colorBy, colorStep(place, colorBy, timeframe, total)));
       if (square.options.fillColor !== fillColor) square.setStyle({ fillColor });
     }
   }, [run, places, colorBy, timeframe]);
+
+  // ---------- The states and regions: borders, names, fills ----------
+  const unitKey = units?.length ? `${area?.id || ""}|${units.length}|${units[0].id}|${units[units.length - 1].id}` : "";
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    for (const name of ["unitLines", "unitFill", "unitLabels"]) layers.current[name]?.remove();
+    layers.current.unitLines = null;
+    layers.current.unitFill = null;
+    layers.current.unitLabels = null;
+    layers.current.unitFillIndex = new Map();
+    layers.current.labelList = [];
+    layers.current.unitKey = unitKey;
+    if (!unitKey) return;
+    const list = units.filter((unit) => unit.geometry);
+    const colors = colorsRef.current;
+
+    // The borders, over the squares.
+    layers.current.unitLines = L.geoJSON(
+      { type: "FeatureCollection", features: list.map(unitFeature) },
+      { renderer: renderers.current.lines, interactive: false, style: { color: colors["--map-unit-line"], weight: 1.5, opacity: 0.85, fill: false, lineJoin: "round" } }
+    ).addTo(map);
+
+    // The fills of the States view (added to the map only in that view).
+    const fill = L.geoJSON(
+      { type: "FeatureCollection", features: list.map(unitFeature) },
+      {
+        renderer: renderers.current.fill,
+        style: { stroke: false, fillOpacity: UNIT_OPACITY, fillColor: colors.hatch },
+        bubblingMouseEvents: false,
+        onEachFeature: (feature, layer) => {
+          layer.options.bubblingMouseEvents = false;
+          const id = feature.properties.id;
+          const index = layers.current.unitFillIndex;
+          if (!index.has(id)) index.set(id, []);
+          index.get(id).push(layer);
+        },
+      }
+    );
+    fill.on("click", (event) => {
+      const now = latest.current;
+      if (now.satelliteOnly || now.drawMode) return;
+      now.onSelectUnit?.(unitsById.current.get(event.layer?.feature?.properties?.id) || null);
+    });
+    fill.on("mousemove", (event) => {
+      if (latest.current.drawMode || latest.current.satelliteOnly) return;
+      const { x, y } = event.containerPoint;
+      setHover({ unitId: event.layer?.feature?.properties?.id, x, y });
+    });
+    fill.on("mouseout", () => setHover(null));
+    layers.current.unitFill = fill;
+
+    // The names: bold, dark on a light halo (placed by layoutLabels).
+    const labels = L.layerGroup();
+    const labelList = [];
+    for (const unit of [...list].sort((a, b) => (b.areaKm2 || 0) - (a.areaKm2 || 0))) {
+      const name = unitName(unit);
+      if (!name || !unit.labelPoint) continue;
+      const text = document.createElement("span");
+      text.className = "atlas-unit-name";
+      text.textContent = name;
+      const marker = L.marker([unit.labelPoint.lat, unit.labelPoint.lon], {
+        pane: "atlasUnitLabels",
+        interactive: false,
+        keyboard: false,
+        icon: L.divIcon({ className: "atlas-unit-label", html: text, iconSize: null }),
+      });
+      labels.addLayer(marker);
+      labelList.push({ marker, unit });
+    }
+    labels.addTo(map);
+    layers.current.unitLabels = labels;
+    layers.current.labelList = labelList;
+    layers.current.relayout?.();
+    // unitKey stands for the units' borders; their scores are coloured below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unitKey]);
+
+  // The States view: the squares give way to the units, each filled by its
+  // own score; the borders get bolder.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    unitsById.current = new Map((units || []).map((unit) => [unit.id, unit]));
+    const cells = layers.current.cells;
+    const fill = layers.current.unitFill;
+    const showUnits = Boolean(unitView && fill);
+    if (cells) {
+      if (showUnits && map.hasLayer(cells)) cells.remove();
+      if (!showUnits && !map.hasLayer(cells)) cells.addTo(map);
+    }
+    if (fill) {
+      if (showUnits && !map.hasLayer(fill)) fill.addTo(map);
+      if (!showUnits && map.hasLayer(fill)) fill.remove();
+    }
+    layers.current.unitLines?.setStyle(showUnits ? { weight: 2, opacity: 1 } : { weight: 1.5, opacity: 0.85 });
+    wrapRef.current?.classList.toggle("is-unit-view", showUnits);
+    layers.current.relayout?.();
+    setHover(null);
+    if (!showUnits) return;
+    const colors = colorsRef.current;
+    const total = rankedCount(units, timeframe);
+    for (const unit of units || []) {
+      const fillColor = fillOf(colors, colorVar(colorBy, colorStep(unit, colorBy, timeframe, total)));
+      for (const layer of layers.current.unitFillIndex.get(unit.id) || []) if (layer.options.fillColor !== fillColor) layer.setStyle({ fillColor });
+    }
+  }, [unitView, units, unitKey, colorBy, timeframe]);
+
+  // The names are placed again when their order changes: another picked
+  // unit, another time frame, or new scores (the weights).
+  useEffect(() => {
+    layers.current.relayout?.();
+  }, [selectedUnitId, timeframe, units]);
 
   // ---------- Selected square and highlighted squares ----------
   const highlightKey = (highlightIds || []).join(",");
@@ -337,17 +635,25 @@ export default function AtlasMap({
     const colors = colorsRef.current;
     for (const id of highlightIds || []) {
       const place = placesById.current.get(id);
-      if (place) group.addLayer(L.rectangle(squareBounds(place, size), { interactive: false, color: colors["--map-highlight"], weight: 1.5, fill: false }));
+      if (place) group.addLayer(L.rectangle(squareBounds(place, size), { renderer: renderers.current.marks, interactive: false, color: colors["--map-highlight"], weight: 1.5, fill: false }));
     }
     const selected = selectedId ? placesById.current.get(selectedId) : null;
     if (selected) {
-      group.addLayer(L.rectangle(squareBounds(selected, size), { interactive: false, color: colors["--map-selected"], weight: 2.5, fill: false }));
+      group.addLayer(L.rectangle(squareBounds(selected, size), { renderer: renderers.current.marks, interactive: false, color: colors["--map-selected"], weight: 2.5, fill: false }));
     }
+    // A unit hovered in the list (or on the map), and the picked unit.
+    const outline = (id, style) => {
+      const unit = units?.find((item) => item.id === id);
+      if (unit?.geometry) group.addLayer(L.geoJSON(unit.geometry, { renderer: renderers.current.marks, interactive: false, style: { fill: false, lineJoin: "round", ...style } }));
+    };
+    const hoverUnitId = unitView ? hover?.unitId : null;
+    for (const id of new Set([highlightUnitId, hoverUnitId].filter(Boolean))) if (id !== selectedUnitId) outline(id, { color: colors["--map-highlight"], weight: 3 });
+    if (selectedUnitId) outline(selectedUnitId, { color: colors["--map-selected"], weight: 3.5 });
     group.addTo(map);
     layers.current.marks = group;
-    // highlightKey stands for highlightIds.
+    // highlightKey stands for highlightIds; hover only matters by its unit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, highlightKey, run, places]);
+  }, [selectedId, highlightKey, run, places, unitKey, unitView, selectedUnitId, highlightUnitId, hover?.unitId]);
 
   // ---------- Flying to a place ----------
   const focusKey = focusBounds ? JSON.stringify(focusBounds) : "";
@@ -398,8 +704,9 @@ export default function AtlasMap({
     getMap: () => mapRef.current,
   }));
 
-  const hoverPlace = hover && !satelliteOnly ? placesById.current.get(hover.id) : null;
-  const total = hoverPlace ? rankedCount(places || [], timeframe) : 0;
+  const hoverPlace = hover && !satelliteOnly && hover.id ? placesById.current.get(hover.id) : null;
+  const hoverUnit = hover && !satelliteOnly && unitView && hover.unitId ? unitsById.current.get(hover.unitId) : null;
+  const total = hoverPlace ? rankedCount(places || [], timeframe) : hoverUnit ? rankedCount(units || [], timeframe) : 0;
   const wrapWidth = wrapRef.current?.clientWidth || 0;
   const tipLeft = hover ? Math.min(hover.x + 14, Math.max(8, wrapWidth - 220)) : 0;
 
@@ -470,10 +777,25 @@ export default function AtlasMap({
           <span className="atlas-map-tip-value">{valueText(hoverPlace, colorBy, timeframe, total)}</span>
         </div>
       )}
+      {hoverUnit && (
+        <div className="atlas-map-tip" style={{ left: tipLeft, top: hover.y + 14 }} role="tooltip">
+          <span className="atlas-map-tip-title">{unitName(hoverUnit) || "No name in FAO GAUL"}</span>
+          <span className="atlas-map-tip-value">{unitTip(hoverUnit, colorBy, timeframe, total)}</span>
+        </div>
+      )}
 
       {!satelliteOnly && children}
     </div>
   );
+}
+
+// A state's hover text: the value the map colours it by. On the Priority map
+// a state that is not ranked says why ("No black-soil cropland"); on the
+// Value, Damage and Feasibility maps it gives its score whenever it has one.
+const SCORE_OF = { value: "soil", damage: "damage", access: "access" };
+function unitTip(unit, colorBy, timeframe, total) {
+  const scored = unit.analyzed || unit.nearTerm?.tier === "setAside" || (SCORE_OF[colorBy] && Number.isFinite(unit[SCORE_OF[colorBy]]));
+  return scored ? valueText(unit, colorBy, timeframe, total) : unit.reason || "Not ranked";
 }
 
 // Six decimals is about 10 cm: plenty for a farm corner.
