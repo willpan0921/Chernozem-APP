@@ -158,6 +158,8 @@ export function scoreUnits(places, units, cellUnit, options = {}) {
       rankedBlackSoilHa: row.blackSoilHa,
       croplandHa: sumOf(squares, "croplandHa"),
       heavyDamageHa: sumOf(squares, "heavyDamageHa"),
+      // A natural disaster's squares: the black-soil cropland it hit.
+      ...(squares.some((square) => Number.isFinite(square.hitHa)) ? { hitHa: sumOf(squares, "hitHa"), hitCropHa: sumOf(squares, "hitCropHa") } : {}),
       people: sumOf(squares, "people"),
       peopleOnDamagedSoil: sumOf(squares, "peopleOnDamagedSoil"),
       nearTerm: result ? result.nearTerm : { ...idle, ramp: 0 },

@@ -26,8 +26,9 @@
 // WHO EDITS IT
 // Whoever changes how the map is coloured. Tested in mapColors.test.js.
 
-import { atlasMethods } from "../../config/research.js";
-import { accessMeasured, atPeace, beforeWar, noFightingFound, notMeasuredReason, warInPart, warPartOf, warSetByTeam } from "./overview.js";
+import { atlasDisasterMethods, atlasMethods } from "../../config/research.js";
+import { accessMeasured, accessSourceOf, atPeace, beforeWar, disasterHitLabel, disasterNoun, disasterType, isDisasterRun, noFightingFound, notMeasuredReason, warInPart, warPartOf, warSetByTeam } from "./overview.js";
+import { FLOOD, WILDFIRE } from "./method.js";
 
 export const COLOR_MODES = ["priority", "value", "damage", "access"];
 
@@ -72,8 +73,26 @@ export function leftOutText(gatePercentile) {
 // the same as safe. Nor is it in a war where no fire looked like fighting
 // (overview.js noFightingFound): "Fires too sparse to tell", never a word
 // that reads as "no fighting".
+// A natural disaster (overview.js isDisasterRun): the Damage key is "Damage:
+// hit since 4 Sep 2023", the Feasibility key "Feasibility: not under water
+// now" (a flood: the share of cropland not under water) or "Feasibility:
+// distance to a fire now" (a wildfire, full at 10 km), and the
+// not-measured key says why ("Not measured for a drought", "Before the
+// flood").
+export const DISASTER_LEGENDS = {
+  flood: { title: "Feasibility: not under water now", low: "80% + under water", high: `${Math.round(FLOOD.dryNowShare * 100)}% or less under water` },
+  wildfire: { title: "Feasibility: distance to a fire now", low: `Under ${WILDFIRE.fullKm / 5} km`, high: `${WILDFIRE.fullKm} km +` },
+};
 export function legendFor(colorBy, run) {
   const legend = LEGENDS[colorBy] || LEGENDS.priority;
+  if (run && isDisasterRun(run)) {
+    if (colorBy === "damage") return { ...legend, title: `Damage: ${disasterHitLabel(run).replace(/^Black/, "black")}` };
+    if (colorBy === "access") {
+      if (!accessMeasured(run)) return { ...legend, title: "Feasibility: not measured", high: notMeasuredReason(run).short };
+      return { ...legend, ...(DISASTER_LEGENDS[disasterType(run)] || {}) };
+    }
+    return legend;
+  }
   if (colorBy === "access" && run && !accessMeasured(run)) {
     const high = noFightingFound(run) ? "Fires too sparse to tell" : beforeWar(run) ? "Before the war" : warSetByTeam(run) ? "Not at war (your team)" : "No war listed";
     return { ...legend, title: "Feasibility: not measured", high };
@@ -88,6 +107,21 @@ export function legendFor(colorBy, run) {
 // no fires that look like fighting were found within 300 km". Null for any
 // other run (at peace the key has no Access colouring either, and the
 // "How it's measured" panel says why).
+// A flood's or a wildfire's Feasibility that is full in every square
+// (nothing seen in the way anywhere): a true reading, but its map would be
+// one flat colour, so the Feasibility tab is not offered (MapTabs) and
+// this says why; null otherwise.
+//   flood     "No square has more than 5% of its cropland under water now"
+//   wildfire  "No fire burning within 10 km in the month's last 7 days"
+export function flatAccessNote(run, places = []) {
+  if (!isDisasterRun(run) || !accessMeasured(run)) return null;
+  const scored = (places || []).filter((place) => place.analyzed !== false && Number.isFinite(place.access));
+  if (!scored.length || scored.some((place) => place.access < 1)) return null;
+  if (accessSourceOf(run) === "flood-now") return `No square has more than ${Math.round(FLOOD.dryNowShare * 100)}% of its cropland under water now`;
+  if (accessSourceOf(run) === "fire-now") return `No fire burning within ${WILDFIRE.fullKm} km in the month's last ${WILDFIRE.nowDays} days`;
+  return null;
+}
+
 export function accessKeyNote(run) {
   if (!noFightingFound(run)) return null;
   const reason = notMeasuredReason(run);
@@ -113,6 +147,10 @@ export function accessKeyNote(run) {
 //                      are any: run.otherWarSquares), and the two peace
 //                      rules used elsewhere
 export function methodsFor(run) {
+  // A natural disaster: the damage and Feasibility items in its own words
+  // (atlasMethods items' whatDisaster, formulaDisaster, sourceDisaster by
+  // type), and a note without war words.
+  if (run && isDisasterRun(run)) return disasterMethods(run);
   const peace = atPeace(run);
   const before = beforeWar(run);
   const measured = !run || accessMeasured(run);
@@ -150,6 +188,30 @@ export function methodsFor(run) {
     note: measured ? atlasMethods.note : atlasMethods.notePeace || atlasMethods.note,
   };
 }
+
+function disasterMethods(run) {
+  const type = disasterType(run);
+  const noun = disasterNoun(run);
+  const before = beforeWar(run);
+  const measured = accessMeasured(run);
+  const words = atlasDisasterMethods;
+  const fill = (text) => String(text || "").replaceAll("{noun}", noun);
+  const items = atlasMethods.items.map((item) => {
+    const own = words[item.id];
+    if (!own) return item;
+    const source = own.sourceDisaster?.[type] || item.source;
+    if (item.id === "damage") {
+      if (before) return { ...item, what: fill(words.whatBeforeDisaster), formula: "Not counted before the disaster began", source };
+      return { ...item, what: fill(own.whatDisaster?.[type] || item.what), formula: own.formulaDisaster?.[type] || item.formula, source };
+    }
+    const what = before ? words.whatBeforeDisaster : !measured && accessSourceNone(run) ? own.whatDisasterNone : own.whatDisaster?.[type];
+    return { ...item, what: fill(what || item.what), formula: (measured && own.formulaDisaster?.[type]) || "Not measured", source };
+  });
+  const note = measured ? words.noteDisaster : words.noteDisasterUnmeasured;
+  return { ...atlasMethods, items, note, limits: words.limitsDisaster?.[type] || atlasMethods.limits };
+}
+// A flood or wildfire month without the images that would measure it.
+const accessSourceNone = (run) => run?.accessSource === "disaster-none";
 
 // The "How it's measured" note for the States view (atlasMethods.noteUnits),
 // in the units' own words: "{one}" and "{many}" become "state" and
@@ -209,12 +271,27 @@ export function unrankedNote(places, colorBy, timeframe) {
   if (!idle.length) return null;
   if (colorBy !== "priority") return "No reading";
   const why = new Set(
-    idle.map((place) => (place[timeframe]?.tier === "noBlackSoil" ? "no black-soil cropland" : Array.isArray(place.cellIds) && place.squares === 0 ? "no map square in it" : "no data"))
+    idle.map((place) =>
+      place[timeframe]?.tier === "noBlackSoil" ? "no black-soil cropland" : Array.isArray(place.cellIds) && place.squares === 0 ? "no map square in it" : typeof place.notMeasured === "string" ? "damage not measured yet" : "no data",
+    )
   );
   return `Not ranked: ${[...why].join(" or ")}`;
 }
 
 // The CSS variable name for a step: "--map-damage-3", "--map-nodata"...
+// The Overview's key line for its hatched squares in a natural disaster
+// (unrankedNote), with a word when most are hatched for lack of black soil:
+// the cropland totals above carry the hit land then. Null otherwise (a
+// war's and peace's Overview keep their key as it is).
+export function overviewUnrankedNote(run, places, timeframe) {
+  if (!isDisasterRun(run)) return null;
+  const note = unrankedNote(places, "priority", timeframe);
+  if (!note) return null;
+  const list = places || [];
+  const noSoil = list.filter((place) => place[timeframe]?.tier === "noBlackSoil").length;
+  return noSoil > list.length / 2 ? `${note} (most squares here: the cropland hit above counts every soil)` : note;
+}
+
 export function colorVar(colorBy, step) {
   if (!(step >= 1)) return "--map-nodata";
   return `--map-${COLOR_MODES.includes(colorBy) ? colorBy : "priority"}-${step}`;
@@ -224,8 +301,27 @@ export function colorVar(colorBy, step) {
 // "Left out for now (least feasible)", "Value 72 / 100", "Damage 45 / 100",
 // "Feasibility: about 42 km from fighting"; for a state "Feasibility 75 /
 // 100 · nearest fighting about 12 km".
-export function valueText(place, colorBy, timeframe, total) {
+//   run   the run shown (optional): in a natural disaster Feasibility is
+//         worded by its type ("Feasibility: 12% of cropland under water",
+//         "Feasibility: about 4 km from a fire burning now")
+export function valueText(place, colorBy, timeframe, total, run = null) {
   if (!place) return "";
+  if (colorBy === "access" && (isDisasterRun(run) || Number.isFinite(place.raw?.wetNowShare) || Number.isFinite(place.raw?.fireKm))) {
+    const type = run ? disasterType(run) : Number.isFinite(place.raw?.wetNowShare) ? "flood" : "wildfire";
+    if (Array.isArray(place.cellIds)) {
+      if (!Number.isFinite(place.access)) return "No feasibility data";
+      const near = place.nearestConflictKm;
+      const nearest = type === "wildfire" && Number.isFinite(near) ? (near >= WILDFIRE.fullKm ? ` · nearest fire now ${WILDFIRE.fullKm} km +` : ` · nearest fire now about ${Math.round(near)} km`) : "";
+      return `Feasibility ${Math.round(place.access * 100)} / 100${nearest}`;
+    }
+    if (type === "flood" && Number.isFinite(place.raw?.wetNowShare)) {
+      const pct = Math.round(place.raw.wetNowShare * 100);
+      return place.raw.wetNowShare <= FLOOD.dryNowShare ? `Feasibility: ${pct}% of cropland under water (counts as nothing in the way)` : `Feasibility: ${pct}% of cropland under water`;
+    }
+    const km = place.raw?.fireKm;
+    if (type === "wildfire" && Number.isFinite(km)) return km >= WILDFIRE.fullKm ? `Feasibility: ${WILDFIRE.fullKm} km + from a fire burning now` : `Feasibility: about ${Math.round(km)} km from a fire burning now`;
+    return Number.isFinite(place.access) ? `Feasibility ${Math.round(place.access * 100)} / 100` : "No feasibility data";
+  }
   if (colorBy === "value") {
     return Number.isFinite(place.soil) ? `Value ${Math.round(place.soil * 100)} / 100` : "No value data";
   }

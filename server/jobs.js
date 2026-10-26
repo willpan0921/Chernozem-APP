@@ -476,6 +476,10 @@ export function cancelAnalysis(jobId) {
 // "Ethiopia" counted all of the country as at war since 1 Aug 2023, so any
 // lasting radar change anywhere was heavy damage; 2026-10-20: the same for
 // a region or a drawn area that touched the boxes.)
+// A natural disaster the team set (area.war mode "disaster") comes the
+// same way (teamConflict): its months are kept or redone by its own key
+// and method version (overview.js keepsMonth, method.js warKey and
+// methodVersionFor).
 function warFor(area, grid) {
   const own = teamConflict(area.war, area.id);
   if (own !== undefined) return { conflict: own, conflictSource: "area" };
@@ -608,6 +612,7 @@ async function runJob(job, area, count, rerun) {
         conflictSource,
         imagery: result.imagery,
         accessSource: result.accessSource,
+        disasterDamage: result.disasterDamage,
       });
       // Redoing a month keeps its id, so links to it keep working.
       if (old) run.id = old.id;

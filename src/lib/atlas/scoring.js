@@ -25,7 +25,7 @@
 // Whoever changes the research method. The fixed choices (which indicators,
 // the defaults, the scales) are in method.js.
 
-import { BLACK_SOIL_MIN, COMPONENTS, NO_BLACK_SOIL_REASON, PEACE_DAMAGE, cellAreaHa, checkSettings } from "./method.js";
+import { BLACK_SOIL_MIN, COMPONENTS, DISASTER_COMPONENTS, NO_BLACK_SOIL_REASON, PEACE_DAMAGE, cellAreaHa, checkSettings, isDisaster } from "./method.js";
 
 // The names of the three scores, in the order the pages show them.
 export const SCORE_KEYS = ["soil", "damage", "access"];
@@ -198,6 +198,11 @@ export function peaceDamageScore(place) {
 //                          region of a war that covers the area only in
 //                          part, run.conflict.partOfCountry) is scored at
 //                          peace too, whatever the run's war
+//                          A natural disaster (method.js isDisaster):
+//                          the disaster's components (DISASTER_COMPONENTS:
+//                          damage = mean of hit and heavy, access =
+//                          feasible), never the peace damage score; the
+//                          gate, the ramp and the power mean are the same
 //              cellSizeDeg the map squares' size, for blackSoilFloor
 //              minBlackSoilHa  the floor to use instead of blackSoilFloor
 //                          (whole states: src/lib/atlas/units.js passes 0,
@@ -214,17 +219,21 @@ export function peaceDamageScore(place) {
 // scored have tier "notAnalyzed" (or "noBlackSoil") and a "reason".
 export function scorePlaces(rows, options = {}) {
   const settings = checkSettings(options.settings);
-  const components = options.components || COMPONENTS;
+  const disaster = isDisaster(options.conflict);
+  const components = options.components || (disaster ? DISASTER_COMPONENTS : COMPONENTS);
   const excludedSet = new Set(options.excluded || []);
 
   const atPeace = options.conflict === null;
   const places = rows.map((row) => {
     const scores = componentScores(row, components);
-    if (atPeace || row.atWar === false) scores.damage = peaceDamageScore(row) ?? scores.damage;
+    if (!disaster && (atPeace || row.atWar === false)) scores.damage = peaceDamageScore(row) ?? scores.damage;
     const missing = SCORE_KEYS.filter((key) => scores[key] === null);
     let reason = null;
     if (excludedSet.has(row.id)) reason = "Not analyzed in this run";
     else if (Number.isFinite(row.blackSoilHa) && row.blackSoilHa < (Number.isFinite(options.minBlackSoilHa) ? options.minBlackSoilHa : blackSoilFloor(row, options.cellSizeDeg))) reason = NO_BLACK_SOIL_REASON;
+    // A natural disaster's square whose damage was not measured yet (no
+    // crop season long enough, no images: server/runs.js notMeasured).
+    else if (disaster && missing.includes("damage") && typeof row.notMeasured === "string") reason = row.notMeasured;
     else if (missing.length) reason = `Missing data for ${missing.join(", ")}`;
     const tier = reason === NO_BLACK_SOIL_REASON ? "noBlackSoil" : "notAnalyzed";
     return {

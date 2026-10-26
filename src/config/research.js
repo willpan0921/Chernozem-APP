@@ -13,9 +13,15 @@
 // And the closing safety line of the Atlas report: safetyNote inside a
 // known war, peaceNote elsewhere (safetyNoteFor(run)).
 //
+// A natural disaster the team set (src/lib/atlas/method.js isDisaster)
+// has its own words: the items' whatDisaster / formulaDisaster /
+// sourceDisaster by type, and the report's disasterNote.
+//
 // WHO EDITS IT
 // Whoever publishes new validation results. Change the text here; the
 // pages pick it up.
+
+import { isDisaster } from "../lib/atlas/method.js";
 
 export const validation = {
   title: "How we know it works",
@@ -36,6 +42,55 @@ export const validation = {
   },
 };
 
+// "How we know it works" for an area in a natural disaster (DataPage):
+// the disaster rules' own checks on real data (docs/METHODS.md, "Natural
+// disasters", scripts/disaster-check.js), one type at a time. `validation`
+// above is the war method's research and stays as it is.
+//   checks   { value, text }, as validation's
+//   failed   the amber note of a rule that failed its checks, or null
+export const disasterValidation = {
+  title: "How we know it works",
+  scope: "Checked on past disasters",
+  intro: "The app's own analysis run on past disasters and on the same places in years without one, against official maps and figures.",
+  warNote: "The research tested in Ukraine checks the war method; this area uses the {noun} rule below.",
+  checked: "Checked on real data on 25 October 2026.",
+  types: {
+    flood: {
+      checks: [
+        { value: "−4 to −19%", text: "Thessaly, Storm Daniel 2023: 12,151 ha of cropland flooded against the Copernicus flood maps (12,600 to 15,000 ha)" },
+        { value: "−17%", text: "Punjab, Chenab floods 2025: 13,747 ha against the Copernicus map (about 16,500 ha of cropland); on rice paddies only water far deeper than their own counts, so it reads a little low" },
+        { value: "37%", text: "Big Sioux, Iowa 2024: of the USDA crop-flood figure (19,269 of about 52,600 ha), a known undercount" },
+        { value: "0–8%", text: "Cropland read as flooded in the same places without a flood: 0.2% Thessaly, 1.1% Punjab, 0% Iowa in summer; about 3% in the Punjab paddy season, 7–8% in an Iowa winter and spring (meltwater and rain on fields)" },
+      ],
+      failed: null,
+    },
+    wildfire: {
+      checks: [
+        { value: "+9 to +15%", text: "Yambol, Bulgaria 2024: 8,388 to 8,860 ha burned against the Copernicus map (7,703 ha)" },
+        { value: "74.5%", text: "Smokehouse Creek, Texas 2024: share of the area burned (official 70–74%)" },
+        { value: "0–8%", text: "Cropland read as burned without a wildfire: 0% Yambol; with crop-residue or stubble burning 1.6% (Punjab 2024), 4.6% (Rostov 2024) and 8.1% (Punjab 2025, unusually heavy burning)" },
+      ],
+      failed: null,
+    },
+    drought: {
+      checks: [
+        { value: "72–73%", text: "Nebraska Panhandle 2026: share of the cropland hit, 107,205 to 109,148 ha, the same from July on (wheat drought claims cover 46,275 ha)" },
+        { value: "11.2%", text: "Heavily damaged share, June to September: above the 8% the check asked for" },
+        { value: "0–20%", text: "Cropland read as hit without a drought: 19.7% in Nebraska 2025 (wetter normal years), 0% in Iowa 2023" },
+      ],
+      failed: null,
+    },
+    ground: {
+      checks: [],
+      failed: "Provisional: this rule failed its checks. Over the Romagna landslides of May 2023 it read only 1.3 times the hit land of nearby hills without slides (2 times was needed), and an irrigated plain with no disaster read 15.6% of its cropland as hit. Treat it as a pointer to where to look, not a measurement.",
+    },
+    other: {
+      checks: [],
+      failed: "Provisional: this rule (the storm, earthquake and landslide one) failed its checks: it read about as much change in places without a disaster. Treat it as a pointer to where to look, not a measurement.",
+    },
+  },
+};
+
 // Where the research is published.
 export const citation = {
   text: "Chernozem Recovery Atlas, Harvard Dataverse",
@@ -49,7 +104,22 @@ export const citation = {
 export const safetyNote = "Never treat land as safe from this map. Only certified deminers can clear land for use.";
 export const peaceNote = "Scores show model priority from satellite data, not proven results. Check the land on the ground before you act on it.";
 
+// A natural disaster: no deminers, but the land can still be dangerous,
+// in the way of its type (a drought has no such hazard).
+const DISASTER_HAZARD = {
+  flood: "Flood water, mud and weakened banks can still be dangerous: check",
+  wildfire: "Smouldering ground and fire-damaged trees can still be dangerous: check",
+  ground: "Unstable slopes and cracked ground can still be dangerous: check",
+  other: "The land can still be dangerous after a disaster: check",
+};
+export function disasterNoteFor(type) {
+  const hazard = DISASTER_HAZARD[type];
+  return `Scores show model priority from satellite data, not proven results. ${hazard ? `${hazard} the land on the ground with local authorities before you act.` : "Check the land and the crop on the ground before you act on it."}`;
+}
+export const disasterNote = disasterNoteFor("other");
+
 export function safetyNoteFor(run) {
+  if (run && isDisaster(run.conflict)) return disasterNoteFor(run.conflict.type);
   return run && run.conflict === null ? peaceNote : safetyNote;
 }
 
@@ -163,4 +233,68 @@ export const atlasMethods = {
   notePartElsewhere: "Elsewhere damage is also counted from the day the war began, but heavy damage needs strong radar change and an unusual fire, and the damage score is the heavily damaged share of the black soil.",
   limits: "Scores show model priority, not proven results. Check the land on the ground before you act on it.",
   sources: "Processed in Google Earth Engine.",
+};
+
+// The "How it's measured" words of a natural disaster the team set
+// (src/lib/atlas/mapColors.js methodsFor), kept apart from atlasMethods so
+// a war's and peace's panel stay exactly as they are: per item (damage,
+// access) what / formula / source by type, and the notes. "{noun}" is the
+// disaster's noun ("flood", "storm, earthquake or landslide").
+export const atlasDisasterMethods = {
+  damage: {
+    whatDisaster: {
+      flood: "Cropland flooded since the day the flood began: normally dry land seen under water on radar (darker than in the same days of 2019–2021, on a day without snow or frozen ground) or in a clear optical image at any look in the 60 days from that day. Heavy damage is land under water over 4 days or more. Land that is often under water (lakes, rivers, and fields under water in the same weeks of most years 2019–2021, as many rice paddies are) and land more than 15 m above the nearest stream are left out, unless the radar sees such a field far darker than it normally is at that time of the year (8 dB or more: a flood over a paddy, deeper than its own water).",
+      wildfire: "Cropland burned since the day the wildfire began: a day on the MODIS or VIIRS burned-area map in the 60 days from it, or an unusual fire within 1 km (at least 3 times the fires of the same days in 2019–2021) with a severe loss of vegetation (Sentinel-2 dNBR of 0.27 or more). On cropland, burning only counts where it is clearly above those years, so fields burned every year (crop residue, stubble) are left out. Heavy damage is burned land with that severe loss. The burned-area maps come about 2.5 months late; until then dormant or grazed land is under-counted.",
+      drought: "This season's crop loss: crop greenness 20% or more below the same weeks of 2019–2021 (35% or more for heavy damage), smoothed over 1.5 km so crop rotation cancels out. It is read at each month's end and the season's worst reading so far is kept, so it does not fall within the season; it starts again when a new season begins. Greenness is not yield.",
+      ground: "Provisional: lasting change of the land over the growing season that contains the day the {noun} began, where two sensors agree: crop greenness 20% or more below normal AND radar change of 2 dB (3 dB for heavy damage). Measured once that season is complete; small slides and wooded slopes are missed.",
+      other: "Provisional: lasting change of the land over the growing season that contains the day the {noun} began, where two sensors agree: crop greenness 20% or more below normal AND radar change of 2 dB (3 dB for heavy damage). Measured once that season is complete.",
+    },
+    formulaDisaster: {
+      flood: "Mean of flooded share and heavily flooded share of the black soil, each full at 20 %",
+      wildfire: "Mean of burned share and severely burned share of the black soil, each full at 20 %",
+      drought: "Mean of the shares with 20 % and 35 % greenness loss, each full at 20 %",
+      ground: "Mean of the shares with greenness loss and 2 dB / 3 dB radar change, each full at 20 %",
+      other: "Mean of the shares with greenness loss and 2 dB / 3 dB radar change, each full at 20 %",
+    },
+    sourceDisaster: {
+      flood: "Sentinel-1 radar, 10 m · Sentinel-2, 10–20 m · JRC Global Surface Water · MERIT Hydro",
+      wildfire: "MODIS MCD64A1 and VIIRS VNP64A1 burned area, 500 m · NASA FIRMS, 1 km · Sentinel-2, 20 m",
+      drought: "MODIS MOD13Q1 greenness, 250 m (VIIRS VNP13A1 when MODIS has none)",
+      ground: "Sentinel-2, 10 m · Sentinel-1 radar, 10 m",
+      other: "Sentinel-2, 10 m · Sentinel-1 radar, 10 m",
+    },
+  },
+  access: {
+    whatDisaster: {
+      flood: "What satellites see now: the share of the square's cropland not under water at its latest look in the last 12 days of the month. Where the radar looked in those days, water in an optical image counts only if the radar saw it too (wet soil and rice paddies look like water to Sentinel-2). A square with 5% or less of its cropland under water counts as nothing in the way, so ponds and puddles never leave it out. 1 means nothing was seen in the way, never that the land can be worked: roads, debris and power are not seen.",
+      wildfire: "What satellites see now: the distance to a fire burning in the last 7 days of the month, full at 10 km. 1 means no fire was seen burning nearby, never that the land can be worked.",
+      drought: "Not measured for a drought: it does not stop fieldwork, so nothing is left out (this does not prove the land can be worked).",
+      ground: "Not measured for a {noun}: satellites do not show what stops fieldwork after it, so nothing is left out (this does not prove the land can be worked).",
+      other: "Not measured for a {noun}: satellites do not show what stops fieldwork after it, so nothing is left out (this does not prove the land can be worked).",
+    },
+    whatDisasterNone: "Not measured this month: no images of its last days to see the {noun} in, so nothing is left out (this does not prove the land can be worked).",
+    formulaDisaster: {
+      flood: "1 when 5 % or less of the cropland is under water at the latest look; above that, falling to 0 when all of it is",
+      wildfire: "Distance to a fire burning now ÷ 10 km, capped at 1",
+    },
+    sourceDisaster: {
+      flood: "Sentinel-1 radar and Sentinel-2, the month's last 12 days",
+      wildfire: "NASA FIRMS fire detections, the month's last 7 days",
+      drought: "Not measured",
+      ground: "Not measured",
+      other: "Not measured",
+    },
+  },
+  // The note when Feasibility is measured (a flood, a wildfire) and when
+  // it is not, and the damage item before the disaster's day.
+  noteDisaster: "Near term leaves the least feasible places out for now (the Feasibility cutoff; they show in the lowest priority shade) and ranks the rest by value and damage; Post-crisis blends all three. The soil-health index is shown for context only.",
+  noteDisasterUnmeasured: "Feasibility is not measured here, so Near term leaves nothing out and ranks by value and damage; Post-crisis blends all three. The soil-health index is shown for context only.",
+  whatBeforeDisaster: "This month ends before the {noun} began, so no disaster damage is counted and Feasibility is not measured. Months from its day count it.",
+  limitsDisaster: {
+    flood: "Scores show model priority, not proven results. Flooded tall crops and towns can be missed, sparse images under-count long floods, and sand, silt and salt left on fields are not measured. Fields under water in most years in those weeks (paddies) count only where the radar sees them far darker than normal, so a shallow flood on them reads low, and some paddies and river beds that are wet every season can still read as flooded. Check the land on the ground before you act on it.",
+    wildfire: "Scores show model priority, not proven results. Until the month's burned-area map is out, fires on dormant or grazed land are under-counted, and pasture is reported, not scored. Where fields burn every year, a wildfire on cropland counts only where burning is clearly above normal, so it can read low there. Check the land on the ground before you act on it.",
+    drought: "Scores show model priority, not proven results. Greenness is not yield, irrigated land shows little loss, and 2019–2021 were wet in some places. Check the land on the ground before you act on it.",
+    ground: "Scores show model priority, not proven results. This rule is provisional: it finds a fraction of the mapped slides, and earthquake cracks are not seen. Check the land on the ground before you act on it.",
+    other: "Scores show model priority, not proven results. This rule is provisional. Check the land on the ground before you act on it.",
+  },
 };

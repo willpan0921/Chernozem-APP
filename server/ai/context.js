@@ -17,9 +17,9 @@
 // cache working).
 
 import { scorePlaces, ranking, nearTermShares } from "../../src/lib/atlas/scoring.js";
-import { COSTS, DEFAULT_SETTINGS, FIRE_YEARS, HEAVY_DAMAGE, METHOD_VERSION, PEACE_DAMAGE, checkSettings, runsComparable } from "../../src/lib/atlas/method.js";
-import { FIGHTING_SEARCH_KM, warningWords, accessMeasured, accessSourceOf, acledFileState, acledStateText, alertPlaces, atPeace, beforeWar, conflictOf, noFightingFound, notMeasuredReason, outsideWar, peaceSquares, seasonWords, shownNewDamage, warInPart, warKey, warPartOf, warSetByTeam } from "../../src/lib/atlas/overview.js";
-import { EARLIEST_WAR_DAY, TEAM_WAR_NAME, teamConflict } from "../../src/config/conflicts.js";
+import { COSTS, DEFAULT_SETTINGS, DISASTER_LABELS, DISASTER_NOUNS, FIRE_YEARS, HEAVY_DAMAGE, METHOD_VERSION, PEACE_DAMAGE, checkSettings, isDisaster, methodVersionFor, runsComparable } from "../../src/lib/atlas/method.js";
+import { FIGHTING_SEARCH_KM, warningWords, accessMeaning, accessMeasured, accessSourceOf, acledFileState, acledStateText, alertPlaces, atPeace, beforeWar, conflictOf, damageMeaning, disasterDamageState, heavyDamageRule, isDisasterRun, noFightingFound, notMeasuredReason, outsideWar, peaceSquares, seasonWords, shownNewDamage, warInPart, warKey, warPartOf, warSetByTeam } from "../../src/lib/atlas/overview.js";
+import { EARLIEST_WAR_DAY, TEAM_DISASTER_NAME, TEAM_WAR_NAME, teamConflict } from "../../src/config/conflicts.js";
 import { listConflictForArea } from "../conflicts.js";
 import { NO_WAR_WARNING, TEAM_PEACE_WARNING } from "../runs.js";
 import { placeNames } from "../../src/lib/atlas/placeNames.js";
@@ -47,7 +47,7 @@ export const ATLAS_TOOLS = [
   {
     name: "get_place",
     description:
-      "Full detail for one map cell: value, damage and feasibility (safe access: distance to fighting) scores, ranks in both timeframes, black-soil and heavily damaged hectares, people, and recovery cost. Call this when the user asks about a specific place, a cell id (like r12c40) or a coordinate. Give either cellId, or lat and lon (the nearest cell is used).",
+      "Full detail for one map cell: value, damage and feasibility (in a war, safe access: distance to fighting; in a natural disaster, what satellites see in the way now: land under water or a fire burning nearby) scores, ranks in both timeframes, black-soil and heavily damaged hectares, people, and recovery cost. Call this when the user asks about a specific place, a cell id (like r12c40) or a coordinate. Give either cellId, or lat and lon (the nearest cell is used).",
     strict: true,
     input_schema: {
       type: "object",
@@ -77,7 +77,7 @@ export const ATLAS_TOOLS = [
   {
     name: "budget_coverage",
     description:
-      "How many hectares a budget in US dollars can restore (fast path and full recovery; where a war is listed, before demining) and which top near-term places it covers first. Call this when the user mentions money, a budget, funding or cost.",
+      "How many hectares a budget in US dollars can restore (fast path and full recovery; where a war is listed, before demining; after a natural disaster, restoring the soil) and which top near-term places it covers first. Call this when the user mentions money, a budget, funding or cost.",
     strict: true,
     input_schema: {
       type: "object",
@@ -311,8 +311,12 @@ async function safe(fn) {
 //                  "no-battles", "unusable"): where no fire looked like
 //                  fighting, the AI is then never told "there is no ACLED
 //                  file"
-export function conflictLine(conflict, accessSource = null, { currentMethod = true, setByTeam = false, beforeWar = false, inPart = null, acled = null } = {}) {
+//   run            the run itself: a natural disaster the team set
+//                  (src/lib/atlas/method.js isDisaster) is worded from it
+//                  (disasterLine), never with a war's words
+export function conflictLine(conflict, accessSource = null, { currentMethod = true, setByTeam = false, beforeWar = false, inPart = null, acled = null, run = null } = {}) {
   if (conflict === undefined) return "";
+  if (isDisaster(conflict)) return disasterLine(conflict, run || { conflict, accessSource, conflictSource: "area" }, { currentMethod, beforeWar });
   // At peace the label does not bring up fighting (FEASIBILITY_PEACE).
   const notMeasured = (why, label = FEASIBILITY) =>
     `${label} is not measured here: ${why}, so it reads full (100) everywhere and nothing is left out of the near-term ranking for it. That does NOT mean the land is safe: never call land safe, and point to local authorities for unexploded ordnance or security questions.`;
@@ -389,6 +393,41 @@ export function conflictLine(conflict, accessSource = null, { currentMethod = tr
   return `${none} ${damage} ${access} Do not talk about a war, a front line or demining for this area unless the user raises it.`;
 }
 
+// The AI's line for a natural disaster the team set (conflictLine):
+// "Disaster: Flood since 2023-09-04 (set by the team: Storm Daniel
+// floods). Damage score: ... Feasibility: ... Cropland hit (all soils): Y
+// ha; ..." with how its damage behaves over time, and never a word of the
+// war's (no demining, front, fighting, battles, war years or safe access).
+export function disasterLine(conflict, run, { currentMethod = true, beforeWar: before = false } = {}) {
+  const type = conflict.type;
+  const noun = DISASTER_NOUNS[type];
+  const named = conflict.name && conflict.name !== TEAM_DISASTER_NAME(type);
+  const head = `Disaster: ${DISASTER_LABELS[type]} since ${conflict.since} (set by the user's team for this area in Atlas Settings${named ? `: ${conflict.name}` : ""}).`;
+  const rules = "Never say land is safe or workable as a fact: satellites cannot see roads, debris, power or contamination. Speak of this disaster only, not of armed conflict or mine clearance, unless the user raises it.";
+  if (before || beforeWar(run)) {
+    return `${head} This month ends before the ${noun} began, so no disaster damage is counted for it (the damage score is 0 everywhere) and Feasibility is not measured. ${rules}`;
+  }
+  const t = run?.totals || {};
+  const grass = type === "flood" || type === "wildfire" ? `; grassland and pasture hit (reported, not scored): ${ha(t.grassHitHa)}` : "";
+  const time =
+    type === "drought"
+      ? "Damage here is this season's crop loss: it is read at each month's end and the season's worst reading so far is kept, so it does not fall within a season; it starts again when a new season begins, so it can fall from one season to the next."
+      : type === "flood" || type === "wildfire"
+        ? `Damage counts the land hit within 60 days of the day the ${noun} began; every later month keeps that window, so it does not fade.${type === "wildfire" ? " Until the month's burned-area map is out (about 2.5 months late), fires on dormant or grazed land are under-counted, so it can still grow." : ""}`
+        : `Damage is measured over the whole growing season that contains the day, once that season is complete; this rule is provisional (it failed its checks against areas without such a disaster), so present it as a pointer to where to look, not a measurement.`;
+  const older = currentMethod ? "" : ` This month was made with an older method: it is not comparable with months made with the current one (${methodVersionFor(conflict)}).`;
+  // Not measured (yet) on some or all squares, or it may read low.
+  const state = disasterDamageState(run);
+  const unmeasured =
+    state?.measured === false
+      ? ` This month's damage is NOT measured yet (${state.reason.replace(/^not measured( yet)?: /, "")}): the 0 ha totals are not "no damage". Say so.`
+      : state?.partial
+        ? ` Damage is not measured yet on ${Math.round(state.share * 100)}% of the squares (${state.reason.replace(/^not measured( yet)?: /, "")}); the totals cover the rest only.`
+        : "";
+  const low = state?.measured !== false && state?.mayBeLow.length ? ` The damage may read low: ${state.mayBeLow.join("; ")}.` : "";
+  return `${head} Damage score: ${damageMeaning(run)}. Heavy damage: ${heavyDamageRule(run)}. Feasibility: ${accessMeaning(run)}. Cropland hit (all soils): ${ha(t.hitCropHa)}; black-soil cropland hit: ${ha(t.hitHa)}${grass}. ${time}${unmeasured}${low}${older} ${rules}`;
+}
+
 // Why nothing is left out for feasibility, as the AI should say it (the
 // pages' words are overview.js peaceReason, which speaks to "your team"):
 // "no war recorded", "the user's team marked this area as not at war",
@@ -398,6 +437,8 @@ export function conflictLine(conflict, accessSource = null, { currentMethod = tr
 // 300 km, and there is no ACLED file" (or what a connected ACLED file did:
 // overview.js acledFileState).
 export function quietReason(run) {
+  // A natural disaster: its own reason ("not measured for a drought").
+  if (isDisasterRun(run)) return notMeasuredReason(run)?.note || "not measured here";
   if (noFightingFound(run)) {
     const reason = notMeasuredReason(run);
     return `feasibility is not measured here: ${reason.found}, and ${reason.acled}`;
@@ -425,6 +466,13 @@ export function warSettingNote(area, run) {
   // A war the team set without a name of its own is never called by the
   // placeholder (TEAM_WAR_NAME), as in conflictLine.
   const named = now?.name && now.name !== TEAM_WAR_NAME ? ` (${now.name})` : "";
+  // A natural disaster on either side: the crisis in its own words ("in a
+  // flood since 2023-09-04"), never "at war".
+  if (isDisaster(now) || isDisaster(madeWith)) {
+    const crisis = (c) => (isDisaster(c) ? `in a ${DISASTER_NOUNS[c.type]} since ${c.since}` : c?.since ? `at war since ${c.since}` : "with no crisis");
+    const who = own !== undefined ? "the user's team has since set this area" : "the app's list now has this area";
+    return `Crisis setting changed: this month was made ${crisis(madeWith)}, but ${who} ${crisis(now)}. Its numbers follow the setting it was made with until the analysis is re-run (Atlas Settings, Re-run analysis).`;
+  }
   const nowText = now ? `at war${named} since ${now.since}${where(now)}` : "not at war";
   const who = own !== undefined ? `the user's team has since marked this area ${nowText}` : now ? `the app's list now has this area ${nowText}` : "the app's list now has no war for this area";
   return `War setting changed: this month was made ${made ? `at war since ${madeWith.since}${where(madeWith)}` : "at peace"}, but ${who}. Its numbers follow the setting it was made with until the analysis is re-run (Atlas Settings, Re-run analysis).`;
@@ -552,7 +600,7 @@ export function contextText({ workspace, area, run, summaries, scored, settings,
   // How damage behaves over time is said only for a run made with this
   // method (older runs: fires over the whole window, the last season's radar).
   const inPart = warInPart(run) ? { warSquares: run.warSquares, squares: run.cellCount ?? run.cells?.length, of: warPartOf(run.conflict), otherWar: run.otherWarSquares } : null;
-  const war = conflictLine(conflictOf(run), accessSourceOf(run), { currentMethod: run.method?.version === METHOD_VERSION, setByTeam: warSetByTeam(run), beforeWar: beforeWar(run), inPart, acled: acledFileState(run) });
+  const war = conflictLine(conflictOf(run), accessSourceOf(run), { currentMethod: run.method?.version === methodVersionFor(conflictOf(run)), setByTeam: warSetByTeam(run), beforeWar: beforeWar(run), inPart, acled: acledFileState(run), run });
   if (war) lines.push(war);
   const changed = warSettingNote(area, run);
   if (changed) lines.push(changed);
@@ -598,7 +646,7 @@ export function contextText({ workspace, area, run, summaries, scored, settings,
 
   if (summaries.length) {
     lines.push("", "History by month (newest first):");
-    lines.push("(Months from different data sources, method versions or war settings are not comparable: never subtract them.)");
+    lines.push(`(Months from different data sources, method versions or ${isDisasterRun(run) ? "crisis" : "war"} settings are not comparable: never subtract them.)`);
     for (const s of summaries.slice(0, 24)) {
       // A month whose damage radar took in a new growing season says so
       // (seasonWords), whatever its heavy damage did.
@@ -627,8 +675,10 @@ export function contextText({ workspace, area, run, summaries, scored, settings,
 
 // True when a known war covers the run's area (run.conflict). Older runs
 // have no conflict field: they were all made inside Ukraine.
+// A natural disaster is not a war: nothing to demine.
 export function atWar(run) {
   const conflict = conflictOf(run);
+  if (isDisaster(conflict)) return false;
   return conflict === undefined ? true : Boolean(conflict);
 }
 
@@ -661,6 +711,17 @@ function placeDetail(p, war = true) {
     people: round(p.people),
     peopleOnDamagedSoil: round(p.peopleOnDamagedSoil),
     recoveryCostUsd: recoveryCost(p.heavyDamageHa, atWarHere),
+    // A natural disaster's square (server/runs.js): what it hit, and what
+    // satellites see in the way now.
+    ...(Number.isFinite(p.hitHa)
+      ? {
+          hitBlackSoilHa: round(p.hitHa),
+          hitCroplandHa: round(p.hitCropHa),
+          grasslandHitHa: round(p.grassHitHa),
+          ...(Number.isFinite(p.raw?.wetNowShare) ? { croplandUnderWaterNowShare: round(p.raw.wetNowShare, 3) } : {}),
+          ...(Number.isFinite(p.raw?.fireKm) ? { kmToFireBurningNow: round(p.raw.fireKm, 1) } : {}),
+        }
+      : {}),
   };
 }
 
@@ -836,7 +897,9 @@ export async function runAtlasTool(name, input = {}, data) {
         costPerHaUsd: { fastPath: COSTS.fastPathPerHa, fullRecovery: COSTS.fullRecoveryPerHa },
         coversHa: coverage,
         coversFirst,
-        note: atWar(run)
+        note: isDisasterRun(run)
+          ? "Rough ranges for restoring the soil after the disaster. Flood water, fire and unstable ground can still be dangerous: this does not say the land is safe or can be worked. The per-hectare costs are planning assumptions (not sourced), not measurements: say so."
+          : atWar(run)
           ? "Costs exclude demining. Only certified deminers can declare land safe. The per-hectare costs are planning assumptions (not sourced), not measurements: say so."
           : `Rough ranges for restoring damaged soil. ${warSetByTeam(run) ? "The user's team marked this area as not at war" : "No war is recorded in this area"}; this does not say the land is safe. The per-hectare costs are planning assumptions (not sourced), not measurements: say so.`,
       };

@@ -1017,3 +1017,38 @@ test("what went wrong in the last monthly update is kept for the pages (also pas
     sampleProvider.analyze = analyze;
   }
 });
+
+test("a natural disaster set on the war's day redoes the months (another crisis); a disaster month made with the disaster method is then kept", async () => {
+  const { DISASTER_METHOD_VERSION } = await import("../src/lib/atlas/method.js");
+  const area = boxArea("area-redo-flood", "Flood redo", box(-93.5, 42.0, -93.4, 42.1), { war: { mode: "war", since: "2024-06-20" } });
+  await saveArea(area);
+  assert.equal((await finished((await startAnalysis({ areaId: area.id, months: 2 })).id)).status, "done");
+  const before = await listRuns(area.id);
+  assert.ok(before.every((run) => !run.conflict.kind && run.method.version === METHOD_VERSION));
+  // The same day, now a flood: every month is made again with its rules.
+  await updateArea(area.id, (saved) => {
+    saved.war = { mode: "disaster", since: "2024-06-20", type: "flood", name: "Big Sioux floods" };
+  });
+  const redo = await finished((await startAnalysis({ areaId: area.id, months: 2 })).id);
+  assert.equal(redo.status, "done");
+  assert.equal(redo.analyzed, 2);
+  const after = await listRuns(area.id);
+  for (const summary of after) {
+    assert.deepEqual(summary.conflict, { id: "area-area-redo-flood", name: "Big Sioux floods", since: "2024-06-20", source: "area", kind: "disaster", type: "flood" });
+    assert.equal(summary.method.version, DISASTER_METHOD_VERSION);
+    assert.equal(summary.accessSource, "flood-now");
+    assert.ok(Number.isFinite(summary.totals.hitHa) && Number.isFinite(summary.totals.hitCropHa));
+    const run = await getRun(summary.id);
+    assert.ok(run.cells.every((cell) => cell.distance === null && Number.isFinite(cell.feasible)));
+  }
+  // Kept now: made with the disaster method and the same crisis.
+  const again = await finished((await startAnalysis({ areaId: area.id, months: 2 })).id);
+  assert.equal(again.analyzed, 0);
+  // A wildfire on the same day is another crisis: redone again.
+  await updateArea(area.id, (saved) => {
+    saved.war = { mode: "disaster", since: "2024-06-20", type: "wildfire" };
+  });
+  const fire = await finished((await startAnalysis({ areaId: area.id, months: 2 })).id);
+  assert.equal(fire.analyzed, 2);
+  assert.ok((await listRuns(area.id)).every((run) => run.conflict.type === "wildfire" && run.conflict.name === "Wildfire (set for this area)"));
+});

@@ -133,6 +133,18 @@
 // (`accessSource`: "acled", "fires", "fires-none" when no fire looked like
 // fighting, or "none").
 //
+// A natural disaster the team set (src/lib/atlas/method.js isDisaster:
+// a flood, wildfire, drought, storm/earthquake/landslide or other) has its
+// own damage and Feasibility, in the same request structure: its images
+// are counted with the month's others (preflight disasterCounts,
+// seasonPreflight), built by floodImages, burnImages, cropLossImage and
+// greenLossImage, and read as the bands hit, grassland, grassHit and wetNow
+// (toReading); a wildfire's fires burning now give the distance (conflictM,
+// "fire-now"), a flood's water now its wetNow ("flood-now"); no ACLED file
+// and no fighting fires are read for it. `npm run disaster:check` runs it
+// on the events it was checked against (docs/METHODS.md, "Natural
+// disasters").
+//
 // Nothing here runs until Earth Engine credentials are in .env (see
 // docs/CONNECT-DATA.md). `npm run gee:check` tries it on real data.
 // Tests (gee.test.js) run the whole analysis against a stand-in for Earth
@@ -144,10 +156,10 @@
 
 import { config, missingGeeSettings } from "../env.js";
 import { cellAreaKm2, formatCoord } from "../geo.js";
-import { NO_WAR_WARNING, addMonths, beforeWarWarning, cleanConflict } from "../runs.js";
-import { FIRE_YEARS, HEAVY_DAMAGE, fireYears } from "../../src/lib/atlas/method.js";
+import { NO_WAR_WARNING, addMonths, beforeDisasterWarning, beforeWarWarning, cleanConflict, monthLabel } from "../runs.js";
+import { DISASTER_NOUNS, DROUGHT, FIRE_YEARS, FLOOD, GROUND, HAZARD_GRID_M, HEAVY_DAMAGE, WILDFIRE, fireYears, isDisaster } from "../../src/lib/atlas/method.js";
 import { blackSoilFloor } from "../../src/lib/atlas/scoring.js";
-import { areaDamageSeasons, baselineWindows, climateBand, damageSeasons, lastCompleteSeason, peakMonthFrom, sameWindowIn, windowLabel } from "../../src/lib/season.js";
+import { areaDamageSeasons, baselineWindows, climateBand, cropLossSeason, damageSeasons, lastCompleteSeason, noLossSeasonWarning, peakMonthFrom, sameWindowIn, windowLabel } from "../../src/lib/season.js";
 import { damageWindow, warBoxes, warSquares } from "../../src/config/conflicts.js";
 import { conflictForArea, warCellsFor } from "../conflicts.js";
 import { acledBattlesFor, expandBbox } from "./acled.js";
@@ -166,6 +178,18 @@ export const DATASETS = {
   worldPop: "WorldPop/GP/100m/pop",
   gaul1: "FAO/GAUL/2015/level1",
   gaul2: "FAO/GAUL/2015/level2",
+  // Natural disasters only (a team's crisis setting: src/lib/atlas/method.js
+  // isDisaster; floodImages, burnImages, cropLossImage below).
+  jrcWater: "JRC/GSW1_4/GlobalSurfaceWater",
+  jrcMonthly: "JRC/GSW1_4/MonthlyHistory",
+  hand: "MERIT/Hydro/v1_0_1",
+  burnedModis: "MODIS/061/MCD64A1",
+  burnedViirs: "NASA/VIIRS/002/VNP64A1",
+  ndvi250: "MODIS/061/MOD13Q1",
+  ndviViirs: "NASA/VIIRS/002/VNP13A1",
+  // Daily snow cover and topsoil temperature (a flood's radar looks on
+  // snowy or frozen days are left out: floodImages).
+  era5Daily: "ECMWF/ERA5_LAND/DAILY_AGGR",
 };
 
 export const BANDS = {
@@ -178,7 +202,16 @@ export const BANDS = {
   worldPop: "population",
   sentinel1: "VV",
   modisNdvi: "NDVI", // x 0.0001
+  jrcSeasonality: "seasonality", // months of the year with water, 1984-2021
+  hand: "hnd", // height above the nearest drainage, m
+  burnModis: "BurnDate", // day of the year it burned (0 = not burned)
+  burnViirs: "Burn_Date",
+  ndvi: "NDVI", // MOD13Q1 / VNP13A1, x 0.0001
+  snowCover: "snow_cover", // ERA5-Land daily mean, %
+  soilTemp: "soil_temperature_level_1_min", // ERA5-Land daily minimum, K (0-7 cm)
 };
+// Grassland in ESA WorldCover (a disaster's grassland and pasture hit).
+export const GRASSLAND_CLASS = 30;
 
 // The "before" picture: the same months of 2019, 2020 and 2021, in one
 // composite (the research compares several pre-war years with the war
@@ -972,6 +1005,11 @@ function croplandImage(ee) {
   return ee.ImageCollection(DATASETS.worldCover).first().select(BANDS.worldCover).eq(CROPLAND_CLASS).unmask(0).rename("cropland");
 }
 
+// Grassland (ESA WorldCover class 30): a disaster's grassland and pasture hit.
+function grasslandImage(ee) {
+  return ee.ImageCollection(DATASETS.worldCover).first().select(BANDS.worldCover).eq(GRASSLAND_CLASS).unmask(0).rename("grassland");
+}
+
 // A band with no data anywhere (its mean comes back empty).
 function emptyBand(ee, name) {
   return ee.Image.constant(0).updateMask(ee.Image.constant(0)).rename(name);
@@ -1026,7 +1064,9 @@ function populationImages(ee, region) {
 // Counts what imagery exists, so empty collections never reach a formula
 // (an empty collection has no bands and would make the whole request fail).
 // Never null inside the dictionary: "no image" is NONE (-1).
-async function preflight(ee, { region, bufferRegion, windows, context }) {
+//   nowRegion  a wildfire: the cells padded by WILDFIRE.fullKm (fires
+//              burning now are looked for there)
+async function preflight(ee, { region, bufferRegion, nowRegion = region, windows, context }) {
   const latest = (collection) => ee.Algorithms.If(collection.size().gt(0), collection.aggregate_max("system:time_start"), ee.Number(NONE));
   const viirsSearch = viirs(ee, region, windows.viirsSearch);
   const s1 = (list, pass) => list.map((w) => sentinel1(ee, region, w, pass)).reduce((all, next) => all.merge(next)).size();
@@ -1043,11 +1083,93 @@ async function preflight(ee, { region, bufferRegion, windows, context }) {
     firmsMonthBase: windows.monthBaselines.map((w) => firms(ee, region, w)).reduce((all, next) => all.merge(next)).size(),
     // Within 300 km, like the distance; only needed inside a known war
     // (not in a month before it began: nothing is estimated then).
-    firmsYear: windows.conflict && !windows.beforeWar ? firms(ee, bufferRegion, windows.lastYear).size() : ee.Number(0),
+    // Not for a natural disaster (it has no fighting).
+    firmsYear: windows.conflict && !isDisaster(windows.conflict) && !windows.beforeWar ? firms(ee, bufferRegion, windows.lastYear).size() : ee.Number(0),
     worldPop: worldPop(ee, region).size(),
+    // A natural disaster's images, in the same request (disasterCounts).
+    ...disasterCounts(ee, { region, nowRegion, windows }),
   };
   const raw = await countImages(ee, counts, { what: "Checking which satellite images exist", context });
-  return cleanCounts(raw);
+  const clean = cleanCounts(raw);
+  if (windows.disaster) clean.hazard = cleanHazardCounts(raw, windows);
+  return clean;
+}
+
+// The images a natural disaster's month needs, counted with the others
+// (preflight), so an empty collection never reaches a formula ({} for a
+// war, and for a month before the disaster began):
+//   flood     s1Hazard, s2Hazard (looks in the hazard window), s1Now, s2Now
+//             (looks in its last 12 days), jrcMonthly (the water guard)
+//   wildfire  firmsHazard, firmsHazardBase (FIRMS days in the window and its
+//             normal-year days), firmsNow (in the last 7 days, the area
+//             padded by 10 km), burnedModis<i>, burnedViirs<i> (the
+//             burned-area map of each month of windows.burnMonths), s2Pre,
+//             s2Post (dNBR)
+// Drought and storm/earthquake/landslide count per season group
+// (seasonPreflight).
+export function disasterCounts(ee, { region, nowRegion, windows }) {
+  const type = windows.disaster?.type;
+  if (!windows.hazard || !(windows.hazard.end > windows.hazard.start)) return {};
+  const merged = (list, make) => list.map(make).reduce((all, next) => all.merge(next)).size();
+  if (type === "flood") {
+    const nowNormals = windows.hazardNowNormals || [];
+    return {
+      s1Hazard: sentinel1(ee, region, windows.hazard).size(),
+      s2Hazard: sentinel2(ee, region, windows.hazard).size(),
+      s1Now: sentinel1(ee, region, windows.hazardNow).size(),
+      s2Now: sentinel2(ee, region, windows.hazardNow).size(),
+      jrcMonthly: ee.ImageCollection(DATASETS.jrcMonthly).filterBounds(region).filter(ee.Filter.calendarRange(BASELINE_FROM, BASELINE_YEAR, "year")).size(),
+      // The normal years' radar (floodImages: darker than normal, recurring water).
+      s1HazardBase: merged(windows.floodNormals || [], (w) => sentinel1(ee, region, w)),
+      s2HazardBase: merged(windows.floodNormals || [], (w) => sentinel2(ee, region, w)),
+      s1NowBase: nowNormals.length ? merged(nowNormals, (w) => sentinel1(ee, region, w)) : ee.Number(0),
+      s2NowBase: nowNormals.length ? merged(nowNormals, (w) => sentinel2(ee, region, w)) : ee.Number(0),
+      // Days of the hazard window with snow or frozen topsoil on a tenth
+      // or more of the area (ERA5-Land), and the days ERA5-Land has yet.
+      coldDays: coldDays(ee, region, windows.hazard),
+      coldNowDays: windows.hazardNow && windows.hazardNow.end > windows.hazardNow.start ? coldDays(ee, region, windows.hazardNow) : ee.Number(0),
+      coldNormalDays: [...(windows.floodNormals || []), ...nowNormals]
+        .map((w) => coldDays(ee, region, { start: shiftDays(w.start, -FLOOD.normalPadDays), end: shiftDays(w.end, FLOOD.normalPadDays) }))
+        .reduce((all, next) => ee.Number(all).add(next)),
+    };
+  }
+  if (type === "wildfire") {
+    return {
+      firmsHazard: firms(ee, region, windows.hazard).size(),
+      firmsHazardBase: merged(windows.hazardNormals, (w) => firms(ee, region, w)),
+      firmsNow: firms(ee, nowRegion, windows.hazardNow).size(),
+      ...Object.fromEntries(
+        windows.burnMonths.flatMap((m, i) => [
+          [`burnedModis${i}`, burnedArea(ee, DATASETS.burnedModis, BANDS.burnModis, region, m).size()],
+          [`burnedViirs${i}`, burnedArea(ee, DATASETS.burnedViirs, BANDS.burnViirs, region, m).size()],
+        ]),
+      ),
+      s2Pre: sentinel2(ee, region, windows.burnPre).size(),
+      s2Post: sentinel2(ee, region, windows.burnPost).size(),
+    };
+  }
+  return {};
+}
+
+// The disaster counts as plain numbers ({ key: count }, never below 0):
+// those disasterCounts asked for, with burnedModis / burnedViirs as lists
+// (one count per month of windows.burnMonths).
+export function cleanHazardCounts(raw = {}, windows = {}) {
+  const r = raw || {};
+  const count = (key) => Math.max(0, numberOr(r[key], 0));
+  const keys = ["s1Hazard", "s2Hazard", "s1Now", "s2Now", "jrcMonthly", "s1HazardBase", "s2HazardBase", "s1NowBase", "s2NowBase", "coldDays", "coldNowDays", "coldNormalDays", "firmsHazard", "firmsHazardBase", "firmsNow", "s2Pre", "s2Post"];
+  const months = windows.burnMonths || [];
+  return {
+    ...Object.fromEntries(keys.map((key) => [key, count(key)])),
+    burnedModis: months.map((_, i) => count(`burnedModis${i}`)),
+    burnedViirs: months.map((_, i) => count(`burnedViirs${i}`)),
+  };
+}
+
+// One month's burned-area map (MCD64A1 or VNP64A1) over a region.
+function burnedArea(ee, dataset, band, region, month) {
+  const { start, end } = monthBounds(month);
+  return ee.ImageCollection(dataset).filterBounds(region).filterDate(start, end).select(band);
 }
 
 // Evaluates a set of image counts ({ key: ee.Number }) in one request.
@@ -1196,6 +1318,10 @@ async function analyzeMonth(deps, { area, cells, month, cellSizeDeg, onProgress,
   const today = isoDay(deps.now());
   const conflict = cleanConflict(givenConflict !== undefined ? givenConflict : conflictForArea({ countryId: area.countryId, bbox, cells, war: area.war, areaId: area.id }));
   const shared = monthWindows(month, today, { lat: midLat, conflict });
+  // A natural disaster the team set (src/lib/atlas/method.js isDisaster):
+  // its own damage and Feasibility rules, never fighting or ACLED.
+  const disaster = isDisaster(conflict) ? conflict : null;
+  const noun = disaster ? DISASTER_NOUNS[disaster.type] : null;
   // An area that holds its war only in part (a whole country such as
   // Thailand, Russia or Ethiopia, or a region, box or drawn area across the
   // edge of the war's boxes: conflict.partOfCountry, server/conflicts.js
@@ -1238,7 +1364,7 @@ async function analyzeMonth(deps, { area, cells, month, cellSizeDeg, onProgress,
   // last group's season of that year is complete, so the area's total
   // changes once a year, not once per group.
   const grouped = seasonGroups(cells, peaks);
-  const warSeasons = shared.damage ? areaDamageSeasons(grouped.map((group) => ({ lat: group.seasonLat, peakMonth: group.peakMonth })), shared.asOf, shared.damage.start) : grouped.map(() => []);
+  const warSeasons = shared.damage ? areaDamageSeasons(grouped.map((group) => ({ lat: group.seasonLat, peakMonth: group.peakMonth })), shared.asOf, shared.damage.start, { containing: Boolean(disaster) }) : grouped.map(() => []);
   const groups = grouped.map((group, i) => {
     const groupBoxes = cellBoxes(group.cells, cellSizeDeg);
     return { ...group, region: boxesGeometry(ee, groupBoxes), windows: monthWindows(month, today, { lat: group.seasonLat, conflict, peakMonth: group.peakMonth, radarSeasons: warSeasons[i] }) };
@@ -1252,8 +1378,10 @@ async function analyzeMonth(deps, { area, cells, month, cellSizeDeg, onProgress,
   // or for a war that covers the area only in part, inside its boxes and
   // its squares that another listed war covers.
   const fightRegion = warCells ? boxesGeometry(ee, [...warBoxes(conflict), ...squareRuns(otherWarCells, cellSizeDeg)]) : bufferRegion;
+  // A wildfire's fires burning now are looked for within 10 km of the cells.
+  const nowRegion = disaster?.type === "wildfire" ? boxesGeometry(ee, cellBoxes(cells, cellSizeDeg, WILDFIRE.fullKm)) : region;
   const [have, asset, ...groupHave] = await Promise.all([
-    preflight(ee, { region, bufferRegion: fightRegion, windows: shared, context }),
+    preflight(ee, { region, bufferRegion: fightRegion, nowRegion, windows: shared, context }),
     checkChernozemAsset(ee, cfg.chernozemAsset, context),
     ...groups.map((group) => seasonPreflight(ee, { region: group.region, windows: group.windows, context })),
   ]);
@@ -1273,11 +1401,13 @@ async function analyzeMonth(deps, { area, cells, month, cellSizeDeg, onProgress,
   // does not make the land safe). Inside a war, when no fire within 300 km
   // of any square looks like fighting, it is not measured either: that is
   // known once the cells are read (step 6, "fires-none").
-  const acled = acledBattlesFor({ csvPath: cfg.acledCsvPath, bbox: boxesBbox(boxes), month });
+  // A natural disaster has no fighting: no ACLED file is read for it.
+  const acled = disaster ? { points: [], status: null, warning: null } : acledBattlesFor({ csvPath: cfg.acledCsvPath, bbox: boxesBbox(boxes), month });
   if (acled.warning) warnings.push(acled.warning);
   // A month before its war began: no war damage (no damage window), and
-  // its fires are not fighting (monthWindows beforeWar).
-  if (shared.beforeWar) warnings.push(beforeWarWarning(conflict.since, { accessMeasured: acled.points.length > 0 }));
+  // its fires are not fighting (monthWindows beforeWar). The same before a
+  // disaster's day: no disaster damage, and Feasibility is not measured.
+  if (shared.beforeWar) warnings.push(disaster ? beforeDisasterWarning(conflict.since, disaster.type) : beforeWarWarning(conflict.since, { accessMeasured: acled.points.length > 0 }));
   let conflictM = null;
   let accessSource = "none";
   // Where the fires that stand in for fighting come from, for the words
@@ -1285,7 +1415,62 @@ async function analyzeMonth(deps, { area, cells, month, cellSizeDeg, onProgress,
   // (worded again in step 6 when none looks like fighting).
   const fightWhere = warCells ? (otherWarCells.length ? "war+other" : "war") : null;
   let accessWarning = -1;
-  if (acled.points.length) {
+  // The images of a flood or a wildfire do not depend on the season, so
+  // they are built once for every group (step 3 below).
+  const onHazard = disaster?.type === "flood" ? (image) => onFloodGrid(image, scale) : (image) => onHazardGrid(image, scale);
+  let hazardImages = null;
+  // What a disaster run could not measure, for the pages (runs.js
+  // cleanDisasterDamage): the cells whose damage was not measured (id ->
+  // "season-incomplete" | "no-images"), and why the damage may read low.
+  const unmeasured = new Map();
+  const mayBeLow = new Set();
+  if (disaster) {
+    const h = have.hazard || {};
+    const monthName = monthLabel(month);
+    if (shared.beforeWar) {
+      // Said above (beforeDisasterWarning): nothing is measured.
+    } else if (disaster.type === "flood") {
+      hazardImages = floodImages(ee, { region, windows: shared, have });
+      if (shared.hazard) {
+        warnings.push(`Flood looks: ${h.s1Hazard} radar ${h.s1Hazard === 1 ? "pass" : "passes"} and ${h.s2Hazard} optical ${h.s2Hazard === 1 ? "image" : "images"} between ${shared.hazard.start} and ${shiftDays(shared.hazard.end, -1)}.`);
+        if (h.coldDays > 0) {
+          warnings.push(floodColdWarning(h.coldDays));
+          mayBeLow.add("snow");
+        }
+        if (!(h.s1Hazard + h.s2Hazard > 0)) for (const cell of cells) unmeasured.set(cell.id, "no-images");
+        if (!(h.s1HazardBase > 0 || h.s2HazardBase > 0)) warnings.push(`No radar or optical images of the same days in ${BASELINE_FROM}-${BASELINE_YEAR}, so land under water in most years (such as rice paddies) could not be left out: the flood may read high.`);
+      }
+      if (h.s1Now + h.s2Now > 0) accessSource = "flood-now";
+      else {
+        accessSource = "disaster-none";
+        warnings.push(`No radar or satellite image in the last ${FLOOD.nowDays} days of ${monthName}, so Feasibility (land under water now) is not measured.`);
+      }
+    } else if (disaster.type === "wildfire") {
+      hazardImages = burnImages(ee, { region, nowRegion, windows: shared, have, onFireGrid, tileScale });
+      const covered = shared.burnMonths.filter((_, i) => h.burnedModis?.[i] > 0 || h.burnedViirs?.[i] > 0);
+      if (covered.length < shared.burnMonths.length) {
+        const names = (list) => list.map(monthLabel).join(", ");
+        const cover = covered.length ? `Burned-area maps cover ${names(covered)}` : `No burned-area map covers ${names(shared.burnMonths)} yet`;
+        warnings.push(`${cover}; the rest is counted from fire detections and Sentinel-2 alone and may be low, mainly on dormant or grazed land.`);
+        mayBeLow.add("burn-map-pending");
+      }
+      if (!(h.s2Pre > 0 && h.s2Post > 0)) mayBeLow.add("no-dnbr");
+      if (!(h.s2Pre > 0 && h.s2Post > 0)) warnings.push("No Sentinel-2 images just before and after the day the wildfire began, so severe burning (dNBR) is not measured: heavy damage is not counted, and only the burned-area maps count as hit.");
+      if (hazardImages.nowPoints) {
+        // With fire data but no fire within 300 km, every square reads 300
+        // km (feasible 1): a real measurement, "no fire burning within 10
+        // km", not a gap.
+        conflictM = onFireGrid(hazardImages.nowPoints.distance(MAX_CONFLICT_M)).unmask(MAX_CONFLICT_M).rename("conflictM");
+        accessSource = "fire-now";
+      } else {
+        accessSource = "disaster-none";
+        warnings.push(`No fire data for the last ${WILDFIRE.nowDays} days of ${monthName}, so Feasibility (distance to a fire burning now) is not measured.`);
+      }
+    } else {
+      accessSource = "none";
+      warnings.push(`Feasibility is not measured for a ${noun}: satellites do not show what stops fieldwork after it. Nothing is set aside; this does not prove the land can be worked.`);
+    }
+  } else if (acled.points.length) {
     const battles = ee.FeatureCollection(acled.points.map((point) => ee.Feature(ee.Geometry.Point(point))));
     conflictM = onFireGrid(battles.distance(MAX_CONFLICT_M)).unmask(MAX_CONFLICT_M).rename("conflictM");
     accessSource = "acled";
@@ -1400,7 +1585,68 @@ async function analyzeMonth(deps, { area, cells, month, cellSizeDeg, onProgress,
     // The peace rule's heavy damage, for the squares outside the war's
     // squares of an area that holds it only in part (warCells).
     let heavyOutside;
-    if (seasonPass && measuredSeasons.length) {
+    // A natural disaster's own bands (hit, grassland, grassHit, wetNow).
+    const disasterBands = [];
+    if (disaster) {
+      // Its damage follows its type (method.js DISASTER_*): hit and heavy
+      // on cropland. The war's radar is read only for a storm, earthquake,
+      // landslide or other disaster, whose rule needs it.
+      radarDb = emptyBand(ee, "radarDb");
+      heavy = emptyBand(ee, "heavy");
+      let hit = emptyBand(ee, "hit");
+      const say = (text) => {
+        if (!warnings.includes(text)) warnings.push(text);
+      };
+      if (shared.beforeWar) {
+        // Said once (beforeDisasterWarning): nothing is counted.
+      } else if (hazardImages) {
+        // A flood or a wildfire: its images need no growing season.
+        hit = onHazard(hazardImages.hit).updateMask(cropland).rename("hit");
+        heavy = onHazard(hazardImages.heavy).updateMask(cropland).rename("heavy");
+        const grassland = grasslandImage(ee);
+        disasterBands.push(grassland, onHazard(hazardImages.hit).updateMask(grassland).rename("grassHit"));
+        // The land under water now stays on the hazard grid (onFloodGrid).
+        if (disaster.type === "flood") disasterBands.push(onHazardGrid(hazardImages.wetNow, scale).updateMask(cropland).rename("wetNow"));
+        // Seen hit, but routine in those weeks (a paddy's water, a field
+        // burned every year): not counted, and the run says how much.
+        if (hazardImages.routine) disasterBands.push(onHazard(hazardImages.routine).updateMask(cropland).rename("routine"));
+      } else if (disaster.type === "drought") {
+        const lossWindow = group.windows.lossWindow;
+        const loss = lossWindow ? cropLossImage(ee, { region: group.region, window: lossWindow, baselines: group.windows.lossBaselines, have: g, cropland }) : null;
+        const lossLabel = lossWindow ? windowLabel({ from: lossWindow.start.slice(0, 7), to: shiftDays(lossWindow.end, -1).slice(0, 7) }) : null;
+        if (loss) {
+          hit = loss.hit.updateMask(cropland).rename("hit");
+          heavy = loss.heavy.updateMask(cropland).rename("heavy");
+          if (loss.viirs) say(`MODIS greenness (MOD13Q1) has no image for ${lossLabel}; VIIRS greenness (VNP13A1, 500 m, not yet checked against a real drought) was used instead.`);
+        } else {
+          say(lossWindow ? `No MODIS or VIIRS greenness images for ${lossLabel} and the same weeks of ${BASELINE_FROM}-${BASELINE_YEAR}; the drought's crop loss could not be measured there.` : noLossSeasonWarning(disaster.since));
+          for (const cell of group.cells) unmeasured.set(cell.id, lossWindow ? "no-images" : "season-incomplete");
+        }
+      } else {
+        // A storm, earthquake, landslide or other disaster: greenness loss
+        // AND radar change in the growing season that contains its day
+        // (radarSeasons[0], once complete), two sensors that must agree.
+        const first = radarSeasons[0];
+        const optical = g.disaster?.s2First > 0 && g.disaster?.s2FirstBase > 0;
+        say(GROUND_PROVISIONAL(noun));
+        if (first && seasonPass && measuredSeasons[0] === first && optical) {
+          const before = mergedSentinel1(ee, group.region, group.windows.radarSeasonBaselines, seasonPass).median();
+          const radar = seasonRadarImages(ee, { region: group.region, seasons: measuredSeasons, before, pass: seasonPass });
+          radarDb = radar.level.updateMask(cropland).rename("radarDb");
+          const green = greenLossImage(ee, { region: group.region, window: first, baselines: baselineWindows(first, BASELINE_YEARS) });
+          hit = green.and(radar.first.gte(GROUND.hitRadarDb)).updateMask(cropland).rename("hit");
+          heavy = green.and(radar.first.gte(GROUND.heavyRadarDb)).updateMask(cropland).rename("heavy");
+        } else if (!first) {
+          say(`No growing season since the ${noun} began on ${disaster.since} is complete yet; its damage could not be measured yet.`);
+          for (const cell of group.cells) unmeasured.set(cell.id, "season-incomplete");
+        } else {
+          const seasonText = windowLabel({ from: first.start.slice(0, 7), to: shiftDays(first.end, -1).slice(0, 7) });
+          say(`No ${optical ? "Sentinel-1 radar images from one orbit direction" : "usable Sentinel-2 images"} for both ${seasonText} and the same season of ${BASELINE_FROM}-${BASELINE_YEAR}; the ${noun}'s damage could not be measured there.`);
+          for (const cell of group.cells) unmeasured.set(cell.id, "no-images");
+        }
+      }
+      disasterBands.unshift(hit);
+    } else if (seasonPass && measuredSeasons.length) {
       const before = mergedSentinel1(ee, group.region, group.windows.radarSeasonBaselines, seasonPass).median();
       const radar = seasonRadarImages(ee, { region: group.region, seasons: measuredSeasons, before, pass: seasonPass });
       radarDb = radar.level.updateMask(cropland).rename("radarDb");
@@ -1444,6 +1690,7 @@ async function analyzeMonth(deps, { area, cells, month, cellSizeDeg, onProgress,
         lights,
         radarShare,
         fire.month,
+        ...disasterBands,
       ]);
     group.meanImage = meanImage(heavy);
     // The same images with the peace rule's heavy damage, for the group's
@@ -1601,7 +1848,26 @@ async function analyzeMonth(deps, { area, cells, month, cellSizeDeg, onProgress,
     if (accessWarning >= 0) warnings[accessWarning] = said;
     else warnings.push(said);
   }
-  if (noRadar > 0 && noRadar < cells.length) {
+  // Squares whose disaster damage was not measured: no hit and no heavy
+  // share (runs.js keeps them null, so they read "not measured", never 0).
+  for (const reading of readings) {
+    if (!unmeasured.has(reading.id)) continue;
+    reading.hitShare = null;
+    reading.heavyShare = null;
+  }
+  // A flood's or a wildfire's cropland that is routinely under water or
+  // burned in those weeks: not counted, and said when it is 1% or more of
+  // the cropland.
+  if (hazardImages?.routine) {
+    const latOf = new Map(cells.map((cell) => [cell.id, cell.lat]));
+    const cropHaOf = (reading) => cellAreaKm2(cellSizeDeg, latOf.get(reading.id) ?? midLat) * 100 * numberOr(reading.croplandShare, 0);
+    const routineHa = readings.reduce((sum, reading) => sum + cropHaOf(reading) * numberOr(reading.routineShare, 0), 0);
+    const cropHa = readings.reduce((sum, reading) => sum + cropHaOf(reading), 0);
+    if (cropHa > 0 && routineHa >= 0.01 * cropHa) warnings.push(routineWarning(disaster.type, routineHa, routineHa / cropHa));
+    for (const reading of readings) delete reading.routineShare;
+  }
+  // (A disaster's damage does not use the war's fire and radar.)
+  if (!disaster && noRadar > 0 && noRadar < cells.length) {
     warnings.push(`${noRadar} of ${cells.length} cells had no radar reading on cropland; their damage uses fires only.`);
   }
   if (noHealth > 0 && noHealth < cells.length && groupHave.some((g) => g.s2Current > 0)) {
@@ -1648,7 +1914,69 @@ async function analyzeMonth(deps, { area, cells, month, cellSizeDeg, onProgress,
   }
   onProgress?.(1, "Done");
   // Damage is measured against the same season of 2019-2021 (see monthWindows).
-  return { readings, alerts, warnings, baseline: GEE_BASELINE, conflict, imagery: imageryOf(seasonUsed, cells.length), accessSource };
+  // A flood's or a wildfire's images are those of its hazard window, and a
+  // drought's those of its crop season (disasterImagery).
+  const imagery = disaster ? disasterImagery(disaster, shared, groups, { cellCount: cells.length, unmeasured }) || imageryOf(seasonUsed, cells.length) : imageryOf(seasonUsed, cells.length);
+  if (!disaster) return { readings, alerts, warnings, baseline: GEE_BASELINE, conflict, imagery, accessSource };
+  const reasons = [...new Set(unmeasured.values())];
+  const disasterDamage = {
+    notMeasured: reasons.includes("season-incomplete") ? "season-incomplete" : reasons[0] || null,
+    unmeasuredShare: cells.length ? Math.round((1000 * unmeasured.size) / cells.length) / 1000 : 0,
+    mayBeLow: [...mayBeLow],
+  };
+  return { readings, alerts, warnings, baseline: GEE_BASELINE, conflict, imagery, accessSource, disasterDamage };
+}
+
+// "4 September 2023".
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const dayLabel = (day) => `${Number(day.slice(8, 10))} ${MONTH_NAMES[Number(day.slice(5, 7)) - 1]} ${day.slice(0, 4)}`;
+
+// The imagery a natural disaster's run says it used ({ from, to, label }),
+// or null to keep the seasons' (a month before the day):
+//   flood, wildfire  "from 4 September 2023 to 30 September 2023 (within
+//                    60 days of the day the flood began)"
+//   drought          "of the crop season from 1 March 2026 to 30 June 2026
+//                    (this season's crop loss)"; each season group's own
+//                    window with its share of the area when they differ,
+//                    and the share not measured yet
+//   storm, earthquake, landslide, other  "of the growing season from 1
+//                    April 2023 to 30 September 2023 (the season the ...
+//                    hit)", the same way
+//   nothing measured "none yet: <why>" (from = to = the month), never the
+//                    war's radar seasons
+// unmeasured: the cells whose damage was not measured (id -> reason).
+export function disasterImagery(disaster, shared, groups = [], { cellCount = 0, unmeasured = new Map() } = {}) {
+  if (shared.beforeWar) return null;
+  const noun = DISASTER_NOUNS[disaster.type];
+  const span = (window) => ({ from: window.start.slice(0, 7), to: shiftDays(window.end, -1).slice(0, 7) });
+  if (shared.hazard && shared.hazard.end > shared.hazard.start) {
+    const days = disaster.type === "flood" ? FLOOD.windowDays : WILDFIRE.windowDays;
+    return { ...span(shared.hazard), label: `from ${dayLabel(shared.hazard.start)} to ${dayLabel(shiftDays(shared.hazard.end, -1))} (within ${days} days of the day the ${noun} began)` };
+  }
+  if (disaster.type === "flood" || disaster.type === "wildfire") return null;
+  const drought = disaster.type === "drought";
+  const total = cellCount || groups.reduce((sum, group) => sum + group.cells.length, 0);
+  // The measured groups' windows, the same window once with its cells.
+  const byWindow = new Map();
+  for (const group of groups) {
+    const window = drought ? group.windows?.lossWindow : group.windows?.radarSeasons?.[0];
+    const cellsMeasured = group.cells.filter((cell) => !unmeasured.has(cell.id)).length;
+    if (!window || !cellsMeasured) continue;
+    const key = `${window.start}/${window.end}`;
+    byWindow.set(key, { window, cells: (byWindow.get(key)?.cells || 0) + cellsMeasured });
+  }
+  const month = shared.month.start.slice(0, 7);
+  const why = drought ? `no crop season since ${dayLabel(disaster.since)} has run long enough to measure` : `the growing season that contains ${dayLabel(disaster.since)} is not complete yet`;
+  if (!byWindow.size) return { from: month, to: month, label: `none yet: ${unmeasured.size && [...unmeasured.values()].every((reason) => reason === "no-images") ? "no usable images" : why}` };
+  const pct = (cells) => `${Math.round((100 * cells) / Math.max(1, total))}% of the area`;
+  const list = [...byWindow.values()].sort((a, b) => b.cells - a.cells);
+  const part = ({ window, cells }) => `from ${dayLabel(window.start)} to ${dayLabel(shiftDays(window.end, -1))}${list.length > 1 || unmeasured.size ? ` (${pct(cells)})` : ""}`;
+  const what = drought ? "crop season" : "growing season";
+  const tail = drought ? "this season's crop loss" : `the season the ${noun} hit`;
+  const notYet = unmeasured.size ? `; not measured yet on ${pct(unmeasured.size)}` : "";
+  const from = list.map((entry) => entry.window.start).sort()[0];
+  const to = list.map((entry) => shiftDays(entry.window.end, -1)).sort().at(-1);
+  return { from: from.slice(0, 7), to: to.slice(0, 7), label: `of the ${what}${list.length > 1 ? "s" : ""} ${list.map(part).join(" and ")} (${tail})${notYet}` };
 }
 
 // The imagery a run says it compared: the season used for most cells, with
@@ -1785,7 +2113,524 @@ export function seasonRadarImages(ee, { region, seasons, before, pass }) {
   }
   const measured = peak.gte(0);
   const level = persistent.where(persistent.lt(0), peak);
-  return { persistent: persistent.updateMask(measured), peak: peak.updateMask(measured), level: level.updateMask(measured) };
+  // first: the change in the oldest season alone (a storm, earthquake or
+  // landslide: the season it hit), masked where it was not measured.
+  const first = changes[0].updateMask(changes[0].gte(0));
+  return { persistent: persistent.updateMask(measured), peak: peak.updateMask(measured), level: level.updateMask(measured), first };
+}
+
+// ---------- Natural disasters (src/lib/atlas/method.js isDisaster) ----------
+
+// What every storm, earthquake, landslide or other disaster run says: the
+// rule is provisional. (Real data, 2026-10-25, scripts/disaster-check.js:
+// the Romagna landslides of May 2023 read 5.9% of the cropland hit against
+// 4.7% in the Bologna hills outside them, and an irrigated Emilia plain
+// without a disaster 15.6%, from crop rotation.)
+export const GROUND_PROVISIONAL = (noun) =>
+  `Damage for a ${noun} is provisional: greenness loss with radar change also follows crop rotation (an irrigated plain with no disaster read 15.6% of its cropland as hit in a check), so treat it as a pointer to where to look, not a measurement.`;
+// What a flood run says when snow or frozen ground hid part of its window.
+export const floodColdWarning = (days) =>
+  `Snow or frozen ground (ERA5-Land) on ${days} ${days === 1 ? "day" : "days"} of the flood window: radar looks on those days are not counted, because wet snow and frozen soil look like water to radar. Water under snow is seen only by clear Sentinel-2 images, so the flood may read low.`;
+// What a flood or wildfire run says about the hit cropland it left out
+// because it is under water, or burned, in those weeks of most normal years.
+export function routineWarning(type, ha, share) {
+  const amount = `${Math.round(ha).toLocaleString("en-US")} ha (${Math.round(share * 1000) / 10}% of the cropland)`;
+  return type === "wildfire"
+    ? `${amount} burned where fields burn in the same weeks of most years 2019-2021 (such as crop-residue burning) and is not counted: only burning clearly above those years counts.`
+    : `${amount} seen under water is under water in the same weeks of most years 2019-2021 (such as rice paddies), and the radar saw it no deeper than its normal water, so it is not counted: flood damage there cannot be told apart from its normal water.`;
+}
+// Pure image builders: nothing is computed until a request. Every image
+// they use was counted first (preflight disasterCounts, seasonPreflight),
+// so an empty collection never reaches a formula (real data, 2026-10-25:
+// "Image.lt: If one image has no bands" on a 3-day Sentinel-2 window).
+
+const DAY_MS = 86400000;
+const dayMs = (day) => Date.parse(`${day}T00:00:00Z`);
+
+// The per-pixel hazard tests on the HAZARD_GRID_M grid, unmasked to 0
+// first, whatever the pixels the cells are reduced with (scale, m; kept as
+// an argument for the callers). (Real data, Thessaly 2023, probe d4: -20%
+// of the flood without the grid at a 200 m reduce, -9% with it, the same
+// at 1 km. And on finer reduces the flood's normal-year water, on the same
+// grid, must sample the same points as its hit: real data, 2026-10-25,
+// the Punjab July control read 8% at a 50 m reduce against 5% on the grid.)
+export function onHazardGrid(image, scale) {
+  return image.unmask(0).reproject({ crs: "EPSG:4326", scale: HAZARD_GRID_M });
+}
+// A flood's hit and heavy: on the hazard grid when the cells are reduced
+// with coarser pixels, otherwise on the reduce's own pixels (its
+// normal-year masks are on the grid, grown by FLOOD.normalGrowM so a
+// field's edge cannot slip out of them). (Real data, 2026-10-25: the
+// Punjab flood of August 2025 and the Iowa flood of June 2024 read 7 to
+// 8% less on the grid, at 47 and 41 m reduces.) Its land under water now stays on
+// the grid (onHazardGrid): on finer pixels, ponds after rain in an Iowa
+// spring without a flood read 693 ha under water against 279 ha.
+export function onFloodGrid(image, scale) {
+  return scale > HAZARD_GRID_M ? onHazardGrid(image, scale) : image.unmask(0);
+}
+
+// Snow or frozen topsoil (ERA5-Land daily: snow cover above
+// FLOOD.snowCoverPct, or the top 7 cm of soil at or below FLOOD.frozenC)
+// as 0/1, on one ERA5-Land image.
+function coldOf(weather) {
+  return weather.select(BANDS.snowCover).gt(FLOOD.snowCoverPct).or(weather.select(BANDS.soilTemp).lte(273.15 + FLOOD.frozenC)).unmask(0);
+}
+// The snow or frost of a radar look's day, from ERA5-Land over some
+// windows (a few months: the lookup stays small); a day ERA5-Land does not
+// have yet (it is about two weeks behind) takes `fallback`, the mean of
+// the same days in 2019-2021. Wet snow and frozen soil darken the radar
+// like water. (Real data, 2026-10-25: a flood setting in Iowa from 1
+// February 2025, with no flood, read 26% of the cropland under water in
+// March.)
+function coldLookup(ee, windows, fallback) {
+  const era = windows.map((w) => ee.ImageCollection(DATASETS.era5Daily).filterDate(w.start, w.end).select([BANDS.snowCover, BANDS.soilTemp])).reduce((all, next) => all.merge(next));
+  return (date) => {
+    const day = ee.Date(ee.Date(date).format("YYYY-MM-dd"));
+    return coldOf(ee.Image(era.filterDate(day, day.advance(1, "day")).merge(ee.ImageCollection([fallback])).first()));
+  };
+}
+// How many days of a window had snow or frozen topsoil on a tenth or more
+// of the region (ERA5-Land), for the run's words.
+function coldDays(ee, region, window) {
+  return ee
+    .ImageCollection(DATASETS.era5Daily)
+    .filterDate(window.start, window.end)
+    .select([BANDS.snowCover, BANDS.soilTemp])
+    .map((image) => {
+      const cold = coldOf(image).rename("cold");
+      return image.set("cold", cold.reduceRegion({ reducer: ee.Reducer.mean(), geometry: region, scale: 11132, bestEffort: true }).get("cold"));
+    })
+    .filter(ee.Filter.gte("cold", 0.1))
+    .size();
+}
+
+// A flood (method.js FLOOD), all 0/1 images on any land, unmasked:
+//   hit          normally dry land seen under water at any look in the
+//                hazard window: Sentinel-1 VV (any orbit) smoothed over 50
+//                m below -18 dB AND 3 dB or more below its median in the
+//                same days of 2019-2021, on a day without snow or frozen
+//                topsoil (ERA5-Land); or clear Sentinel-2 with MNDWI (B3,
+//                B11) > 0 and NDWI (B3, B8) > -0.1
+//   heavy        hit, with its first and last wet look 4 days or more apart
+//   wetNow       normally dry land under water at its latest look in the
+//                last 12 days of the month (Sentinel-1 and -2 together,
+//                newest on top), radar against the same 12 days' normal;
+//                where the radar had a look there in those days, optical
+//                water counts only if the radar saw water too
+//   normallyDry  JRC water seasonality under 10 months, not water in the
+//                same calendar months of 2 or more of 2019-2021 (JRC
+//                monthly history), less than 15 m above the nearest
+//                drainage (MERIT HAND), and not "normally wet": under water
+//                at some look of the same days (+-30) in 2 or more of the 3
+//                normal years, grown by 150 m: lakes, rivers, high ground
+//                and land under water in most years in those weeks (rice
+//                paddies, wetlands) are left out. The hit land's guard
+//                uses the whole 60-day window (the same in every month),
+//                the land under water now that of the month's days.
+//                Normally wet land still counts as hit where a radar look
+//                of the window is 8 dB or more darker than the median of
+//                the same orbit within 15 days of that day of the year in
+//                2019-2021 (deeper than its normal water: a flood over a
+//                paddy)
+//   routine      (hit's guard) land seen under water in the window that is
+//                left out only because it is normally wet: what the run
+//                says it could not count
+// The Sentinel-1 or -2 arm is left out when it has no image (have.hazard),
+// and the normal-year radar tests when 2019-2021 have no radar there.
+// Every image is unmasked and on no grid of its own: the caller puts the
+// hit and heavy on the reduce's pixels or the hazard grid (onFloodGrid),
+// the water now on the grid; the normal-year masks are on the 100 m
+// hazard grid.
+export function floodImages(ee, { region, windows, have }) {
+  const h = have.hazard || {};
+  const zero = ee.Image.constant(0);
+  const masked = ee.Image.constant(0).updateMask(ee.Image.constant(0)).toFloat();
+  const ORBIT = "relativeOrbitNumber_start";
+  const sinceMs = dayMs(windows.disaster.since);
+  const seasonal = ee.Image(DATASETS.jrcWater).select(BANDS.jrcSeasonality).unmask(0).lt(FLOOD.permanentMonths);
+  // JRC water in the same calendar months of at least FLOOD.normalJrcYears
+  // of the normal years (one year's flood, such as 2019's, does not make
+  // land normally wet).
+  const jrcWater = ([m1, m2]) =>
+    h.jrcMonthly > 0
+      ? BASELINE_YEARS.map((year) =>
+          ee
+            .ImageCollection(DATASETS.jrcMonthly)
+            .filter(ee.Filter.calendarRange(year, year, "year"))
+            .filter(ee.Filter.calendarRange(m1, m2, "month"))
+            .map((image) => image.eq(2))
+            .merge(ee.ImageCollection([zero.rename("water")]))
+            .max()
+            .unmask(0),
+        )
+          .reduce((all, next) => all.add(next))
+          .gte(FLOOD.normalJrcYears)
+      : zero;
+  const low = ee.Image(DATASETS.hand).select(BANDS.hand).unmask(0).lt(FLOOD.handM);
+  const vv = (image) => image.focal_mean(FLOOD.smoothM, "circle", "meters");
+  // The normal years' masks on the hazard grid (they are smooth; at the
+  // reduce's finer pixels they cost too much: real data, 2026-10-25, the
+  // Thessaly box at 43 m failed with "too much work").
+  const onGrid = (image) => image.reproject({ crs: "EPSG:4326", scale: HAZARD_GRID_M });
+  const widen = (w, days) => ({ start: shiftDays(w.start, -days), end: shiftDays(w.end, days) });
+  const pad = (w) => widen(w, FLOOD.normalPadDays);
+  // Radar looks on a snowy or frozen day are dropped, only when some day
+  // of the windows or their normal years was cold (preflight coldDays,
+  // coldNowDays, coldNormalDays): a summer flood skips the lookup.
+  const anyCold = h.coldDays + h.coldNowDays + h.coldNormalDays > 0;
+  const warmer = (list) => {
+    if (!anyCold || !list.length) return (image) => image;
+    const era = ee.ImageCollection(DATASETS.era5Daily).select([BANDS.snowCover, BANDS.soilTemp]);
+    const fallbackWindows = list.map((w) => baselineWindows(w, BASELINE_YEARS)).flat();
+    const fallback = fallbackWindows.map((w) => era.filterDate(w.start, w.end)).reduce((all, next) => all.merge(next)).mean();
+    const cold = coldLookup(ee, list, fallback);
+    // image: what is masked; look: the radar image it comes from (its day).
+    return (image, look) => image.updateMask(cold(look.get("system:time_start")).not());
+  };
+  const opticalWet = (image) => {
+    const clear = maskSentinel2Clouds(image);
+    return clear.normalizedDifference(["B3", "B11"]).gt(FLOOD.mndwi).and(clear.normalizedDifference(["B3", "B8"]).gt(FLOOD.ndwi));
+  };
+  const dayOfYear = (image) => ee.Date(image.get("system:time_start")).getRelative("day", "year");
+  // The normal years over some days (one window per year):
+  //   median       the radar's median for a look: the normal years' looks
+  //                from the SAME relative orbit (one track sees a field at
+  //                another angle than the next, a few dB darker or
+  //                brighter: real data, 2026-10-25, Iowa March 2025, the
+  //                00:22 UTC track read 6% of the cropland below -18 dB on
+  //                a dry, thawed day, the 00:14 one 0%); masked when that
+  //                orbit has no such look. Null without radar then
+  //   nearMedian   the same, only the looks within FLOOD.deepNearDays of the
+  //                look's day of the year: the field's normal state at
+  //                that time (a paddy's water, or its grown crop)
+  //   recurring    the land under water at some look (radar or optical,
+  //                the same tests) in FLOOD.normalWetYears or more of the
+  //                years, grown by FLOOD.normalGrowM. Null without any image
+  //                then. (Real data, 2026-10-25: a flood setting from 1
+  //                July 2024 in the Punjab box, with no major flood, read
+  //                28% of the cropland flooded, almost all of it paddies
+  //                seen wet by Sentinel-2; 6% with the mask not grown.)
+  const normalWater = (bases, s1Count, s2Count) => {
+    if (!bases?.length || !(s1Count > 0 || s2Count > 0)) return null;
+    const blank = ee.Image.constant(0).toByte().rename("wet");
+    // Wider by FLOOD.normalPadDays on each side for the recurring water:
+    // paddies are planted a few weeks earlier or later from year to year.
+    const warm = warmer(bases.map(pad));
+    const level = (window) => sentinel1(ee, region, window).map((image) => ee.Image(warm(vv(image).updateMask(image.mask()), image).copyProperties(image, [ORBIT])).set("doy", dayOfYear(image)));
+    const none = masked.rename(BANDS.sentinel1);
+    const medianOf = (collection) => onGrid(collection.merge(ee.ImageCollection([none])).median());
+    let median = null;
+    let nearMedian = null;
+    if (s1Count > 0) {
+      const all = bases.map(level).reduce((every, next) => every.merge(next));
+      median = (look) => medianOf(all.filter(ee.Filter.eq(ORBIT, look.get(ORBIT))));
+      const k = FLOOD.deepNearDays;
+      const near = bases.map((w) => level(widen(w, k))).reduce((every, next) => every.merge(next));
+      nearMedian = (look) => {
+        const d = ee.Number(dayOfYear(look));
+        // Within k days of the look's day of the year, across the new year too.
+        const around = (shift) => ee.Filter.and(ee.Filter.gte("doy", d.subtract(k).add(shift)), ee.Filter.lte("doy", d.add(k).add(shift)));
+        return medianOf(near.filter(ee.Filter.eq(ORBIT, look.get(ORBIT))).filter(ee.Filter.or(around(0), around(365), around(-365))));
+      };
+    }
+    const wetYears = bases
+      .map((w) => {
+        const parts = [
+          ...(s1Count > 0 ? [sentinel1(ee, region, pad(w)).map((image) => warm(vv(image).lt(FLOOD.waterVvDb).updateMask(image.mask()), image).toByte().rename("wet"))] : []),
+          ...(s2Count > 0 ? [sentinel2(ee, region, pad(w)).map((image) => opticalWet(image).toByte().rename("wet"))] : []),
+        ];
+        return parts.reduce((all, next) => all.merge(next)).merge(ee.ImageCollection([blank])).max().unmask(0);
+      })
+      .reduce((all, next) => all.add(next));
+    const recurring = onGrid(onGrid(wetYears.gte(FLOOD.normalWetYears)).focal_max(FLOOD.normalGrowM, "circle", "meters"));
+    return { median, nearMedian, recurring };
+  };
+  const guard = (months, normal) => {
+    const base = seasonal.and(jrcWater(months).not()).and(low);
+    return { base, dry: normal ? base.and(normal.recurring.not()) : base };
+  };
+  // One look: a 0/1 "wet" band (masked where the image has no data, or on
+  // a snowy or frozen day for radar), the days since the disaster's day,
+  // "deep" (radar: how much darker than the field's normal at that time
+  // of the year, dB, where wet; masked for optical) and "radar" (1 where
+  // a radar look has data, masked for optical).
+  const look = (wet, image, { deep = masked, radar = masked } = {}) =>
+    ee.Image(
+      wet
+        .rename("wet")
+        .addBands(ee.Image.constant(ee.Number(image.get("system:time_start")).subtract(sinceMs).divide(DAY_MS)).float().rename("day"))
+        .addBands(deep.toFloat().rename("deep"))
+        .addBands(radar.toByte().rename("radar"))
+        .copyProperties(image, ["system:time_start"]),
+    );
+  const radar = (window, normal) => {
+    const warm = warmer([window]);
+    return sentinel1(ee, region, window).map((image) => {
+      const level = vv(image);
+      // Where the normal years have no look without snow or frost (most of
+      // a winter), there is nothing to compare with: the look is not
+      // counted there (the median is masked, so is the test).
+      const dark = normal?.median ? level.lt(FLOOD.waterVvDb).and(level.lt(normal.median(image).subtract(FLOOD.darkerDb))) : level.lt(FLOOD.waterVvDb);
+      const wet = warm(dark.updateMask(image.mask()), image);
+      const deep = normal?.nearMedian ? normal.nearMedian(image).subtract(level).updateMask(wet) : masked;
+      return look(wet, image, { deep, radar: ee.Image.constant(1).updateMask(wet.mask()) });
+    });
+  };
+  const optical = (window) => sentinel2(ee, region, window).map((image) => look(opticalWet(image), image));
+  const looks = (window, s1Count, s2Count, normal) => {
+    const parts = [...(s1Count > 0 ? [radar(window, normal)] : []), ...(s2Count > 0 ? [optical(window)] : [])];
+    return parts.length ? parts.reduce((all, next) => all.merge(next)) : null;
+  };
+  const hitNormal = normalWater(windows.floodNormals, h.s1HazardBase, h.s2HazardBase);
+  const hitGuard = guard(windows.hazardMonths || [1, 12], hitNormal);
+  let hit = zero;
+  let heavy = zero;
+  let routine = zero;
+  const during = looks(windows.hazard, h.s1Hazard, h.s2Hazard, hitNormal);
+  if (during) {
+    const wetDays = during.map((image) => image.select("day").updateMask(image.select("wet")));
+    const first = wetDays.min();
+    const last = wetDays.max();
+    const seen = first.mask().unmask(0).gt(0);
+    // Normally wet, but under water deeper than its normal at some radar
+    // look: a flood over a paddy (FLOOD.deepDb).
+    const deeper = hitNormal?.nearMedian ? during.select("deep").max().gte(FLOOD.deepDb).unmask(0) : zero;
+    const wetNormally = hitNormal ? hitNormal.recurring.and(deeper.not()) : zero;
+    const dry = hitGuard.base.and(wetNormally.not());
+    hit = seen.and(dry);
+    heavy = hit.and(last.subtract(first).unmask(0).gte(FLOOD.heavyDays));
+    if (hitNormal) routine = seen.and(hitGuard.base).and(wetNormally);
+  }
+  let wetNow = zero;
+  const nowMonth = windows.hazardNow ? Number(windows.hazardNow.start.slice(5, 7)) : null;
+  const nowNormal = normalWater(windows.hazardNowNormals, h.s1NowBase, h.s2NowBase);
+  const nowGuard = nowMonth ? guard([nowMonth, nowMonth], nowNormal) : hitGuard;
+  const recent = looks(windows.hazardNow, h.s1Now, h.s2Now, nowNormal);
+  if (recent) {
+    wetNow = recent.sort("system:time_start").select("wet").mosaic().unmask(0).and(nowGuard.dry);
+    // Where the radar looked in those days, optical water counts only if
+    // the radar saw water too (darker than normal, as for the hit).
+    if (h.s1Now > 0) {
+      const radarLooked = recent.select("radar").max().unmask(0);
+      const radarWet = recent.map((image) => image.select("wet").updateMask(image.select("radar"))).max().unmask(0);
+      wetNow = wetNow.and(radarLooked.not().or(radarWet));
+    }
+  }
+  return { hit: hit.rename("hit"), heavy: heavy.rename("heavy"), wetNow: wetNow.rename("wetNow"), routine: routine.rename("routine"), normallyDry: hitGuard.dry };
+}
+
+// A wildfire (method.js WILDFIRE), 0/1 images on any land, unmasked:
+//   hit        burned in the hazard window: a day of the month's MODIS or
+//              VIIRS burned-area map (MCD64A1, VNP64A1; either is enough,
+//              so the rule survives the end of MODIS) inside the window, OR
+//              an unusual fire within 1 km (a FIRMS detection in the window
+//              whose 5 km smoothed count is above the same days' in
+//              2019-2021) with a Sentinel-2 dNBR of 0.27 or more (the median
+//              NBR of the 30 days before the day minus that of the 30 days
+//              from it). Plain dNBR is not enough: a Kansas wheat harvest
+//              passes it on 21.9% of the cropland without any fire.
+//              "Unusual" is a clear excess (method.js WILDFIRE): at least
+//              twice the normal and 0.1 detections per km2 above it. On
+//              cropland, a burned-area pixel counts only where the burned
+//              share of the cropland within 5 km is at least twice that of
+//              the same days in 2019-2021 and 5 points above it, so fields
+//              burned every year (crop residue, stubble) are left out
+//   heavy      hit with dNBR 0.27 or more (a severe loss of vegetation)
+//   routine    cropland seen burned (or burned by dNBR next to a fire) that
+//              is left out as routine burning: what the run says it left out
+//   nowPoints  FIRMS detections of the last 7 days of the month (the area
+//              padded by 10 km) as sample points (a fixed seed, as for
+//              fighting), or null without fire data: Feasibility is the
+//              distance to them
+// Only the burned-area maps the preflight found are used, and the
+// unusual-fire arm only with Sentinel-2 before and after the day.
+// onFireGrid: the FIRMS images on the 1 km grid for small areas (fireImages).
+export function burnImages(ee, { region, nowRegion = region, windows, have, onFireGrid = (image) => image, tileScale = 4 }) {
+  const h = have.hazard || {};
+  const zero = ee.Image.constant(0);
+  const cropland = croplandImage(ee);
+  const windowDays = daysBetween(windows.hazard.start, windows.hazard.end);
+  const smooth = (image) => image.focal_mean(FIRE_SMOOTH_M, "circle", "meters");
+  // A clear excess over the normal: excessTimes the normal and `margin` above it.
+  const clearly = (now, normal, margin) => now.gte(normal.multiply(WILDFIRE.excessTimes)).and(now.subtract(normal).gte(margin));
+  // The burned-area maps over a window: BurnDate is the day of the year
+  // (1-366) of the map's year; d = that day counted from the window's
+  // first day. counts: the maps the preflight found (per month of the
+  // window), or null for a normal year (a map that is not there reads as
+  // not burned).
+  const burnedIn = (window, counts) => {
+    const startMs = dayMs(window.start);
+    const days = daysBetween(window.start, window.end);
+    let out = zero;
+    const months = [];
+    for (let m = window.start.slice(0, 7), guard = 0; m <= shiftDays(window.end, -1).slice(0, 7) && guard < 6; m = addMonths(m, 1), guard += 1) months.push(m);
+    months.forEach((month, i) => {
+      const offset = Math.round((dayMs(`${month.slice(0, 4)}-01-01`) - startMs) / DAY_MS) - 1;
+      for (const [dataset, band, count] of [
+        [DATASETS.burnedModis, BANDS.burnModis, counts ? counts.modis?.[i] : 1],
+        [DATASETS.burnedViirs, BANDS.burnViirs, counts ? counts.viirs?.[i] : 1],
+      ]) {
+        if (!(count > 0)) continue;
+        const maps = burnedArea(ee, dataset, band, region, month);
+        const day = (counts ? maps : maps.merge(ee.ImageCollection([ee.Image.constant(0).toInt16().rename(band)]))).max();
+        const d = day.add(offset);
+        out = out.or(day.gt(0).and(d.gte(0)).and(d.lt(days)).unmask(0));
+      }
+    });
+    return out;
+  };
+  const burned = burnedIn({ start: windows.disaster.since, end: windows.hazard.end }, { modis: h.burnedModis, viirs: h.burnedViirs });
+  // On cropland, only burning clearly above the same days of 2019-2021.
+  // (On a 500 m grid, the burned-area maps' own size, so the 5 km window
+  // stays small.)
+  const grid500 = (image) => image.reproject({ crs: "EPSG:4326", scale: 500 });
+  const cropShare = (image) => smooth(grid500(image.updateMask(cropland).unmask(0))).divide(smooth(grid500(cropland.toFloat())).max(1e-6));
+  const normals = windows.hazardNormals || [];
+  const normalBurned = normals.length ? normals.map((w) => burnedIn(w, null).toFloat()).reduce((all, next) => all.add(next)).divide(normals.length) : zero;
+  const burnedUnusual = clearly(cropShare(burned.toFloat()), cropShare(normalBurned), WILDFIRE.excessBurnShare);
+  const burnedKept = burned.and(cropland.not().or(burnedUnusual));
+  let hit = burnedKept;
+  let heavy = zero;
+  // Seen burned, but left out as routine burning (the run says how much).
+  let routine = burned.and(burnedKept.not());
+  if (h.s2Pre > 0 && h.s2Post > 0) {
+    const nbr = (window) => sentinel2(ee, region, window).map((image) => maskSentinel2Clouds(image).normalizedDifference(["B8", "B12"]).rename("nbr")).median();
+    const severe = nbr(windows.burnPre).subtract(nbr(windows.burnPost)).gte(WILDFIRE.severeDnbr).unmask(0);
+    let ring = zero;
+    let anyRing = zero;
+    if (h.firmsHazard > 0) {
+      const grid = (image) => image.setDefaultProjection("EPSG:4326", null, 1000);
+      const count = (window) => grid(firms(ee, region, window).count().unmask(0));
+      const now = count(windows.hazard);
+      const normal =
+        h.firmsHazardBase > 0
+          ? grid(windows.hazardNormals.map((w) => firms(ee, region, w)).reduce((all, next) => all.merge(next)).count().unmask(0)).divide(windows.hazardNormals.length)
+          : zero;
+      const near = (image) => onFireGrid(onFireGrid(image).focal_max(WILDFIRE.nearM, "circle", "meters"), RING_GRID_M).unmask(0);
+      const unusual = now.gt(0).and(onFireGrid(clearly(smooth(now), smooth(normal), WILDFIRE.excessPerKm2)));
+      ring = near(unusual);
+      anyRing = near(now.gt(0));
+    }
+    hit = burnedKept.or(ring.and(severe));
+    heavy = hit.and(severe);
+    routine = burned.or(anyRing.and(severe)).and(hit.not());
+  }
+  routine = routine.and(cropland);
+  let nowPoints = null;
+  if (h.firmsNow > 0) {
+    const fire = firms(ee, nowRegion, windows.hazardNow).count().unmask(0).gt(0).selfMask().setDefaultProjection("EPSG:4326", null, 1000).rename("fire");
+    nowPoints = fire.stratifiedSample({ numPoints: 3000, classBand: "fire", region: nowRegion, scale: 1000, seed: 0, geometries: true, tileScale });
+  }
+  return { hit: hit.rename("hit"), heavy: heavy.rename("heavy"), routine: routine.rename("routine"), nowPoints };
+}
+
+// A drought (method.js DROUGHT): crop greenness in the loss window
+// (windows.lossWindow) against the same span of 2019-2021, from MODIS
+// MOD13Q1 NDVI (250 m, 16-day composites). Each composite is masked to
+// cropland and smoothed over 1.5 km, so field-by-field rotation (wheat and
+// fallow) cancels out, and is paired with the same composite (the same day
+// of the year) of each normal year. A composite counts only where its
+// normal NDVI is 0.3 or more (and it exists in both): dormant weeks, when
+// bare fields read alike every year, would otherwise dilute the loss. (Real
+// data, 2026-10-25: the Nebraska Panhandle drought, March to June 2026,
+// 24% of the cropland hit with the 0.3 floor on the window's mean, 70% with
+// it per composite, against 74% over 15 April to 15 June; the 2025 control
+// 3% and 8%.) loss = 1 - the kept composites' NDVI / their normal, read at
+// each month's end of the season so far (lossCuts) and kept at its worst. VIIRS
+// VNP13A1 (500 m) is used only when MOD13Q1 has no image there ({ viirs:
+// true }), on the window's means. Gives back { hit, heavy, viirs } (loss
+// 20% / 35% or more), masked where it was not measured, or null when
+// neither dataset has images.
+export const MODIS_COMPOSITE_DAYS = 16;
+export function compositeDays(window) {
+  const out = [];
+  const firstYear = Number(window.start.slice(0, 4));
+  const lastYear = Number(shiftDays(window.end, -1).slice(0, 4));
+  for (let year = firstYear; year <= lastYear; year += 1) {
+    for (let doy = 1; doy <= 366; doy += MODIS_COMPOSITE_DAYS) {
+      const day = shiftDays(`${year}-01-01`, doy - 1);
+      if (day >= window.start && day < window.end) out.push({ year, doy, day });
+    }
+  }
+  return out;
+}
+// The ends (not included) at which a drought season is read: each month's
+// end from DROUGHT.worstFromDays (90) after the season's start, and the
+// window's own end. The loss kept is the worst of those readings, so a
+// crop lost in May still reads lost in September: the later, normal
+// weeks of the same season (summer crops after a failed wheat) would
+// otherwise dilute it. (Real data, 2026-10-25: the Nebraska Panhandle
+// drought read 70% of the cropland hit in June 2026 and 11% in September
+// over the whole season to date.) It changes only when a new season starts.
+// Not from 60 days: the short early readings are noisy (real data,
+// 2026-10-25: from 60 days the Nebraska 2025 control, no drought, read 26%
+// of its cropland hit).
+export function lossCuts(window) {
+  const first = shiftDays(window.start, DROUGHT.worstFromDays);
+  const out = [];
+  for (let m = addMonths(first.slice(0, 7), first.endsWith("-01") ? 0 : 1), guard = 0; `${m}-01` < window.end && guard < 24; m = addMonths(m, 1), guard += 1) out.push(`${m}-01`);
+  out.push(window.end);
+  return out;
+}
+export function cropLossImage(ee, { region, window, baselines, have, cropland }) {
+  const g = have.disaster || {};
+  const modis = g.ndviLoss > 0 && g.ndviLossBase > 0;
+  const viirs = !modis && g.ndviViirsLoss > 0 && g.ndviViirsLossBase > 0;
+  if (!modis && !viirs) return null;
+  const dataset = modis ? DATASETS.ndvi250 : DATASETS.ndviViirs;
+  const gridM = modis ? 250 : 500;
+  // As float, so a day's images and its masked placeholder merge.
+  const scaled = (collection) => collection.select(BANDS.ndvi).map((image) => image.multiply(0.0001).updateMask(image.gt(-2000)).toFloat());
+  const ndvi = (w) => scaled(ee.ImageCollection(dataset).filterBounds(region).filterDate(w.start, w.end));
+  const grid = (image) => image.reproject({ crs: "EPSG:4326", scale: gridM });
+  const smooth = (image) => grid(grid(image).updateMask(cropland).focal_mean(DROUGHT.smoothM, "circle", "meters"));
+  const lossFrom = (now, normal) => ee.Image(1).subtract(now.divide(normal));
+  let loss;
+  if (modis) {
+    // One composite (or none: then masked, never an empty collection in a
+    // formula) of a day, as a masked placeholder plus the day's images.
+    const blank = ee.Image.constant(0).updateMask(ee.Image.constant(0)).rename(BANDS.ndvi).toFloat();
+    const composite = (day) => scaled(ee.ImageCollection(dataset).filterBounds(region).filterDate(day, shiftDays(day, 1))).merge(ee.ImageCollection([blank])).mean();
+    const shifts = baselines.map((b) => Number(b.start.slice(0, 4)) - Number(window.start.slice(0, 4)));
+    let nowSum = null;
+    let normalSum = null;
+    // The season's reading at each month's end (lossCuts), and its worst.
+    const readings = [];
+    const cuts = lossCuts(window);
+    const days = compositeDays(window);
+    days.forEach(({ year, doy, day }, i) => {
+      const now = smooth(composite(shiftDays(`${year}-01-01`, doy - 1)));
+      const normal = smooth(ee.ImageCollection(shifts.map((shift) => composite(shiftDays(`${year + shift}-01-01`, doy - 1)))).mean());
+      const keep = normal.gte(DROUGHT.minBaseNdvi).and(now.gte(-1)).unmask(0);
+      const nowKept = now.updateMask(keep).unmask(0);
+      const normalKept = normal.updateMask(keep).unmask(0);
+      nowSum = nowSum ? nowSum.add(nowKept) : nowKept;
+      normalSum = normalSum ? normalSum.add(normalKept) : normalKept;
+      // The last composite before a cut: the reading as of that month's end.
+      const next = days[i + 1]?.day;
+      if (cuts.some((cut) => day < cut && !(next < cut))) readings.push(lossFrom(nowSum, normalSum).updateMask(normalSum.gt(0)).rename("loss"));
+    });
+    if (!nowSum) return null;
+    if (!readings.length) readings.push(lossFrom(nowSum, normalSum).updateMask(normalSum.gt(0)).rename("loss"));
+    loss = readings.length === 1 ? readings[0] : ee.ImageCollection(readings).max();
+  } else {
+    const now = smooth(ndvi(window).mean());
+    const normal = smooth(baselines.map(ndvi).reduce((all, next) => all.merge(next)).mean());
+    loss = lossFrom(now, normal).updateMask(normal.gte(DROUGHT.minBaseNdvi));
+  }
+  return { hit: loss.gte(DROUGHT.hitLoss).rename("hit"), heavy: loss.gte(DROUGHT.heavyLoss).rename("heavy"), viirs };
+}
+
+// Greenness loss in one season (a storm, earthquake, landslide or other
+// disaster: method.js GROUND): the cloud-masked median Sentinel-2 NDVI of
+// the season against that of the same season in 2019-2021; 1 where it is
+// 20% or more below a normal of 0.3 or more, 0 elsewhere, masked where the
+// normal is below 0.3.
+export function greenLossImage(ee, { region, window, baselines }) {
+  const ndvi = (w) => sentinel2(ee, region, w).map((image) => maskSentinel2Clouds(image).normalizedDifference(["B8", "B4"]).rename("ndvi"));
+  const now = ndvi(window).median();
+  const normal = baselines.map(ndvi).reduce((all, next) => all.merge(next)).median();
+  return ee.Image(1).subtract(now.divide(normal)).updateMask(normal.gte(GROUND.minBaseNdvi)).gte(GROUND.greenLoss);
 }
 
 // The orbit direction to compare radar with: the one with the most passes
@@ -1821,8 +2666,26 @@ async function seasonPreflight(ee, { region, windows, context }) {
       [`s1SeasonBase_${pass}`, s1(windows.radarSeasonBaselines.length ? windows.radarSeasonBaselines : windows.baselines, pass)],
     ])),
   };
+  // A natural disaster's own images, per group: a drought's greenness in
+  // its loss window and the same span of 2019-2021 (MOD13Q1; VNP13A1 too,
+  // used only when MOD13Q1 has none), and for a storm, earthquake,
+  // landslide or other disaster Sentinel-2 in the season it hit
+  // (radarSeasons[0], which contains its day) and that season of 2019-2021.
+  const type = windows.disaster?.type;
+  if (type === "drought" && windows.lossWindow) {
+    const ndvi = (dataset, list) => list.map((w) => ee.ImageCollection(dataset).filterBounds(region).filterDate(w.start, w.end)).reduce((all, next) => all.merge(next)).size();
+    counts.ndviLoss = ndvi(DATASETS.ndvi250, [windows.lossWindow]);
+    counts.ndviLossBase = ndvi(DATASETS.ndvi250, windows.lossBaselines);
+    counts.ndviViirsLoss = ndvi(DATASETS.ndviViirs, [windows.lossWindow]);
+    counts.ndviViirsLossBase = ndvi(DATASETS.ndviViirs, windows.lossBaselines);
+  }
+  if ((type === "ground" || type === "other") && seasons.length) {
+    counts.s2First = sentinel2(ee, region, seasons[0]).size();
+    counts.s2FirstBase = baselineWindows(seasons[0], BASELINE_YEARS).map((w) => sentinel2(ee, region, w)).reduce((all, next) => all.merge(next)).size();
+  }
   const raw = (await countImages(ee, counts, { what: "Checking which satellite images exist for the season", context })) || {};
   const count = (key) => Math.max(0, numberOr(raw[key], 0));
+  const disaster = type ? Object.fromEntries(["ndviLoss", "ndviLossBase", "ndviViirsLoss", "ndviViirsLossBase", "s2First", "s2FirstBase"].map((key) => [key, count(key)])) : null;
   const each = (seasons.length ? seasons : [windows.season]).map((_, j) => Object.fromEntries(ORBIT_PASSES.map((pass) => [pass, count(`s1Season${j}_${pass}`)])));
   return {
     s2Current: count("s2Current"),
@@ -1830,6 +2693,7 @@ async function seasonPreflight(ee, { region, windows, context }) {
     s1Season: Object.fromEntries(ORBIT_PASSES.map((pass) => [pass, each.reduce((sum, e) => sum + e[pass], 0)])),
     s1SeasonEach: seasons.length ? each : [],
     s1SeasonBase: Object.fromEntries(ORBIT_PASSES.map((pass) => [pass, count(`s1SeasonBase_${pass}`)])),
+    ...(disaster ? { disaster } : {}),
   };
 }
 
@@ -2253,7 +3117,10 @@ export function monthWindows(month, today = isoDay(new Date()), { lat, conflict 
   const fighting = Boolean(war) && !beforeWar;
   // The damage radar: every complete growing season inside the damage
   // window, against the same season of 2019-2021 (method.js FIRE_YEARS).
-  const radarSeasons = !damage ? [] : Array.isArray(givenSeasons) ? givenSeasons.map((w) => ({ start: w.start, end: w.end })) : damageSeasons(Number.isFinite(lat) ? lat : 50, asOf, damage.start, peakMonth);
+  // A natural disaster counts the whole season that contains its day too
+  // (season.js damageSeasons containing).
+  const disaster = isDisaster(war) ? war : null;
+  const radarSeasons = !damage ? [] : Array.isArray(givenSeasons) ? givenSeasons.map((w) => ({ start: w.start, end: w.end })) : damageSeasons(Number.isFinite(lat) ? lat : 50, asOf, damage.start, peakMonth, { containing: Boolean(disaster) });
   // The fires that stand in for fighting: the 12 months up to the end of
   // the month, never from before the war began.
   const yearStart = yearBefore(own.end);
@@ -2284,7 +3151,69 @@ export function monthWindows(month, today = isoDay(new Date()), { lat, conflict 
     }),
     fightingSince,
     viirsSearch: stop({ start: `${addMonths(month, -5)}-01`, end: own.end }),
+    ...(disaster ? disasterWindows(disaster, { own, damage, asOf, lat, peakMonth, stop }) : {}),
   };
+}
+
+// The windows of a natural disaster's month (monthWindows, a disaster
+// only: a war's windows get none of these keys). All null or empty for a
+// month that ends before the disaster began (no damage window).
+//   hazard        flood and wildfire: from the day to 60 days after it, cut
+//                 at the month's end (method.js FLOOD.windowDays, WILDFIRE);
+//                 every month after the 60 days reads the same window
+//   hazardNow     the last 12 (flood) or 7 (wildfire) days of the month,
+//                 never before the day: what is under water, or burning, now
+//   hazardNormals the hazard's days in each normal year 2019-2021 (unusual
+//                 fire; baselineWindows, so they never reach into 2022)
+//   floodNormals  the WHOLE hazard window (60 days from the day, not cut at
+//                 the month's end) in each normal year, and
+//   hazardNowNormals  the hazardNow days in each normal year: a flood's
+//                 normal radar and its recurring water (floodImages), the
+//                 same in every month for the hit land
+//   hazardMonths  the first and last calendar month (1-12) of the WHOLE
+//                 hazard window (60 days from the day, not cut at the
+//                 month's end), for the JRC monthly water guard: the guard is
+//                 the same in every month, so the hit land cannot shrink
+//                 when the window grows (real data, 2026-10-25: Iowa's flood
+//                 read 5,408 ha in June and 5,240 ha in July 2024 when the
+//                 guard followed the cut window)
+//   burnMonths    the months ("YYYY-MM") the hazard spans: the monthly
+//                 burned-area maps (MCD64A1, VNP64A1) of each
+//   burnPre       the 30 days before the day; burnPost the 30 days from it,
+//                 cut at the month's end (Sentinel-2 dNBR)
+//   lossWindow    drought: the crop season running now (or just ended:
+//                 season.js cropLossSeason), and lossBaselines the same span
+//                 in 2019-2021; null when no season can be measured yet
+//   disaster      the disaster ({ since, type, ... })
+function disasterWindows(disaster, { own, damage, asOf, lat, peakMonth, stop }) {
+  const out = { disaster, hazard: null, hazardNow: null, hazardNormals: [], floodNormals: [], hazardNowNormals: [], hazardMonths: null, burnMonths: [], burnPre: null, burnPost: null, lossWindow: null, lossBaselines: [] };
+  if (!damage) return out;
+  const since = disaster.since;
+  const rules = disaster.type === "wildfire" ? WILDFIRE : disaster.type === "flood" ? FLOOD : null;
+  if (rules) {
+    const capped = (day) => (day < own.end ? day : own.end);
+    out.hazard = stop({ start: since, end: capped(shiftDays(since, rules.windowDays)) });
+    const nowStart = shiftDays(own.end, -rules.nowDays);
+    out.hazardNow = stop({ start: nowStart > since ? nowStart : since, end: own.end });
+    if (out.hazard.end > out.hazard.start) {
+      out.hazardNormals = baselineWindows(out.hazard, BASELINE_YEARS);
+      out.floodNormals = baselineWindows({ start: since, end: shiftDays(since, rules.windowDays) }, BASELINE_YEARS);
+      if (out.hazardNow.end > out.hazardNow.start) out.hazardNowNormals = baselineWindows(out.hazardNow, BASELINE_YEARS);
+      const lastDayOf = shiftDays(out.hazard.end, -1);
+      out.hazardMonths = [Number(since.slice(5, 7)), Number(shiftDays(since, rules.windowDays - 1).slice(5, 7))];
+      for (let m = since.slice(0, 7), guard = 0; m <= lastDayOf.slice(0, 7) && guard < 6; m = addMonths(m, 1), guard += 1) out.burnMonths.push(m);
+    }
+    out.burnPre = stop({ start: shiftDays(since, -WILDFIRE.preDays), end: since });
+    out.burnPost = stop({ start: since, end: capped(shiftDays(since, WILDFIRE.postDays)) });
+  }
+  if (disaster.type === "drought") {
+    const loss = cropLossSeason(Number.isFinite(lat) ? lat : 50, asOf, since, peakMonth, { minDays: DROUGHT.minSeasonDays });
+    if (loss) {
+      out.lossWindow = stop({ start: loss.start, end: loss.end });
+      out.lossBaselines = baselineWindows({ start: loss.start, end: loss.end }, BASELINE_YEARS);
+    }
+  }
+  return out;
 }
 
 // ---------- Where the cells are ----------
@@ -2806,6 +3735,14 @@ export function toReading(cell, means = {}, sums = {}, { cellSizeDeg, names } = 
     heavyShare: round(clamp01(numberOr(m.heavy, 0)), 4),
     population: Math.round(population),
   };
+  // A natural disaster's bands (analyzeMonth), only when they were read:
+  // the share of the cell's cropland hit, its grassland share and the
+  // share of that hit, and (a flood) the cropland share under water now.
+  if (m.hit !== undefined) reading.hitShare = round(clamp01(numberOr(m.hit, 0)), 4);
+  if (m.grassland !== undefined) reading.grassShare = round(clamp01(numberOr(m.grassland, 0)), 4);
+  if (m.grassHit !== undefined) reading.grassHitShare = round(clamp01(numberOr(m.grassHit, 0)), 4);
+  if (m.wetNow !== undefined) reading.wetNowShare = round(clamp01(numberOr(m.wetNow, 0)), 4);
+  if (m.routine !== undefined) reading.routineShare = round(clamp01(numberOr(m.routine, 0)), 4);
   if (names?.admin1) reading.admin1 = names.admin1;
   if (names?.admin2) reading.admin2 = names.admin2;
   return reading;

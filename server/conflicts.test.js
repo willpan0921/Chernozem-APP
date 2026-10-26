@@ -12,7 +12,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { conflictAt, conflictForArea, countryAt, listConflictForArea, listWarFor, warCellsFor } from "./conflicts.js";
-import { CONFLICTS, EARLIEST_WAR_DAY, TEAM_WAR_NAME, WAR_NAME_MAX, checkAreaWar, damageWindow, endsBeforeWar, teamConflict, warBoxes, warSquares } from "../src/config/conflicts.js";
+import { CONFLICTS, EARLIEST_WAR_DAY, TEAM_WAR_NAME, WAR_NAME_MAX, checkAreaWar, crisisFormFor, damageWindow, endsBeforeWar, teamConflict, warBoxes, warSquares } from "../src/config/conflicts.js";
 
 test("countries are found from a point", () => {
   assert.equal(countryAt(49.73, 37.54)?.name, "Ukraine"); // Kupiansk
@@ -353,7 +353,7 @@ test("checkAreaWar: one of three choices; for a war a real day from 2022-01-01 t
     [{ mode: "war" }, /YYYY-MM-DD/],
     [{ mode: "war", since: "2023-08-01", name: "x".repeat(81) }, /at most 80 characters \(this one has 81\)/],
     [{ mode: "war", since: "2023-08-01", name: 5 }, /must be text/],
-    [{ mode: "sometimes" }, /must be "list" \(the app's list\), "war" \(at war from a day\) or "peace" \(not at war\), not "sometimes"/],
+    [{ mode: "sometimes" }, /must be "list" \(the app's list of wars\), "war" \(at war from a day\), "disaster" \(a natural disaster from a day\) or "peace" \(no crisis\), not "sometimes"/],
     [{}, /must be "list"/],
     [null, /Send the war setting as/],
     ["war", /Send the war setting as/],
@@ -376,4 +376,47 @@ test("a month ends before its war began when the war's first day comes after the
   assert.equal(endsBeforeWar("2025-12", { ...war, since: "2026-01-01" }), true, "across the new year");
   assert.equal(endsBeforeWar("2026-05", null), false, "at peace");
   assert.equal(endsBeforeWar("not a month", war), false);
+});
+
+test("checkAreaWar and teamConflict: a natural disaster since a day, with its type and an optional name; wars, peace and the list as before", async () => {
+  const { TEAM_DISASTER_NAME } = await import("../src/config/conflicts.js");
+  const today = "2026-10-19";
+  assert.deepEqual(checkAreaWar({ mode: "disaster", since: "2023-09-04", type: "flood", name: "  Storm   Daniel floods " }, today), { war: { mode: "disaster", since: "2023-09-04", type: "flood", name: "Storm Daniel floods" } });
+  assert.deepEqual(checkAreaWar({ mode: "disaster", since: "2024-07-17", type: "wildfire" }, today), { war: { mode: "disaster", since: "2024-07-17", type: "wildfire" } });
+  for (const type of ["drought", "ground", "other"]) assert.equal(checkAreaWar({ mode: "disaster", since: "2024-01-01", type }, today).war.type, type);
+  const errors = [
+    [{ mode: "disaster", since: "2023-09-04" }, "Choose what kind of disaster it was: flood, wildfire, drought, storm/earthquake/landslide, or other."],
+    [{ mode: "disaster", since: "2023-09-04", type: "volcano" }, "Choose what kind of disaster it was: flood, wildfire, drought, storm/earthquake/landslide, or other."],
+    [{ mode: "disaster", since: "2021-12-31", type: "flood" }, "The day must be 1 January 2022 or later: the normal years 2019 to 2021 must come before the disaster."],
+    [{ mode: "disaster", since: "2026-10-20", type: "flood" }, "The day cannot be after today (2026-10-19)."],
+    [{ mode: "disaster", since: "2023-02-30", type: "flood" }, "Give the day the disaster began, as YYYY-MM-DD (for example 2024-06-21)."],
+    [{ mode: "disaster", since: "2023-09-04", type: "flood", name: "x".repeat(81) }, `The disaster's name can have at most ${WAR_NAME_MAX} characters (this one has 81).`],
+  ];
+  for (const [input, message] of errors) assert.deepEqual(checkAreaWar(input, today), { error: message }, JSON.stringify(input));
+  // The crisis object: a war's, plus kind and type.
+  assert.deepEqual(teamConflict({ mode: "disaster", since: "2023-09-04", type: "flood" }, "a1"), { id: "area-a1", name: "Flood (set for this area)", since: "2023-09-04", source: "area", kind: "disaster", type: "flood" });
+  assert.deepEqual(teamConflict({ mode: "disaster", since: "2023-09-04", type: "flood", name: "Storm Daniel floods" }, "a1").name, "Storm Daniel floods");
+  assert.equal(TEAM_DISASTER_NAME("ground"), "Storm, earthquake or landslide (set for this area)");
+  assert.equal(teamConflict({ mode: "disaster", since: "2023-09-04", type: "volcano" }, "a1"), undefined);
+  // Wars, peace and the list: exactly as before (no new key).
+  assert.deepEqual(teamConflict({ mode: "war", since: "2023-08-01" }, "a1"), { id: "area-a1", name: "War (set for this area)", since: "2023-08-01", source: "area" });
+  assert.equal(teamConflict({ mode: "peace" }, "a1"), null);
+  assert.equal(teamConflict({ mode: "list" }, "a1"), undefined);
+  // The area's analyses use it first, whatever the list says.
+  assert.equal(conflictForArea({ countryId: "804", war: { mode: "disaster", since: "2023-09-04", type: "flood" }, areaId: "u" }).kind, "disaster");
+});
+
+test("crisisFormFor: each Crisis choice starts from its own day and name; a war's never fills a disaster, nor a disaster's a war", () => {
+  // A war of the app's list (Kharkiv since 24 Feb 2022): Natural disaster starts empty.
+  assert.deepEqual(crisisFormFor("disaster", null, "2022-02-24"), { since: "", name: "", type: "" });
+  assert.deepEqual(crisisFormFor("war", null, "2022-02-24"), { since: "2022-02-24", name: "", type: "" });
+  assert.deepEqual(crisisFormFor("war", null, "2014-04-06"), { since: "", name: "", type: "" }, "a list war older than 2022 is not offered");
+  // A saved flood: reopened as it is; At war gets the list day and no name.
+  const flood = { mode: "disaster", since: "2025-08-15", type: "flood", name: "Chenab floods" };
+  assert.deepEqual(crisisFormFor("disaster", flood, "2022-02-24"), { since: "2025-08-15", name: "Chenab floods", type: "flood" });
+  assert.deepEqual(crisisFormFor("war", flood, null), { since: "", name: "", type: "" });
+  // A saved war: Natural disaster starts empty, never "Fighting in Amhara".
+  const war = { mode: "war", since: "2023-08-01", name: "Fighting in Amhara" };
+  assert.deepEqual(crisisFormFor("disaster", war, null), { since: "", name: "", type: "" });
+  assert.deepEqual(crisisFormFor("war", war, null), { since: "2023-08-01", name: "Fighting in Amhara", type: "" });
 });

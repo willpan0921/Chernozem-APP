@@ -83,8 +83,19 @@ export const atlasSmallAreaPeaceSuggestions = [
 //          distance to fighting was measured (a month before its war
 //          began, or a war where no fire looked like fighting): no
 //          question about fighting
-export function atlasStarterQuestions({ small = false, peace = false } = {}) {
+// In a natural disaster the team set (src/lib/atlas/method.js
+// DISASTER_TYPES) the fourth question follows its type, never fighting.
+export const atlasDisasterQuestions = {
+  flood: "Which fields are still under water?",
+  wildfire: "Where is it still burning?",
+  drought: "Where did the crop fail worst?",
+  ground: "Where did the land change most?",
+  other: "Where did the land change most?",
+};
+//   disaster  the disaster's type ("flood", ...), or null
+export function atlasStarterQuestions({ small = false, peace = false, disaster = null } = {}) {
   if (!small) return atlasSuggestions;
+  if (disaster) return [...atlasSmallAreaPeaceSuggestions.slice(0, 3), atlasDisasterQuestions[disaster] || atlasDisasterQuestions.other];
   return peace ? atlasSmallAreaPeaceSuggestions : atlasSmallAreaSuggestions;
 }
 
@@ -105,6 +116,8 @@ export const composer = {
     placeholder: "Ask about {area}",
     disclaimer: "AI can make mistakes. It never decides whether land is safe. Only certified deminers can.",
     disclaimerPeace: "AI can make mistakes. It never decides whether land is safe.",
+    // A natural disaster: no deminers, but no promise either.
+    disclaimerDisaster: "AI can make mistakes. It never decides whether land is safe or can be worked: check it on the ground with local authorities.",
     welcome: "Ask about {area}",
   },
 };

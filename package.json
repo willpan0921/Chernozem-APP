@@ -8,7 +8,8 @@
     "build": "vite build",
     "start": "node server/index.js",
     "test": "node --test \"src/lib/**/*.test.js\" \"server/**/*.test.js\"",
-    "gee:check": "node scripts/gee-check.js"
+    "gee:check": "node scripts/gee-check.js",
+    "disaster:check": "node scripts/disaster-check.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",

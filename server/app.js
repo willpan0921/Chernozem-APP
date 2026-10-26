@@ -474,8 +474,10 @@ async function route(req, res, url) {
     if (second && !third && method === "PATCH") {
       if (!(await getArea(second))) throw notFound("That area does not exist.");
       const changes = areaChanges(await readJson(req));
-      // Saved months keep the war setting they were made with; Atlas
-      // Settings offers the re-run (nothing is analyzed here).
+      // Saved months keep the war setting (the crisis: a war, a natural
+      // disaster or none, src/config/conflicts.js checkAreaWar) they were
+      // made with; Atlas Settings offers the re-run (nothing is analyzed
+      // here).
       const area = await updateArea(second, (current) => {
         if (changes.name) current.name = changes.name;
         if (changes.war) {

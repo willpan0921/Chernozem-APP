@@ -125,7 +125,7 @@ export function planSteps({ run, hotspots = [], alerts = [], isLatest = false })
 
   return steps.map((step) => {
     const next = { ...step };
-    if (step.id === `${run.id}-demining`) next.id = `${step.id}-${named.slice(0, 2).map((hotspot) => hotspot.id).join("-")}`;
+    if (step.id === `${run.id}-demining` || step.id === `${run.id}-first-check`) next.id = `${step.id}-${named.slice(0, 2).map((hotspot) => hotspot.id).join("-")}`;
     if (step.id === `${run.id}-soil-test` && named[2]) next.id = `${step.id}-${named[2].id}`;
     const alert = alerts.find((item) => step.id === `${run.id}-${item.id}-review`);
     if (alert && !alert.place && !Number.isFinite(alert.lat)) {

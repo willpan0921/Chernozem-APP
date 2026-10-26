@@ -30,7 +30,8 @@ import { PageHeader, Card, Badge, Button, Segmented } from "../../components/ui/
 import { AtlasGate, AnalysisNotice, AnalysisProgress, useAtlasData } from "../../state/AtlasData.jsx";
 import { compareRuns } from "../../api/atlasApi.js";
 import { placeLabel } from "../../lib/atlas/hotspots.js";
-import { validation, citation } from "../../config/research.js";
+import { disasterValidation, validation, citation } from "../../config/research.js";
+import { DISASTER_NOUNS, isDisaster } from "../../lib/atlas/method.js";
 import { formatCount, formatHaShort, formatSigned } from "../../lib/format.js";
 import { runsComparable } from "../../lib/atlas/method.js";
 import { seasonWords, shownNewDamage, sourceBadge, warNote, warningWords } from "../../lib/atlas/overview.js";
@@ -522,6 +523,10 @@ function MonthTable({ runs, onOpen }) {
           <tbody>
             {rows.map((run) => {
               const warnings = run.checks && run.checks.passed < run.checks.total;
+              // A natural disaster's month also shows what its run said
+              // (damage not measured yet, burned-area map not out, a
+              // provisional rule) when every check passed.
+              const notes = !warnings && isDisaster(run.conflict) && run.checks?.warnings?.length > 0;
               return (
                 <tr
                   key={run.id}
@@ -557,6 +562,11 @@ function MonthTable({ runs, onOpen }) {
                       {warnings && (
                         <span className="dp-warn" title={run.checks.warnings.map(warningWords).join(" ")} aria-label={`${run.checks.total - run.checks.passed} checks failed`}>
                           <TriangleAlert size={13} />
+                        </span>
+                      )}
+                      {notes && (
+                        <span className="dp-warn" title={run.checks.warnings.map(warningWords).join(" ")} aria-label={`Notes from the run: ${run.checks.warnings.length}`}>
+                          <Info size={13} />
                         </span>
                       )}
                     </span>
@@ -603,7 +613,10 @@ const NOT_COMPARABLE_NOTES = {
   grid: "were analyzed on different squares, so they cannot be compared square by square.",
   // The team changed the area's war setting (Atlas Settings), or the app's
   // list of wars changed, between the two months.
-  war: "were analyzed with different war settings (at war and at peace, or another start day), so their difference says nothing about the land. Re-run the analysis (Settings) to compare.",
+  war: "were analyzed with different crisis settings (at war and at peace, another start day, or another kind of disaster), so their difference says nothing about the land. Re-run the analysis (Settings) to compare.",
+  // One month was made in a natural disaster, the other in a war or at
+  // peace (method.js runsComparable "crisis").
+  crisis: "were analyzed with different crisis settings (a natural disaster against a war or no crisis), so their difference says nothing about the land. Re-run the analysis (Settings) to compare.",
 };
 
 const CHANGE_LIMIT = 8;
@@ -800,6 +813,8 @@ function CompareCard() {
 // ---------------------------------------------------------------------------
 
 function ValidationCard() {
+  const { run } = useAtlasData();
+  if (run && isDisaster(run.conflict)) return <DisasterValidationCard type={run.conflict.type} />;
   return (
     <Card
       title={validation.title}
@@ -827,6 +842,37 @@ function ValidationCard() {
         {citation.text}
         <ExternalLink size={12} aria-hidden="true" />
       </a>
+    </Card>
+  );
+}
+
+// "How we know it works" in a natural disaster: that type's own checks on
+// real data (research.js disasterValidation), never the war's research.
+function DisasterValidationCard({ type }) {
+  const words = disasterValidation;
+  const own = words.types[type] || words.types.other;
+  return (
+    <Card title={words.title} className="dp-validation" actions={<Badge tone="outline">{words.scope}</Badge>}>
+      <p className="dp-validation-intro">
+        {words.intro} {words.warNote.replace("{noun}", DISASTER_NOUNS[type] || "disaster")}
+      </p>
+      {own.checks.length > 0 && (
+        <ul className="dp-checks">
+          {own.checks.map((check) => (
+            <li key={check.text}>
+              <span className="dp-check-value">{check.value}</span>
+              <span className="dp-check-text">{check.text}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {own.failed && (
+        <div className="panel panel-amber dp-open">
+          <Info size={14} aria-hidden="true" />
+          <p>{own.failed}</p>
+        </div>
+      )}
+      <p className="dp-validation-intro">{words.checked}</p>
     </Card>
   );
 }

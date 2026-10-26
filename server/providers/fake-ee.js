@@ -149,7 +149,7 @@ const RESULT_KIND = {
   FeatureCollection: { size: "Number", aggregate_max: "Number", aggregate_array: "List", first: "Feature", geometry: "Geometry", distance: "Image", reduceToImage: "Image", toList: "List" },
   Feature: { get: "Object", geometry: "Geometry", area: "Number" },
   Geometry: { area: "Number", perimeter: "Number", coordinates: "List" },
-  Date: { get: "Number", millis: "Number", format: "String" },
+  Date: { get: "Number", millis: "Number", format: "String", advance: "Date", getRelative: "Number" },
   Dictionary: { get: "Object" },
   List: { get: "Object", size: "Number" },
   Join: { apply: "FeatureCollection" },
@@ -558,6 +558,12 @@ export function createFakeEe(options = {}) {
     },
     String(value) {
       return make("String", "String", [value]);
+    },
+    // A date (a flood's radar look's day: gee.js coldLookup).
+    Date(value) {
+      calls.push({ name: "Date", args: [value] });
+      if (value === null || value === undefined) throw new Error("fake-ee: ee.Date(null).");
+      return make("Date", "Date", [value]);
     },
     List(value) {
       return make("List", "List", [value]);

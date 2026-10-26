@@ -282,6 +282,11 @@
   width: 100%;
 }
 
+/* A natural disaster: its type first, then the day and the name. */
+.aset-war-form.is-disaster {
+  grid-template-columns: minmax(170px, 230px) 170px minmax(0, 1fr) auto;
+}
+
 .aset-war-field {
   display: flex;
   flex-direction: column;
@@ -544,7 +549,8 @@
     padding: 6px 8px;
   }
 
-  .aset-war-form {
+  .aset-war-form,
+  .aset-war-form.is-disaster {
     grid-template-columns: 1fr;
   }
 

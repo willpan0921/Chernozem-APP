@@ -35,7 +35,7 @@ import { Segmented } from "../../components/ui/index.js";
 import { AtlasGate, useAtlasData, useTimeframe } from "../../state/AtlasData.jsx";
 import { findFocus, placeLabel } from "../../lib/atlas/hotspots.js";
 import { weightItems } from "./overviewHelpers.js";
-import { atPeace, noFightingFound, outsideWar, timeframeOptions } from "../../lib/atlas/overview.js";
+import { atPeace, disasterType, noFightingFound, outsideWar, timeframeOptions } from "../../lib/atlas/overview.js";
 import { atlasStarterQuestions, SMALL_AREA_HA, composer } from "../../data/chats.js";
 
 // The Near term | Postwar switch ("Long term" where no war is listed): timeframeOptions(run).
@@ -124,9 +124,11 @@ function AtlasAi() {
   // deminers line (the area is at war now) but, like a month at peace,
   // asks nothing about fighting: no distance to it was measured then.
   const peace = atPeace(run);
+  // A natural disaster: no deminers either, and its own fourth question.
+  const disaster = disasterType(run);
   const text = {
     placeholder: fill(composer.atlas.placeholder, values),
-    disclaimer: peace ? composer.atlas.disclaimerPeace : composer.atlas.disclaimer,
+    disclaimer: disaster ? composer.atlas.disclaimerDisaster : peace ? composer.atlas.disclaimerPeace : composer.atlas.disclaimer,
     welcome: fill(composer.atlas.welcome, values),
   };
   // A farm-sized area gets farm-sized questions. In a war where no fire
@@ -134,7 +136,7 @@ function AtlasAi() {
   // (noFightingFound), so it is not asked "How far is it from the
   // fighting?" (the deminers' line stays: it is still a war).
   const small = Number.isFinite(area.areaHa) && area.areaHa < SMALL_AREA_HA;
-  const suggestions = atlasStarterQuestions({ small, peace: outsideWar(run) || noFightingFound(run) }).map((question) => fill(question, values));
+  const suggestions = atlasStarterQuestions({ small, peace: outsideWar(run) || noFightingFound(run), disaster }).map((question) => fill(question, values));
 
   return (
     <div className="aai-page">

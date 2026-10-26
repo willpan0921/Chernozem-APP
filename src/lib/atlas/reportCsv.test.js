@@ -63,3 +63,33 @@ test("where feasibility is not measured (no fire looked like fighting), feasibil
     assert.equal(cellsCsv(places, 0.25, { accessUnknown: noFightingFound(measured) }), cellsCsv(places, 0.25));
   }
 });
+
+test("a natural disaster's CSV has its own columns (hit land, its indicators, Post-crisis); a war's columns stay as they are", () => {
+  const place = { id: "r0c0", lat: 39.4, lon: 22.1, croplandHa: 100, blackSoilHa: 80, heavyDamageHa: 8, hitHa: 16, hitCropHa: 20, heavyCropHa: 10, grassHitHa: 3, hit: 1, heavy: 0.5, feasible: 0.75, soil: 0.7, damage: 0.75, access: 0.75, nearTerm: { rank: 1, score: 0.5, tier: "highest" }, postwar: { rank: 1, score: 0.6, tier: "highest" } };
+  const table = (text) => {
+    // Fields may be quoted ("39.40° N, 22.10° E").
+    const split = (line) => [...line.matchAll(/("(?:[^"]|"")*"|[^,]*)(,|$)/g)].slice(0, -1).map((m) => m[1].replace(/^"|"$/g, "").replace(/""/g, '"'));
+    const [head, ...rows] = text.trim().split(/\r?\n/);
+    const columns = split(head);
+    return rows.map((row) => Object.fromEntries(split(row).map((value, i) => [columns[i], value])));
+  };
+  const [row] = table(cellsCsv([place], 0.01, { disaster: true }));
+  assert.equal(row.hit_black_soil_ha, "16");
+  assert.equal(row.heavy_black_soil_ha, "8");
+  assert.equal(row.hit_cropland_ha, "20");
+  assert.equal(row.grassland_hit_ha, "3");
+  assert.equal(row.feasibility, "0.75");
+  assert.equal(row.post_crisis_rank, "1");
+  for (const key of ["postwar_rank", "firms", "radar", "distance"]) assert.ok(!(key in row), key);
+  // Feasibility not measured (a drought): empty, never 1; a square whose
+  // damage was not measured: empty hit land and why.
+  const open = { ...place, id: "r0c1", hit: null, heavy: null, hitHa: null, hitCropHa: null, heavyCropHa: null, grassHitHa: null, damage: null, notMeasured: "Damage not measured yet: the crop season has not run long enough", feasible: 1, access: 1 };
+  const rows = table(cellsCsv([place, open], 0.01, { disaster: true, accessUnknown: true }));
+  assert.ok(rows.every((r) => r.feasibility === "" && r.feasible === ""));
+  const unmeasured = rows.find((r) => r.cell_id === "r0c1");
+  assert.deepEqual([unmeasured.hit, unmeasured.hit_black_soil_ha, unmeasured.heavy_black_soil_ha], ["", "", ""]);
+  assert.match(unmeasured.damage_note, /not measured yet/);
+  const war = cellsCsv([place], 0.01).trim().split(/\r?\n/)[0].split(",");
+  assert.equal(war.at(-1), "lights");
+  assert.ok(!war.includes("hit") && war.includes("postwar_rank"));
+});

@@ -287,11 +287,48 @@ test("runs made with another war setting are not comparable: at war against at p
   const peace = { ...base, conflict: null };
   const team = { ...base, conflict: { id: "area-x", name: "Fighting", since: "2023-08-01", source: "area" } };
   assert.equal(runsComparable(listed, peace).reason, "war");
-  assert.equal(runsComparable(peace, team).text, "Not comparable: different war setting");
-  assert.equal(runsComparable(listed, team).why, "different war setting");
+  assert.equal(runsComparable(peace, team).text, "Not comparable: different crisis setting");
+  assert.equal(runsComparable(listed, team).why, "different crisis setting");
   // The name does not change a number: the same day compares.
   assert.equal(runsComparable(team, { ...team, conflict: { ...team.conflict, name: "Another name" } }).comparable, true);
   assert.equal(runsComparable(listed, { ...base, conflict: { id: "area-y", name: "Set by the team", since: "2022-02-24", source: "area" } }).comparable, true);
   // Runs saved before the war was stored count as matching.
   assert.equal(runsComparable(base, team).comparable, true);
+});
+
+test("natural disasters: their own key, version and comparison; wars keep theirs", async () => {
+  const { isDisaster, methodVersionFor, warKey, runsComparable, METHOD_VERSION, DISASTER_METHOD_VERSION, DISASTER_TYPES, DISASTER_SCALES, SCALES, scaleDisaster } = await import("./method.js");
+  const flood = { id: "area-a", name: "Flood (set for this area)", since: "2023-09-04", source: "area", kind: "disaster", type: "flood" };
+  const fire = { ...flood, type: "wildfire" };
+  const war = { id: "area-a", name: "War (set for this area)", since: "2023-09-04", source: "area" };
+  assert.deepEqual(DISASTER_TYPES, ["flood", "wildfire", "drought", "ground", "other"]);
+  assert.equal(isDisaster(flood), true);
+  assert.equal(isDisaster({ ...flood, type: "volcano" }), false);
+  assert.equal(isDisaster(war), false);
+  assert.equal(isDisaster(null), false);
+  assert.equal(methodVersionFor(flood), DISASTER_METHOD_VERSION);
+  assert.equal(methodVersionFor(war), METHOD_VERSION);
+  assert.equal(methodVersionFor(null), METHOD_VERSION);
+  assert.equal(METHOD_VERSION, "2026-10-19.3", "wars and peace keep their method version");
+  assert.equal(warKey(flood), "2023-09-04 (flood)");
+  assert.equal(warKey(war), "2023-09-04");
+  assert.equal(warKey(null), null);
+  assert.equal(warKey(undefined), undefined);
+  // The disaster scales are kept out of SCALES (a war's method JSON is unchanged).
+  for (const key of Object.keys(DISASTER_SCALES)) assert.ok(!(key in SCALES), key);
+  assert.equal(scaleDisaster("hit", 0.1), 0.5);
+  assert.equal(scaleDisaster("hit", 0.5), 1);
+  assert.equal(scaleDisaster("hit", null), null);
+  // A war against a disaster on the same day: "crisis"; two disasters of
+  // another type or day: "war" (both read "different crisis setting").
+  const run = (conflict, version) => ({ provider: "gee", conflict, method: { version }, cellSizeKm: 1 });
+  const warVsFlood = runsComparable(run(war, METHOD_VERSION), run(flood, DISASTER_METHOD_VERSION));
+  assert.equal(warVsFlood.reason, "crisis");
+  assert.equal(warVsFlood.text, "Not comparable: different crisis setting");
+  assert.equal(runsComparable(run(null, METHOD_VERSION), run(flood, DISASTER_METHOD_VERSION)).reason, "crisis");
+  assert.equal(runsComparable(run(flood, DISASTER_METHOD_VERSION), run({ ...flood, method: 1 }, DISASTER_METHOD_VERSION)).comparable, true);
+  const floodVsFire = runsComparable({ ...run(flood, DISASTER_METHOD_VERSION), method: { version: DISASTER_METHOD_VERSION, disaster: { type: "flood" } } }, { ...run(fire, DISASTER_METHOD_VERSION), method: { version: DISASTER_METHOD_VERSION, disaster: { type: "wildfire" } } });
+  assert.equal(floodVsFire.comparable, false);
+  assert.equal(floodVsFire.reason, "war");
+  assert.equal(runsComparable(run(flood, DISASTER_METHOD_VERSION), run({ ...flood, since: "2023-09-05" }, DISASTER_METHOD_VERSION)).reason, "war");
 });

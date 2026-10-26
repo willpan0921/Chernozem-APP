@@ -31,7 +31,11 @@ const round = (value, digits) => (Number.isFinite(value) ? Number(value.toFixed(
 //   cellSizeDeg   the run's square size, for the place names
 //   accessUnknown feasibility is not measured in this run (overview.js
 //                 noFightingFound): feasibility and distance are left empty
-export function cellsCsv(places, cellSizeDeg, { accessUnknown = false } = {}) {
+//   disaster      a natural disaster's run (overview.js isDisasterRun): its
+//                 own columns (disasterRow); every other run's columns stay
+//                 as they are
+export function cellsCsv(places, cellSizeDeg, { accessUnknown = false, disaster = false } = {}) {
+  if (disaster) return disasterCsv(places, cellSizeDeg, { accessUnknown });
   const rows = places.map((place) => ({
     cell_id: place.id,
     place: placeLabel(place, cellSizeDeg),
@@ -64,5 +68,52 @@ export function cellsCsv(places, cellSizeDeg, { accessUnknown = false } = {}) {
   }));
   // Best Postwar rank first, unranked squares last.
   rows.sort((a, b) => (a.postwar_rank || Infinity) - (b.postwar_rank || Infinity));
+  return toCsv(rows);
+}
+
+// A natural disaster's CSV: the same place and score columns, the time
+// frame named Post-crisis (post_crisis_*), the hit hectares (black soil,
+// all cropland, grassland) and the disaster's indicators (hit, heavy,
+// feasible) instead of the war's (fires, radar, distance), and why a
+// square's damage was not measured (damage_note). Feasibility is empty
+// where it is not measured (accessUnknown: a drought, a storm, a month
+// without images), never 1; so are the hit hectares of a square not
+// measured.
+function disasterCsv(places, cellSizeDeg, { accessUnknown = false } = {}) {
+  const rows = places.map((place) => ({
+    cell_id: place.id,
+    place: placeLabel(place, cellSizeDeg),
+    lat: place.lat,
+    lon: place.lon,
+    admin1: place.admin1 || "",
+    admin2: place.admin2 || "",
+    cropland_ha: round(place.croplandHa, 1),
+    black_soil_ha: round(place.blackSoilHa, 1),
+    hit_black_soil_ha: round(place.hitHa, 1),
+    heavy_black_soil_ha: Number.isFinite(place.hit) ? round(place.heavyDamageHa, 1) : "",
+    hit_cropland_ha: round(place.hitCropHa, 1),
+    heavy_cropland_ha: round(place.heavyCropHa, 1),
+    grassland_hit_ha: round(place.grassHitHa, 1),
+    soil_value: round(place.soil, 4),
+    damage: round(place.damage, 4),
+    feasibility: accessUnknown ? "" : round(place.access, 4),
+    near_term_rank: place.nearTerm.rank ?? "",
+    near_term_score: round(place.nearTerm.score, 4),
+    near_term_tier: place.nearTerm.tier,
+    post_crisis_rank: place.postwar.rank ?? "",
+    post_crisis_score: round(place.postwar.score, 4),
+    post_crisis_tier: place.postwar.tier,
+    wrb: place.wrb,
+    ag_output: place.agOutput,
+    hit: place.hit ?? "",
+    heavy: place.heavy ?? "",
+    feasible: accessUnknown ? "" : place.feasible,
+    chi: place.chi,
+    population: place.population,
+    lights: place.lights,
+    people: round(place.people, 0),
+    damage_note: place.notMeasured || "",
+  }));
+  rows.sort((a, b) => (a.post_crisis_rank || Infinity) - (b.post_crisis_rank || Infinity));
   return toCsv(rows);
 }

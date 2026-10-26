@@ -4,7 +4,7 @@
 // hectares, the area totals, the alerts and the quality checks. Also
 // compares two runs and works with months.
 //
-//   buildRun({ area, month, provider, readings, alerts, warnings, cellSizeDeg, cells, baseline, conflict, conflictSource, imagery, accessSource })
+//   buildRun({ area, month, provider, readings, alerts, warnings, cellSizeDeg, cells, baseline, conflict, conflictSource, imagery, accessSource, disasterDamage })
 //   summarizeRun(run)        the run without its cells and alerts (for lists)
 //   compareRuns(a, b)        what changed from run a to run b
 //   linkNewDamage(runs)      fills "new heavy damage" from each previous month
@@ -17,7 +17,7 @@
 // WHO EDITS IT
 // Whoever changes what a run contains. Saved runs keep their numbers.
 
-import { COMPONENTS, METHOD_VERSION, SCALES, runsComparable, scaleIndicator } from "../src/lib/atlas/method.js";
+import { COMPONENTS, DISASTER_COMPONENTS, DISASTER_METHOD_VERSION, DISASTER_NOUNS, DISASTER_RULES, DISASTER_SCALES, DISASTER_TYPES, FLOOD, METHOD_VERSION, SCALES, WILDFIRE, isDisaster, runsComparable, scaleDisaster, scaleIndicator } from "../src/lib/atlas/method.js";
 import { warSquares } from "../src/config/conflicts.js";
 import { cellSizeKm } from "./geo.js";
 import { imageryMonths } from "../src/lib/season.js";
@@ -103,13 +103,24 @@ export function beforeWarWarning(since, { accessMeasured = false } = {}) {
   return `This month ends before the war began (${since}): no war damage is counted${access}.`;
 }
 
+// The same for a natural disaster the team set (src/lib/atlas/method.js
+// isDisaster): no disaster damage before its day, and Feasibility is not
+// measured. "This month ends before the flood began (2023-09-04): ..."
+export function beforeDisasterWarning(since, type) {
+  return `This month ends before the ${DISASTER_NOUNS[type] || "disaster"} began (${since}): no disaster damage is counted, and Feasibility is not measured.`;
+}
+
 // Where the distance to fighting came from: "acled" (battles in the ACLED
 // file), "fires" (unusual fires inside a known war), "fires-none" (inside
 // a known war, but no fire within 300 km of any square looked like
 // fighting: nothing measured, server/providers/gee.js), "none" (no war, or
 // a month before its war began: nothing measured), or null when the data
-// source does not say.
-export const ACCESS_SOURCES = ["acled", "fires", "fires-none", "none"];
+// source does not say. For a natural disaster (Feasibility, not distance
+// to fighting): "flood-now" (the share of cropland under water at the
+// latest look of the month's last 12 days), "fire-now" (the distance to
+// fires burning in its last 7 days), "disaster-none" (no images to measure
+// them from), and "none" for the types it is not measured for.
+export const ACCESS_SOURCES = ["acled", "fires", "fires-none", "none", "flood-now", "fire-now", "disaster-none"];
 function cleanAccessSource(value) {
   return ACCESS_SOURCES.includes(value) ? value : null;
 }
@@ -122,9 +133,13 @@ function cleanAccessSource(value) {
 // server/conflicts.js listWarFor) keeps partOfCountry: true, and partOf:
 // "area" when the area is not a whole country (a region, a box or a drawn
 // area).
+// A natural disaster the team set (kind "disaster", a type of
+// DISASTER_TYPES) keeps both: { id, name, since, source: "area", kind:
+// "disaster", type }.
 export function cleanConflict(value) {
   if (!value || typeof value !== "object" || !value.id || !/^\d{4}-\d{2}-\d{2}$/.test(String(value.since || ""))) return null;
   const war = { id: String(value.id), name: String(value.name || value.id), since: String(value.since) };
+  if (value.kind === "disaster" && DISASTER_TYPES.includes(value.type)) return { ...war, source: "area", kind: "disaster", type: value.type };
   if (value.source === "area") return { ...war, source: "area" };
   if (value.partOfCountry !== true) return war;
   return value.partOf === "area" ? { ...war, partOfCountry: true, partOf: "area" } : { ...war, partOfCountry: true };
@@ -178,8 +193,12 @@ function providerId(provider) {
 // area, "list" (the default) when the app's list decided. At peace by the
 // team's choice the run says so (TEAM_PEACE_WARNING) instead of "no war in
 // the app's list", which may not be true there.
-export function buildRun({ area, month, provider, readings = [], alerts = [], warnings = [], cellSizeDeg, cells = [], baseline, conflict = null, conflictSource = null, imagery = null, accessSource = null }) {
+export function buildRun({ area, month, provider, readings = [], alerts = [], warnings = [], cellSizeDeg, cells = [], baseline, conflict = null, conflictSource = null, imagery = null, accessSource = null, disasterDamage = null }) {
   if (!isMonth(month)) throw new Error(`Not a month: ${month}`);
+  // A natural disaster the team set: hit and heavily damaged land, and
+  // Feasibility (src/lib/atlas/method.js DISASTER_*); a war's run gets no
+  // new key.
+  const disaster = isDisaster(conflict) ? cleanConflict(conflict) : null;
   const byId = new Map(readings.map((reading) => [reading.id, reading]));
   const outCells = [];
   let missing = 0;
@@ -196,7 +215,10 @@ export function buildRun({ area, month, provider, readings = [], alerts = [], wa
     }
     const chernozem = share(raw.chernozem);
     const cropShare = share(raw.croplandShare);
-    const heavy = share(raw.heavyShare) ?? 0;
+    // A natural disaster's square whose damage was not measured (gee.js:
+    // no hit or heavy share) keeps null: "not measured", never 0.
+    const heavyUnmeasured = Boolean(disaster) && raw.heavyShare === null;
+    const heavy = heavyUnmeasured ? 0 : share(raw.heavyShare) ?? 0;
     const population = Math.max(0, num(raw.population) ?? 0);
     const croplandHa = (cell.areaHa || 0) * (cropShare ?? 0);
     const blackSoilHa = croplandHa * (chernozem ?? 0);
@@ -234,15 +256,22 @@ export function buildRun({ area, month, provider, readings = [], alerts = [], wa
     // only in part (conflict.partOfCountry): false outside the war's squares
     // (peace rules; scoring.js gives it the peace damage score).
     if (typeof raw.atWar === "boolean") out.atWar = raw.atWar;
+    if (disaster) addDisasterFields(out, raw, { type: disaster.type, areaHa: cell.areaHa || 0, croplandHa, blackSoilHa, heavy: heavyUnmeasured ? null : heavy, reason: disasterDamage?.notMeasured });
     outCells.push(out);
   }
 
-  const totals = { croplandHa: 0, blackSoilHa: 0, heavyDamageHa: 0, peopleOnDamagedSoil: 0 };
+  // A disaster's totals add the hit land, and the cropland whose damage
+  // was measured (measuredCropHa: the hit is "of" that, not of all).
+  const totals = { croplandHa: 0, blackSoilHa: 0, heavyDamageHa: 0, peopleOnDamagedSoil: 0, ...(disaster ? { hitHa: 0, hitCropHa: 0, heavyCropHa: 0, grassHitHa: 0, measuredCropHa: 0 } : {}) };
   for (const cell of outCells) {
     totals.croplandHa += cell.croplandHa;
     totals.blackSoilHa += cell.blackSoilHa;
     totals.heavyDamageHa += cell.heavyDamageHa;
     totals.peopleOnDamagedSoil += cell.peopleOnDamagedSoil;
+    if (disaster) {
+      for (const key of ["hitHa", "hitCropHa", "heavyCropHa", "grassHitHa"]) totals[key] += cell[key] || 0;
+      if (cell.hit !== null) totals.measuredCropHa += cell.croplandHa;
+    }
   }
   for (const key of Object.keys(totals)) totals[key] = Math.round(totals[key]);
 
@@ -297,10 +326,89 @@ export function buildRun({ area, month, provider, readings = [], alerts = [], wa
     checks: { passed: checks.length - failed.length, total: checks.length, warnings: [...said, ...failed] },
     // The method version, components and scales: runs made with another
     // method are "not comparable" (method.js runsComparable).
-    method: { version: METHOD_VERSION, components: COMPONENTS, scales: SCALES },
+    ...(disaster ? { disasterDamage: cleanDisasterDamage(disasterDamage) } : {}),
+    method: disaster
+      ? { version: DISASTER_METHOD_VERSION, components: DISASTER_COMPONENTS, scales: { ...SCALES, ...DISASTER_SCALES }, disaster: { type: disaster.type, rules: DISASTER_RULES[disaster.type] } }
+      : { version: METHOD_VERSION, components: COMPONENTS, scales: SCALES },
     cells: outCells,
     alerts: strongest,
   };
+}
+
+// The disaster fields of one cell (buildRun, a disaster run only):
+//   hitHa        black-soil cropland hit since the date (blackSoilHa x
+//                hitShare, the convention of heavyDamageHa)
+//   hitCropHa    all cropland hit, heavyCropHa all cropland heavily
+//                damaged (so a place with little black soil still has
+//                honest totals)
+//   grassHitHa   grassland and pasture hit (flood and wildfire; reported,
+//                not scored)
+//   hit, heavy   the damage indicators (DISASTER_SCALES, full at 20%)
+//   feasible     Feasibility: flood 1 - the cropland share under water now
+//                above FLOOD.dryNowShare, rescaled (feasibleFromWet);
+//                wildfire the distance to a fire burning now / 10 km; else 1
+//   distance     null: there is no distance to fighting
+//   notMeasured  only for a square whose damage was not measured (no hit
+//                share: gee.js), the reason the ranking gives; hit, heavy
+//                and the hit hectares are then null, never 0
+// raw keeps hitShare, heavyShare, wetNowShare and fireKm; raw.conflictKm
+// is the distance to a fire for a wildfire, else null (scoring.js uses it
+// to break ties in the Feasibility cutoff).
+export const NOT_MEASURED_REASONS = {
+  "season-incomplete": "Damage not measured yet: the crop season has not run long enough",
+  "no-images": "Damage not measured: no usable images",
+};
+function addDisasterFields(out, raw, { type, areaHa, croplandHa, blackSoilHa, heavy, reason }) {
+  const measured = raw.hitShare !== null && heavy !== null;
+  const hitShare = measured ? share(raw.hitShare) ?? 0 : null;
+  const grassShare = share(raw.grassShare) ?? 0;
+  const grassHitShare = share(raw.grassHitShare) ?? 0;
+  const wetNowShare = share(raw.wetNowShare);
+  const fireKm = type === "wildfire" && num(raw.conflictKm) != null ? Math.max(0, raw.conflictKm) : null;
+  out.hitHa = measured ? r2(blackSoilHa * hitShare) : null;
+  out.hitCropHa = measured ? r2(croplandHa * hitShare) : null;
+  out.heavyCropHa = measured ? r2(croplandHa * heavy) : null;
+  out.grassHitHa = measured ? r2(areaHa * grassShare * grassHitShare) : null;
+  out.hit = measured ? r4(scaleDisaster("hit", hitShare)) : null;
+  out.heavy = measured ? r4(scaleDisaster("heavy", heavy)) : null;
+  if (!measured) out.notMeasured = NOT_MEASURED_REASONS[reason] || NOT_MEASURED_REASONS["no-images"];
+  out.feasible = type === "flood" ? r4(feasibleFromWet(wetNowShare ?? 0)) : type === "wildfire" ? r4(fireKm == null ? 1 : Math.min(1, fireKm / WILDFIRE.fullKm)) : 1;
+  out.distance = null;
+  out.raw = {
+    ...out.raw,
+    conflictKm: fireKm == null ? null : r2(fireKm),
+    hitShare: measured ? r4(hitShare) : null,
+    heavyShare: measured ? r4(heavy) : null,
+    wetNowShare: wetNowShare == null ? null : r4(wetNowShare),
+    fireKm: fireKm == null ? null : r2(fireKm),
+  };
+}
+
+// A flood square's Feasibility from the share of its cropland under water
+// now: 1 (nothing in the way) at FLOOD.dryNowShare or less, so puddles,
+// ponds and stray wet pixels never set a square aside; above it, falling
+// to 0 for a square all under water. (Real data, 2026-10-25: Iowa in July
+// 2024 had 14 ha under water in the whole box, yet 32 of 1,340 squares
+// were left out for it.)
+export function feasibleFromWet(wetShare) {
+  const wet = Math.min(1, Math.max(0, Number(wetShare) || 0));
+  const floor = FLOOD.dryNowShare;
+  return wet <= floor ? 1 : 1 - (wet - floor) / (1 - floor);
+}
+
+// What a disaster run could not measure (gee.js analyze), for the pages:
+//   notMeasured     "season-incomplete" | "no-images" when some squares'
+//                   damage was not measured, else null
+//   unmeasuredShare the share of the squares not measured (0..1)
+//   mayBeLow        why the damage may read low: "burn-map-pending" (no
+//                   burned-area map yet), "no-dnbr" (no Sentinel-2 around the
+//                   day), "snow" (snowy or frozen days left out)
+export const MAY_BE_LOW = ["burn-map-pending", "no-dnbr", "snow"];
+export function cleanDisasterDamage(value) {
+  const v = value && typeof value === "object" ? value : {};
+  const notMeasured = Object.hasOwn(NOT_MEASURED_REASONS, v.notMeasured) ? v.notMeasured : null;
+  const shareOf = Number.isFinite(v.unmeasuredShare) ? Math.min(1, Math.max(0, v.unmeasuredShare)) : notMeasured ? 1 : 0;
+  return { notMeasured, unmeasuredShare: notMeasured ? shareOf : 0, mayBeLow: (Array.isArray(v.mayBeLow) ? v.mayBeLow : []).filter((key) => MAY_BE_LOW.includes(key)) };
 }
 
 export function summarizeRun(run) {

@@ -694,3 +694,76 @@ test("with fires that look like fighting, an ACLED file or at peace, the AI says
   assert.match(peace.text, /Feasibility \(safe access\) is not measured here: no war is recorded for this area, so it reads full \(100\) everywhere and nothing is left out of the near-term ranking for it\./);
   assert.equal("feasibility" in (await peace.runTool("get_ranking", { timeframe: "nearTerm", limit: 1 })), false);
 });
+
+// ---------- Natural disasters ----------
+
+const DISASTER_WAR_WORDS = /demin|front|fighting|battle|war year|postwar|safe access/i;
+async function disasterContext(type, { month = "2023-09", accessSource, name, warnings = [], disasterDamage } = {}) {
+  const { DISASTER_METHOD_VERSION } = await import("../../src/lib/atlas/method.js");
+  const { TEAM_DISASTER_NAME } = await import("../../src/config/conflicts.js");
+  const cells = gridCells().map((cell, i) => ({ ...cell, distance: null, hit: (i % 5) / 4, heavy: (i % 3) / 4, feasible: type === "flood" ? 1 - (i % 4) / 4 : 1, hitHa: 40, hitCropHa: 60, heavyCropHa: 20, grassHitHa: 5, raw: { conflictKm: null, wetNowShare: type === "flood" ? (i % 4) / 4 : null, fireKm: null } }));
+  const conflict = { id: "area-grid", name: name || TEAM_DISASTER_NAME(type), since: "2023-09-04", source: "area", kind: "disaster", type };
+  const store = fakeStore(cells, { conflict, conflictSource: "area", accessSource: accessSource ?? (type === "flood" ? "flood-now" : type === "wildfire" ? "fire-now" : "none"), method: { version: DISASTER_METHOD_VERSION }, checks: { passed: 2, total: 2, warnings }, ...(disasterDamage ? { disasterDamage } : {}) });
+  const base = store.getRun;
+  store.getRun = async (id) => {
+    const run = await base(id);
+    return run && { ...run, month, totals: { ...run.totals, hitHa: 1440, hitCropHa: 2160, heavyCropHa: 720, grassHitHa: 180 } };
+  };
+  store.getArea = async (id) => (id === "area-grid" ? { id, name: "Grid Oblast", kind: "custom", source: "coordinates", areaHa: 25200, war: { mode: "disaster", since: "2023-09-04", type, ...(name ? { name } : {}) } } : null);
+  return buildAtlasContext({ store, context: { runId: "run-sep" } });
+}
+
+test("the AI in a natural disaster: a Disaster line in the disaster's words, its hit land, no war words for any type or month", async () => {
+  for (const type of ["flood", "wildfire", "drought", "ground", "other"]) {
+    for (const options of [
+      {},
+      { month: "2023-08" },
+      { accessSource: "disaster-none" },
+      { name: "Storm Daniel floods", warnings: ["Flood looks: 14 radar passes and 8 optical images between 2023-09-04 and 2023-09-30."] },
+      { disasterDamage: { notMeasured: "season-incomplete", unmeasuredShare: 1, mayBeLow: [] } },
+      { disasterDamage: { notMeasured: "no-images", unmeasuredShare: 0.3, mayBeLow: ["burn-map-pending", "snow"] } },
+    ]) {
+      const context = await disasterContext(type, options);
+      const bad = context.text.match(DISASTER_WAR_WORDS);
+      assert.equal(bad, null, `${type} ${JSON.stringify(options)}: "${bad?.[0]}" in ${context.text.split("\n").find((line) => DISASTER_WAR_WORDS.test(line))}`);
+      assert.match(context.text, /^Disaster: /m);
+      assert.doesNotMatch(context.text, /^War: /m);
+      // A month made with the disaster method is the current method's.
+      assert.doesNotMatch(context.text, /older method/);
+      // The tools: no demining in the costs.
+      const budget = await context.runTool("budget_coverage", { usd: 1000000 });
+      assert.doesNotMatch(budget.note, /demin/i);
+      const place = await context.runTool("get_place", { cellId: "r0c0" });
+      assert.doesNotMatch(place.place.recoveryCostUsd.note, /demin/i);
+      assert.equal(place.place.hitCroplandHa, 60);
+    }
+  }
+  const flood = await disasterContext("flood", { name: "Storm Daniel floods" });
+  const line = flood.text.split("\n").find((l) => l.startsWith("Disaster: "));
+  assert.ok(line.startsWith("Disaster: Flood since 2023-09-04 (set by the user's team for this area in Atlas Settings: Storm Daniel floods). Damage score: half for black-soil cropland flooded since 4 September 2023 and half for land under water 4 days or more, each full at 20% of the black soil. Heavy damage: under water for 4 days or more. Feasibility: the share of the square's cropland not under water at the latest look (last 12 days of the month). Cropland hit (all soils): 2,160 ha; black-soil cropland hit: 1,440 ha; grassland and pasture hit (reported, not scored): 180 ha."), line);
+  assert.match(line, /Never say land is safe or workable as a fact/);
+  const drought = (await disasterContext("drought")).text;
+  assert.match(drought, /Damage here is this season's crop loss: it is read at each month's end and the season's worst reading so far is kept, so it does not fall within a season/);
+  assert.match(drought, /nothing is left out for feasibility \(not measured for a drought\)/);
+  assert.match((await disasterContext("flood", { month: "2023-08" })).text, /This month ends before the flood began, so no disaster damage is counted for it/);
+  assert.match(flood.text, /Top places, post-crisis:/);
+  // Damage not measured yet: the AI is told the 0 ha is not "no damage".
+  const none = (await disasterContext("drought", { disasterDamage: { notMeasured: "season-incomplete", unmeasuredShare: 1, mayBeLow: [] } })).text;
+  assert.match(none, /This month's damage is NOT measured yet \(no crop season since .* has run long enough\): the 0 ha totals are not "no damage"/);
+  const part = (await disasterContext("wildfire", { disasterDamage: { notMeasured: "no-images", unmeasuredShare: 0.3, mayBeLow: ["burn-map-pending"] } })).text;
+  assert.match(part, /Damage is not measured yet on 30% of the squares/);
+  assert.match(part, /The damage may read low: the burned-area map for these weeks is not out yet/);
+  assert.match((await disasterContext("ground")).text, /this rule is provisional \(it failed its checks/);
+  // A war's line is the war's (and peace's the peace's), as before.
+  assert.match(conflictLine({ id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" }, "fires"), /^War: Full-scale invasion of Ukraine, since 2022-02-24\. Damage is counted from that day\./);
+  assert.match(conflictLine(null, "none"), /^War: none in the app's list covers this area/);
+});
+
+test("the AI's note when the crisis setting changed to or from a natural disaster speaks of the crisis, never of a war it is not", () => {
+  const run = { conflict: { id: "area-g", name: "War (set for this area)", since: "2023-09-04", source: "area" } };
+  const area = { id: "g", war: { mode: "disaster", since: "2023-09-04", type: "flood" } };
+  assert.equal(warSettingNote(area, run), "Crisis setting changed: this month was made at war since 2023-09-04, but the user's team has since set this area in a flood since 2023-09-04. Its numbers follow the setting it was made with until the analysis is re-run (Atlas Settings, Re-run analysis).");
+  const flood = { conflict: { id: "area-g", name: "Flood (set for this area)", since: "2023-09-04", source: "area", kind: "disaster", type: "flood" } };
+  assert.equal(warSettingNote({ id: "g", war: { mode: "peace" } }, flood), "Crisis setting changed: this month was made in a flood since 2023-09-04, but the user's team has since set this area with no crisis. Its numbers follow the setting it was made with until the analysis is re-run (Atlas Settings, Re-run analysis).");
+  assert.equal(warSettingNote(area, flood), "");
+});

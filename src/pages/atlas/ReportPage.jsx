@@ -37,7 +37,8 @@ import { useEffect, useMemo } from "react";
 import { ArrowLeft, Download, Printer } from "lucide-react";
 import { Button, Badge } from "../../components/ui/index.js";
 import { AtlasGate, useAtlasData, useTimeframe } from "../../state/AtlasData.jsx";
-import { accessMeaning, accessMeasured, alertPlaces, atPeace, damageMeaning, describeAlert, imageryText, kpis, longTermAccessNote, nearTermSetAside, noFightingFound, notMeasuredReason, seasonWords, shownNewDamage, summarize, timeframeLabel } from "../../lib/atlas/overview.js";
+import { accessMeaning, accessMeasured, alertPlaces, atPeace, crisisOf, damageMeaning, describeAlert, disasterType, imageryText, kpis, longTermAccessNote, nearTermSetAside, noFightingFound, notMeasuredReason, seasonWords, setAsideNote, shownNewDamage, summarize, timeframeLabel } from "../../lib/atlas/overview.js";
+import { disasterNoteFor } from "../../config/research.js";
 import { cellsCsv } from "../../lib/atlas/reportCsv.js";
 import { formatHaShort, listNames } from "../../lib/format.js";
 import { atlasLink, haFixed, nameAreas, priorityIndex, useMonthInUrl, warNote, weightItems } from "./overviewHelpers.js";
@@ -75,6 +76,10 @@ const INDICATOR_NAMES = {
   distance: "distance to fighting",
   population: "population",
   lights: "night lights",
+  // A natural disaster's (src/lib/atlas/method.js DISASTER_COMPONENTS).
+  hit: "land hit",
+  heavy: "heavily damaged land",
+  feasible: "feasibility now",
 };
 // "damage is the mean of fire detections and soil-health decline".
 function madeOf(label, list = []) {
@@ -132,12 +137,16 @@ function Report() {
   const nearTermWeights = weightItems(settings, "nearTerm")
     .filter((item) => measured || item.key !== "access")
     .map((item) => item.text)
-    .concat(measured ? [] : [`Feasibility not measured here (${quiet?.note || "no war recorded"}): nothing is left out`])
+    .concat(measured ? [] : [crisisOf(run) === "disaster" ? setAsideNote(run) : `Feasibility not measured here (${quiet?.note || "no war recorded"}): nothing is left out`])
     .join(" · ");
   // Feasibility not measured in a war (no fire looked like fighting): the
   // CSV leaves it empty, not 1. (The tables show "–" wherever it is not
   // measured, at peace too: !measured.)
   const accessUnknown = noFightingFound(run);
+  // A natural disaster the team set: its own words, no deminers, and the
+  // cropland and grassland it hit (not only the black soil the scores use).
+  const crisis = crisisOf(run);
+  const disaster = disasterType(run);
 
   return (
     <div className="page rp-page">
@@ -146,7 +155,7 @@ function Report() {
           Overview
         </Button>
         <span className="rp-spacer" />
-        <Button icon={<Download size={14} />} onClick={() => downloadCsv(cellsCsv(scored.places, run.cellSizeDeg, { accessUnknown }), `${fileBase}.csv`)}>
+        <Button icon={<Download size={14} />} onClick={() => downloadCsv(cellsCsv(scored.places, run.cellSizeDeg, { accessUnknown: disaster ? !measured : accessUnknown, disaster: Boolean(disaster) }), `${fileBase}.csv`)}>
           Download CSV
         </Button>
         <Button variant="primary" icon={<Printer size={14} />} onClick={() => window.print()}>
@@ -171,9 +180,21 @@ function Report() {
             <div key={kpi.id} className="rp-kpi">
               <span className={kpi.tone === "red" && kpi.value !== "0 ha" ? "rp-kpi-value rp-red" : "rp-kpi-value"}>{kpi.value}</span>
               <span className="rp-kpi-label">{kpi.label}</span>
+              {kpi.note && <span className="rp-kpi-label">{kpi.note}</span>}
             </div>
           ))}
         </section>
+        {disaster && (
+          <p className="rp-line">
+            Cropland hit (all soils): <strong>{formatHaShort(summary.hitCropHa)}</strong>
+            {(disaster === "flood" || disaster === "wildfire") && (
+              <>
+                {" "}
+                · Grassland and pasture hit (not in the scores: the Atlas ranks cropland): <strong>{formatHaShort(summary.grassHitHa)}</strong>
+              </>
+            )}
+          </p>
+        )}
         {shownNewDamage(run, runs) > 0 && (
           <p className="rp-line">
             New heavy damage this month: <strong className="rp-red">+{formatHaShort(run.newHeavyDamageHa)}</strong>
@@ -244,7 +265,7 @@ function Report() {
         <section className="rp-section rp-method">
           <h2>Method</h2>
           <p>
-            {madeOf("Value (soil value)", comp.soil)}. Damage is {damageMeaning(run)}. Feasibility (safe access) is {accessMeaning(run)}. Each is scaled 0–1 on fixed
+            {madeOf("Value (soil value)", comp.soil)}. Damage is {damageMeaning(run)}. {disaster ? "Feasibility" : "Feasibility (safe access)"} is {accessMeaning(run)}. Each is scaled 0–1 on fixed
             scales.{" "}
             {nearTermSetAside(run, settings)}{" "}
             {longTerm} blends all three (weighted power mean, r = {settings.r}). The soil-health index (chi) is a diagnostic in the CSV, not part
@@ -256,7 +277,9 @@ function Report() {
           </p>
           {/* A month before its war began keeps the deminers' line: the
               area is at war now, and the land may be mined since. */}
-          {atPeace(run) ? (
+          {crisis === "disaster" ? (
+            <p className="rp-disclaimer">{disasterNoteFor(disaster)}</p>
+          ) : atPeace(run) ? (
             <p className="rp-disclaimer">
               Scores show model priority from satellite data, not proven restoration results. They do not replace field sampling or local
               advice: check the land on the ground before you act on it.

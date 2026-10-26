@@ -221,3 +221,32 @@ test("new damage is never positive while the total falls", () => {
     assert.equal(runs[i].newHeavyDamageHa, Math.max(0, growth), runs[i].month);
   }
 });
+
+test("sample data in a natural disaster: no front, a hit patch around the middle, Feasibility per type", async () => {
+  const geometry = { type: "Polygon", coordinates: [[[22.05, 39.35], [22.35, 39.35], [22.35, 39.55], [22.05, 39.55], [22.05, 39.35]]] };
+  const grid = planGrid(geometry);
+  const area = { id: "sample-flood", name: "Sample flood", bbox: grid.bbox, geometry };
+  const conflict = (type) => ({ id: "area-sample-flood", name: "x", since: "2023-09-04", source: "area", kind: "disaster", type });
+  const flood = sampleReadings({ area, cells: grid.cells, month: "2023-09", cellSizeDeg: grid.cellSizeDeg, conflict: conflict("flood") });
+  assert.equal(flood.accessSource, "flood-now");
+  assert.ok(flood.readings.every((r) => r.conflictKm === 300), "no front line: no distance to fighting");
+  const hit = flood.readings.filter((r) => r.hitShare > 0);
+  assert.ok(hit.length > 0 && hit.length < flood.readings.length, "a patch, not everywhere");
+  assert.ok(Math.max(...flood.readings.map((r) => r.hitShare)) <= 0.6);
+  assert.ok(flood.readings.every((r) => Math.abs(r.heavyShare - r.hitShare / 2) < 1e-4));
+  assert.ok(hit.every((r) => r.wetNowShare === 0.3));
+  // The month after: no water now; the same hit land.
+  const after = sampleReadings({ area, cells: grid.cells, month: "2023-10", cellSizeDeg: grid.cellSizeDeg, conflict: conflict("flood") });
+  assert.ok(after.readings.every((r) => r.wetNowShare === 0));
+  assert.deepEqual(after.readings.map((r) => r.hitShare), flood.readings.map((r) => r.hitShare));
+  // A wildfire: the distance to the fire in its month, 300 km after.
+  const fire = sampleReadings({ area, cells: grid.cells, month: "2023-09", cellSizeDeg: grid.cellSizeDeg, conflict: conflict("wildfire") });
+  assert.equal(fire.accessSource, "fire-now");
+  assert.ok(Math.min(...fire.readings.map((r) => r.conflictKm)) < 5);
+  assert.ok(sampleReadings({ area, cells: grid.cells, month: "2023-10", cellSizeDeg: grid.cellSizeDeg, conflict: conflict("wildfire") }).readings.every((r) => r.conflictKm === 300));
+  // A drought: not measured; before the day: nothing at all.
+  assert.equal(sampleReadings({ area, cells: grid.cells, month: "2023-09", cellSizeDeg: grid.cellSizeDeg, conflict: conflict("drought") }).accessSource, "none");
+  const before = sampleReadings({ area, cells: grid.cells, month: "2023-08", cellSizeDeg: grid.cellSizeDeg, conflict: conflict("flood") });
+  assert.ok(before.readings.every((r) => r.hitShare === 0));
+  assert.ok(before.warnings.includes("This month ends before the flood began (2023-09-04): no disaster damage is counted, and Feasibility is not measured."));
+});

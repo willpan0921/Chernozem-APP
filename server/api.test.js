@@ -193,7 +193,7 @@ test("an area's war setting: checked (400 with a clear message), saved, shown wi
     [{ mode: "war", since: "2023-02-30" }, /YYYY-MM-DD/],
     [{ mode: "war" }, /YYYY-MM-DD/],
     [{ mode: "war", since: "2023-08-01", name: "x".repeat(81) }, /at most 80 characters/],
-    [{ mode: "sometimes" }, /must be "list" \(the app's list\), "war" \(at war from a day\) or "peace" \(not at war\)/],
+    [{ mode: "sometimes" }, /must be "list" \(the app's list of wars\), "war" \(at war from a day\), "disaster" \(a natural disaster from a day\) or "peace" \(no crisis\)/],
     ["war", /Send the war setting as/],
     [null, /Send the war setting as/],
   ]) {

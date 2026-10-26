@@ -50,7 +50,8 @@ import AreaPicker from "../../components/atlas/AreaPicker.jsx";
 import { API_ROOT, ApiError, AUTH_REQUIRED_EVENT, listJobs } from "../../api/atlasApi.js";
 import { lineMarks } from "../../lib/atlas/analysisNotice.js";
 import { formatAreaSize, formatMonthYear } from "../../lib/format.js";
-import { EARLIEST_WAR_DAY, WAR_NAME_MAX, checkAreaWar } from "../../config/conflicts.js";
+import { EARLIEST_WAR_DAY, WAR_NAME_MAX, checkAreaWar, crisisFormFor } from "../../config/conflicts.js";
+import { DISASTER_LABELS, DISASTER_TYPES, isDisaster } from "../../lib/atlas/method.js";
 import { acledFileState, analysisMonths, areaWar, conflictOf, keepsMonth, monthsWithOtherWar, noFightingNote, warDay, warKey, warPartOf, warText } from "../../lib/atlas/overview.js";
 import "./SettingsPage.css";
 
@@ -788,14 +789,20 @@ function DataCard() {
 
 // ---------- War ----------
 
-// The team's three choices for the current area, saved as area.war (the
-// server checks them with the same rules: src/config/conflicts.js
-// checkAreaWar).
+// The team's four choices for the current area's crisis, saved as
+// area.war (the server checks them with the same rules:
+// src/config/conflicts.js checkAreaWar): the app's list of wars, at war
+// since a day, a natural disaster since a day (with its type), or no
+// crisis. The same Near term and Post-crisis maths follow every one; only
+// how Damage and Feasibility are measured follows the crisis.
 const WAR_MODES = [
-  { value: "list", label: "App's list" },
+  { value: "list", label: "App's list of wars" },
   { value: "war", label: "At war" },
-  { value: "peace", label: "Not at war" },
+  { value: "disaster", label: "Natural disaster" },
+  { value: "peace", label: "No crisis" },
 ];
+// A form for a day (and a name): "At war" and "Natural disaster".
+const DAY_MODES = ["war", "disaster"];
 
 // Today as "YYYY-MM-DD" in UTC, as the server checks it: the latest day a
 // war can count from.
@@ -812,14 +819,20 @@ function listWords(list) {
 
 function WarCard() {
   const { area, runs, serverStatus, actions } = useAtlasData();
-  const savedMode = area?.war?.mode === "war" || area?.war?.mode === "peace" ? area.war.mode : "list";
+  const savedMode = ["war", "disaster", "peace"].includes(area?.war?.mode) ? area.war.mode : "list";
   const list = area?.listConflict;
-  // A war of the app's list that started in 2022 or later is offered as
-  // the day to start from.
-  const startDay = area?.war?.since || (list?.since && list.since >= EARLIEST_WAR_DAY ? list.since : "");
+  // What the form starts from for each choice: the saved day, name and
+  // type for the saved choice; for "At war" otherwise the day a war of the
+  // app's list began (2022 or later), and no name; for "Natural disaster"
+  // otherwise nothing, so the team enters the disaster's own day (a war's
+  // day or name is never carried into a disaster, nor a disaster's into a
+  // war).
+  const formFor = (next) => crisisFormFor(next, area?.war, list?.since);
+  const start = formFor(savedMode === "list" || savedMode === "peace" ? "war" : savedMode);
   const [mode, setMode] = useState(savedMode);
-  const [since, setSince] = useState(startDay);
-  const [name, setName] = useState(area?.war?.name || "");
+  const [since, setSince] = useState(start.since);
+  const [name, setName] = useState(start.name);
+  const [type, setType] = useState(start.type);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   // The saved months made with another war setting than the area's now.
@@ -833,11 +846,12 @@ function WarCard() {
   const rerun = useRerun({ redoAll: false, months: reach });
 
   // Start again from what is saved when the area or its setting changes.
-  const savedKey = `${area?.id}|${savedMode}|${area?.war?.since || ""}|${area?.war?.name || ""}`;
+  const savedKey = `${area?.id}|${savedMode}|${area?.war?.since || ""}|${area?.war?.name || ""}|${area?.war?.type || ""}`;
   useEffect(() => {
     setMode(savedMode);
-    setSince(startDay);
-    setName(area?.war?.name || "");
+    setSince(start.since);
+    setName(start.name);
+    setType(start.type);
     setError(null);
     // savedKey holds everything the reset reads.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -852,29 +866,37 @@ function WarCard() {
       await actions.updateArea(area.id, { war });
     } catch (err) {
       setError(errorText(err));
-      // Not saved: the switch shows what is saved again ("At war" keeps
-      // its form open, to fix the day).
-      if (war.mode !== "war") setMode(savedMode);
+      // Not saved: the switch shows what is saved again ("At war" and
+      // "Natural disaster" keep their form open, to fix the day).
+      if (!DAY_MODES.includes(war.mode)) setMode(savedMode);
     } finally {
       setBusy(false);
     }
   };
 
-  // The app's list and "Not at war" need nothing more: saved at once.
-  // "At war" opens the day and the name first.
+  // The app's list and "No crisis" need nothing more: saved at once.
+  // "At war" and "Natural disaster" open the day (and the type) first.
   const choose = (next) => {
     if (busy) return;
     setError(null);
+    // Each day choice starts from its own values (formFor); clicking the
+    // choice already open keeps what was typed.
+    if (next !== mode && DAY_MODES.includes(next)) {
+      const form = formFor(next);
+      setSince(form.since);
+      setName(form.name);
+      setType(form.type);
+    }
     setMode(next);
-    if (next !== "war" && next !== savedMode) save({ mode: next });
+    if (!DAY_MODES.includes(next) && next !== savedMode) save({ mode: next });
   };
 
   const cleanName = name.replace(/\s+/g, " ").trim();
-  const unchanged = savedMode === "war" && since === area.war.since && cleanName === (area.war.name || "");
+  const unchanged = savedMode === mode && since === area.war?.since && cleanName === (area.war?.name || "") && (mode !== "disaster" || type === (area.war?.type || ""));
   const submit = (event) => {
     event.preventDefault();
     // The server's own rules, for a quick answer (it checks them again).
-    const checked = checkAreaWar({ mode: "war", since, name: cleanName }, todayUtc());
+    const checked = checkAreaWar(mode === "disaster" ? { mode, since, name: cleanName, type } : { mode: "war", since, name: cleanName }, todayUtc());
     if (checked.error) {
       setError(checked.error);
       return;
@@ -886,7 +908,8 @@ function WarCard() {
   const now = areaWar(area);
   const war = now?.conflict;
   const listText = listWords(list);
-  const title = now === undefined ? "The app's list" : war ? `At war since ${warDay(war.since)}` : "Not at war";
+  // A natural disaster: "Flood since 4 Sep 2023".
+  const title = now === undefined ? "The app's list" : isDisaster(war) ? `${DISASTER_LABELS[war.type]} since ${warDay(war.since)}` : war ? `At war since ${warDay(war.since)}` : "No crisis";
   let meta = null;
   if (now?.team) {
     const own = war ? (area.war.name ? `${area.war.name}. ` : "") : "";
@@ -917,7 +940,7 @@ function WarCard() {
   // war since 7 Oct 2023, with its rules all over the country").
   const madeWith = (months) => {
     const keys = new Set(months.map((item) => warKey(conflictOf(item))));
-    return keys.size === 1 ? `made ${warText(conflictOf(months[0]), war)}` : "made with another war setting";
+    return keys.size === 1 ? `made ${warText(conflictOf(months[0]), war)}` : "made with another crisis setting";
   };
   const staleCount =
     reached.length === runs.length ? (runs.length === 1 ? "The saved month was" : "The saved months were") : reached.length === 1 ? "1 saved month was" : `${reached.length} saved months were`;
@@ -927,7 +950,7 @@ function WarCard() {
   const onlyOlderText = !reached.length && older > 0 ? `${older === 1 ? "1 saved month" : `${older} saved months`} before ${firstReached} ${older === 1 ? "was" : "were"} ${madeWith(stale)} and ${older === 1 ? "keeps that setting" : "keep that setting"}: a re-run reaches back ${MAX_RERUN_MONTHS} months at most.` : "";
 
   return (
-    <Card className="aset-card" title="War">
+    <Card className="aset-card" title="Crisis">
       <div className="aset-block">
         <StatusRow
           icon={<ShieldAlert size={16} />}
@@ -936,11 +959,34 @@ function WarCard() {
           meta={meta}
         />
         <div className="aset-war-controls">
-          <Segmented light options={WAR_MODES} value={mode} onChange={choose} ariaLabel={`War setting for ${area.name}`} />
-          {mode === "war" && (
+          <Segmented light options={WAR_MODES} value={mode} onChange={choose} ariaLabel={`Crisis setting for ${area.name}`} />
+          {DAY_MODES.includes(mode) && (
             // noValidate: the app's own message says why a day is refused
             // (the date picker still offers 2022-01-01 to today only).
-            <form className="aset-war-form" onSubmit={submit} noValidate>
+            <form className={mode === "disaster" ? "aset-war-form is-disaster" : "aset-war-form"} onSubmit={submit} noValidate>
+              {mode === "disaster" && (
+                <label className="aset-war-field">
+                  <span className="field-label">What happened</span>
+                  <select
+                    className="select"
+                    value={type}
+                    disabled={busy}
+                    onChange={(event) => {
+                      setError(null);
+                      setType(event.target.value);
+                    }}
+                  >
+                    <option value="" disabled>
+                      Choose the kind of disaster
+                    </option>
+                    {DISASTER_TYPES.map((value) => (
+                      <option key={value} value={value}>
+                        {DISASTER_LABELS[value]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <label className="aset-war-field">
                 <span className="field-label">Count damage from</span>
                 <input
@@ -961,7 +1007,7 @@ function WarCard() {
                 <input
                   className="input"
                   maxLength={WAR_NAME_MAX}
-                  placeholder="For example Fighting in Amhara"
+                  placeholder={mode === "disaster" ? "For example Storm Daniel floods" : "For example Fighting in Amhara"}
                   value={name}
                   disabled={busy}
                   onChange={(event) => {
@@ -970,15 +1016,21 @@ function WarCard() {
                   }}
                 />
               </label>
-              <Button variant="primary" size="sm" type="submit" className="aset-war-save" disabled={busy || !since || unchanged}>
+              <Button variant="primary" size="sm" type="submit" className="aset-war-save" disabled={busy || !since || unchanged || (mode === "disaster" && !type)}>
                 {busy ? "Saving…" : "Save"}
               </Button>
-              <p className="aset-hint aset-war-hint">
-                Began before 2022? Count from 1 Jan 2022: earlier damage is not counted, and the normal years 2019–2021 may already include the war.
-              </p>
+              {mode === "disaster" ? (
+                <p className="aset-hint aset-war-hint">
+                  Disaster damage is measured on cropland from this day: flooded or burned land within 60 days of it, crop greenness for a drought, lasting change of the land for a storm, earthquake or landslide. Draw the area around the hit land: every square gets the disaster's rules. Months more than 24 months back cannot be analyzed from the app.
+                </p>
+              ) : (
+                <p className="aset-hint aset-war-hint">
+                  Began before 2022? Count from 1 Jan 2022: earlier damage is not counted, and the normal years 2019–2021 may already include the war.
+                </p>
+              )}
             </form>
           )}
-          {busy && mode !== "war" && <p className="aset-hint">Saving…</p>}
+          {busy && !DAY_MODES.includes(mode) && <p className="aset-hint">Saving…</p>}
           {error && (
             <p className="aset-error" role="alert">
               {error}

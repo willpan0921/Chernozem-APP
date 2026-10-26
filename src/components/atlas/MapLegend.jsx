@@ -66,7 +66,7 @@ export default function MapLegend({ colorBy = "priority", timeframe = "nearTerm"
     <div className={["map-legend", className].filter(Boolean).join(" ")}>
       {/* has-note: a phone that folds the key keeps the note in sight
           (src/pages/atlas/MapPage.css). */}
-      <div className={accessNote ? "map-legend-body has-note" : "map-legend-body"}>
+      <div className={["map-legend-body", accessNote ? "has-note" : "", unranked ? "has-unranked" : ""].filter(Boolean).join(" ")}>
         <span className="map-legend-title">{legend.title}</span>
         <div className="map-legend-ramp" aria-hidden="true">
           {[1, 2, 3, 4, 5].map((step) => (
@@ -84,7 +84,7 @@ export default function MapLegend({ colorBy = "priority", timeframe = "nearTerm"
           </div>
         )}
         {unranked && (
-          <div className="map-legend-aside">
+          <div className="map-legend-aside is-unranked">
             <span className="map-legend-swatch is-hatched" aria-hidden="true" />
             {unranked}
           </div>

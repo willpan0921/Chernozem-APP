@@ -164,3 +164,31 @@ test("peak month from monthly NDVI", () => {
   assert.equal(peakMonthFrom([0.8, null, null, null, null, null, 0.3, 0.4, 0.5, 0.6, 0.7, 0.75]), null);
   assert.equal(peakMonthFrom(null), null);
 });
+
+test("a natural disaster's seasons: the season that contains its day (damageSeasons containing), and a drought's crop-loss season", async () => {
+  const { damageSeasons, areaDamageSeasons, cropLossSeason, noLossSeasonWarning } = await import("./season.js");
+  // Iowa, a flood on 2024-06-20 (peak July: April to September): the 2024
+  // season counts from November 2024 for a disaster, never for a war.
+  assert.deepEqual(damageSeasons(42.7, "2024-11-30", "2024-06-20", 7, { containing: true }), [{ start: "2024-04-01", end: "2024-10-01" }]);
+  assert.deepEqual(damageSeasons(42.7, "2024-11-30", "2024-06-20", 7), []);
+  assert.deepEqual(damageSeasons(42.7, "2025-11-30", "2024-06-20", 7, { containing: true }), [{ start: "2024-04-01", end: "2024-10-01" }, { start: "2025-04-01", end: "2025-10-01" }]);
+  assert.deepEqual(damageSeasons(42.7, "2024-09-30", "2024-06-20", 7, { containing: true }), [], "not complete yet");
+  // A day before its season: that season counts (it ends after the day).
+  assert.deepEqual(damageSeasons(50, "2023-10-31", "2023-01-10", null, { containing: true }), [{ start: "2023-04-01", end: "2023-10-01" }]);
+  assert.deepEqual(areaDamageSeasons([{ lat: 42.7, peakMonth: 7 }], "2024-11-30", "2024-06-20", { containing: true }), [[{ start: "2024-04-01", end: "2024-10-01" }]]);
+  // cropLossSeason: northern summer crop (no peak month: April to September).
+  assert.deepEqual(cropLossSeason(41.2, "2026-06-30", "2026-02-10", null), { start: "2026-04-01", end: "2026-07-01", running: true });
+  // Winter wheat, greenest in May (February to July).
+  assert.deepEqual(cropLossSeason(41.2, "2026-06-30", "2026-02-10", 5), { start: "2026-02-01", end: "2026-07-01", running: true });
+  // The southern hemisphere (October to March, across the new year).
+  assert.deepEqual(cropLossSeason(-34, "2026-01-31", "2025-11-01", null), { start: "2025-10-01", end: "2026-02-01", running: true });
+  // The tropics (no peak month: the calendar year).
+  assert.deepEqual(cropLossSeason(5, "2026-08-31", "2026-03-01", null), { start: "2026-01-01", end: "2026-09-01", running: true });
+  // After the season: the last complete season, if it ends after the day.
+  assert.deepEqual(cropLossSeason(41.2, "2026-11-30", "2026-02-10", null), { start: "2026-04-01", end: "2026-10-01", running: false });
+  assert.equal(cropLossSeason(41.2, "2026-11-30", "2026-10-15", null), null, "a day after the season: nothing to measure yet");
+  // Fewer than 60 days in: the season before, if it ends after the day; else nothing.
+  assert.equal(cropLossSeason(41.2, "2026-05-15", "2026-04-10", null), null);
+  assert.deepEqual(cropLossSeason(41.2, "2026-05-15", "2025-08-01", null), { start: "2025-04-01", end: "2025-10-01", running: false });
+  assert.equal(noLossSeasonWarning("2026-04-10"), "No crop season since 2026-04-10 has run long enough to measure yet.");
+});

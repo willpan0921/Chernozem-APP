@@ -161,12 +161,20 @@ export function lastCompleteSeason(lat, today, peakMonth) {
 // is over yet. Gives back [{ start, end }] (end not included).
 //   lastYear  optional: leave out seasons that end after this year (the
 //             year of their last day; areaDamageSeasons)
-export function damageSeasons(lat, today, since, peakMonth, { lastYear = null } = {}) {
+//   containing  true for a natural disaster (src/lib/atlas/method.js
+//             isDisaster): the whole season that CONTAINS `since` counts
+//             too (a season is kept while it ends after `since`, not only
+//             when it starts on it or later), so the season the disaster
+//             hit is measured once it is complete. Whole seasons, never
+//             clipped at `since`, so each covers the same calendar months
+//             as its 2019-2021 baseline. A war keeps false.
+export function damageSeasons(lat, today, since, peakMonth, { lastYear = null, containing = false } = {}) {
   if (!since) return [];
   const spec = damageSeasonSpec(lat, peakMonth);
   const out = [];
   let season = latestSeasonBy(spec, today);
-  for (let guard = 0; season && season.start >= since && guard < 100; guard += 1) {
+  const keep = (s) => (containing ? s.end > since : s.start >= since);
+  for (let guard = 0; season && keep(season) && guard < 100; guard += 1) {
     if (!(Number.isFinite(lastYear) && seasonYear(season) > lastYear)) out.unshift(season);
     season = seasonStartingIn(spec, Number(season.start.slice(0, 4)) - 1);
   }
@@ -198,12 +206,44 @@ const seasonYear = (season) => Number(addDays(season.end, -1).slice(0, 4));
 // in August, those greenest in June in September, so the area's total
 // changed in two months, July to August included.)
 //   places  [{ lat, peakMonth }]; today, since as damageSeasons
+//   containing  as damageSeasons (a natural disaster)
 // Gives back one list per place (damageSeasons, the same order).
-export function areaDamageSeasons(places, today, since) {
+export function areaDamageSeasons(places, today, since, { containing = false } = {}) {
   const list = Array.isArray(places) ? places : [];
   const latest = list.map((p) => latestSeasonBy(damageSeasonSpec(p.lat, p.peakMonth), today)).filter(Boolean).map(seasonYear);
   const lastYear = latest.length ? Math.min(...latest) : null;
-  return list.map((p) => damageSeasons(p.lat, today, since, p.peakMonth, { lastYear }));
+  return list.map((p) => damageSeasons(p.lat, today, since, p.peakMonth, { lastYear, containing }));
+}
+
+// A drought's loss window (src/lib/atlas/method.js DROUGHT): the crop
+// season running at `asOf` ("YYYY-MM-DD", the month's last day), cut at
+// asOf, when it has run at least `minDays` days and ends after `since`;
+// else the last complete season, when it ends after `since`; else null
+// (nothing to measure yet: noLossSeasonWarning). The place's own season
+// (its peak month), or the calendar year in the tropics without one, as
+// damageSeasons uses. Gives back { start, end, running } (end not
+// included) or null.
+export const MIN_LOSS_SEASON_DAYS = 60;
+export function cropLossSeason(lat, asOf, since, peakMonth, { minDays = MIN_LOSS_SEASON_DAYS } = {}) {
+  if (!since || !asOf) return null;
+  const spec = damageSeasonSpec(lat, peakMonth);
+  const year = Number(asOf.slice(0, 4));
+  for (const startYear of [year, year - 1]) {
+    const season = seasonStartingIn(spec, startYear);
+    if (season.start <= asOf && asOf < season.end) {
+      const end = addDays(asOf, 1);
+      const days = (msOf(end) - msOf(season.start)) / DAY_MS;
+      if (days >= minDays && season.end > since) return { start: season.start, end, running: true };
+      break;
+    }
+  }
+  const last = latestSeasonBy(spec, addDays(asOf, 1));
+  if (last && last.end > since) return { ...last, running: false };
+  return null;
+}
+// What a drought run says when cropLossSeason found nothing to measure.
+export function noLossSeasonWarning(since) {
+  return `No crop season since ${since} has run long enough to measure yet.`;
 }
 
 // The season that is running now, cut off at today; or, outside the

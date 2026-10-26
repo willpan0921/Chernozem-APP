@@ -25,6 +25,11 @@
 //                ("Not measured here") and cannot be picked, so the map is
 //                never coloured flat
 //     why        the line that says why (overview.js setAsideNote)
+//     offHint    the off tab's short words instead of "Not measured here"
+//                (a measured but flat Feasibility: "Nothing in the way")
+//     disaster   the run's natural disaster type ("flood", ...: overview.js
+//                disasterType), or null: the Damage and Feasibility tabs'
+//                hints follow it (DISASTER_HINTS), never "Safe access"
 //
 // WHO EDITS IT
 // Whoever changes the left column of the Atlas map page. The colours of the
@@ -39,6 +44,15 @@ export const MAP_TABS = [
   { value: "damage", label: "Damage", hint: "Fire and radar" },
   { value: "access", label: "Feasibility", hint: "Safe access" },
 ];
+
+// The Damage and Feasibility hints in a natural disaster.
+export const DISASTER_HINTS = {
+  flood: { damage: "Flooded land", access: "Water now" },
+  wildfire: { damage: "Burned land", access: "Fires now" },
+  drought: { damage: "Crop loss", access: "Not measured" },
+  ground: { damage: "Land change", access: "Not measured" },
+  other: { damage: "Land change", access: "Not measured" },
+};
 
 export function DetailSwitch({ value, onChange, units, status }) {
   const label = units?.label || "States";
@@ -72,7 +86,8 @@ export function DetailSwitch({ value, onChange, units, status }) {
   );
 }
 
-export function MapTabs({ value, onChange, measured = true, why = null }) {
+export function MapTabs({ value, onChange, measured = true, why = null, disaster = null, offHint = null }) {
+  const hints = disaster ? DISASTER_HINTS[disaster] || {} : {};
   const shown = value === "access" && !measured ? "priority" : value;
   return (
     <section className="map-section" aria-labelledby="map-tabs-title">
@@ -99,7 +114,7 @@ export function MapTabs({ value, onChange, measured = true, why = null }) {
                 ))}
               </span>
               <span className="map-tab-label">{tab.label}</span>
-              <span className="map-tab-hint">{off ? "Not measured here" : tab.hint}</span>
+              <span className="map-tab-hint">{off ? offHint || "Not measured here" : hints[tab.value] || tab.hint}</span>
             </button>
           );
         })}

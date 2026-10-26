@@ -196,10 +196,94 @@ test("a run keeps who decided its war (the team, area.war, or the app's list); a
   const result = compareRuns(before, after);
   assert.equal(result.comparable, false);
   assert.equal(result.notComparable, "war");
-  assert.equal(result.notComparableText, "Not comparable: different war setting");
+  assert.equal(result.notComparableText, "Not comparable: different crisis setting");
   linkNewDamage([before, after]);
   assert.equal(after.newHeavyDamageHa, null);
   // The same start day by another name (or by the list) compares.
   const sameDay = buildRun({ ...makeArgs("2026-08"), conflict: { ...team, name: "Another name" } });
   assert.equal(compareRuns(sameDay, after).comparable, true);
+});
+
+test("cleanConflict keeps a natural disaster's kind and type; a war's comes out as before", async () => {
+  const { cleanConflict } = await import("./runs.js");
+  const flood = { id: "area-a", name: "Storm Daniel floods", since: "2023-09-04", source: "area", kind: "disaster", type: "flood", extra: 1 };
+  assert.deepEqual(cleanConflict(flood), { id: "area-a", name: "Storm Daniel floods", since: "2023-09-04", source: "area", kind: "disaster", type: "flood" });
+  // An unknown type is not a disaster: read as the team's war it would be.
+  assert.deepEqual(cleanConflict({ ...flood, type: "volcano" }), { id: "area-a", name: "Storm Daniel floods", since: "2023-09-04", source: "area" });
+  assert.deepEqual(cleanConflict({ id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" }), { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" });
+  assert.deepEqual(cleanConflict({ id: "gaza", name: "Gaza war", since: "2023-10-07", partOfCountry: true, partOf: "area" }), { id: "gaza", name: "Gaza war", since: "2023-10-07", partOfCountry: true, partOf: "area" });
+  assert.equal(cleanConflict(null), null);
+});
+
+test("buildRun in a natural disaster: hit and heavy land, Feasibility, the disaster's method; a war's run gets no new key", async () => {
+  const { DISASTER_METHOD_VERSION, DISASTER_COMPONENTS, DISASTER_SCALES, SCALES, COMPONENTS, METHOD_VERSION, FLOOD } = await import("../src/lib/atlas/method.js");
+  const flood = { id: "area-test", name: "Flood (set for this area)", since: "2023-09-04", source: "area", kind: "disaster", type: "flood" };
+  const wet = (id, extra) => ({ ...reading(id, 0.1), conflictKm: 300, hitShare: 0.2, grassShare: 0.1, grassHitShare: 0.5, wetNowShare: 0.25, ...extra });
+  const run = buildRun({ area, month: "2023-09", provider: "gee", readings: [wet("r0c0"), wet("r0c1", { hitShare: 0, heavyShare: 0, wetNowShare: 0 })], cellSizeDeg: 0.5, cells, conflict: flood, conflictSource: "area", accessSource: "flood-now" });
+  const [a, b] = run.cells;
+  // 1000 ha x 0.5 cropland = 500 ha, x 0.8 black soil = 400 ha.
+  assert.equal(a.hitHa, 80); // 400 x 0.2
+  assert.equal(a.hitCropHa, 100); // 500 x 0.2
+  assert.equal(a.heavyDamageHa, 40); // 400 x 0.1
+  assert.equal(a.heavyCropHa, 50);
+  assert.equal(a.grassHitHa, 50); // 1000 x 0.1 x 0.5
+  assert.equal(a.hit, 1); // 20% of the black soil: full
+  assert.equal(a.heavy, 0.5); // 10% of 20%
+  assert.equal(a.feasible, 0.7895); // 25% under water now: 1 - (0.25 - 0.05) / 0.95
+  assert.equal(a.distance, null);
+  assert.deepEqual(a.raw, { chiDrop: 0.1, radarDb: null, firesPer100Km2: 12.5, conflictKm: null, popPerKm2: 100, hitShare: 0.2, heavyShare: 0.1, wetNowShare: 0.25, fireKm: null });
+  assert.equal(b.feasible, 1);
+  assert.deepEqual(run.totals, { croplandHa: 1000, blackSoilHa: 800, heavyDamageHa: 40, peopleOnDamagedSoil: 50, hitHa: 80, hitCropHa: 100, heavyCropHa: 50, grassHitHa: 100, measuredCropHa: 1000 });
+  assert.deepEqual(run.disasterDamage, { notMeasured: null, unmeasuredShare: 0, mayBeLow: [] });
+  assert.deepEqual(run.method, { version: DISASTER_METHOD_VERSION, components: DISASTER_COMPONENTS, scales: { ...SCALES, ...DISASTER_SCALES }, disaster: { type: "flood", rules: FLOOD } });
+  assert.deepEqual(run.conflict, flood);
+  assert.equal(run.accessSource, "flood-now");
+  // A wildfire: Feasibility is the distance to a fire burning now, full at 10 km.
+  const fire = buildRun({ area, month: "2024-07", provider: "gee", readings: [reading("r0c0", 0), { ...reading("r0c1", 0), conflictKm: 300 }].map((r, i) => ({ ...r, conflictKm: i ? 300 : 4, hitShare: 0.1 })), cellSizeDeg: 0.5, cells, conflict: { ...flood, type: "wildfire" }, accessSource: "fire-now" });
+  assert.deepEqual(fire.cells.map((cell) => [cell.feasible, cell.raw.fireKm, cell.raw.conflictKm]), [[0.4, 4, 4], [1, 300, 300]]);
+  // A drought: Feasibility not measured, 1 everywhere.
+  const drought = buildRun({ area, month: "2026-06", provider: "gee", readings: [reading("r0c0", 0), reading("r0c1", 0)].map((r) => ({ ...r, hitShare: 0.3 })), cellSizeDeg: 0.5, cells, conflict: { ...flood, type: "drought" }, accessSource: "none" });
+  assert.ok(drought.cells.every((cell) => cell.feasible === 1 && cell.raw.conflictKm === null && cell.grassHitHa === 0));
+  // A war's run: exactly the keys and method it always had.
+  const war = buildRun({ area, month: "2023-09", provider: "gee", readings: [reading("r0c0", 0.1), reading("r0c1", 0)], cellSizeDeg: 0.5, cells, conflict: { id: "area-test", name: "War (set for this area)", since: "2023-09-04", source: "area" }, accessSource: "fires" });
+  assert.deepEqual(Object.keys(war.cells[0]), ["id", "lat", "lon", "wrb", "agOutput", "firms", "radar", "chi", "distance", "population", "lights", "croplandHa", "blackSoilHa", "heavyDamageHa", "people", "peopleOnDamagedSoil", "raw"]);
+  assert.deepEqual(Object.keys(war.cells[0].raw), ["chiDrop", "radarDb", "firesPer100Km2", "conflictKm", "popPerKm2"]);
+  assert.deepEqual(Object.keys(war.totals), ["croplandHa", "blackSoilHa", "heavyDamageHa", "peopleOnDamagedSoil"]);
+  assert.deepEqual(war.method, { version: METHOD_VERSION, components: COMPONENTS, scales: SCALES });
+  assert.deepEqual(war.conflict, { id: "area-test", name: "War (set for this area)", since: "2023-09-04", source: "area" });
+  assert.equal(war.cells[0].distance, 0.5);
+  assert.equal("disasterDamage" in war, false);
+});
+
+test("buildRun in a natural disaster: a square whose damage was not measured reads null, never 0, and is not ranked", async () => {
+  const { scorePlaces } = await import("../src/lib/atlas/scoring.js");
+  const drought = { id: "area-test", name: "Drought (set for this area)", since: "2026-02-10", source: "area", kind: "disaster", type: "drought" };
+  const readings = [{ ...reading("r0c0", 0.1), hitShare: 0.3 }, { ...reading("r0c1", 0.1), hitShare: null, heavyShare: null }];
+  const run = buildRun({ area, month: "2026-04", provider: "gee", readings, cellSizeDeg: 0.5, cells, conflict: drought, accessSource: "none", disasterDamage: { notMeasured: "season-incomplete", unmeasuredShare: 0.5, mayBeLow: ["snow", "bogus"] } });
+  const [measured, open] = run.cells;
+  assert.equal(measured.hit, 1);
+  assert.equal(measured.notMeasured, undefined);
+  assert.deepEqual([open.hit, open.heavy, open.hitHa, open.hitCropHa, open.heavyCropHa, open.grassHitHa], [null, null, null, null, null, null]);
+  assert.equal(open.raw.hitShare, null);
+  assert.equal(open.heavyDamageHa, 0);
+  assert.match(open.notMeasured, /not measured yet/);
+  // The totals hold the measured square only, and say how much was measured.
+  assert.equal(run.totals.hitCropHa, measured.hitCropHa);
+  assert.equal(run.totals.measuredCropHa, measured.croplandHa);
+  assert.deepEqual(run.disasterDamage, { notMeasured: "season-incomplete", unmeasuredShare: 0.5, mayBeLow: ["snow"] });
+  const scored = scorePlaces(run.cells, { conflict: run.conflict, cellSizeDeg: 0.5, minBlackSoilHa: 0 });
+  const notRanked = scored.places.find((place) => place.id === open.id);
+  assert.equal(notRanked.analyzed, false);
+  assert.equal(notRanked.reason, open.notMeasured);
+});
+
+test("feasibleFromWet: 5% or less under water is nothing in the way; more falls to 0", async () => {
+  const { feasibleFromWet } = await import("./runs.js");
+  assert.equal(feasibleFromWet(0), 1);
+  assert.equal(feasibleFromWet(0.003), 1);
+  assert.equal(feasibleFromWet(0.012), 1);
+  assert.equal(feasibleFromWet(0.05), 1);
+  assert.ok(feasibleFromWet(0.06) < 1 && feasibleFromWet(0.06) > 0.98);
+  assert.equal(feasibleFromWet(1), 0);
+  assert.ok(feasibleFromWet(0.5) > feasibleFromWet(0.8));
 });

@@ -294,6 +294,155 @@ export const PEACE_DAMAGE = { unit: "share of black-soil cropland heavily damage
 //                 radar)
 export const METHOD_VERSION = "2026-10-19.3";
 
+// ---------------------------------------------------------------------------
+// Natural disasters (a crisis the team sets for an area in Atlas Settings:
+// src/config/conflicts.js checkAreaWar mode "disaster")
+// ---------------------------------------------------------------------------
+// A crisis is what an area is going through: a war, a natural disaster of
+// one of these types, or none. The same Near term (gate by Feasibility) and
+// Post-crisis (power mean) maths apply to every crisis; only how Damage and
+// Feasibility are measured follows the type. Everything below is used only
+// for a run whose conflict has kind "disaster" (isDisaster): wars and peace
+// keep COMPONENTS, SCALES and METHOD_VERSION exactly as they are.
+//
+// Per type (docs/METHODS.md "Disasters"; server/providers/gee.js
+// floodImages, burnImages, cropLossImage, greenLossImage):
+//   flood     hit: normally dry cropland seen under water (Sentinel-1 VV
+//             below -18 dB and 3 dB below the same orbit's normal, on a day
+//             without snow or frost; or Sentinel-2 water) at any look in the
+//             60 days from the date, leaving out land under water in those
+//             weeks of most normal years (paddies) unless the radar is far
+//             darker than that field's normal; heavy: under water over
+//             4 days or more; Feasibility: from the share of the square's
+//             cropland under water at its latest look in the last 12 days of
+//             the month, 1 at 5% or less
+//   wildfire  hit: burned in the 60 days from the date (MODIS/VIIRS
+//             burned-area maps, or an unusual fire within 1 km with a
+//             Sentinel-2 dNBR of 0.27 or more; on cropland only burning
+//             clearly above 2019-2021); heavy: hit with dNBR 0.27
+//             or more; Feasibility: distance to a fire burning in the last
+//             7 days of the month, full at 10 km
+//   drought   hit: crop greenness (MODIS 250 m, smoothed over 1.5 km) 20% or
+//             more below the same weeks of 2019-2021 in the crop season now
+//             (or just ended), the season's worst month-end reading; heavy:
+//             35% or more. It is this season's crop loss: it falls only when
+//             a new season starts. Feasibility is not measured
+//   ground    storm, earthquake or landslide (provisional): in the growing
+//             season that contains the date, Sentinel-2 greenness 20% or
+//             more below normal AND radar change of 2 dB (heavy 3 dB);
+//             Feasibility is not measured
+//   other     as ground
+// Damage = mean(hit, heavy), each the share of the square's black-soil
+// cropland, full at 20% (DISASTER_SCALES), like PEACE_DAMAGE.
+export const DISASTER_TYPES = ["flood", "wildfire", "drought", "ground", "other"];
+export const DISASTER_LABELS = {
+  flood: "Flood",
+  wildfire: "Wildfire",
+  drought: "Drought",
+  ground: "Storm, earthquake or landslide",
+  other: "Other disaster",
+};
+// Lower-case nouns for sentences: "since the flood began".
+export const DISASTER_NOUNS = { flood: "flood", wildfire: "wildfire", drought: "drought", ground: "storm, earthquake or landslide", other: "disaster" };
+//   2026-10-25.d1  the first disaster method (this file's DISASTER_* rules)
+//   2026-10-25.d2  floods: radar water must be darker than normal, recurring
+//                  water (paddies) and snow or frozen days are left out, and
+//                  Feasibility ignores squares with 5% or less under water;
+//                  wildfires: burning that is routine in those weeks is left
+//                  out; droughts: the season's worst reading so far is kept;
+//                  unmeasured squares are no longer read as undamaged
+//   2026-10-25.d3  floods: a paddy's normal water no longer hides a real
+//                  flood (a look far darker than that field's normal still
+//                  counts; JRC water in 2 of the 3 normal years; the
+//                  normally wet mask grown by 150 m), small areas worked out
+//                  on their own pixels, and optical water now confirmed by
+//                  radar where radar looked
+export const DISASTER_METHOD_VERSION = "2026-10-25.d3";
+// The per-pixel hazard tests (flood, wildfire) are worked out on a grid of
+// this size (m) when the cells are reduced with coarser pixels: without it
+// a 200 m reduce lost 20% of the Thessaly flood (real data, 2026-10-25,
+// probe d4), with it 9%, the same at 1 km. A wildfire's tests are on it
+// always; a flood's hit and water now, at finer reduces, on the reduce's
+// own pixels (its normal-year masks stay on this grid: gee.js onFloodGrid).
+export const HAZARD_GRID_M = 100;
+// FLOOD, besides the water tests:
+//   darkerDb        a radar look counts as water only where it is also this
+//                   much darker than the median of the same days in
+//                   2019-2021 (smooth bare soil, wet snow and frozen ground
+//                   read below -18 dB too, but they do so in normal years)
+//   normalWetYears  land under water at some look in the same days (padded
+//                   by normalPadDays) of at least this many of the three
+//                   normal years (Sentinel-1 or -2; rice paddies, wetlands,
+//                   seasonal river beds) is "normally wet", and so is land
+//                   JRC maps as water in the same calendar months of at
+//                   least normalJrcYears of them; the normally wet mask is
+//                   grown by normalGrowM (its 100 m grid is coarser than a
+//                   field's edge)
+//   deepDb, deepNearDays  normally wet land still counts as flooded where a
+//                   radar look is at least deepDb darker than the median of
+//                   the same orbit within deepNearDays of that day of the
+//                   year in 2019-2021: deeper water than the field's normal
+//                   (a paddy's transplanting water reads a few dB darker
+//                   than its normal, a flood over its grown crop far more).
+//                   (Real data, 2026-10-25: the Punjab flood of August 2025
+//                   read 10,731 ha without this, about 16,500 ha officially;
+//                   13,554 ha with it, while a July setting with no flood
+//                   stayed at 3%.)
+//   snowCoverPct, frozenC  radar looks on a day with ERA5-Land snow cover
+//                   above this (%) or topsoil at or below this (deg C) are
+//                   not counted (wet snow and frozen soil look like water)
+//   land under water now: as the hit (latest look), and where the radar
+//                   had a look in those 12 days, optical water counts only
+//                   if the radar also saw water (paddies and wet soil look
+//                   like water to Sentinel-2: real data, 2026-10-25, Punjab
+//                   in July 2026, a year after the flood, read 5,091 ha
+//                   under water, 214 ha with radar confirmation)
+//   dryNowShare     Feasibility: a square with at most this share of its
+//                   cropland under water now counts as nothing in the way
+//                   (puddles, ponds and stray wet pixels never set it aside)
+export const FLOOD = { waterVvDb: -18, smoothM: 50, mndwi: 0, ndwi: -0.1, permanentMonths: 10, handM: 15, windowDays: 60, heavyDays: 4, nowDays: 12, darkerDb: 3, normalWetYears: 2, normalPadDays: 30, normalJrcYears: 2, normalGrowM: 150, deepDb: 8, deepNearDays: 15, snowCoverPct: 10, frozenC: 0, dryNowShare: 0.05 };
+// WILDFIRE, besides the burn tests: an unusual fire needs a clear excess
+// over the same days of 2019-2021, the 5 km smoothed FIRMS count at least
+// excessTimes the normal AND excessPerKm2 detections per km2 above it; and
+// on cropland a burned-area pixel counts only where the burned share of
+// the cropland within 5 km is at least excessTimes its normal AND
+// excessBurnShare above it. Fields burned every year in those weeks (crop
+// residue, stubble) are so left out; grassland and forest keep every burn.
+// (Real data, 2026-10-25: a wildfire setting in the Punjab box from 15
+// October 2024, with no wildfire, read 13.7% of the cropland burned, 12%
+// from the fire arm, where fires ran about 1.4 times their normal; the
+// Yambol wildfire's fires ran about 25 times theirs.)
+export const WILDFIRE = { windowDays: 60, preDays: 30, postDays: 30, nearM: 1000, severeDnbr: 0.27, nowDays: 7, fullKm: 10, excessTimes: 3, excessPerKm2: 0.1, excessBurnShare: 0.1 };
+// DROUGHT.worstFromDays: the season is read at each month's end from this
+// many days after its start, and the worst reading kept (gee.js lossCuts).
+export const DROUGHT = { hitLoss: 0.2, heavyLoss: 0.35, minBaseNdvi: 0.3, smoothM: 1500, minSeasonDays: 60, worstFromDays: 90 };
+export const GROUND = { greenLoss: 0.2, minBaseNdvi: 0.3, hitRadarDb: 2, heavyRadarDb: 3 };
+// The rules of each type, as a disaster run saves them (run.method.disaster.rules).
+export const DISASTER_RULES = { flood: FLOOD, wildfire: WILDFIRE, drought: DROUGHT, ground: GROUND, other: GROUND };
+// Indicators of a disaster run (kept OUT of SCALES so a war run's method
+// JSON stays the same).
+export const DISASTER_SCALES = {
+  hit: { unit: "share of black-soil cropland hit since the date", full: 0.2 },
+  heavy: { unit: "share of black-soil cropland heavily damaged since the date", full: 0.2 },
+  feasible: { unit: "share of the square workable now (1 = nothing seen in the way)", full: 1 },
+  fireKm: { unit: "km to a fire burning in the last 7 days", full: 10 },
+};
+export const DISASTER_COMPONENTS = { soil: ["wrb", "agOutput"], damage: ["hit", "heavy"], access: ["feasible"] };
+// True for a crisis object that is a natural disaster of a known type.
+export function isDisaster(conflict) {
+  return conflict?.kind === "disaster" && DISASTER_TYPES.includes(conflict.type);
+}
+// The method version a run with this crisis is made with.
+export function methodVersionFor(conflict) {
+  return isDisaster(conflict) ? DISASTER_METHOD_VERSION : METHOD_VERSION;
+}
+// One disaster indicator from 0 to 1 (DISASTER_SCALES), or null.
+export function scaleDisaster(name, raw) {
+  const scale = DISASTER_SCALES[name];
+  if (!scale || !Number.isFinite(raw)) return null;
+  return Math.min(1, Math.max(0, raw / scale.full));
+}
+
 // Whether two runs of an area can be compared number for number: the same
 // data source (Earth Engine or sample), the same method (its components
 // and scales, saved on every run), the same squares and the same war
@@ -303,6 +452,8 @@ export const METHOD_VERSION = "2026-10-19.3";
 //   "method"  the method changed between them (e.g. damage from the health
 //             index before 2026-10-19, from radar and fire since)
 //   "grid"    different square sizes
+//   "crisis"  one was made in a natural disaster (isDisaster) and the
+//             other in a war or at peace
 //   "war"     one was made at war and the other at peace, or with another
 //             war start (run.conflict.since), or one with the war's rules
 //             all over the area and the other only in the war's squares
@@ -313,13 +464,14 @@ export const METHOD_VERSION = "2026-10-19.3";
 //             until the area is re-run
 // Runs saved before a field existed count as matching on it.
 //   why   "different data source" / "different method version" /
-//         "different squares" / "different war setting"; text
+//         "different squares" / "different crisis setting"; text
 //         "Not comparable: " + why
 export const NOT_COMPARABLE_WHY = {
   source: "different data source",
   method: "different method version",
   grid: "different squares",
-  war: "different war setting",
+  war: "different crisis setting",
+  crisis: "different crisis setting",
 };
 // What decides a war's numbers: the day it began (the damage window, the
 // fire years and the war seasons follow it), and, for a war that covers its
@@ -329,9 +481,12 @@ export const NOT_COMPARABLE_WHY = {
 // war: server/conflicts.js warCellsFor); null at peace,
 // undefined when not known. Two runs (or a run and a setting) with the same
 // key give the same numbers; the war's name does not matter.
+// A natural disaster (isDisaster) gives "<since> (<type>)", so a war and a
+// flood from the same day, or a flood and a wildfire, never share a key.
 export function warKey(conflict) {
   if (conflict === undefined) return undefined;
   if (!conflict?.since) return null;
+  if (isDisaster(conflict)) return `${conflict.since} (${conflict.type})`;
   return conflict.partOfCountry ? `${conflict.since} (in part of the country)` : conflict.since;
 }
 
@@ -339,6 +494,11 @@ export function runsComparable(a, b) {
   const no = (reason) => ({ comparable: false, reason, why: NOT_COMPARABLE_WHY[reason], text: `Not comparable: ${NOT_COMPARABLE_WHY[reason]}` });
   if (!a || !b) return { comparable: true };
   if ((a.provider || null) !== (b.provider || null)) return no("source");
+  // A war (or peace) against a natural disaster: "crisis"; two disasters
+  // of another type or day: "war" (the same words), before their methods
+  // (which name the type) are compared.
+  if (a.conflict !== undefined && b.conflict !== undefined && isDisaster(a.conflict) !== isDisaster(b.conflict)) return no("crisis");
+  if (isDisaster(a.conflict) && isDisaster(b.conflict) && warKey(a.conflict) !== warKey(b.conflict)) return no("war");
   if (a.method && b.method && JSON.stringify(a.method) !== JSON.stringify(b.method)) return no("method");
   if (Number.isFinite(a.cellSizeKm) && Number.isFinite(b.cellSizeKm) && Math.abs(a.cellSizeKm - b.cellSizeKm) > 0.001 * Math.max(a.cellSizeKm, b.cellSizeKm)) return no("grid");
   if (a.conflict !== undefined && b.conflict !== undefined && warKey(a.conflict) !== warKey(b.conflict)) return no("war");

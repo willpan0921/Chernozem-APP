@@ -58,6 +58,12 @@
   font-weight: 550;
 }
 
+/* A natural disaster's "Hit since ...": the cropland hit on all soils. */
+.ao-stats .stat-note .ao-stat-sub {
+  color: var(--c-muted);
+  font-weight: 450;
+}
+
 /* "Mostly older damage: the 2026 season's radar images are counted for
    the first time", under the new heavy damage of the month a season joined
    the damage radar. */
@@ -211,6 +217,34 @@
 .ao-legend .map-legend-aside {
   grid-area: aside;
   padding-left: var(--s-2);
+}
+
+/* A natural disaster's key also names the hatched squares: one line each,
+   the lowest-shade line on top. */
+.ao-legend .map-legend-body.has-unranked {
+  grid-template-areas:
+    "title ramp aside"
+    ". ends unranked";
+}
+
+.ao-legend .map-legend-body.has-unranked .map-legend-aside.is-unranked {
+  grid-area: unranked;
+  max-width: 52ch;
+}
+
+/* A phone: the key's two lines go under the ramp, full width. */
+@media (max-width: 640px) {
+  .ao-legend .map-legend-body.has-unranked {
+    grid-template-columns: auto minmax(120px, 1fr);
+    grid-template-areas:
+      "title ramp"
+      ". ends"
+      "aside aside"
+      "unranked unranked";
+  }
+  .ao-legend .map-legend-body.has-unranked .map-legend-aside {
+    padding-left: 0;
+  }
 }
 
 /* "Feasibility not measured here: ..." takes the place of the lowest-shade line. */

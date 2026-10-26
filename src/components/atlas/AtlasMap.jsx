@@ -774,13 +774,13 @@ export default function AtlasMap({
       {hoverPlace && (
         <div className="atlas-map-tip" style={{ left: tipLeft, top: hover.y + 14 }} role="tooltip">
           <span className="atlas-map-tip-title">{placeLabel(hoverPlace, run?.cellSizeDeg)}</span>
-          <span className="atlas-map-tip-value">{valueText(hoverPlace, colorBy, timeframe, total)}</span>
+          <span className="atlas-map-tip-value">{valueText(hoverPlace, colorBy, timeframe, total, run)}</span>
         </div>
       )}
       {hoverUnit && (
         <div className="atlas-map-tip" style={{ left: tipLeft, top: hover.y + 14 }} role="tooltip">
           <span className="atlas-map-tip-title">{unitName(hoverUnit) || "No name in FAO GAUL"}</span>
-          <span className="atlas-map-tip-value">{unitTip(hoverUnit, colorBy, timeframe, total)}</span>
+          <span className="atlas-map-tip-value">{unitTip(hoverUnit, colorBy, timeframe, total, run)}</span>
         </div>
       )}
 
@@ -793,9 +793,10 @@ export default function AtlasMap({
 // a state that is not ranked says why ("No black-soil cropland"); on the
 // Value, Damage and Feasibility maps it gives its score whenever it has one.
 const SCORE_OF = { value: "soil", damage: "damage", access: "access" };
-function unitTip(unit, colorBy, timeframe, total) {
+// run: the run shown (a natural disaster words Feasibility by its type).
+function unitTip(unit, colorBy, timeframe, total, run = null) {
   const scored = unit.analyzed || unit.nearTerm?.tier === "setAside" || (SCORE_OF[colorBy] && Number.isFinite(unit[SCORE_OF[colorBy]]));
-  return scored ? valueText(unit, colorBy, timeframe, total) : unit.reason || "Not ranked";
+  return scored ? valueText(unit, colorBy, timeframe, total, run) : unit.reason || "Not ranked";
 }
 
 // Six decimals is about 10 cm: plenty for a farm corner.

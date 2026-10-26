@@ -28,6 +28,7 @@ import { AnalysisNotice, AnalysisProgress, AtlasGate, useAtlasData, useTimeframe
 import { useAreaUnits } from "../../state/useUnits.js";
 import AtlasMap from "../../components/atlas/AtlasMap.jsx";
 import MapLegend from "../../components/atlas/MapLegend.jsx";
+import { overviewUnrankedNote } from "../../lib/atlas/mapColors.js";
 import RunPicker from "../../components/atlas/RunPicker.jsx";
 import { alertPlaces, describeAlert, kpis, seasonWords, shownNewDamage, springPlan, summarize, timeframeOptions } from "../../lib/atlas/overview.js";
 import { COST_NOTE } from "../../lib/atlas/method.js";
@@ -140,8 +141,9 @@ function Overview() {
             label={item.label}
             value={item.value}
             // Red only when there is damage to show: a red "0 ha" reads like an alarm.
-            tone={item.id === "heavy-damage" && item.value === "0 ha" ? undefined : item.tone}
-            note={item.id === "heavy-damage" && shownNewDamage(run, runs) > 0 ? <NewDamageNote run={run} runs={runs} /> : undefined}
+            tone={(item.id === "heavy-damage" || item.id === "hit") && item.value === "0 ha" ? undefined : item.tone}
+            // A natural disaster's "Hit since ..." says the cropland hit on all soils too.
+            note={item.id === "heavy-damage" && shownNewDamage(run, runs) > 0 ? <NewDamageNote run={run} runs={runs} /> : item.note ? <span className="ao-stat-sub">{item.note}</span> : undefined}
           />
         ))}
       </div>
@@ -185,7 +187,9 @@ function Overview() {
             />
           </div>
           {/* The key sits under the map so it never covers squares. */}
-          <MapLegend colorBy="priority" timeframe={timeframe} run={run} className="ao-legend" />
+          {/* A natural disaster's key also names the hatched squares (Punjab:
+              almost no black soil, so almost none is ranked). */}
+          <MapLegend colorBy="priority" timeframe={timeframe} run={run} className="ao-legend" unranked={overviewUnrankedNote(run, scored.places, timeframe)} />
 
           <div className="ao-top">
             <div className="ao-top-head">

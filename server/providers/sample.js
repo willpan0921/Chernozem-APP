@@ -39,6 +39,14 @@
 //     war's readings; the other squares get the readings of peace, with
 //     their distance to that front (as Earth Engine: each reading says
 //     which, atWar)
+//   - a natural disaster the team set (src/lib/atlas/method.js
+//     isDisaster): no front line. A made-up "hit patch" instead: a disc
+//     around the area's centre, a quarter of the area's width across in
+//     radius, hit 60% at its centre falling to 0 at its edge, heavily
+//     damaged half of that; a flood's land under water now (30% inside the
+//     disc in the month of its day, none after), a wildfire's distance to a
+//     fire burning now (to the centre in the month of its day, 300 km
+//     after); Feasibility per type as on Earth Engine (disasterFields)
 //   - alerts: the cells where damage or fires grew most since last month
 //
 // It returns the same shape as the Earth Engine source (gee.js), so the
@@ -47,10 +55,10 @@
 // WHO EDITS IT
 // Nobody, normally. It is only a stand-in for the real data.
 
-import { HEAVY_DAMAGE_CHI_DROP } from "../../src/lib/atlas/method.js";
+import { DISASTER_NOUNS, HEAVY_DAMAGE_CHI_DROP, isDisaster } from "../../src/lib/atlas/method.js";
 import { formatCoord } from "../geo.js";
 import { conflictForArea, warCellsFor } from "../conflicts.js";
-import { NO_WAR_WARNING, beforeWarWarning, cleanConflict } from "../runs.js";
+import { NO_WAR_WARNING, beforeDisasterWarning, beforeWarWarning, cleanConflict } from "../runs.js";
 import { endsBeforeWar } from "../../src/config/conflicts.js";
 
 // The distance to fighting at peace: the most that is measured (as gee.js).
@@ -553,6 +561,7 @@ export function sampleReadings({ area, cells, month, cellSizeDeg, conflict: give
   );
   const sampleWarning = "Sample data: made-up values for trying the app, not satellite measurements.";
   if (!cells.length) return { readings: [], alerts: [], warnings: [sampleWarning], conflict };
+  if (isDisaster(conflict)) return disasterReadings({ area, cells, month, cellSizeDeg, conflict, sampleWarning });
   const seed = hashString(String(area.id));
   // A war that covers the area only in part: its squares (null: all),
   // those that touch its boxes or lie in another listed war, as on Earth
@@ -626,6 +635,59 @@ export function sampleReadings({ area, cells, month, cellSizeDeg, conflict: give
     conflict,
     accessSource: conflict && !beforeWar ? "fires" : "none",
   };
+}
+
+// A natural disaster's sample month (sampleReadings): the area's soil,
+// cropland and people as always, at peace otherwise (no front), and the
+// made-up hit patch (see the top of this file).
+function disasterReadings({ area, cells, month, cellSizeDeg, conflict, sampleWarning }) {
+  const seed = hashString(String(area.id));
+  const frame = makeFrame(area, cells, null);
+  const statics = staticFields(area, cells, frame, seed);
+  const calm = peaceFields(statics, frame, month, seed);
+  const before = endsBeforeWar(month, conflict);
+  const sinceMonth = conflict.since.slice(0, 7);
+  const first = month === sinceMonth;
+  const [west, south, east, north] = cellsBox(cells);
+  const midLat = (south + north) / 2;
+  const kx = 111.32 * Math.cos((midLat * Math.PI) / 180);
+  const centre = { x: ((west + east) / 2) * kx, y: ((south + north) / 2) * 111.32 };
+  const radiusKm = Math.max(0.05, 0.25 * Math.max((east - west + (cellSizeDeg || 0)) * kx, 0.001));
+  const type = conflict.type;
+  const readings = [];
+  for (const cell of cells) {
+    const base = statics.get(cell.id);
+    const m = calm.get(cell.id);
+    const km = Math.hypot(cell.lon * kx - centre.x, cell.lat * 111.32 - centre.y);
+    const inside = !before && km < radiusKm;
+    const hitShare = inside ? 0.6 * (1 - km / radiusKm) : 0;
+    const reading = {
+      id: cell.id,
+      chernozem: base.chernozem,
+      croplandShare: base.croplandShare,
+      firesPer100Km2: m.fires,
+      chiDrop: m.chiDrop,
+      radarDb: m.radarDb === null ? null : Math.round(m.radarDb * 100) / 100,
+      conflictKm: PEACE_KM,
+      popPerKm2: base.popPerKm2,
+      lights: m.lights,
+      heavyShare: Math.round((hitShare / 2) * 10000) / 10000,
+      population: base.popPerKm2 * ((cell.areaHa || 0) / 100),
+      hitShare: Math.round(hitShare * 10000) / 10000,
+    };
+    if (type === "flood" || type === "wildfire") {
+      reading.grassShare = 0.1;
+      reading.grassHitShare = reading.hitShare;
+    }
+    if (type === "flood") reading.wetNowShare = inside && first ? 0.3 : 0;
+    if (type === "wildfire") reading.conflictKm = first && !before ? Math.round(km * 100) / 100 : PEACE_KM;
+    readings.push(reading);
+  }
+  const accessSource = before ? "none" : type === "flood" ? "flood-now" : type === "wildfire" ? "fire-now" : "none";
+  const warnings = [sampleWarning];
+  if (before) warnings.push(beforeDisasterWarning(conflict.since, type));
+  else if (accessSource === "none") warnings.push(`Feasibility is not measured for a ${DISASTER_NOUNS[type]}: satellites do not show what stops fieldwork after it. Nothing is set aside; this does not prove the land can be worked.`);
+  return { readings, alerts: [], warnings, conflict, accessSource };
 }
 
 export function createSampleProvider() {

@@ -47,6 +47,17 @@
 //   seasonWords(run, runs)       what the pages say about such a month ("Mostly older damage: ...")
 //   keepsMonth(old, options)     whether an analysis keeps a saved month (server/jobs.js uses it)
 //   analysisMonths(count)        the months an analysis of `count` months covers
+//   crisisOf(run)                "war", "disaster" or "peace": what the area is going through
+//   isDisasterRun(run)           true for a natural disaster the team set (method.js isDisaster)
+//   disasterType(run)            "flood", "wildfire", "drought", "ground", "other", or null
+//   disasterNoun(run)            "flood", ..., "storm, earthquake or landslide", "disaster"
+//
+// A NATURAL DISASTER (a team's crisis setting, Atlas Settings) uses the
+// same Near term and Post-crisis maths as a war; only how Damage and
+// Feasibility are measured follows its type (method.js DISASTER_*). Every
+// function above words it in its own terms, never with war words (no
+// demining, front, fighting, battles, "war year", "Postwar" or "safe
+// access"), and never calls land safe or workable as a fact.
 //
 // Plain functions with no React, like scoring.js, so they can be tested and
 // reused by the report and the server.
@@ -55,8 +66,8 @@
 // Whoever changes the rules behind the overview. For example, to add a new
 // kind of next step, add a block to nextSteps() below.
 
-import { COSTS, HEAVY_DAMAGE, METHOD_VERSION, PEACE_DAMAGE, SCALES, runsComparable, warKey } from "./method.js";
-import { EARLIEST_WAR_DAY, TEAM_WAR_NAME, conflictForCountry, endsBeforeWar, teamConflict } from "../../config/conflicts.js";
+import { COSTS, DISASTER_LABELS, DISASTER_NOUNS, DROUGHT, FLOOD, GROUND, HEAVY_DAMAGE, METHOD_VERSION, PEACE_DAMAGE, SCALES, WILDFIRE, isDisaster, methodVersionFor, runsComparable, warKey } from "./method.js";
+import { EARLIEST_WAR_DAY, TEAM_DISASTER_NAME, TEAM_WAR_NAME, conflictForCountry, endsBeforeWar, teamConflict } from "../../config/conflicts.js";
 import { addDays, addMonths, formatCoord, formatHaShort, formatCount, formatMonthYear, formatShortDate, listNames, monthName, roundThousands, toDay } from "../format.js";
 import { displayPlaceText } from "./placeNames.js";
 
@@ -77,19 +88,117 @@ export function summarize(places) {
     damagedShare: blackSoilHa > 0 ? heavyDamageHa / blackSoilHa : null,
     people: sum("people"),
     peopleOnDamagedSoil: sum("peopleOnDamagedSoil"),
+    // A natural disaster's squares (server/runs.js): black-soil cropland
+    // hit, all cropland hit, all cropland heavily damaged, grassland hit.
+    hitHa: sum("hitHa"),
+    hitCropHa: sum("hitCropHa"),
+    heavyCropHa: sum("heavyCropHa"),
+    grassHitHa: sum("grassHitHa"),
+    // Of which the damage was measured (a square not measured has hit null).
+    ...(list.some((place) => place.hit === null && typeof place.notMeasured === "string")
+      ? { measuredCount: list.filter((place) => Number.isFinite(place.hit)).length, measuredCropHa: list.reduce((total, place) => total + (Number.isFinite(place.hit) && Number.isFinite(place.croplandHa) ? place.croplandHa : 0), 0) }
+      : {}),
   };
 }
 
 // The four big numbers along the top of the overview. The damage number is
 // red only inside a war (`run` with a conflict, or an older run, in a month
 // the war had begun by); at peace it is radar change, not an alarm.
+// A natural disaster: black soil, "Black soil hit since 4 Sep 2023" (a
+// drought: "Black soil hit this season (since Mar 2026)"), with the
+// cropland hit on all soils as its note, and the black soil heavily
+// damaged (no "people on damaged land": the hit land says more). Where
+// the damage was not measured (disasterDamageState) both read "Not
+// measured yet" with the reason; measured on part of the area, the note
+// says on how much; when it may read low or the rule is provisional, the
+// note says so.
 export function kpis(summary, run = null) {
+  if (isDisasterRun(run)) {
+    const tone = beforeWar(run) ? undefined : "red";
+    const state = disasterDamageState(run);
+    const none = state?.measured === false;
+    const hitNote = [
+      none ? state.reason : `${formatHaShort(summary.hitCropHa || 0)} hit on all cropland`,
+      state?.partial ? `measured on ${formatHaShort(summary.measuredCropHa ?? 0)} of ${formatHaShort(summary.croplandHa)} of cropland (${state.reason})` : null,
+      !none && state?.mayBeLow.length ? `may be low: ${state.mayBeLow.join("; ")}` : null,
+      !none && state?.provisional ? "provisional: a pointer, not a measurement" : null,
+    ].filter(Boolean);
+    return [
+      { id: "cropland", label: "Cropland analyzed", value: formatHaShort(summary.croplandHa) },
+      { id: "black-soil", label: "Black-soil cropland", value: formatHaShort(summary.blackSoilHa) },
+      { id: "hit", label: disasterHitLabel(run), value: none ? NOT_MEASURED_YET : formatHaShort(summary.hitHa || 0), tone: none ? undefined : tone, note: hitNote.join(" · ") },
+      { id: "heavy-damage", label: "Black soil heavily damaged", value: none ? NOT_MEASURED_YET : formatHaShort(summary.heavyDamageHa), tone: none ? undefined : tone },
+    ];
+  }
   return [
     { id: "cropland", label: "Cropland analyzed", value: formatHaShort(summary.croplandHa) },
     { id: "black-soil", label: "Black-soil cropland", value: formatHaShort(summary.blackSoilHa) },
     { id: "heavy-damage", label: "Heavily damaged", value: formatHaShort(summary.heavyDamageHa), tone: outsideWar(run) ? undefined : "red" },
     { id: "people", label: "People on damaged land", value: formatCount(summary.peopleOnDamagedSoil) },
   ];
+}
+
+export const NOT_MEASURED_YET = "Not measured yet";
+
+// The label of a disaster's hit land (the Overview's tile, the map key):
+// "Black soil hit since 4 Sep 2023"; a drought, whose reading is this
+// crop season's loss, "Black soil hit this season (since Mar 2026)", from
+// the season's start (run.imagery.from).
+export function disasterHitLabel(run) {
+  if (disasterType(run) === "drought") {
+    const from = run?.imagery?.from;
+    return `Black soil hit this season${/^\d{4}-\d{2}$/.test(from || "") && !/^none yet/.test(run.imagery.label || "") ? ` (since ${formatMonthYear(from).replace(/^(\w{3})\w*/, "$1")})` : ""}`;
+  }
+  return `Black soil hit since ${warDay(conflictOf(run).since)}`;
+}
+
+// What a disaster run could not measure, for the pages (server/runs.js
+// cleanDisasterDamage), or null (a war, peace, a month before the day):
+//   measured    false when no square's damage was measured
+//   partial     true when some squares' was not
+//   share       the share of the squares not measured (0..1)
+//   reason      "not measured yet: no crop season since 10 Feb 2026 has
+//               run long enough", "not measured yet: the growing season
+//               that contains 16 May 2023 is not complete", "not
+//               measured: no usable images"
+//   mayBeLow    ["the burned-area map for the month is not out yet", ...]
+//   provisional true for a storm, earthquake, landslide or other disaster
+//   next        the first Next step when nothing was measured ("Analyze
+//               this area again once ...")
+export function disasterDamageState(run) {
+  if (!isDisasterRun(run) || beforeWar(run)) return null;
+  const d = run.disasterDamage || {};
+  const type = disasterType(run);
+  const day = warDay(conflictOf(run).since, "short");
+  const share = Number.isFinite(d.unmeasuredShare) ? d.unmeasuredShare : d.notMeasured ? 1 : 0;
+  const reason =
+    d.notMeasured === "season-incomplete"
+      ? type === "drought"
+        ? `not measured yet: no crop season since ${day} has run long enough`
+        : `not measured yet: the growing season that contains ${day} is not complete`
+      : d.notMeasured
+        ? "not measured: no usable images"
+        : null;
+  const LOW = {
+    "burn-map-pending": "the burned-area map for these weeks is not out yet (about 2.5 months behind)",
+    "no-dnbr": "no Sentinel-2 images around the day, so severe burning is not counted",
+    "snow": "radar looks on snowy or frozen days are left out",
+  };
+  const next =
+    d.notMeasured === "season-incomplete"
+      ? type === "drought"
+        ? "Analyze this area again once the crop season has run two months"
+        : "Analyze this area again once the growing season that contains the day is complete"
+      : "Analyze this area again when new images are out";
+  return {
+    measured: !(d.notMeasured && share >= 1),
+    partial: Boolean(d.notMeasured) && share < 1,
+    share,
+    reason,
+    mayBeLow: (d.mayBeLow || []).map((key) => LOW[key]).filter(Boolean),
+    provisional: type === "ground" || type === "other",
+    next,
+  };
 }
 
 // "From 31.2M ha of cropland in 1,176 squares."
@@ -287,6 +396,13 @@ export function imageryText(run) {
   const { from, to, label } = run?.imagery || {};
   if (!from || !to) return "";
   const baseline = run.baseline?.label ? `, compared with ${run.baseline.label}` : "";
+  // A natural disaster's flood, wildfire or drought window (gee.js
+  // disasterImagery): "Imagery from 4 September 2023 to 30 September 2023
+  // (within 60 days of the day the flood began), compared with ...".
+  if (isDisasterRun(run) && /^(from|of) /.test(label || "")) return `Imagery ${label}${baseline}`;
+  // Nothing measured yet (gee.js disasterImagery "none yet: ..."): never a
+  // season's months.
+  if (isDisasterRun(run) && /^none yet: /.test(label || "")) return `No images measure the damage yet: ${label.replace(/^none yet: /, "")}`;
   // Several areas' seasons, or the damage radar's war seasons ("April to
   // September of 2022 to 2025").
   if (label && (label.includes(";") || run.imagery.seasons > 1)) return `Imagery from ${label}${baseline}`;
@@ -390,6 +506,8 @@ const acledClause = (run) => acledStateText(acledFileState(run));
 // Null when safe access is measured.
 export function notMeasuredReason(run) {
   if (accessMeasured(run)) return null;
+  // A natural disaster: its own reason (disasterQuiet).
+  if (isDisasterRun(run)) return disasterQuiet(run);
   if (noFightingFound(run)) {
     const found = noFightingClause(run);
     const acled = acledClause(run);
@@ -405,6 +523,10 @@ export function notMeasuredReason(run) {
 // set by your team) ...", "... (before the war, which began on ...) ...".
 export function setAsideNote(run) {
   if (!run || accessMeasured(run)) return null;
+  if (isDisasterRun(run)) {
+    const quiet = disasterQuiet(run);
+    return quiet.short.startsWith("Not measured") ? `Feasibility ${quiet.note}: nothing is left out` : `Feasibility not measured here (${quiet.note}): nothing is left out`;
+  }
   if (noFightingFound(run)) return "Feasibility not measured here, so nothing can be left out for it";
   return `Feasibility not measured here (${notMeasuredReason(run).note}): nothing is left out`;
 }
@@ -456,6 +578,59 @@ export function conflictOf(run) {
   const code = /^country-(\d+)$/.exec(String(run.areaId || ""))?.[1];
   const war = code ? conflictForCountry(code) : null;
   return war ? { id: war.id, name: war.name, since: war.since } : undefined;
+}
+
+// What the area is going through in the run: "war" (a war's rules, or an
+// older run that does not say: they were all made in Ukraine), "disaster"
+// (a natural disaster the team set: method.js isDisaster) or "peace".
+export function crisisOf(run) {
+  const conflict = conflictOf(run);
+  if (isDisaster(conflict)) return "disaster";
+  return conflict === null ? "peace" : "war";
+}
+export function isDisasterRun(run) {
+  return Boolean(run) && isDisaster(conflictOf(run));
+}
+export function disasterType(run) {
+  return isDisasterRun(run) ? conflictOf(run).type : null;
+}
+// "flood", "wildfire", "drought", "storm, earthquake or landslide", "disaster".
+export function disasterNoun(run) {
+  const type = disasterType(run);
+  return type ? DISASTER_NOUNS[type] : null;
+}
+// "Flood", ..., "Storm, earthquake or landslide", "Other disaster".
+function disasterLabel(run) {
+  return DISASTER_LABELS[disasterType(run)] || "Disaster";
+}
+// What a disaster's hit land is, after "cropland ...": "flooded within 60
+// days of it" (warNote's line).
+function disasterHitClause(run) {
+  const type = disasterType(run);
+  if (type === "flood") return `flooded within ${FLOOD.windowDays} days of it`;
+  if (type === "wildfire") return `burned within ${WILDFIRE.windowDays} days of it`;
+  if (type === "drought") return `whose crop greenness fell ${Math.round(DROUGHT.hitLoss * 100)}% or more below 2019–2021 in this season`;
+  return "that changed lastingly (greenness loss with radar change; provisional)";
+}
+// Why a disaster run's Feasibility is not measured, as a clause: "this
+// month ends before the flood began on 4 September 2023", "Feasibility is
+// not measured for a drought", "no radar or satellite image of the month's
+// last 12 days shows the water"; null when it is measured.
+function disasterQuiet(run) {
+  if (accessMeasured(run)) return null;
+  const noun = disasterNoun(run);
+  if (beforeWar(run)) {
+    const day = warDay(conflictOf(run).since, "long");
+    return { short: `Before the ${noun}`, note: `before the ${noun}, which began on ${day}`, clause: `this month ends before the ${noun} began on ${day}` };
+  }
+  const type = disasterType(run);
+  if (accessSourceOf(run) === "disaster-none" && type === "flood") {
+    return { short: "No recent images", note: `no radar or satellite image in the month's last ${FLOOD.nowDays} days`, clause: `no radar or satellite image of the month's last ${FLOOD.nowDays} days shows the water` };
+  }
+  if (accessSourceOf(run) === "disaster-none" && type === "wildfire") {
+    return { short: "No recent fire data", note: `no fire data for the month's last ${WILDFIRE.nowDays} days`, clause: `there is no fire data for the month's last ${WILDFIRE.nowDays} days` };
+  }
+  return { short: `Not measured for a ${noun}`, note: `not measured for a ${noun}`, clause: `Feasibility is not measured for a ${noun}` };
 }
 
 // True when the run says no war covers its area (conflict null): none in
@@ -561,6 +736,8 @@ export function warSetByTeam(run) {
 // the AI said so for a Ukraine area the team had marked as not at war).
 // Null when a war's rules apply.
 export function peaceReason(run) {
+  // A natural disaster before its day: its own words (disasterQuiet).
+  if (isDisasterRun(run)) return beforeWar(run) ? disasterQuiet(run) : null;
   if (beforeWar(run)) {
     const day = warDay(conflictOf(run).since, "long");
     return { short: "Before the war", note: `before the war, which began on ${day}`, clause: `this month ends before the war began on ${day}` };
@@ -617,6 +794,7 @@ export function warDay(since, style = "short") {
 export function warNote(run) {
   const conflict = run?.conflict;
   if (conflict === undefined) return null;
+  if (isDisaster(conflict)) return disasterNote(run);
   const team = warSetByTeam(run);
   if (!conflict?.since) {
     // At peace the damage score is the heavily damaged share of the black
@@ -687,6 +865,59 @@ export function warNote(run) {
   return { war: true, team, name: conflict.name, badge: `War since ${short}`, line: `${conflict.name}, since ${long}: damage is counted from that day.${notMeasured}` };
 }
 
+// warNote for a natural disaster (always set by the team):
+//   { war: false, disaster: true, team: true, type, name, badge: "Flood
+//     since 4 Sep 2023 · set by your team", line: "Storm Daniel floods, set
+//     by your team, since 4 September 2023: damage is counted from that
+//     day, on cropland flooded within 60 days of it. Feasibility is ..." }
+//   before its day: badge "Before the flood (from 4 Sep 2023) · set by
+//     your team", line "This month ends before the flood began on 4
+//     September 2023: no disaster damage is counted, and Feasibility is not
+//     measured."
+function disasterNote(run) {
+  const conflict = run.conflict;
+  const short = warDay(conflict.since, "short");
+  const long = warDay(conflict.since, "long");
+  const noun = disasterNoun(run);
+  const label = disasterLabel(run);
+  const named = Boolean(conflict.name) && conflict.name !== TEAM_DISASTER_NAME(conflict.type);
+  const base = { war: false, disaster: true, team: true, type: conflict.type, name: conflict.name };
+  if (beforeWar(run)) {
+    return { ...base, beforeWar: true, badge: `Before the ${noun} (from ${short}) · set by your team`, line: `This month ends before the ${noun} began on ${long}: no disaster damage is counted, and Feasibility is not measured.` };
+  }
+  const lead = named ? `${conflict.name}, set by your team, since ${long}` : `${label} since ${long}, set by your team`;
+  // A storm, earthquake, landslide or other disaster is measured over the
+  // whole growing season that contains its day, not from the day.
+  const counted = conflict.type === "ground" || conflict.type === "other" ? "damage is measured over the growing season that contains that day" : "damage is counted from that day";
+  return { ...base, badge: `${label} since ${short} · set by your team`, line: `${lead}: ${counted}, on cropland ${disasterHitClause(run)}. ${disasterAccessSentence(run)}${disasterDamageSentence(run)}` };
+}
+
+// What the line adds when the damage was not (fully) measured, may read
+// low, or the rule is provisional (disasterDamageState): " Damage is not
+// measured yet this month (no crop season since 10 Feb 2026 has run long
+// enough)." ... or "".
+export function disasterDamageSentence(run) {
+  const state = disasterDamageState(run);
+  if (!state) return "";
+  const parts = [];
+  const why = (state.reason || "").replace(/^not measured( yet)?: /, "");
+  if (state.measured === false) parts.push(`Damage is not measured yet this month (${why}), so the order follows value alone.`);
+  else if (state.partial) parts.push(`Damage is not measured yet on ${Math.round(state.share * 100)}% of the squares (${why}); they are not ranked.`);
+  if (state.measured !== false && state.mayBeLow.length) parts.push(`The damage may read low: ${state.mayBeLow.join("; ")}.`);
+  if (state.provisional) parts.push(`This rule is provisional: it failed its checks against areas without a ${disasterNoun(run)}, so treat it as a pointer to where to look, not a measurement.`);
+  return parts.length ? ` ${parts.join(" ")}` : "";
+}
+
+// The Feasibility sentence of a disaster's line (warNote).
+function disasterAccessSentence(run) {
+  const source = accessSourceOf(run);
+  if (source === "flood-now") return "Feasibility is the share of each square's cropland not under water in the latest images.";
+  if (source === "fire-now") return `Feasibility is the distance to fires burning in the last ${WILDFIRE.nowDays} days, full at ${WILDFIRE.fullKm} km.`;
+  const quiet = disasterQuiet(run);
+  if (quiet?.short?.startsWith("Not measured")) return `Feasibility is not measured for a ${disasterNoun(run)} (nothing is set aside; this does not prove the land can be worked).`;
+  return `Feasibility is not measured this month: ${quiet?.clause || "nothing was measured"} (nothing is set aside; this does not prove the land can be worked).`;
+}
+
 // The war an area's next analysis will use (server/conflicts.js
 // conflictForArea): the team's own choice for it (area.war, Atlas
 // Settings) first, else what the app's list says (area.listConflict, sent
@@ -727,6 +958,8 @@ export function monthsWithOtherWar(area, runs) {
 // part of the country now).
 export function warText(conflict, now) {
   if (!conflict?.since) return "at peace";
+  // A natural disaster: "after the flood of 4 Sep 2023".
+  if (isDisaster(conflict)) return `after the ${DISASTER_NOUNS[conflict.type]} of ${warDay(conflict.since)}`;
   const text = `at war since ${warDay(conflict.since)}`;
   const part = warPartOf(conflict);
   if (now?.since === conflict.since && Boolean(now.partOfCountry) !== Boolean(conflict.partOfCountry)) {
@@ -753,7 +986,9 @@ export function keepsMonth(old, { rerun = false, provider = "sample", manual = t
   if (!old || rerun) return false;
   if (old.provider === "sample" && provider !== "sample") return false;
   if (!manual) return true;
-  if ((old.method?.version || null) !== METHOD_VERSION) return false;
+  // A disaster month is kept when it was made with the disaster method
+  // (method.js methodVersionFor); a war's or peace's with METHOD_VERSION.
+  if ((old.method?.version || null) !== methodVersionFor(conflictOf(old))) return false;
   const made = warKey(conflictOf(old));
   return made === undefined || made === warNow;
 }
@@ -787,6 +1022,9 @@ export function timeframeOptions(run) {
 // aside. So too in a war where no fire within 300 km of any square looked
 // like fighting (run.accessSource "fires-none": noFightingFound).
 export function accessMeasured(run) {
+  // A natural disaster: only water now (a flood) and fires now (a
+  // wildfire) are measured, never before its day.
+  if (isDisasterRun(run)) return !beforeWar(run) && ["flood-now", "fire-now"].includes(accessSourceOf(run));
   if (accessSourceOf(run) === "fires-none") return false;
   return !outsideWar(run) || accessSourceOf(run) === "acled";
 }
@@ -813,6 +1051,7 @@ export function accessMeasured(run) {
 //              that touch the war's region [or lie in another listed war];
 //              elsewhere" the peace one
 export function damageMeaning(run) {
+  if (isDisasterRun(run)) return disasterDamageMeaning(run);
   if (beforeWar(run)) return `not counted for this month: it ends before the war began on ${warDay(conflictOf(run).since, "long")}, so the damage score is 0 everywhere`;
   if (atPeace(run)) {
     return `the heavily damaged share of the black soil (radar change backed by unusual fire), full at ${Math.round(PEACE_DAMAGE.fullShare * 100)}%`;
@@ -826,6 +1065,22 @@ export function damageMeaning(run) {
   return war;
 }
 
+// damageMeaning for a natural disaster: what hit and heavy are for its
+// type, each the share of the square's black soil, full at 20%.
+function disasterDamageMeaning(run) {
+  const noun = disasterNoun(run);
+  const long = warDay(conflictOf(run).since, "long");
+  if (beforeWar(run)) return `not counted for this month: it ends before the ${noun} began on ${long}, so the damage score is 0 everywhere`;
+  const full = "each full at 20% of the black soil";
+  const type = disasterType(run);
+  if (type === "flood") return `half for black-soil cropland flooded since ${long} and half for land under water ${FLOOD.heavyDays} days or more, ${full}`;
+  if (type === "wildfire") return `half for black-soil cropland burned since ${long} and half for land burned severely (a dNBR of ${WILDFIRE.severeDnbr} or more), ${full}`;
+  if (type === "drought") {
+    return `half for black-soil cropland whose crop greenness is ${Math.round(DROUGHT.hitLoss * 100)}% or more below 2019–2021 in this season and half for ${Math.round(DROUGHT.heavyLoss * 100)}% or more below, ${full} (this season's crop loss: the season's worst reading so far is kept, so it does not fall within the season; it starts again when a new season begins)`;
+  }
+  return `half for black-soil cropland with greenness loss and radar change of ${GROUND.hitRadarDb} dB and half for ${GROUND.heavyRadarDb} dB, over the growing season that contains the day the ${noun} began, ${full} (provisional)`;
+}
+
 // What safe access is for this run. At peace without an ACLED file (and in
 // a month before its war began) it is never called "distance to fighting":
 // nothing was measured, and the words say why (peaceReason: no war on the
@@ -837,6 +1092,14 @@ export function damageMeaning(run) {
 // here", never "safe to reach".
 export function accessMeaning(run) {
   const km = SCALES.distance.full;
+  if (isDisasterRun(run)) {
+    const source = accessSourceOf(run);
+    if (accessMeasured(run) && source === "flood-now") return `the share of the square's cropland not under water at the latest look (last ${FLOOD.nowDays} days of the month)`;
+    if (accessMeasured(run) && source === "fire-now") return `the distance to a fire burning in the last ${WILDFIRE.nowDays} days, full at ${WILDFIRE.fullKm} km`;
+    const quiet = disasterQuiet(run);
+    if (quiet.short.startsWith("Not measured")) return `not measured for a ${disasterNoun(run)}: nothing is set aside (this does not prove the land can be worked)`;
+    return `not measured here: ${quiet.clause} (nothing is set aside; this does not prove the land can be worked)`;
+  }
   if (noFightingFound(run)) {
     return `not measured here: ${noFightingClause(run)}, and ${acledClause(run)}, so every square counts as far from fighting (this does not make the land safe)`;
   }
@@ -872,10 +1135,20 @@ function accessTarget(run) {
 //                        ranks the rest by value and damage."
 export function nearTermSetAside(run, settings) {
   const gate = settings?.gatePercentile ?? 0;
+  if (isDisasterRun(run)) {
+    if (!accessMeasured(run)) return `${disasterQuiet(run).clause.replace(/^./, (c) => c.toUpperCase())}, so nothing is left out. Near term ranks by value and damage.`;
+    if (!(gate > 0)) return "Near term leaves nothing out (Feasibility cutoff 0%) and ranks by value and damage.";
+    return `Near term leaves out the least feasible ${gate}% for now (${disasterNearest(run)}) and ranks the rest by value and damage.`;
+  }
   if (noFightingFound(run)) return "Near term leaves nothing out (feasibility is not measured here) and ranks by value and damage.";
   if (!accessMeasured(run)) return "Near term leaves nothing out and ranks by value and damage.";
   if (!(gate > 0)) return "Near term leaves nothing out (Feasibility cutoff 0%) and ranks by value and damage.";
   return `Near term leaves the least feasible ${gate}% of black soil out for now (the Feasibility cutoff; squares ${SCALES.distance.full} km or more from ${accessTarget(run)} are never left out) and ranks the rest by value and damage.`;
+}
+
+// "most land under water now" / "nearest a fire burning now".
+function disasterNearest(run) {
+  return disasterType(run) === "flood" ? "most land under water now" : "nearest a fire burning now";
 }
 
 // Heavy damage in one line, for the method notes:
@@ -883,6 +1156,14 @@ export function nearTermSetAside(run, settings) {
 //   in a month before its war began: none is counted
 export function heavyDamageRule(run) {
   const km = HEAVY_DAMAGE.fireNearM / 1000;
+  if (isDisasterRun(run)) {
+    if (beforeWar(run)) return `none counted: ${disasterQuiet(run).clause}`;
+    const type = disasterType(run);
+    if (type === "flood") return `under water for ${FLOOD.heavyDays} days or more`;
+    if (type === "wildfire") return `burned with a severe loss of vegetation (dNBR ${WILDFIRE.severeDnbr} or more)`;
+    if (type === "drought") return `crop greenness ${Math.round(DROUGHT.heavyLoss * 100)}% or more below normal`;
+    return `greenness ${Math.round(GROUND.greenLoss * 100)}% or more below normal and radar change of ${GROUND.heavyRadarDb} dB or more`;
+  }
   if (beforeWar(run)) return `none counted: ${peaceReason(run).clause}`;
   const peace = `radar change of ${HEAVY_DAMAGE.radarDb} dB or more and an unusual fire within ${km} km`;
   if (atPeace(run)) return peace;
@@ -897,6 +1178,13 @@ export function heavyDamageRule(run) {
 // (noFightingFound), that safe access is not measured, so nothing can be
 // set aside for it and it changes no order.
 export function ruleText(timeframe, settings, run) {
+  if (isDisasterRun(run)) {
+    if (timeframe === "postwar") return "All three scores are blended into one Post-crisis ranking.";
+    if (!accessMeasured(run)) return `${disasterQuiet(run).clause.replace(/^./, (c) => c.toUpperCase())}, so nothing is left out. Places are ranked by value and damage.`;
+    const gate = settings?.gatePercentile ?? 30;
+    if (!(gate > 0)) return "Nothing is left out (Feasibility cutoff 0%). Places are ranked by value and damage.";
+    return `The least feasible ${gate}% of black soil (${disasterNearest(run)}) is left out for now (the Feasibility cutoff). The rest is ranked by value and damage.`;
+  }
   if (timeframe === "postwar") {
     if (noFightingFound(run)) return "All three scores are blended; feasibility is not measured here, so it is the same in every square and changes no order.";
     return outsideWar(run)
@@ -968,6 +1256,8 @@ export function nextSteps({ run, hotspots = [], alerts = [] }) {
   if (!run) return [];
   const steps = [];
   const published = publishedOn(run);
+  // A natural disaster: its own steps, never demining.
+  if (isDisasterRun(run) && !beforeWar(run)) return disasterSteps({ run, hotspots, alerts, published });
   // No war (none in the app's list, the team's "Not at war", or a month
   // before its war began: outsideWar): no demining, no "cleared land", and
   // radar change is just change (harvest, tillage, flooding) until someone
@@ -1035,6 +1325,59 @@ export function nextSteps({ run, hotspots = [], alerts = [] }) {
     to: "/atlas/report",
   });
 
+  return steps;
+}
+
+// The "Next steps" of a natural disaster (nextSteps): the first step in
+// the two best Near-term areas follows its type (flood "Check drained
+// fields for sand, silt and debris", wildfire "Check burned fields, fences
+// and water points", drought "Plan seed and feed support where the crop
+// failed", storm/earthquake/landslide "Survey slipped, cracked or flattened
+// fields"), each radar change gets "Review new damage near ...", the third
+// area a replanting plan (flood, wildfire) or a soil test, then the report.
+// The first step's id is "<run>-first-check" (a war's is "<run>-demining");
+// the others are a war's, so ticks are kept the same way.
+function disasterSteps({ run, hotspots, alerts, published }) {
+  const steps = [];
+  const type = disasterType(run);
+  const first = {
+    flood: "Check drained fields for sand, silt and debris in",
+    wildfire: "Check burned fields, fences and water points in",
+    drought: "Plan seed and feed support where the crop failed in",
+  }[type] || "Survey slipped, cracked or flattened fields in";
+  // Nothing measured yet (disasterDamageState): the first step is to
+  // analyze again, not to survey fields the ranking cannot name.
+  const state = disasterDamageState(run);
+  if (state?.measured === false) {
+    steps.push({ id: `${run.id}-first-check`, title: state.next, due: addMonths(published, 1), icon: "report", tone: "amber", to: "/atlas/settings" });
+  } else if (hotspots.length >= 1) {
+    const named = hotspots.slice(0, 2);
+    steps.push({ id: `${run.id}-first-check`, title: `${first} ${listNames(named.map((hotspot) => hotspot.label))}`, due: addMonths(published, 1), icon: "soil", tone: "green", to: `/atlas/map?focus=${hotspots[0].id}` });
+  }
+  // A radar change is damage only where the type's rule uses radar (a
+  // storm, earthquake, landslide or other disaster); a flood's, a
+  // wildfire's or a drought's damage does not, so there it is checked, as
+  // at peace (a harvest or ploughing changes the radar too).
+  const radarDamage = type === "ground" || type === "other";
+  const places = alertPlaces(alerts);
+  for (const alert of alerts.filter((item) => item.kind === "radar").slice(0, 2)) {
+    const focus = alert.cellIds?.[0];
+    const where = places.get(alert.id) || displayPlaceText(alert.place);
+    steps.push({
+      id: `${run.id}-${alert.id}-review`,
+      title: radarDamage ? `Review new damage near ${where}` : `Check the radar change near ${where}`,
+      due: alert.date ? addDays(alert.date, 7) : published,
+      icon: "alert",
+      tone: radarDamage ? "red" : "amber",
+      to: focus ? `/atlas/map?focus=${focus}&view=postwar&color=damage` : "/atlas/map?color=damage",
+    });
+  }
+  if (hotspots.length >= 3) {
+    const third = hotspots[2].label;
+    const title = type === "flood" ? `Plan replanting on flooded black soil in ${third}` : type === "wildfire" ? `Plan reseeding of burned black soil in ${third}` : `Test soil in ${third}`;
+    steps.push({ id: `${run.id}-soil-test`, title, due: addMonths(published, 2), icon: "soil", tone: "amber", to: `/atlas/map?focus=${hotspots[2].id}` });
+  }
+  steps.push({ id: `${run.id}-report`, title: `Send the ${monthName(`${run.month}-01`)} report`, due: published, icon: "report", tone: null, to: "/atlas/report" });
   return steps;
 }
 

@@ -33,7 +33,10 @@
 // THE TEAM'S OWN CHOICE: any Atlas area can be marked by its team in Atlas
 // Settings (saved as area.war; checkAreaWar and teamConflict below): "App's
 // list" (use this list; the default), "At war" from a day of their choice
-// (2022-01-01 to today), or "Not at war" whatever this list says.
+// (2022-01-01 to today), "Natural disaster" from a day of their choice with
+// its type (flood, wildfire, drought, storm/earthquake/landslide, other:
+// src/lib/atlas/method.js DISASTER_TYPES), or "No crisis" whatever this
+// list says.
 // server/conflicts.js conflictForArea uses that choice first. A month that
 // ends before its war began has no war damage counted (endsBeforeWar).
 //
@@ -73,6 +76,8 @@
 // Whoever adds a war. Add an entry with its sources; nothing else needs to
 // change. Add a test with a point inside and one outside its boxes
 // (server/conflicts.test.js), and its line in docs/METHODS.md ("Wars").
+
+import { DISASTER_LABELS, DISASTER_TYPES } from "../lib/atlas/method.js";
 
 export const CONFLICTS = [
   // Caveat: the Donbas front line (Donetsk and Luhansk oblasts) was fought
@@ -485,17 +490,44 @@ export function damageWindow(conflict, today) {
 //                                  EARLIEST_WAR_DAY to today), with an
 //                                  optional name of up to WAR_NAME_MAX
 //                                  characters
-//   { mode: "peace" }              not at war, whatever the list says
+//   { mode: "disaster", since, type, name? }
+//                                  a natural disaster from `since` (the
+//                                  same days as a war), of a type in
+//                                  DISASTER_TYPES (src/lib/atlas/method.js),
+//                                  with an optional name
+//   { mode: "peace" }              no crisis, whatever the list says
+// (The field keeps the name "war": it is the area's crisis setting.)
 
-export const AREA_WAR_MODES = ["list", "war", "peace"];
+export const AREA_WAR_MODES = ["list", "war", "disaster", "peace"];
 // The earliest day a war set by the team can count from: the normal years
 // 2019 to 2021 must come before the war. For a war that began earlier the
 // team counts from this day; damage before it is not counted, and the
 // normal years may already hold the war.
 export const EARLIEST_WAR_DAY = "2022-01-01";
+
+// What the Crisis card's form starts from when a choice is opened
+// (src/pages/atlas/SettingsPage.jsx WarCard): { since, name, type }.
+//   next       the choice opened ("war", "disaster", ...)
+//   saved      the area's saved setting (area.war), or null
+//   listSince  the day the app's list's war began, if any
+// The saved day, name and type for the saved choice; for "At war"
+// otherwise the list war's day (2022 or later) and no name; for "Natural
+// disaster" otherwise nothing, so the team enters the disaster's own day:
+// a war's day or name is never carried into a disaster, nor a disaster's
+// into a war.
+export function crisisFormFor(next, saved, listSince) {
+  const savedMode = ["war", "disaster", "peace"].includes(saved?.mode) ? saved.mode : "list";
+  const listDay = listSince && listSince >= EARLIEST_WAR_DAY ? listSince : "";
+  if (next === savedMode && (next === "war" || next === "disaster")) return { since: saved.since || "", name: saved.name || "", type: saved.type || "" };
+  if (next === "war") return { since: listDay, name: "", type: "" };
+  return { since: "", name: "", type: "" };
+}
 export const WAR_NAME_MAX = 80;
 // What a war set by the team is called when the team gave it no name.
 export const TEAM_WAR_NAME = "War (set for this area)";
+// What a disaster set by the team is called without a name of its own:
+// "Flood (set for this area)".
+export const TEAM_DISASTER_NAME = (type) => `${DISASTER_LABELS[type] || DISASTER_LABELS.other} (set for this area)`;
 
 // True for a real day written "YYYY-MM-DD" (not 2023-02-30).
 export function isDay(text) {
@@ -516,32 +548,53 @@ export function checkAreaWar(input, today) {
     return { error: 'Send the war setting as { mode, since, name }, with mode "list", "war" or "peace".' };
   }
   if (!AREA_WAR_MODES.includes(input.mode)) {
-    return { error: `The war setting must be "list" (the app's list), "war" (at war from a day) or "peace" (not at war), not "${String(input.mode ?? "").slice(0, 20)}".` };
+    return { error: `The crisis setting must be "list" (the app's list of wars), "war" (at war from a day), "disaster" (a natural disaster from a day) or "peace" (no crisis), not "${String(input.mode ?? "").slice(0, 20)}".` };
   }
-  if (input.mode !== "war") return { war: { mode: input.mode } };
+  if (input.mode !== "war" && input.mode !== "disaster") return { war: { mode: input.mode } };
+  const disaster = input.mode === "disaster";
+  // A disaster's type comes first: without it nothing else can be said.
+  if (disaster && !DISASTER_TYPES.includes(input.type)) {
+    return { error: "Choose what kind of disaster it was: flood, wildfire, drought, storm/earthquake/landslide, or other." };
+  }
   const since = typeof input.since === "string" ? input.since.trim() : "";
-  if (!isDay(since)) return { error: "Give the day the war began, as YYYY-MM-DD (for example 2023-08-01)." };
+  if (!isDay(since)) {
+    return { error: disaster ? "Give the day the disaster began, as YYYY-MM-DD (for example 2024-06-21)." : "Give the day the war began, as YYYY-MM-DD (for example 2023-08-01)." };
+  }
   if (since < EARLIEST_WAR_DAY) {
-    return { error: `The day must be 1 January 2022 or later: the normal years 2019 to 2021 must come before the war. For a war that began earlier, count from ${EARLIEST_WAR_DAY}.` };
+    return {
+      error: disaster
+        ? "The day must be 1 January 2022 or later: the normal years 2019 to 2021 must come before the disaster."
+        : `The day must be 1 January 2022 or later: the normal years 2019 to 2021 must come before the war. For a war that began earlier, count from ${EARLIEST_WAR_DAY}.`,
+    };
   }
   if (today && since > today) return { error: `The day cannot be after today (${today}).` };
+  const what = disaster ? "disaster" : "war";
   let name = "";
   if (input.name !== undefined && input.name !== null) {
-    if (typeof input.name !== "string") return { error: "The war's name must be text." };
+    if (typeof input.name !== "string") return { error: `The ${what}'s name must be text.` };
     name = input.name.replace(/\s+/g, " ").trim();
-    if (name.length > WAR_NAME_MAX) return { error: `The war's name can have at most ${WAR_NAME_MAX} characters (this one has ${name.length}).` };
+    if (name.length > WAR_NAME_MAX) return { error: `The ${what}'s name can have at most ${WAR_NAME_MAX} characters (this one has ${name.length}).` };
   }
+  if (disaster) return { war: name ? { mode: "disaster", since, type: input.type, name } : { mode: "disaster", since, type: input.type } };
   return { war: name ? { mode: "war", since, name } : { mode: "war", since } };
 }
 
 // The war a team's choice gives an area:
 //   { mode: "war", since, name }  { id: "area-<areaId>", name (or
 //                                 TEAM_WAR_NAME), since, source: "area" }
-//   { mode: "peace" }             null: not at war, whatever the list says
+//   { mode: "disaster", since, type, name }
+//                                 { id: "area-<areaId>", name (or
+//                                 TEAM_DISASTER_NAME(type)), since, source:
+//                                 "area", kind: "disaster", type }
+//   { mode: "peace" }             null: no crisis, whatever the list says
 //   { mode: "list" }, or none     undefined: the app's list decides
 export function teamConflict(war, areaId) {
   if (!war || typeof war !== "object") return undefined;
   if (war.mode === "peace") return null;
+  if (war.mode === "disaster" && isDay(war.since) && DISASTER_TYPES.includes(war.type)) {
+    const name = (typeof war.name === "string" && war.name.trim()) || TEAM_DISASTER_NAME(war.type);
+    return { id: `area-${areaId || "custom"}`, name, since: war.since, source: "area", kind: "disaster", type: war.type };
+  }
   if (war.mode === "war" && isDay(war.since)) {
     return { id: `area-${areaId || "custom"}`, name: (typeof war.name === "string" && war.name.trim()) || TEAM_WAR_NAME, since: war.since, source: "area" };
   }

@@ -269,3 +269,30 @@ test("a war that covers the area only in part: squares outside its region (atWar
   close(byId["far-hit"].damage, 2000 / 20000 / PEACE_DAMAGE.fullShare);
   assert.equal(byId.far.atWar, false, "the place keeps which rules it was read with");
 });
+
+test("a natural disaster: damage from hit and heavy, Feasibility as the cutoff; nothing set aside where it reads 1", async () => {
+  const { DISASTER_COMPONENTS, COMPONENTS } = await import("./method.js");
+  const flood = { id: "area-a", name: "Flood", since: "2023-09-04", source: "area", kind: "disaster", type: "flood" };
+  const square = (id, hit, heavy, feasible, more = {}) => ({ id, lat: 39.4, wrb: 0.8, agOutput: 0.7, firms: 1, radar: 1, distance: null, hit, heavy, feasible, blackSoilHa: 1000, heavyDamageHa: 900, ...more });
+  const rows = [square("a", 1, 0.5, 0.2), square("b", 0.5, 0, 0.9), square("c", 0, 0, 1), square("d", 0.2, 0.2, 0.4)];
+  const out = scorePlaces(rows, { conflict: flood, cellSizeDeg: 0.01 });
+  const by = Object.fromEntries(out.places.map((p) => [p.id, p]));
+  assert.equal(by.a.damage, 0.75, "mean of hit and heavy, never the peace damage score");
+  assert.equal(by.c.damage, 0);
+  assert.equal(by.a.access, 0.2);
+  // The wettest squares (least feasible) are left out first; a square at 1 never.
+  assert.equal(by.a.nearTerm.tier, "setAside");
+  assert.notEqual(by.c.nearTerm.tier, "setAside");
+  assert.ok(Number.isFinite(by.a.postwar.score), "Post-crisis blends all three");
+  // Feasibility 1 everywhere (a drought): nothing is set aside.
+  const dry = scorePlaces(rows.map((row) => ({ ...row, feasible: 1 })), { conflict: { ...flood, type: "drought" }, cellSizeDeg: 0.01 });
+  assert.equal(dry.places.filter((p) => p.nearTerm.tier === "setAside").length, 0);
+  assert.equal(dry.setAsideShare, 0);
+  // Given components still win, and a war's rows score as before.
+  assert.deepEqual(scorePlaces(rows, { conflict: flood, components: COMPONENTS }).places[0].damage, 1);
+  const war = scorePlaces(rows, { conflict: { ...flood, kind: undefined, type: undefined }, cellSizeDeg: 0.01 });
+  assert.equal(war.places[0].damage, 1, "a war: the mean of firms and radar");
+  const peace = scorePlaces(rows, { conflict: null, cellSizeDeg: 0.01 });
+  assert.equal(peace.places[0].damage, 1, "at peace: the heavily damaged share (900 of 1000, capped)");
+  assert.deepEqual(DISASTER_COMPONENTS, { soil: ["wrb", "agOutput"], damage: ["hit", "heavy"], access: ["feasible"] });
+});

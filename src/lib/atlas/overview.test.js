@@ -675,3 +675,263 @@ test("warningWords: the server's saved warnings read in today's words (Feasibili
   assert.equal(warningWords("Safe access is not measured here: no fires that look like fighting were found within 300 km."), "Feasibility (safe access) is not measured here: no fires that look like fighting were found within 300 km.");
   assert.equal(warningWords("Cloudy month."), "Cloudy month.");
 });
+
+// ---------- Natural disasters: their own words, never a war's ----------
+
+const DISASTER_WAR_WORDS = /demin|front|fighting|battle|war year|postwar|safe access/i;
+async function disasterRun(type, { month = "2023-09", since = "2023-09-04", accessSource, name, disasterDamage, imagery } = {}) {
+  const { DISASTER_METHOD_VERSION } = await import("./method.js");
+  const { TEAM_DISASTER_NAME } = await import("../../config/conflicts.js");
+  const source = accessSource ?? (type === "flood" ? "flood-now" : type === "wildfire" ? "fire-now" : "none");
+  const cells = [0, 1, 2, 3].map((i) => ({
+    id: `r0c${i}`,
+    lat: 39.4,
+    lon: 22.1 + i * 0.01,
+    wrb: 0.8,
+    agOutput: 0.7,
+    hit: i / 4,
+    heavy: i / 8,
+    feasible: type === "flood" ? 1 - i / 5 : type === "wildfire" ? Math.min(1, i / 3) : 1,
+    croplandHa: 100,
+    blackSoilHa: 80,
+    heavyDamageHa: 8 * i,
+    hitHa: 16 * i,
+    hitCropHa: 20 * i,
+    heavyCropHa: 10 * i,
+    grassHitHa: 3 * i,
+    people: 10,
+    peopleOnDamagedSoil: 1,
+    distance: null,
+    raw: { conflictKm: type === "wildfire" ? 3 * i : null, hitShare: i / 20, heavyShare: i / 40, wetNowShare: type === "flood" ? i / 5 : null, fireKm: type === "wildfire" ? 3 * i : null },
+  }));
+  return {
+    id: `run-${type}-${month}`,
+    areaId: "area-d",
+    month,
+    provider: "gee",
+    conflict: { id: "area-d", name: name || TEAM_DISASTER_NAME(type), since, source: "area", kind: "disaster", type },
+    conflictSource: "area",
+    accessSource: source,
+    method: { version: DISASTER_METHOD_VERSION },
+    imagery: imagery || { from: "2023-09", to: "2023-09", label: "from 4 September 2023 to 30 September 2023 (within 60 days of the day the flood began)" },
+    ...(disasterDamage ? { disasterDamage } : {}),
+    baseline: { label: "2019 to 2021 (same months)" },
+    cells,
+    alerts: [{ id: "radar-1", kind: "radar", date: `${month}-10`, place: "Larisa", cellIds: ["r0c3"], magnitude: 2, unit: "km² changed" }],
+    totals: { croplandHa: 400, blackSoilHa: 320, heavyDamageHa: 48, hitHa: 96, hitCropHa: 120, heavyCropHa: 60, grassHitHa: 18, peopleOnDamagedSoil: 4 },
+  };
+}
+// Every word the pages and the report say about a run.
+async function wordsOf(run) {
+  const mc = await import("./mapColors.js");
+  const { safetyNoteFor } = await import("../../config/research.js");
+  const scored = scorePlaces(run.cells, { conflict: run.conflict, cellSizeDeg: 0.01 });
+  const settings = { weights: { soil: 30, damage: 40, access: 30 }, gatePercentile: 30, rampWidth: 0.2, r: 0.5 };
+  const hotspots = [{ id: "h1", label: "Larisa", cellIds: ["r0c3"] }, { id: "h2", label: "Trikala", cellIds: ["r0c2"] }, { id: "h3", label: "Karditsa", cellIds: ["r0c1"] }];
+  const methods = mc.methodsFor(run);
+  return [
+    warNote(run).badge,
+    warNote(run).line,
+    damageMeaning(run),
+    accessMeaning(run),
+    nearTermSetAside(run, settings),
+    heavyDamageRule(run),
+    ruleText("nearTerm", settings, run),
+    ruleText("postwar", settings, run),
+    String(setAsideNote(run)),
+    longTermAccessNote(run),
+    // The visible words only (ids, links and keys such as "postwar" are code).
+    ...kpis(summarize(scored.places), run).map((tile) => [tile.label, tile.value, tile.note].filter(Boolean).join(" ")),
+    ...nextSteps({ run, hotspots, alerts: run.alerts }).map((step) => step.title),
+    ...timeframeOptions(run).map((option) => option.label),
+    warText(run.conflict),
+    imageryText(run),
+    JSON.stringify(notMeasuredReason(run)),
+    ...["priority", "value", "damage", "access"].map((mode) => JSON.stringify(mc.legendFor(mode, run))),
+    JSON.stringify({ items: methods.items.map(({ what, formula, source, name }) => ({ what, formula, source, name })), note: methods.note, limits: methods.limits }),
+    ...scored.places.map((place) => ["access", "damage", "priority"].map((mode) => mc.valueText(place, mode, "nearTerm", 4, run)).join(" | ")),
+    safetyNoteFor(run),
+  ].join("\n");
+}
+
+test("natural disasters: the words of every page and the report, for every type and month, never a war's", async () => {
+  for (const type of ["flood", "wildfire", "drought", "ground", "other"]) {
+    for (const options of [
+      {},
+      { month: "2023-08" },
+      { month: "2023-11" },
+      { accessSource: "disaster-none" },
+      { name: "Storm Daniel floods" },
+      { disasterDamage: { notMeasured: "season-incomplete", unmeasuredShare: 1, mayBeLow: [] } },
+      { disasterDamage: { notMeasured: "no-images", unmeasuredShare: 0.4, mayBeLow: ["burn-map-pending", "no-dnbr", "snow"] } },
+    ]) {
+      const run = await disasterRun(type, options);
+      const text = await wordsOf(run);
+      const bad = text.match(DISASTER_WAR_WORDS);
+      assert.equal(bad, null, `${type} ${JSON.stringify(options)}: "${bad?.[0]}" in\n${text.split("\n").find((line) => DISASTER_WAR_WORDS.test(line))}`);
+      assert.ok(!/never decides|deminer/i.test(text));
+    }
+  }
+});
+
+test("natural disasters: what the chip, the line, the scores and the steps say (a flood since 4 Sep 2023)", async () => {
+  const { warDay } = await import("./overview.js");
+  // "4 Sep 2023" ("4 Sept 2023" in newer en-GB data): as the pages write it.
+  const short = warDay("2023-09-04");
+  const run = await disasterRun("flood", { name: "Storm Daniel floods" });
+  assert.deepEqual(warNote(run), {
+    war: false,
+    disaster: true,
+    team: true,
+    type: "flood",
+    name: "Storm Daniel floods",
+    badge: `Flood since ${short} · set by your team`,
+    line: "Storm Daniel floods, set by your team, since 4 September 2023: damage is counted from that day, on cropland flooded within 60 days of it. Feasibility is the share of each square's cropland not under water in the latest images.",
+  });
+  assert.equal(warNote(await disasterRun("flood")).line.slice(0, 50), "Flood since 4 September 2023, set by your team: da");
+  assert.equal(warNote(await disasterRun("wildfire")).line.split(". ").pop(), "Feasibility is the distance to fires burning in the last 7 days, full at 10 km.");
+  assert.ok(warNote(await disasterRun("drought")).line.endsWith("Feasibility is not measured for a drought (nothing is set aside; this does not prove the land can be worked)."));
+  const before = await disasterRun("flood", { month: "2023-08" });
+  assert.equal(warNote(before).badge, `Before the flood (from ${short}) · set by your team`);
+  assert.equal(warNote(before).line, "This month ends before the flood began on 4 September 2023: no disaster damage is counted, and Feasibility is not measured.");
+  assert.equal(damageMeaning(run), "half for black-soil cropland flooded since 4 September 2023 and half for land under water 4 days or more, each full at 20% of the black soil");
+  assert.ok(damageMeaning(await disasterRun("drought")).endsWith("(this season's crop loss: the season's worst reading so far is kept, so it does not fall within the season; it starts again when a new season begins)"));
+  assert.ok(damageMeaning(await disasterRun("ground")).endsWith("over the growing season that contains the day the storm, earthquake or landslide began, each full at 20% of the black soil (provisional)"));
+  assert.equal(heavyDamageRule(run), "under water for 4 days or more");
+  assert.equal(heavyDamageRule(await disasterRun("wildfire")), "burned with a severe loss of vegetation (dNBR 0.27 or more)");
+  assert.equal(accessMeaning(run), "the share of the square's cropland not under water at the latest look (last 12 days of the month)");
+  assert.equal(accessMeaning(await disasterRun("wildfire")), "the distance to a fire burning in the last 7 days, full at 10 km");
+  assert.equal(accessMeaning(await disasterRun("drought")), "not measured for a drought: nothing is set aside (this does not prove the land can be worked)");
+  assert.equal(accessMeasured(run), true);
+  assert.equal(accessMeasured(await disasterRun("drought")), false);
+  assert.equal(accessMeasured(await disasterRun("flood", { accessSource: "disaster-none" })), false);
+  assert.equal(accessMeasured(before), false);
+  const settings = { gatePercentile: 30 };
+  assert.equal(nearTermSetAside(run, settings), "Near term leaves out the least feasible 30% for now (most land under water now) and ranks the rest by value and damage.");
+  assert.equal(nearTermSetAside(await disasterRun("wildfire"), settings), "Near term leaves out the least feasible 30% for now (nearest a fire burning now) and ranks the rest by value and damage.");
+  assert.equal(nearTermSetAside(await disasterRun("drought"), settings), "Feasibility is not measured for a drought, so nothing is left out. Near term ranks by value and damage.");
+  assert.equal(ruleText("postwar", settings, run), "All three scores are blended into one Post-crisis ranking.");
+  assert.equal(setAsideNote(await disasterRun("drought")), "Feasibility not measured for a drought: nothing is left out");
+  assert.equal(warText(run.conflict), `after the flood of ${short}`);
+  assert.equal(timeframeLabel("postwar", run), "Post-crisis");
+  const tiles = kpis(summarize(scorePlaces(run.cells, { conflict: run.conflict }).places), run);
+  assert.deepEqual(tiles.map((tile) => tile.label), ["Cropland analyzed", "Black-soil cropland", `Black soil hit since ${short}`, "Black soil heavily damaged"]);
+  assert.equal(tiles[2].value, "96 ha");
+  assert.equal(tiles[2].note, "120 ha hit on all cropland");
+  const steps = nextSteps({ run, hotspots: [{ id: "h1", label: "Larisa", cellIds: [] }, { id: "h2", label: "Trikala", cellIds: [] }, { id: "h3", label: "Karditsa", cellIds: [] }], alerts: run.alerts });
+  // A flood's damage is not radar: a radar change is checked, not called damage.
+  assert.deepEqual(steps.map((step) => step.title), ["Check drained fields for sand, silt and debris in Larisa and Trikala", "Check the radar change near Larisa", "Plan replanting on flooded black soil in Karditsa", "Send the September report"]);
+  assert.equal(nextSteps({ run: await disasterRun("ground"), hotspots: [], alerts: run.alerts })[0].title, "Review new damage near Larisa");
+  const fireSteps = nextSteps({ run: await disasterRun("wildfire"), hotspots: [{ id: "h1", label: "A", cellIds: [] }, { id: "h2", label: "B", cellIds: [] }, { id: "h3", label: "C", cellIds: [] }], alerts: [] });
+  assert.deepEqual(fireSteps.map((step) => step.title).slice(0, 2), ["Check burned fields, fences and water points in A and B", "Plan reseeding of burned black soil in C"]);
+  assert.equal(nextSteps({ run: await disasterRun("drought"), hotspots: [{ id: "h1", label: "A", cellIds: [] }], alerts: [] })[0].title, "Plan seed and feed support where the crop failed in A");
+  assert.equal(nextSteps({ run: await disasterRun("ground"), hotspots: [{ id: "h1", label: "A", cellIds: [] }], alerts: [] })[0].title, "Survey slipped, cracked or flattened fields in A");
+  assert.equal(imageryText(run), "Imagery from 4 September 2023 to 30 September 2023 (within 60 days of the day the flood began), compared with 2019 to 2021 (same months)");
+});
+
+test("natural disasters: damage not measured yet, measured in part, may read low, provisional: the tiles, the line and the steps say so", async () => {
+  const { disasterDamageState, warDay } = await import("./overview.js");
+  const tilesOf = (run) => kpis(summarize(scorePlaces(run.cells, { conflict: run.conflict }).places), run);
+  // Nothing measured: never "0 ha".
+  const none = { notMeasured: "season-incomplete", unmeasuredShare: 1, mayBeLow: [] };
+  const drought = await disasterRun("drought", { since: "2026-02-10", month: "2026-03", disasterDamage: none, imagery: { from: "2026-03", to: "2026-03", label: "none yet: no crop season since 10 February 2026 has run long enough to measure" } });
+  drought.cells = drought.cells.map((cell) => ({ ...cell, hit: null, heavy: null, hitHa: null, hitCropHa: null, heavyCropHa: null, notMeasured: "Damage not measured yet: the crop season has not run long enough" }));
+  const state = disasterDamageState(drought);
+  assert.equal(state.measured, false);
+  assert.equal(state.reason, `not measured yet: no crop season since ${warDay("2026-02-10")} has run long enough`);
+  const tiles = tilesOf(drought);
+  assert.deepEqual(tiles.slice(2).map((tile) => [tile.label, tile.value, tile.tone]), [["Black soil hit this season", "Not measured yet", undefined], ["Black soil heavily damaged", "Not measured yet", undefined]]);
+  assert.equal(tiles[2].note, state.reason);
+  assert.match(warNote(drought).line, /Damage is not measured yet this month \(no crop season since .* has run long enough\), so the order follows value alone\./);
+  assert.equal(nextSteps({ run: drought, hotspots: [{ id: "h1", label: "A", cellIds: [] }], alerts: [] })[0].title, "Analyze this area again once the crop season has run two months");
+  assert.equal(imageryText(drought), "No images measure the damage yet: no crop season since 10 February 2026 has run long enough to measure");
+  // A drought measured from March: "this season (since Mar 2026)".
+  const measured = await disasterRun("drought", { since: "2026-02-10", month: "2026-06", imagery: { from: "2026-03", to: "2026-06", label: "of the crop season from 1 March 2026 to 30 June 2026 (this season's crop loss)" } });
+  assert.equal(tilesOf(measured)[2].label, "Black soil hit this season (since Mar 2026)");
+  assert.equal(disasterDamageState(measured).measured, true);
+  // Measured in part, and may read low.
+  const part = await disasterRun("wildfire", { disasterDamage: { notMeasured: "no-images", unmeasuredShare: 0.25, mayBeLow: ["burn-map-pending"] } });
+  part.cells[0] = { ...part.cells[0], hit: null, heavy: null, hitHa: null, hitCropHa: null, notMeasured: "Damage not measured: no usable images" };
+  const note = tilesOf(part)[2].note;
+  assert.match(note, /^120 ha hit on all cropland · measured on 300 ha of 400 ha of cropland \(not measured: no usable images\) · may be low: the burned-area map for these weeks is not out yet/);
+  assert.match(warNote(part).line, /Damage is not measured yet on 25% of the squares/);
+  assert.match(warNote(part).line, /The damage may read low: the burned-area map/);
+  // A storm, earthquake or landslide: provisional, on the tile and the line;
+  // measured over the season that contains the day.
+  const ground = await disasterRun("ground");
+  assert.match(tilesOf(ground)[2].note, /provisional: a pointer, not a measurement/);
+  assert.match(warNote(ground).line, /damage is measured over the growing season that contains that day/);
+  assert.match(warNote(ground).line, /This rule is provisional/);
+  assert.ok(!/provisional/.test(warNote(await disasterRun("flood")).line));
+  // A month before the day: nothing to say about measuring.
+  assert.equal(disasterDamageState(await disasterRun("flood", { month: "2023-08" })), null);
+  // A war or peace: none of it.
+  assert.equal(disasterDamageState({ conflict: { id: "u", name: "War", since: "2022-02-24" } }), null);
+});
+
+test("natural disasters: the map key, its hover words and 'How it's measured'", async () => {
+  const mc = await import("./mapColors.js");
+  const { warDay } = await import("./overview.js");
+  const { safetyNoteFor, disasterNote, disasterNoteFor } = await import("../../config/research.js");
+  const flood = await disasterRun("flood");
+  assert.equal(mc.legendFor("damage", flood).title, `Damage: black soil hit since ${warDay("2023-09-04")}`);
+  assert.deepEqual(mc.legendFor("access", flood), { title: "Feasibility: not under water now", low: "80% + under water", high: "5% or less under water" });
+  assert.deepEqual(mc.legendFor("access", await disasterRun("wildfire")), { title: "Feasibility: distance to a fire now", low: "Under 2 km", high: "10 km +" });
+  assert.deepEqual(mc.legendFor("access", await disasterRun("drought")), { title: "Feasibility: not measured", low: "Under 20 km", high: "Not measured for a drought" });
+  const place = flood.cells[2];
+  assert.equal(mc.valueText({ ...place, access: place.feasible }, "access", "nearTerm", 4, flood), "Feasibility: 40% of cropland under water");
+  const fire = await disasterRun("wildfire");
+  assert.equal(mc.valueText({ ...fire.cells[1], access: 1 / 3 }, "access", "nearTerm", 4, fire), "Feasibility: about 3 km from a fire burning now");
+  assert.equal(mc.valueText({ cellIds: ["a"], access: 0.5, nearestConflictKm: 4 }, "access", "nearTerm", 4, fire), "Feasibility 50 / 100 · nearest fire now about 4 km");
+  const methods = mc.methodsFor(flood);
+  assert.ok(methods.items.find((item) => item.id === "damage").what.startsWith("Cropland flooded since the day the flood began"));
+  assert.ok(methods.items.find((item) => item.id === "access").what.startsWith("What satellites see now: the share of the square's cropland not under water"));
+  assert.ok(mc.methodsFor(await disasterRun("ground")).items.find((item) => item.id === "damage").what.includes("the growing season that contains the day the storm, earthquake or landslide began"));
+  assert.ok(methods.items.find((item) => item.id === "damage").what.includes("as many rice paddies are"));
+  assert.ok(methods.limits.includes("paddies and river beds that are wet every season can still read as flooded"));
+  // The closing note names the type's own hazard; a drought's has none.
+  assert.equal(safetyNoteFor(flood), disasterNoteFor("flood"));
+  assert.match(safetyNoteFor(flood), /Flood water/);
+  assert.ok(!/flood|fire|slope/i.test(safetyNoteFor(await disasterRun("drought"))));
+  assert.match(safetyNoteFor(await disasterRun("wildfire")), /fire-damaged trees/);
+  assert.match(safetyNoteFor(await disasterRun("ground")), /Unstable slopes/);
+  assert.equal(disasterNote, disasterNoteFor("other"));
+  // A square with 5% or less of its cropland under water: nothing in the way.
+  assert.equal(mc.valueText({ ...place, access: 1, raw: { ...place.raw, wetNowShare: 0.03 } }, "access", "nearTerm", 4, flood), "Feasibility: 3% of cropland under water (counts as nothing in the way)");
+  // Feasibility full everywhere: the tab is not offered, and says why.
+  const full = (run) => run.cells.map((cell) => ({ ...cell, access: 1, analyzed: true }));
+  assert.equal(mc.flatAccessNote(flood, full(flood)), "No square has more than 5% of its cropland under water now");
+  assert.equal(mc.flatAccessNote(fire, full(fire)), "No fire burning within 10 km in the month's last 7 days");
+  assert.equal(mc.flatAccessNote(fire, fire.cells.map((cell) => ({ ...cell, access: cell.feasible }))), null);
+  assert.equal(mc.flatAccessNote(await disasterRun("drought"), full(flood)), null);
+  assert.equal(mc.flatAccessNote({ conflict: { id: "u", name: "War", since: "2022-02-24" }, accessSource: "fires" }, full(flood)), null);
+  // The Overview's key names the hatched squares in a disaster only.
+  const hatched = flood.cells.map((cell, i) => ({ ...cell, nearTerm: { tier: i ? "noBlackSoil" : "highest", rank: i ? null : 1 }, postwar: { tier: "highest" } }));
+  assert.equal(mc.overviewUnrankedNote(flood, hatched, "nearTerm"), "Not ranked: no black-soil cropland (most squares here: the cropland hit above counts every soil)");
+  assert.equal(mc.overviewUnrankedNote({ conflict: { id: "u", name: "War", since: "2022-02-24" } }, hatched, "nearTerm"), null);
+  // A war's words stay a war's.
+  assert.equal(mc.legendFor("access", { conflict: { id: "u", name: "War", since: "2022-02-24" }, accessSource: "fires", month: "2026-09" }).title, "Feasibility: distance to fighting");
+});
+
+test("natural disasters: a saved month is kept when made with the disaster method and the same crisis; another crisis is redone", async () => {
+  const { DISASTER_METHOD_VERSION } = await import("./method.js");
+  const run = await disasterRun("flood");
+  const flood = run.conflict;
+  assert.equal(keepsMonth(run, { provider: "gee", warNow: warKey(flood) }), true);
+  assert.equal(keepsMonth({ ...run, method: { version: METHOD_VERSION } }, { provider: "gee", warNow: warKey(flood) }), false, "a disaster month made with the war method");
+  assert.equal(keepsMonth(run, { provider: "gee", warNow: warKey({ ...flood, type: "wildfire" }) }), false);
+  assert.equal(keepsMonth(run, { provider: "gee", warNow: warKey({ id: "area-d", name: "War", since: "2023-09-04", source: "area" }) }), false, "war on the same day");
+  assert.equal(DISASTER_METHOD_VERSION, run.method.version);
+  const area = { id: "area-d", war: { mode: "disaster", since: "2023-09-04", type: "wildfire" } };
+  assert.equal(monthsWithOtherWar(area, [run]).length, 1);
+  assert.equal(monthsWithOtherWar({ ...area, war: { mode: "disaster", since: "2023-09-04", type: "flood", name: "New name" } }, [run]).length, 0, "a new name changes no number");
+});
+
+test("natural disasters: a state's numbers carry its squares' hit land", async () => {
+  const { scoreUnits } = await import("./units.js");
+  const run = await disasterRun("flood");
+  const scored = scorePlaces(run.cells, { conflict: run.conflict, cellSizeDeg: 0.01 });
+  const { units } = scoreUnits(scored.places, [{ id: "u1", name: "Larisa" }], Object.fromEntries(run.cells.map((cell) => [cell.id, "u1"])));
+  assert.equal(units[0].hitHa, 96);
+  assert.equal(units[0].hitCropHa, 120);
+});

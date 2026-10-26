@@ -67,8 +67,8 @@ import { cleanBoolean } from "../../lib/prefs.js";
 import { useMedia } from "../../state/useMedia.js";
 import { usePref } from "../../state/usePref.js";
 import { cellBounds, compassName, coordDigits, findFocus, labelParts, placesExtent } from "../../lib/atlas/hotspots.js";
-import { leftOutText, rankedCount, unrankedNote } from "../../lib/atlas/mapColors.js";
-import { accessMeasured, recoveryCost, setAsideNote } from "../../lib/atlas/overview.js";
+import { flatAccessNote, leftOutText, rankedCount, unrankedNote } from "../../lib/atlas/mapColors.js";
+import { accessMeasured, disasterType, recoveryCost, setAsideNote } from "../../lib/atlas/overview.js";
 import { placeNames } from "../../lib/atlas/placeNames.js";
 import { unitRanking } from "../../lib/atlas/units.js";
 import { COST_NOTE } from "../../lib/atlas/method.js";
@@ -385,8 +385,23 @@ function PlaceDetail({ detail, titleRef, onBack, onZoom, onAsk, accessUnknown = 
           <dt>Black soil</dt>
           <dd>{formatHaShort(detail.blackSoilHa)}</dd>
         </div>
+        {/* A natural disaster: the black-soil cropland it hit, then the
+            heavily damaged land. */}
+        {Number.isFinite(detail.hitHa) && (
+          <div>
+            <dt>Black soil hit</dt>
+            <dd className="is-red">{formatHaShort(detail.hitHa)}</dd>
+          </div>
+        )}
+        {/* All cropland hit: a place with little black soil still shows it. */}
+        {Number.isFinite(detail.hitCropHa) && (
+          <div>
+            <dt>Cropland hit (all soils)</dt>
+            <dd className="is-red">{formatHaShort(detail.hitCropHa)}</dd>
+          </div>
+        )}
         <div>
-          <dt>Damaged</dt>
+          <dt>{Number.isFinite(detail.hitHa) ? "Black soil heavily damaged" : "Damaged"}</dt>
           <dd className="is-red">{formatHaShort(detail.heavyDamageHa)}</dd>
         </div>
         <div>
@@ -514,7 +529,12 @@ function MapView({ held }) {
   // link shows Priority). So too in a war where no fire looked like
   // fighting (overview.js accessMeasured).
   const measured = accessMeasured(run);
-  const colorBy = chosenColor === "access" && !measured ? "priority" : chosenColor;
+  // A flood's or wildfire's Feasibility that is full everywhere is measured
+  // but would colour the map flat: its tab is not offered then either, and
+  // says why (mapColors.js flatAccessNote).
+  const flatAccess = flatAccessNote(run, scored.places);
+  const accessMap = measured && !flatAccess;
+  const colorBy = chosenColor === "access" && !accessMap ? "priority" : chosenColor;
   const [params, setParams] = useSearchParams();
   const [hoverIds, setHoverIds] = useState(null);
   // The states (or districts) of the area: their borders and names over
@@ -625,6 +645,7 @@ function MapView({ held }) {
         access: u.access,
         blackSoilHa: u.blackSoilHa,
         heavyDamageHa: u.heavyDamageHa,
+        ...(Number.isFinite(u.hitHa) ? { hitHa: u.hitHa, hitCropHa: u.hitCropHa } : {}),
         people: u.people,
         squaresText: u.squares ? `${squares}: ${parts.filter(Boolean).join(", ")}. Scores are black-soil-weighted means of its ranked squares.` : null,
         wholeText,
@@ -665,6 +686,7 @@ function MapView({ held }) {
       access: p.access,
       blackSoilHa: p.blackSoilHa,
       heavyDamageHa: p.heavyDamageHa,
+      ...(Number.isFinite(p.hitHa) ? { hitHa: p.hitHa, hitCropHa: p.hitCropHa } : {}),
       people: p.people,
       bounds: padBounds(cellBounds(p, size), size * 4),
       cellIds: null,
@@ -787,7 +809,7 @@ function MapView({ held }) {
     if (detail.kind === "unit") {
       query = new URLSearchParams({ state: `${detail.name} (${detail.what}${pickedUnit?.parentDisplayName ? `, ${pickedUnit.parentDisplayName}` : ""})` });
       const facts = [
-        detail.rankText ? `${detail.rankText.replace(/^Rank/, "ranked")} by ${detail.what} (${timeframe === "postwar" ? "postwar" : "near term"})` : detail.tier === "setAside" ? "left out of the near-term ranking by state for now (least feasible)" : null,
+        detail.rankText ? `${detail.rankText.replace(/^Rank/, "ranked")} by ${detail.what} (${timeframe === "postwar" ? "post-crisis" : "near term"})` : detail.tier === "setAside" ? "left out of the near-term ranking by state for now (least feasible)" : null,
         ...[["value", detail.soil], ["damage", detail.damage], ["feasibility", measured ? detail.access : null]].filter(([, v]) => Number.isFinite(v)).map(([k, v]) => `${k} ${Math.round(v * 100)}`),
       ].filter(Boolean);
       if (facts.length) query.set("facts", facts.join(", "));
@@ -842,7 +864,7 @@ function MapView({ held }) {
             {saveError && <p className="mp-save-error">Couldn’t save the weights. They will be tried again.</p>}
           </div>
           <DetailSwitch value={detailLevel} onChange={setDetailLevel} units={unitsAnswer.data} status={unitsAnswer.status} />
-          <MapTabs value={colorBy} onChange={setColorBy} measured={measured} why={setAsideNote(run)} />
+          <MapTabs value={colorBy} onChange={setColorBy} measured={accessMap} why={flatAccess || setAsideNote(run)} disaster={disasterType(run)} offHint={flatAccess ? "Nothing in the way" : null} />
         </div>
       </aside>
 

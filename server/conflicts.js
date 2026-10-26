@@ -86,9 +86,11 @@ const MAX_POINTS = 400;
 const BOX_STEPS = 9;
 
 //   war     the area's own choice (area.war: { mode: "list" | "war" |
-//           "peace", since, name }); "war" gives { id: "area-<areaId>",
-//           name, since, source: "area" }, "peace" gives null, "list" (or
-//           none) leaves it to the app's list
+//           "disaster" | "peace", since, type, name }); "war" gives { id:
+//           "area-<areaId>", name, since, source: "area" }, "disaster" the
+//           same with kind: "disaster" and its type (a natural disaster:
+//           its rules apply to every square, warCellsFor is null for it),
+//           "peace" gives null, "list" (or none) leaves it to the app's list
 //   areaId  the area's id, for the id of a war the team set
 export function conflictForArea({ countryId, bbox, cells, war, areaId } = {}) {
   const own = teamConflict(war, areaId);
