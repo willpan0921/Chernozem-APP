@@ -15,7 +15,8 @@
 // Nobody, normally. The server side is server/auth.js.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Sprout } from "lucide-react";
+import Logo from "../ui/Logo.jsx";
+
 import { Button } from "../ui/index.js";
 import { AUTH_REQUIRED_EVENT, getAuthStatus, signIn } from "../../api/atlasApi.js";
 import "./atlas.css";
@@ -74,7 +75,7 @@ export default function AccessGate({ children }) {
     <main className="access-gate">
       <form className="access-card" onSubmit={submit}>
         <span className="access-logo" aria-hidden="true">
-          <Sprout size={18} strokeWidth={2.4} />
+          <Logo size={44} />
         </span>
         <h1 className="access-title">Chernozem Atlas</h1>
         <label className="field-label" htmlFor="access-code">

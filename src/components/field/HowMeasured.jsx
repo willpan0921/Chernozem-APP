@@ -6,7 +6,9 @@
 // are in src/config/research.js; the long version is docs/METHODS.md.
 //
 // WHAT IT RECEIVES
-//   methods    { title, intro, items: [{ id, name, what, formula, source }], note, limits, sources }
+//   methods    { title, intro, items: [{ id, name, what, formula, source }], note, limits, sources,
+//                priority? }: priority (the Atlas) = { title, intro, frames:
+//                [{ id, name, tag, what, steps, formula }], blend, scale }
 //   label      the link's text (default "How it's measured")
 //   className  extra class names for the link (optional)
 //
@@ -72,6 +74,31 @@ export default function HowMeasured({ methods, label = "How it's measured", clas
                 </div>
               ))}
             </dl>
+            {methods.priority && (
+              <section className="hm-priority" aria-label={methods.priority.title}>
+                <h3>{methods.priority.title}</h3>
+                {methods.priority.intro && <p className="hm-intro">{methods.priority.intro}</p>}
+                <div className="hm-frames">
+                  {methods.priority.frames.map((frame) => (
+                    <div key={frame.id} className="hm-frame">
+                      <p className="hm-frame-head">
+                        <strong>{frame.name}</strong>
+                        {frame.tag && <span className="hm-tag">{frame.tag}</span>}
+                      </p>
+                      <p className="hm-what">{frame.what}</p>
+                      <ol className="hm-steps">
+                        {frame.steps.map((step, i) => (
+                          <li key={i}>{step}</li>
+                        ))}
+                      </ol>
+                      {frame.formula && <p className="hm-formula">{frame.formula}</p>}
+                    </div>
+                  ))}
+                </div>
+                {methods.priority.blend && <p className="hm-note">{methods.priority.blend}</p>}
+                {methods.priority.scale && <p className="hm-note">{methods.priority.scale}</p>}
+              </section>
+            )}
             {methods.note && <p className="hm-note">{methods.note}</p>}
             {methods.limits && <p className="hm-limits">{methods.limits}</p>}
             {methods.sources && <p className="hm-sources">{methods.sources}</p>}

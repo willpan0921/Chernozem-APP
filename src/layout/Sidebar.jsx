@@ -31,8 +31,9 @@
 // src/config/navigation.js instead.
 
 import { useEffect, useState } from "react";
+import Logo from "../components/ui/Logo.jsx";
 import { NavLink, Link, useLocation } from "react-router-dom";
-import { Sprout, ChevronDown, Lock, MapPin, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { ChevronDown, Lock, MapPin, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { products, productForPath } from "../config/navigation.js";
 import { useFieldData } from "../state/FieldData.jsx";
 import { farmLine } from "../lib/field/format.js";
@@ -129,7 +130,7 @@ export default function Sidebar({ collapsed = false, onToggle }) {
       <div className="sidebar-top">
         <Link to="/" className="sidebar-brand" aria-label={collapsed ? "Chernozem" : undefined} {...tipFor("Chernozem")}>
           <span className="sidebar-logo">
-            <Sprout size={15} strokeWidth={2.4} />
+            <Logo size={30} />
           </span>
           <span className="sidebar-label">Chernozem</span>
         </Link>

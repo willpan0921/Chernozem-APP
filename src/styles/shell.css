@@ -62,11 +62,14 @@
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
-  background: var(--c-ink);
-  color: var(--c-on-dark);
+  width: 30px;
+  height: 30px;
+}
+
+.logo {
+  display: block;
+  object-fit: contain;
+  user-select: none;
 }
 
 .sidebar-toggle {

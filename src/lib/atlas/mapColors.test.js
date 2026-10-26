@@ -8,7 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { scorePlaces } from "./scoring.js";
-import { LOWEST_SHADE_NOTE, STEP_NONE, accessKeyNote, colorStep, colorVar, leftOutText, legendFor, methodsFor, rankedCount, valueText } from "./mapColors.js";
+import { LOWEST_SHADE_NOTE, STEP_NONE, accessKeyNote, colorStep, colorVar, leftOutText, legendFor, methodsFor, priorityMethods, rankedCount, valueText } from "./mapColors.js";
 import { atlasMethods } from "../../config/research.js";
 import { makePlaces } from "./testPlaces.js";
 
@@ -125,8 +125,13 @@ test("the 'How it's measured' panel: safe access not measured where no fire look
   assert.equal(accessWords(withFile), `Not measured here: no fires that look like fighting were found within 300 km, and the ACLED file has no battles within 300 km of this area. ${why}`);
   // Unchanged: a war with fires (the panel as written), with no run, at
   // peace, the team's peace and before the war.
-  assert.equal(methodsFor(firesWar), atlasMethods);
-  assert.equal(methodsFor(null), atlasMethods);
+  // The score words are exactly the research text; the panel also explains priority.
+  const { priority: firesPriority, ...firesScores } = methodsFor(firesWar);
+  assert.deepEqual(firesScores, atlasMethods);
+  assert.equal(firesPriority.frames[0].steps[0].startsWith("Gate: the least feasible places are left out"), true);
+  const { priority: nullPriority, ...nullScores } = methodsFor(null);
+  assert.deepEqual(nullScores, atlasMethods);
+  assert.ok(nullPriority);
   const firesInPart = methodsFor({ ...firesWar, conflict: { ...lebanon, partOfCountry: true } });
   assert.equal(accessWords(firesInPart), atlasMethods.items.find((item) => item.id === "access").what);
   assert.ok(firesInPart.note.startsWith(`${atlasMethods.note} ${atlasMethods.notePartOfCountry}`));
@@ -157,4 +162,21 @@ test("not ranked places are hatched, never the lowest green, and the key says wh
   assert.match(unitsNote(atlasMethods.noteUnits, { one: "district", many: "districts" }), /^A district's value, damage and feasibility .* across the districts .* A district is judged by its average/);
   assert.doesNotMatch(unitsNote(atlasMethods.noteUnits, { one: "district", many: "districts" }), /\{|state/);
   assert.match(unitsNote(atlasMethods.noteUnits), /^A state's/);
+});
+
+test("How it's measured explains the two time frames: the gate in Near term, the blend in Post-crisis", () => {
+  const war = { conflict: { id: "ukraine-2022", name: "Full-scale invasion of Ukraine", since: "2022-02-24" }, accessSource: "fires" };
+  const measured = priorityMethods(war);
+  assert.deepEqual(measured.frames.map((f) => [f.name, f.tag]), [["Near term", "Gated"], ["Post-crisis", "Blended"]]);
+  assert.match(measured.frames[0].steps.join(" "), /Gate: .*Ramp: .*Value and Damage only/);
+  assert.match(measured.frames[1].steps.join(" "), /Nothing is left out/);
+  assert.match(measured.frames[0].formula, /ramp/);
+  assert.match(measured.frames[1].formula, /Feasibility/);
+  assert.match(measured.blend, /r = 0\.5/);
+  // Where Feasibility is not measured (at peace), the gate leaves nothing out.
+  const peace = priorityMethods({ conflict: null, accessSource: "none" });
+  assert.match(peace.frames[0].steps[0], /not measured here, so the gate leaves nothing out/);
+  assert.doesNotMatch(peace.frames[0].steps.join(" "), /Ramp/);
+  // The steps never leak the other set's key.
+  assert.equal(measured.frames[0].stepsUnmeasured, undefined);
 });

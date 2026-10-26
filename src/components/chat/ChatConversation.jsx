@@ -29,7 +29,8 @@
 // composer   - the <ChatComposer /> to show at the bottom
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Check, Copy, Loader2, RotateCcw, Sprout, Trash2, TriangleAlert } from "lucide-react";
+import Logo from "../ui/Logo.jsx";
+import { Check, Copy, Loader2, RotateCcw, Trash2, TriangleAlert } from "lucide-react";
 import { Button } from "../ui/index.js";
 import { aiName } from "../../data/chats.js";
 import { plainText } from "../../lib/chat/markdown.js";
@@ -52,7 +53,7 @@ const labels = {
 function AiLogo() {
   return (
     <span className="chat-ai-logo" title={aiName} aria-label={aiName}>
-      <Sprout size={13} strokeWidth={2.4} />
+      <Logo size={24} />
     </span>
   );
 }

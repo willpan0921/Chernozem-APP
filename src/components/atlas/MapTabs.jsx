@@ -74,8 +74,8 @@ export function DetailSwitch({ value, onChange, units, status }) {
       </h2>
       <Segmented
         options={[
-          { value: "squares", label: "Squares", title: "Every map square, ranked one by one" },
-          { value: "units", label, title, disabled },
+          { value: "squares", label: "Micro", title: "Micro: every map square, ranked one by one" },
+          { value: "units", label: "Macro", title: disabled ? title : `Macro: ${label.toLowerCase()} ranked as a whole${title ? ` (${title})` : ""}`, disabled },
         ]}
         value={value === "units" && !disabled ? "units" : "squares"}
         onChange={onChange}

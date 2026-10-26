@@ -47,8 +47,9 @@
 //                below): { icon, text } or null
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Logo from "../ui/Logo.jsx";
 import { useSearchParams } from "react-router-dom";
-import { Sprout } from "lucide-react";
+
 import { getAiStatus, listThreads, openThread, removeThread, sendChatMessage } from "../../api/chatApi.js";
 import { titleFrom, upsertThread } from "../../lib/chat/threads.js";
 import ChatLayout from "./ChatLayout.jsx";
@@ -341,7 +342,7 @@ export default function ChatScreen({ product, context, text, suggestions = [], u
   const welcome = (
     <div className="chat-welcome">
       <span className="chat-welcome-logo">
-        <Sprout size={22} strokeWidth={2.2} />
+        <Logo size={48} />
       </span>
       <p className="chat-welcome-text">{text.welcome}</p>
       {suggestions.length > 0 && (

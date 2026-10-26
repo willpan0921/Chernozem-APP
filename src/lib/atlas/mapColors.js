@@ -26,7 +26,7 @@
 // WHO EDITS IT
 // Whoever changes how the map is coloured. Tested in mapColors.test.js.
 
-import { atlasDisasterMethods, atlasMethods } from "../../config/research.js";
+import { atlasDisasterMethods, atlasMethods, priorityMethods as PRIORITY } from "../../config/research.js";
 import { accessMeasured, accessSourceOf, atPeace, beforeWar, disasterHitLabel, disasterNoun, disasterType, isDisasterRun, noFightingFound, notMeasuredReason, warInPart, warPartOf, warSetByTeam } from "./overview.js";
 import { FLOOD, WILDFIRE } from "./method.js";
 
@@ -146,7 +146,23 @@ export function accessKeyNote(run) {
 //                      region (and those in another listed war, when there
 //                      are any: run.otherWarSquares), and the two peace
 //                      rules used elsewhere
+// How priority is worked out (research.js priorityMethods), for this run:
+// where Feasibility is not measured (at peace, a war with no fire that
+// looked like fighting, a drought or storm) the gate leaves nothing out,
+// and the steps say so.
+export function priorityMethods(run) {
+  const measured = !run || accessMeasured(run);
+  return {
+    ...PRIORITY,
+    frames: PRIORITY.frames.map(({ steps, stepsUnmeasured, ...frame }) => ({ ...frame, steps: measured ? steps : stepsUnmeasured })),
+  };
+}
+
 export function methodsFor(run) {
+  return { ...methodsForScores(run), priority: priorityMethods(run) };
+}
+
+function methodsForScores(run) {
   // A natural disaster: the damage and Feasibility items in its own words
   // (atlasMethods items' whatDisaster, formulaDisaster, sourceDisaster by
   // type), and a note without war words.

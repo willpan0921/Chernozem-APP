@@ -181,7 +181,7 @@ export const atlasMethods = {
   // (src/lib/atlas/units.js).
   // "{one}" and "{many}" are the units' own words ("district", "districts"):
   // mapColors.js unitsNote.
-  noteUnits: "A {one}'s value, damage and feasibility are the black-soil-weighted means of its ranked squares; its priority is then worked out across the {many} the same way as for squares. A {one} is judged by its average, so some of its squares can still rank near the top in Squares view, even when the {one} as a whole is left out for now.",
+  noteUnits: "A {one}'s value, damage and feasibility are the black-soil-weighted means of its ranked squares; its priority is then worked out across the {many} the same way as for squares. A {one} is judged by its average, so some of its squares can still rank near the top in the Micro view, even when the {one} as a whole is left out for now.",
   items: [
     {
       id: "soil",
@@ -217,11 +217,11 @@ export const atlasMethods = {
       source: "ACLED battles when connected, else unusual fire inside a known war",
     },
   ],
-  note: "Near term leaves the least feasible places out for now (the Feasibility cutoff; they show in the lowest priority shade) and ranks the rest by value and damage; the long view blends all three. The soil-health index is shown for context only.",
-  notePeace: "Near term ranks by value and damage; the long view blends all three. The soil-health index is shown for context only.",
+  note: "Near term leaves the least feasible places out for now (the Feasibility cutoff; they show in the lowest priority shade) and ranks the rest by value and damage; Post-crisis blends all three. The soil-health index is shown for context only.",
+  notePeace: "Near term ranks by value and damage; Post-crisis blends all three. The soil-health index is shown for context only.",
   // In a war where no fire looked like fighting (src/lib/atlas/overview.js
   // noFightingFound): feasibility is not measured, so nothing is left out.
-  noteNoFighting: "Feasibility not measured here, so Near term leaves nothing out and ranks by value and damage; the long view blends all three. The soil-health index is shown for context only.",
+  noteNoFighting: "Feasibility not measured here, so Near term leaves nothing out and ranks by value and damage; Post-crisis blends all three. The soil-health index is shown for context only.",
   // Added for a war that covers a whole-country area only in part, and
   // (notePartOfArea) a region, a box or a drawn area; notePartOtherWar
   // after it when some squares have the war's rules because another listed
@@ -233,6 +233,51 @@ export const atlasMethods = {
   notePartElsewhere: "Elsewhere damage is also counted from the day the war began, but heavy damage needs strong radar change and an unusual fire, and the damage score is the heavily damaged share of the black soil.",
   limits: "Scores show model priority, not proven results. Check the land on the ground before you act on it.",
   sources: "Processed in Google Earth Engine.",
+};
+
+// How the three scores become a priority, in the two time frames (the
+// owner's research method: "Gated Aggregation"; src/lib/atlas/scoring.js
+// does exactly this). Shown in the Atlas "How it's measured" panel, after
+// the three scores (src/lib/atlas/mapColors.js priorityMethods picks the
+// words for where Feasibility is not measured).
+export const priorityMethods = {
+  title: "How priority is worked out",
+  intro: "The two time frames use the same three scores but combine them differently, as in the research method (Gated Aggregation).",
+  frames: [
+    {
+      id: "nearTerm",
+      name: "Near term",
+      tag: "Gated",
+      what: "What can be done now, while the crisis goes on.",
+      steps: [
+        "Gate: the least feasible places are left out for now, until they hold the Feasibility cutoff share of the black soil (30% unless you change it). Places with full feasibility are never left out.",
+        "Ramp: places just above the gate fade in over a band of feasibility (0.2), so a place a hair over the line does not jump from nothing to full strength.",
+        "Rank the rest by Value and Damage only, blended with their two weights. Feasibility has already done its job as the gate, so it is not a weight here.",
+      ],
+      stepsUnmeasured: [
+        "Gate: Feasibility is not measured here, so the gate leaves nothing out.",
+        "Rank every place by Value and Damage, blended with their two weights.",
+      ],
+      formula: "Priority = ramp × (w₁·√Value + w₂·√Damage)²   (weights add up to 1)",
+    },
+    {
+      id: "postCrisis",
+      name: "Post-crisis",
+      tag: "Blended",
+      what: "Where to recover once the war or disaster is over.",
+      steps: [
+        "Nothing is left out.",
+        "Value, Damage and Feasibility are blended with their three weights. Feasibility still counts (mines, damaged roads, wet or burned ground), but as one factor, not a barrier.",
+      ],
+      stepsUnmeasured: [
+        "Nothing is left out.",
+        "Value, Damage and Feasibility are blended with their three weights; Feasibility is not measured here, so it is the same everywhere and the order follows Value and Damage.",
+      ],
+      formula: "Priority = (w₁·√Value + w₂·√Damage + w₃·√Feasibility)²   (weights add up to 1)",
+    },
+  ],
+  blend: "Both use a weighted power mean (r = 0.5), between an average and a product: a place that is fair on every score ranks above one that is strong on one and weak on another. Value 0.5 and Damage 0.5 give 0.50; Value 0.8 and Damage 0.2 give 0.45.",
+  scale: "Priority is shown from 0 to 100 as a share of the best place's score. Tiers go by rank: the top 25% are highest, the next 25% high, the next 20% medium, the rest lower. Default weights: Value 30, Damage 40, Feasibility 30; cutoff 30%.",
 };
 
 // The "How it's measured" words of a natural disaster the team set
