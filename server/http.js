@@ -2,13 +2,18 @@
 // Small helpers every server route uses to read a request and answer it:
 //   readJson(req, { maxBytes })         the request body as an object
 //                                       (maxBytes: a bigger limit for one route)
-//   sendJson(res, status, body)         answer with JSON
+//   sendJson(res, status, body)         answer with JSON (gzipped from 1 KB
+//                                       when the browser accepts it)
 //   sendError(res, status, code, text)  answer with { error: { code, message } }
-//   openSse(res)                        start a live stream (used by the AI chat)
+//   openSse(res)                        start a live stream (used by the AI chat;
+//                                       never gzipped, so each part arrives at once)
+//   acceptsGzip(header)                 true when Accept-Encoding allows gzip
 //   HttpError                           throw one inside a route to answer with an error
 //
 // WHO EDITS IT
 // Nobody, normally.
+
+import { gzipSync } from "node:zlib";
 
 // Throw this inside a route: the router turns it into a JSON error answer.
 export class HttpError extends Error {
@@ -68,17 +73,44 @@ function readBody(req, maxBytes = MAX_BODY_BYTES) {
   });
 }
 
+// True when an Accept-Encoding header allows gzip ("gzip, deflate, br"
+// yes; "gzip;q=0" or no header no). A listed "gzip" decides; else "*".
+export function acceptsGzip(header) {
+  let gzip = null;
+  let any = null;
+  for (const part of String(header || "").toLowerCase().split(",")) {
+    const [name, ...params] = part.split(";").map((piece) => piece.trim());
+    const q = params.find((param) => param.startsWith("q="));
+    const weight = q ? Number(q.slice(2)) : 1;
+    const allowed = Number.isFinite(weight) && weight > 0;
+    if (name === "gzip" || name === "x-gzip") gzip = allowed;
+    else if (name === "*") any = allowed;
+  }
+  return gzip ?? any ?? false;
+}
+
+// Small answers are not worth compressing.
+const GZIP_MIN_BYTES = 1024;
+
 export function sendJson(res, status, body) {
   if (res.headersSent) {
     res.end();
     return;
   }
-  const text = JSON.stringify(body);
+  let payload = Buffer.from(JSON.stringify(body));
   res.statusCode = status;
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
-  res.setHeader("Content-Length", Buffer.byteLength(text));
-  res.end(text);
+  if (payload.length >= GZIP_MIN_BYTES) {
+    res.setHeader("Vary", "Accept-Encoding");
+    // res.req: the request this answers (set by Node's server).
+    if (acceptsGzip(res.req?.headers?.["accept-encoding"])) {
+      payload = gzipSync(payload);
+      res.setHeader("Content-Encoding", "gzip");
+    }
+  }
+  res.setHeader("Content-Length", payload.length);
+  res.end(payload);
 }
 
 export function sendError(res, status, code, message) {

@@ -51,9 +51,14 @@
 //   /api/chat, /api/chats...            the AI (server/ai/chat.js)
 //   /api/farm..., /api/geocode          the Field product (server/field/routes.js)
 //   /api/auth/status, login, logout     the optional access code (server/auth.js)
+//   GET    /api/health                  { ok: true }: the server is up (for the
+//                                       host's health check; no data, no code)
+//   POST   /api/admin/import            the one-time data upload, only while
+//                                       IMPORT_TOKEN is set (server/import.js)
 //
 // When ATLAS_ACCESS_CODE is set in .env, every address above except the
-// sign-in ones (/api/auth/...) needs a signed-in browser.
+// sign-in ones (/api/auth/...), /api/health and /api/admin/import (which
+// has its own token) needs a signed-in browser.
 //
 // Errors always come back as { error: { code, message } }.
 //
@@ -85,6 +90,7 @@ import { getProvider, providerStatus, withTimeout } from "./providers/index.js";
 import { schedulerStatus } from "./scheduler.js";
 import { checkSettings } from "../src/lib/atlas/method.js";
 import { handleAuth } from "./auth.js";
+import { handleAdmin } from "./import.js";
 import { handleFieldRoutes } from "./field/routes.js";
 import { unitsForArea } from "./units.js";
 import { soilFor } from "./soil.js";
@@ -420,6 +426,12 @@ async function route(req, res, url) {
   const [first, second, third] = parts;
   const q = url.searchParams;
 
+  // Before the access code: the health check (the host asks it every few
+  // seconds; it says nothing about the data) and the data upload, which
+  // has its own token (server/import.js).
+  if (first === "health" && !second && (method === "GET" || method === "HEAD")) return sendJson(res, 200, { ok: true });
+  if (first === "admin") return handleAdmin(req, res, { method, parts, pathname: url.pathname });
+
   // The access code (server/auth.js) comes before every other route: it
   // answers /api/auth/... and, when a code is set, stops browsers that have
   // not signed in (the AI chat included).
@@ -583,7 +595,7 @@ async function route(req, res, url) {
 
   // A known path with the wrong method, or an unknown path. The number is
   // how many parts after /api/ the route can have (/api/runs/:id = 2).
-  const known = { status: 1, areas: 2, workspace: 1, team: 2, analyze: 1, jobs: 2, runs: 2, soil: 1 };
+  const known = { status: 1, health: 1, areas: 2, workspace: 1, team: 2, analyze: 1, jobs: 2, runs: 2, soil: 1 };
   if (first === "areas" && second && third === "units" && parts.length === 3) {
     throw new HttpError(405, "method_not_allowed", `${method} is not supported on ${url.pathname}.`);
   }

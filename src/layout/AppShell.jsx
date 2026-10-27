@@ -7,11 +7,16 @@
 // browser remembers the choice (src/state/usePref.js). On a phone the
 // sidebar sits on top of the page as before and does not fold.
 //
+// A page that fails to show gets a message with a Reload button in its
+// place, and the sidebar stays (src/layout/ErrorBoundary.jsx); opening
+// another page tries again.
+//
 // WHO EDITS IT
 // Nobody, normally. To change the sidebar, edit src/layout/Sidebar.jsx.
 
-import { Outlet } from "react-router-dom";
+import { Outlet, useLocation } from "react-router-dom";
 import Sidebar from "./Sidebar.jsx";
+import ErrorBoundary from "./ErrorBoundary.jsx";
 import { cleanBoolean } from "../lib/prefs.js";
 import { useMedia } from "../state/useMedia.js";
 import { usePref } from "../state/usePref.js";
@@ -21,11 +26,14 @@ export default function AppShell() {
   // A phone never shows the rail (the sidebar sits above the page there).
   const phone = useMedia("(max-width: 860px)");
   const collapsed = folded && !phone;
+  const { pathname } = useLocation();
   return (
     <div className={collapsed ? "shell is-nav-collapsed" : "shell"}>
       <Sidebar collapsed={collapsed} onToggle={() => setFolded(!collapsed)} />
       <main className="shell-main">
-        <Outlet />
+        <ErrorBoundary resetKey={pathname}>
+          <Outlet />
+        </ErrorBoundary>
       </main>
     </div>
   );

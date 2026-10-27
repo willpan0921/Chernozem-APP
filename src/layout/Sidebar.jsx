@@ -12,6 +12,16 @@
 // (in the farm's unit) from src/state/FieldData.jsx, or "No farm yet".
 // Clicking it opens Field Settings, where the farm is changed.
 //
+// The note above the account row says who sees the farm: "Your fields are
+// private" on one's own computer, or "Shared with everyone who has the
+// access code" when the owner set one (src/config/navigation.js,
+// src/state/useAccess.js). No note while that is not known.
+//
+// "Sign out" under the account row, only when an access code is set (on a
+// shared computer, so the next person needs the code again): the access
+// card comes back (src/components/atlas/AccessGate.jsx). Without a code
+// there is nothing to sign out of, so it is not shown.
+//
 // FOLDED TO A RAIL (wider screens): the button next to the logo folds the
 // sidebar to a narrow rail of icons (and unfolds it again), so the pages,
 // the maps above all, get nearly the whole screen. In the rail every item
@@ -33,8 +43,11 @@
 import { useEffect, useState } from "react";
 import Logo from "../components/ui/Logo.jsx";
 import { NavLink, Link, useLocation } from "react-router-dom";
-import { ChevronDown, Lock, MapPin, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { ChevronDown, Lock, LogOut, MapPin, PanelLeftClose, PanelLeftOpen, Users } from "lucide-react";
 import { products, productForPath } from "../config/navigation.js";
+import { signOut } from "../api/atlasApi.js";
+import { canSignOut, privacyNoteFor } from "../lib/access.js";
+import { useAccess } from "../state/useAccess.js";
 import { useFieldData } from "../state/FieldData.jsx";
 import { farmLine } from "../lib/field/format.js";
 import { useAtlasData } from "../state/AtlasData.jsx";
@@ -99,6 +112,49 @@ function FieldScope({ icon: Icon, collapsed, tipFor }) {
   return <ScopeCard to="/field/settings" change="Change farm" icon={Icon} title={title} subtitle={subtitle} collapsed={collapsed} tipFor={tipFor} />;
 }
 
+// "Sign out": the server removes this browser's sign-in, and the access card
+// comes back. If the server cannot be reached the browser stays signed in
+// (the page cannot remove the sign-in by itself), so it says so.
+function SignOutButton({ collapsed, tipFor, hideTip }) {
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const label = failed ? "Could not sign out: try again" : "Sign out";
+  async function leave() {
+    if (busy) return;
+    hideTip();
+    setBusy(true);
+    setFailed(false);
+    try {
+      // On success the access card replaces the whole app.
+      await signOut();
+    } catch {
+      setFailed(true);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <>
+      <button
+        type="button"
+        className="sidebar-signout"
+        onClick={leave}
+        disabled={busy}
+        aria-label={collapsed ? label : undefined}
+        {...tipFor(label)}
+      >
+        <LogOut size={15} aria-hidden="true" />
+        <span className="sidebar-label">{busy ? "Signing out…" : "Sign out"}</span>
+      </button>
+      {failed && (
+        <p className="sidebar-note sidebar-note-error" role="alert">
+          Could not reach the server, so this browser is still signed in. Try again.
+        </p>
+      )}
+    </>
+  );
+}
+
 // In the rail the box shows a grey map pin, not the product's icon (the
 // same as its "Fields" / "Atlas" page), so the two are never confused.
 function ScopeCard({ to, change, icon: Icon, title, subtitle, collapsed, tipFor }) {
@@ -124,6 +180,9 @@ export default function Sidebar({ collapsed = false, onToggle }) {
   const ScopeIcon = product.scope.icon;
   const { tip, tipFor, hideTip } = useRailTips(collapsed);
   const toggleLabel = collapsed ? "Expand sidebar" : "Collapse sidebar";
+  const { shared } = useAccess();
+  const note = product.id !== "atlas" ? privacyNoteFor(product.privacyNote, shared) : null;
+  const NoteIcon = note?.kind === "shared" ? Users : Lock;
 
   return (
     <aside id="app-sidebar" className={collapsed ? "sidebar is-rail" : "sidebar"} onScroll={hideTip}>
@@ -201,10 +260,10 @@ export default function Sidebar({ collapsed = false, onToggle }) {
       <div className="sidebar-spacer" />
 
       <div className="sidebar-footer">
-        {product.id !== "atlas" && product.privacyNote && (
+        {note && (
           <p className="sidebar-note">
-            <Lock size={12} />
-            {product.privacyNote}
+            <NoteIcon size={12} aria-hidden="true" />
+            {note.text}
           </p>
         )}
         <Link
@@ -218,6 +277,7 @@ export default function Sidebar({ collapsed = false, onToggle }) {
           </span>
           <span className="sidebar-label">{product.account.label}</span>
         </Link>
+        {canSignOut(shared) && <SignOutButton collapsed={collapsed} tipFor={tipFor} hideTip={hideTip} />}
       </div>
 
       {/* Only for the eye: each item already carries its name (aria-label). */}

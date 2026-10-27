@@ -9,6 +9,8 @@ The data comes from Google Earth Engine (Sentinel-2, Sentinel-1, NASA FIRMS, ESA
 
 **How every number is measured, with its dataset, formula, update frequency and limits: [docs/METHODS.md](docs/METHODS.md).**
 
+**The public copy at https://chernozem.app (Render): what runs where, what it costs, how updates go live, the data and the access code: [docs/DEPLOY.md](docs/DEPLOY.md).**
+
 ## How to run it
 
 You need [Node.js](https://nodejs.org) (the LTS version). On this Mac Node lives in a private folder, so first run this once per Terminal window:
@@ -89,7 +91,7 @@ server/                   the Node server: API, jobs, scheduler, store
 │                         sample.js and field-sample.js (sample data), fake-ee.js (test stand-in)
 └── ai/                   the Claude chat and what it knows (context.js, field-context.js)
 scripts/                  gee-check.js, the Ukraine example farm's outlines (fields.geojson), Danny's Firestore scripts
-docs/                     METHODS.md, CONNECT-DATA.md
+docs/                     METHODS.md, CONNECT-DATA.md, DEPLOY.md (the public copy)
 ```
 
 | Address | Page |

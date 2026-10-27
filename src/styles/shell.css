@@ -244,6 +244,33 @@
   text-decoration: none;
 }
 
+/* "Sign out" (only when an access code is set). */
+.sidebar-signout {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--c-text-2);
+  text-align: left;
+}
+
+.sidebar-signout svg {
+  flex: 0 0 auto;
+}
+
+.sidebar-signout:hover:not(:disabled) {
+  background: var(--c-surface-3);
+  color: var(--c-text);
+}
+
+.sidebar-note-error {
+  color: var(--c-red-text);
+}
+
 .avatar {
   display: grid;
   place-items: center;
@@ -286,6 +313,49 @@
   height: 100vh;
   display: flex;
   min-width: 0;
+}
+
+/* A page that could not be shown (src/layout/ErrorBoundary.jsx): a small
+   card with a Reload button instead of a blank screen. */
+.page-error {
+  display: grid;
+  place-items: center;
+  min-height: 60vh;
+  padding: var(--s-6) var(--s-4);
+}
+
+.page-error.is-full {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--c-bg);
+}
+
+.page-error-card {
+  width: 100%;
+  max-width: 400px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-3);
+  padding: var(--s-6);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-md);
+}
+
+.page-error-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--c-text);
+}
+
+.page-error-text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--c-text-2);
 }
 
 /* ---------- Small screens ---------- */
@@ -389,6 +459,11 @@
   .sidebar.is-rail .sidebar-account {
     justify-content: center;
     padding: 8px 0;
+  }
+
+  .sidebar.is-rail .sidebar-signout {
+    justify-content: center;
+    padding: 9px 0;
   }
 
   .rail-tip {

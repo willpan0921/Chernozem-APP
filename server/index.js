@@ -1,115 +1,82 @@
 // WHAT THIS FILE DOES
 // The production server ("npm start"): one program that serves the built
-// app from dist/ (made by "npm run build") and answers /api/ requests.
-// It also runs the monthly auto-analysis.
+// app from dist/ (made by "npm run build") and answers /api/ requests
+// (what it does with each request, and the safety headers on every
+// answer, are in server/web.js). It also runs the monthly auto-analysis.
 //
 // Port: PORT in .env (default 8787). Open http://localhost:8787
 // Address: HOST in .env. Without an access code (ATLAS_ACCESS_CODE) it
 // only answers this computer (127.0.0.1); with one it answers the whole
 // network (0.0.0.0), so officials can reach it once they have the code.
+// Online (https://chernozem.app on Render, docs/DEPLOY.md) Render sets
+// PORT, and render.yaml the data folder (CHERNOZEM_DATA_DIR). There it
+// refuses to start, with the reason in the log, when the access code is
+// missing, short or the docs' example, or when the data folder is not the
+// disk (server/online.js): the new version then never goes live.
+//
+// Idle connections are kept open for 125 seconds (Node's default is 5):
+// Render's proxy is reported to reuse a connection for up to 120 seconds,
+// and a request it sends on one this server has just closed fails with a
+// random 502 error (Render's troubleshooting page, "502 errors": raise
+// keepAliveTimeout and headersTimeout).
+//
+// When the host stops the server (a new version going live), the monthly
+// check's locks are let go first, so the new copy can start it at once.
 //
 // WHO EDITS IT
 // Nobody, normally.
 
 import http from "node:http";
-import fs from "node:fs";
-import path from "node:path";
-import { ROOT, config } from "./env.js";
-import { handleApi } from "./app.js";
+import { config } from "./env.js";
+import { createHandler } from "./web.js";
 import { startScheduler } from "./scheduler.js";
 import { accessCode } from "./auth.js";
+import { startProblems } from "./online.js";
+import { dataDir, releaseLock } from "./store.js";
 
-const DIST = path.join(ROOT, "dist");
+const KEEP_ALIVE_MS = 125 * 1000;
 
-const TYPES = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".mjs": "text/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".webp": "image/webp",
-  ".gif": "image/gif",
-  ".ico": "image/x-icon",
-  ".woff": "font/woff",
-  ".woff2": "font/woff2",
-  ".ttf": "font/ttf",
-  ".txt": "text/plain; charset=utf-8",
-  ".map": "application/json; charset=utf-8",
-  ".pdf": "application/pdf",
-  ".csv": "text/csv; charset=utf-8",
-  ".geojson": "application/geo+json",
-};
-
-function sendFile(res, file, req) {
-  const type = TYPES[path.extname(file).toLowerCase()] || "application/octet-stream";
-  res.statusCode = 200;
-  res.setHeader("Content-Type", type);
-  // Built files under assets/ have a fingerprint in their name: cache them.
-  res.setHeader("Cache-Control", file.includes(`${path.sep}assets${path.sep}`) ? "public, max-age=31536000, immutable" : "no-cache");
-  if (req.method === "HEAD") return res.end();
-  fs.createReadStream(file).pipe(res);
+const problems = startProblems();
+if (problems.length) {
+  // Written out in full before the program ends.
+  const text = `[chernozem] Not starting online:\n${problems.map((problem) => `  - ${problem}`).join("\n")}\n`;
+  process.stderr.write(text, () => process.exit(1));
+} else {
+  start();
 }
 
-function serveStatic(req, res) {
-  if (!fs.existsSync(path.join(DIST, "index.html"))) {
-    res.statusCode = 503;
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.end("The app is not built yet. Run: npm run build   (the /api/ addresses already work)\n");
-    return;
+function start() {
+  const server = http.createServer({ keepAliveTimeout: KEEP_ALIVE_MS, headersTimeout: KEEP_ALIVE_MS + 1000 }, createHandler());
+
+  const port = config().port;
+  const protectedByCode = Boolean(accessCode());
+  const host = (process.env.HOST || "").trim() || (protectedByCode ? "0.0.0.0" : "127.0.0.1");
+  const everywhere = host === "0.0.0.0" || host === "::";
+  server.listen(port, host, () => {
+    const shown = host.includes(":") ? `[${host}]` : host;
+    console.log(`Chernozem Atlas is running at http://${shown}:${port}`);
+    if (everywhere) console.log(`  (open to the network; on this computer use http://localhost:${port})`);
+    if (protectedByCode) console.log("  Access code: on (ATLAS_ACCESS_CODE). Visitors must enter it first.");
+    else if (everywhere) console.log("  Warning: no access code is set, so anyone on the network can use the app. Set ATLAS_ACCESS_CODE in .env.");
+    else console.log("  Access code: off (only this computer can open the app).");
+    console.log(`  Data folder: ${dataDir()}`);
+    startScheduler();
+  });
+
+  // Stopping (Control + C here, or the host replacing this copy): let go of
+  // the monthly check's locks, then end.
+  let stopping = false;
+  async function stop(signal) {
+    if (stopping) return;
+    stopping = true;
+    console.log(`[chernozem] Stopping (${signal}).`);
+    server.close();
+    // Never wait long: the host stops the program anyway.
+    const timer = setTimeout(() => process.exit(0), 3000);
+    timer.unref?.();
+    await Promise.allSettled([releaseLock("scheduler"), releaseLock("field-scheduler")]);
+    process.exit(0);
   }
-  let pathname;
-  try {
-    pathname = decodeURIComponent(new URL(req.url, "http://localhost").pathname);
-  } catch {
-    res.statusCode = 400;
-    return res.end("Bad address");
-  }
-  const file = path.normalize(path.join(DIST, pathname));
-  // Never serve anything outside dist/.
-  if (file.startsWith(DIST + path.sep) && fs.existsSync(file) && fs.statSync(file).isFile()) return sendFile(res, file, req);
-  // A missing file with an extension is a real 404; anything else is a page
-  // of the app (React decides what to show).
-  if (path.extname(pathname)) {
-    res.statusCode = 404;
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    return res.end("Not found");
-  }
-  return sendFile(res, path.join(DIST, "index.html"), req);
+  process.once("SIGTERM", () => stop("SIGTERM"));
+  process.once("SIGINT", () => stop("SIGINT"));
 }
-
-const server = http.createServer(async (req, res) => {
-  try {
-    if (await handleApi(req, res)) return;
-    if (req.method !== "GET" && req.method !== "HEAD") {
-      res.statusCode = 405;
-      return res.end();
-    }
-    serveStatic(req, res);
-  } catch (error) {
-    console.error("[chernozem] Request failed:", error);
-    if (!res.headersSent) {
-      res.statusCode = 500;
-      res.setHeader("Content-Type", "application/json; charset=utf-8");
-      // No details for the page (they can name folders); they are logged above.
-      res.end(JSON.stringify({ error: { code: "server_error", message: "Something went wrong on the server. See the server log for details." } }));
-    } else res.end();
-  }
-});
-
-const port = config().port;
-const protectedByCode = Boolean(accessCode());
-const host = (process.env.HOST || "").trim() || (protectedByCode ? "0.0.0.0" : "127.0.0.1");
-const everywhere = host === "0.0.0.0" || host === "::";
-server.listen(port, host, () => {
-  const shown = host.includes(":") ? `[${host}]` : host;
-  console.log(`Chernozem Atlas is running at http://${shown}:${port}`);
-  if (everywhere) console.log(`  (open to the network; on this computer use http://localhost:${port})`);
-  if (protectedByCode) console.log("  Access code: on (ATLAS_ACCESS_CODE). Visitors must enter it first.");
-  else if (everywhere) console.log("  Warning: no access code is set, so anyone on the network can use the app. Set ATLAS_ACCESS_CODE in .env.");
-  else console.log("  Access code: off (only this computer can open the app).");
-  startScheduler();
-});

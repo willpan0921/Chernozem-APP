@@ -107,6 +107,14 @@ export function refreshEnv() {
   loadEnvFile();
 }
 
+// True when the server runs on Render, the host of https://chernozem.app
+// (docs/DEPLOY.md), which always sets RENDER=true. A few safety rules
+// apply only there (server/online.js, server/auth.js).
+export function onRender(env = process.env) {
+  const value = String(env.RENDER ?? "").trim().toLowerCase();
+  return value !== "" && !["0", "false", "no", "off"].includes(value);
+}
+
 // Everything the server needs to know from the environment.
 export function config() {
   loadEnvFile();

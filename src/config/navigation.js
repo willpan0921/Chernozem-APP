@@ -31,8 +31,14 @@ export const products = {
     // The box under the switch shows the farm (Sidebar.jsx reads its name
     // and fields from the Field data); only the icon is set here.
     scope: { icon: Grid2x2 },
-    // The small note near the bottom of the sidebar.
-    privacyNote: "Your fields are private",
+    // The small note near the bottom of the sidebar: "private" on one's
+    // own computer, "shared" when the owner set an access code (everyone
+    // with the code sees and can change the same farm). Which one shows is
+    // worked out in src/lib/access.js from the server's answer.
+    privacyNote: {
+      private: "Your fields are private",
+      shared: "Shared with everyone who has the access code",
+    },
     account: { initials: "MF", label: "Account", tone: "farm" },
     pages: [
       { id: "overview", label: "Overview", path: "/field", icon: LayoutGrid },

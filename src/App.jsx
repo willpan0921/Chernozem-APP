@@ -19,6 +19,7 @@
 import { lazy, Suspense } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import AppShell from "./layout/AppShell.jsx";
+import ErrorBoundary from "./layout/ErrorBoundary.jsx";
 import { AtlasDataProvider } from "./state/AtlasData.jsx";
 import { FieldDataProvider } from "./state/FieldData.jsx";
 import AccessGate from "./components/atlas/AccessGate.jsx";
@@ -46,37 +47,41 @@ const AtlasReportPage = lazy(() => import("./pages/atlas/ReportPage.jsx"));
 // it only lets the app open once the visitor may use it. <Suspense> shows
 // nothing for the moment a page's code is first downloading; after that,
 // moving between pages keeps the old page on screen until the new one is
-// ready.
+// ready. A page that fails to show (its code gone after an update, or any
+// error) gets a message with a Reload button, never a blank screen: the
+// ErrorBoundary here, and the one around each page in AppShell.jsx.
 export default function App() {
   return (
-    <AccessGate>
-      <AtlasDataProvider>
-        <FieldDataProvider>
-          <Suspense fallback={null}>
-            <Routes>
-              <Route element={<AppShell />}>
-                <Route index element={<Navigate to="/field" replace />} />
+    <ErrorBoundary full>
+      <AccessGate>
+        <AtlasDataProvider>
+          <FieldDataProvider>
+            <Suspense fallback={null}>
+              <Routes>
+                <Route element={<AppShell />}>
+                  <Route index element={<Navigate to="/field" replace />} />
 
-                <Route path="/field" element={<FieldOverviewPage />} />
-                <Route path="/field/fields" element={<FieldFieldsPage />} />
-                <Route path="/field/ai" element={<FieldAiPage />} />
-                <Route path="/field/data" element={<FieldDataPage />} />
-                <Route path="/field/settings" element={<FieldSettingsPage />} />
+                  <Route path="/field" element={<FieldOverviewPage />} />
+                  <Route path="/field/fields" element={<FieldFieldsPage />} />
+                  <Route path="/field/ai" element={<FieldAiPage />} />
+                  <Route path="/field/data" element={<FieldDataPage />} />
+                  <Route path="/field/settings" element={<FieldSettingsPage />} />
 
-                <Route path="/atlas" element={<AtlasOverviewPage />} />
-                <Route path="/atlas/map" element={<AtlasMapPage />} />
-                <Route path="/atlas/ai" element={<AtlasAiPage />} />
-                <Route path="/atlas/data" element={<AtlasDataPage />} />
-                <Route path="/atlas/settings" element={<AtlasSettingsPage />} />
-                <Route path="/atlas/report" element={<AtlasReportPage />} />
+                  <Route path="/atlas" element={<AtlasOverviewPage />} />
+                  <Route path="/atlas/map" element={<AtlasMapPage />} />
+                  <Route path="/atlas/ai" element={<AtlasAiPage />} />
+                  <Route path="/atlas/data" element={<AtlasDataPage />} />
+                  <Route path="/atlas/settings" element={<AtlasSettingsPage />} />
+                  <Route path="/atlas/report" element={<AtlasReportPage />} />
 
-                {/* Anything else goes back to the Field overview. */}
-                <Route path="*" element={<Navigate to="/field" replace />} />
-              </Route>
-            </Routes>
-          </Suspense>
-        </FieldDataProvider>
-      </AtlasDataProvider>
-    </AccessGate>
+                  {/* Anything else goes back to the Field overview. */}
+                  <Route path="*" element={<Navigate to="/field" replace />} />
+                </Route>
+              </Routes>
+            </Suspense>
+          </FieldDataProvider>
+        </AtlasDataProvider>
+      </AccessGate>
+    </ErrorBoundary>
   );
 }

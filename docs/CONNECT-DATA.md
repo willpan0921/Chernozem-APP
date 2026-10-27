@@ -271,9 +271,9 @@ To go back to sample data at any time, set `GEE_DISABLED=1` in `.env` and restar
 
 On your own computer the app needs no code. Before handing it to anyone else (on your network or online), set an access code so only people you give it to can see the data.
 
-1. Add a line to `.env` with a long code, for example four random words:
+1. Make up a long code: four or more random words, or one a password manager makes. Never use a code printed in a document (anyone can read those). Add it to `.env`, in place of `<your code>`:
    ```
-   ATLAS_ACCESS_CODE=river-tractor-winter-maple
+   ATLAS_ACCESS_CODE=<your code>
    ```
 2. Restart the app. Everyone now sees a small sign-in card and types the code once; the browser remembers it for 30 days.
 3. Share the code in person or by phone, not in the same email as the link.
@@ -283,6 +283,8 @@ Good to know:
 - **10 wrong codes** from one address lock it out for 10 minutes.
 - With a code set, `npm start` answers the whole network (not just this computer). Without one it only answers this computer. To choose yourself, add `HOST=127.0.0.1` (this computer) or `HOST=0.0.0.0` (the network).
 - Online, put the app behind **https** (for example Caddy, nginx or Cloudflare Tunnel); the sign-in cookie is then sent over https only. Behind such a proxy, also add `ATLAS_TRUST_PROXY=1` so the wrong-code limit counts each visitor separately.
+- The public copy at https://chernozem.app runs on Render, with the code set there: see [DEPLOY.md](DEPLOY.md). There the code must be at least 16 characters, or the server does not start.
+- **Sign out** (at the bottom of the sidebar, shown only with a code) ends the sign-in on that browser: use it on a shared computer.
 - The code protects all the data of both products (farm, fields, reports and photos, areas, runs, team, AI chats). The page design itself (not the data) can still be loaded without it.
 
 ---

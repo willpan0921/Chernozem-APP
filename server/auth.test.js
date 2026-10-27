@@ -1,7 +1,9 @@
 // WHAT THIS FILE DOES
 // Tests the optional access code (server/auth.js): signing and checking
-// the sign-in cookie, running out after 30 days, the wrong-code limit, and
-// that without a code everything stays open. Run with "npm test".
+// the sign-in cookie, running out after 30 days, the wrong-code limit (and
+// which visitor it counts behind a proxy such as Render's), "shared" in the
+// status, and that without a code everything stays open. Run with
+// "npm test".
 //
 // WHO EDITS IT
 // Whoever changes server/auth.js.
@@ -16,6 +18,8 @@ import path from "node:path";
 // A temporary data folder and sample data; the code is switched per test.
 process.env.CHERNOZEM_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "chernozem-auth-"));
 process.env.GEE_DISABLED = "1";
+// Not on Render (where a short code keeps the app locked).
+process.env.RENDER = "";
 process.env.ATLAS_ACCESS_CODE = "";
 const auth = await import("./auth.js");
 const { handleApi } = await import("./app.js");
@@ -113,6 +117,34 @@ test("the wrong-code limit allows 10 per 10 minutes per address", () => {
   assert.equal(limit.check("1.2.3.4", t0 + 60_000).blocked, false, "reset clears the count");
 });
 
+test("the wrong-code limit remembers at most maxKeys visitors, the least recent forgotten first", () => {
+  const limit = auth.createLoginLimiter({ max: 1, maxKeys: 3 });
+  const t0 = 5_000_000;
+  for (const [i, key] of ["a", "b", "c"].entries()) limit.fail(key, t0 + i);
+  assert.equal(limit.size(), 3);
+  // "a" fails again: now the most recent, so "b" is the one forgotten.
+  limit.fail("a", t0 + 3);
+  limit.fail("d", t0 + 4);
+  assert.equal(limit.size(), 3);
+  assert.equal(limit.check("a", t0 + 5).blocked, true);
+  assert.equal(limit.check("b", t0 + 5).blocked, false, "forgotten");
+  assert.equal(limit.check("c", t0 + 5).blocked, true);
+  assert.equal(limit.check("d", t0 + 5).blocked, true);
+  assert.equal(auth.MAX_LIMITER_KEYS, 50_000);
+});
+
+test("visitors whose wrong codes ran out are swept away at most once a minute", () => {
+  const limit = auth.createLoginLimiter({ windowMs: 1000, sweepEveryMs: 60_000 });
+  const t0 = 9_000_000;
+  for (let i = 0; i < 100; i += 1) limit.fail(`old-${i}`, t0);
+  assert.equal(limit.size(), 100);
+  // Their wrong codes have run out, but the last sweep was just now.
+  limit.fail("new-1", t0 + 5000);
+  assert.equal(limit.size(), 101, "no sweep within the minute");
+  limit.fail("new-2", t0 + 61_000);
+  assert.equal(limit.size(), 1, "swept: only the visitor of this wrong code is left");
+});
+
 test("cookies are read from the Cookie header", () => {
   assert.deepEqual(auth.parseCookies("a=1; atlas_session=x.y.z; b=%20two"), { a: "1", atlas_session: "x.y.z", b: " two" });
   assert.deepEqual(auth.parseCookies(""), {});
@@ -125,7 +157,7 @@ test("open mode: without a code everything works as before", async () => {
   process.env.ATLAS_ACCESS_CODE = "";
   const status = await call("GET", "/api/auth/status");
   assert.equal(status.status, 200);
-  assert.deepEqual(status.json, { required: false, signedIn: true });
+  assert.deepEqual(status.json, { required: false, signedIn: true, shared: false });
   assert.equal((await call("GET", "/api/workspace")).status, 200);
   assert.equal((await call("GET", "/api/status")).status, 200);
   const login = await call("POST", "/api/auth/login", { body: { code: "anything" } });
@@ -138,7 +170,7 @@ test("with a code: the API needs the cookie, the chat too", async () => {
   process.env.ATLAS_ACCESS_CODE = "test123";
   auth.resetLoginLimits();
 
-  assert.deepEqual((await call("GET", "/api/auth/status")).json, { required: true, signedIn: false });
+  assert.deepEqual((await call("GET", "/api/auth/status")).json, { required: true, signedIn: false, shared: true });
   for (const [method, url] of [["GET", "/api/workspace"], ["GET", "/api/status"], ["GET", "/api/runs"], ["GET", "/api/chats?product=atlas"]]) {
     const res = await call(method, url);
     assert.equal(res.status, 401, url);
@@ -157,7 +189,8 @@ test("with a code: the API needs the cookie, the chat too", async () => {
   assert.match(ok.setCookie, /^atlas_session=[^;]+; Path=\/; Max-Age=2592000; HttpOnly; SameSite=Lax$/);
   const cookie = cookieOf(ok.setCookie);
 
-  assert.deepEqual((await call("GET", "/api/auth/status", { cookie })).json, { required: true, signedIn: true });
+  assert.deepEqual((await call("GET", "/api/auth/status", { cookie })).json, { required: true, signedIn: true, shared: true });
+  assert.equal(ok.json.shared, true, "the sign-in answer says so too");
   assert.equal((await call("GET", "/api/workspace", { cookie })).status, 200);
   assert.equal((await call("GET", "/api/workspace", { cookie: cookie + "x" })).status, 401, "a changed cookie is refused");
   assert.ok(fs.existsSync(path.join(process.env.CHERNOZEM_DATA_DIR, "auth.json")), "the salt is saved");
@@ -191,4 +224,199 @@ test("with a code: 10 wrong codes lock this address for 10 minutes", async () =>
   auth.resetLoginLimits();
   assert.equal((await call("POST", "/api/auth/login", { body: { code: "test123" } })).status, 200);
   process.env.ATLAS_ACCESS_CODE = "";
+});
+
+// ---------- The visitor behind a proxy (Render) ----------
+
+// Render puts Cloudflare (172.64.0.0/13 and others) and then its own load
+// balancer (a 10.x address) after the visitor, and keeps whatever the
+// visitor sent itself on the left.
+test("X-Forwarded-For: the visitor is the entry before Cloudflare's, never one the visitor typed", () => {
+  const visitor = auth.visitorFromForwarded;
+  assert.equal(visitor("81.107.0.110, 172.71.10.20, 10.201.3.4"), "81.107.0.110", "Render");
+  assert.equal(visitor("192.0.2.44,81.107.0.110, 172.71.10.20, 10.201.3.4"), "81.107.0.110", "Render, with a made-up entry on the left");
+  assert.equal(visitor("1.1.1.1, 172.64.0.1, 81.107.0.110, 172.71.10.20, 10.201.3.4"), "81.107.0.110", "made-up Cloudflare entries on the left do not help");
+  // Only the one Cloudflare address next to Render's own is passed over: a
+  // request that came through Cloudflare before (a Worker; chernozem.app's
+  // DNS is at GoDaddy, so never a second Cloudflare of its own) counts as
+  // that Cloudflare address, never as what its sender typed.
+  assert.equal(visitor("81.107.0.110, 162.158.1.1, 172.71.10.20, 10.0.0.9, 10.201.3.4"), "162.158.1.1", "two Cloudflare hops, two internal hops");
+  assert.equal(visitor("203.0.113.77, 2a06:98c0:3600::103, 172.71.10.5, 10.214.0.9"), "2a06:98c0:3600::103", "a Cloudflare Worker");
+  assert.equal(visitor("2a02:1210:2c4b:8f00:1d2c:3b4a:5968:7a8b, 172.71.10.20, 10.201.3.4"), "2a02:1210:2c4b:8f00:1d2c:3b4a:5968:7a8b", "an IPv6 visitor");
+  assert.equal(visitor("203.0.113.9, 2606:4700:10::ac43:1"), "203.0.113.9", "Cloudflare (IPv6) in front of one proxy");
+  // One proxy (nginx, Caddy, a tunnel): the address it saw, written last.
+  assert.equal(visitor("203.0.113.9"), "203.0.113.9");
+  assert.equal(visitor("6.6.6.6, 203.0.113.9"), "203.0.113.9", "a made-up entry on the left");
+  assert.equal(visitor("6.6.6.6, 192.168.1.5"), "192.168.1.5", "a visitor on the same network as the proxy");
+  assert.equal(visitor("10.0.0.7"), "10.0.0.7");
+  // Odd forms and junk.
+  assert.equal(visitor("[2001:db8::1]:443"), "2001:db8::1");
+  assert.equal(visitor("203.0.113.9:5678"), "203.0.113.9");
+  assert.equal(visitor("unknown, 81.107.0.110, 172.71.10.20"), "81.107.0.110");
+  assert.equal(visitor(""), null);
+  assert.equal(visitor("unknown"), null);
+  assert.equal(visitor(undefined), null);
+  // Known to be behind Cloudflare, but no Cloudflare address recognised (a
+  // range added since the list was made): the last address that is not
+  // private, not Render's load balancer for every visitor.
+  assert.equal(visitor("198.51.100.20, 10.214.0.9", { behindCloudflare: true }), "198.51.100.20");
+  assert.equal(visitor("6.6.6.6, 198.51.100.20, 10.214.0.9", { behindCloudflare: true }), "198.51.100.20");
+  assert.equal(visitor("10.214.0.9", { behindCloudflare: true }), "10.214.0.9");
+  assert.equal(visitor("81.107.0.110, 172.71.10.20, 10.201.3.4", { behindCloudflare: true }), "81.107.0.110");
+  // ...while one proxy keeps the address it saw (a visitor on its network).
+  assert.equal(visitor("198.51.100.20, 10.214.0.9"), "10.214.0.9");
+});
+
+test("where the visitor's address is read: Cloudflare on Render, one proxy, or none", () => {
+  const mode = auth.proxyMode;
+  assert.equal(mode({}), "socket");
+  assert.equal(mode({ ATLAS_TRUST_PROXY: "0" }), "socket");
+  assert.equal(mode({ ATLAS_TRUST_PROXY: "1" }), "forwarded");
+  assert.equal(mode({ ATLAS_TRUST_PROXY: "yes" }), "forwarded");
+  assert.equal(mode({ ATLAS_TRUST_PROXY: "Cloudflare" }), "cloudflare");
+  // Every request to a Render web service comes through Cloudflare.
+  assert.equal(mode({ RENDER: "true" }), "cloudflare");
+  assert.equal(mode({ RENDER: "true", ATLAS_TRUST_PROXY: "1" }), "cloudflare");
+  assert.equal(mode({ RENDER: "true", ATLAS_TRUST_PROXY: "off" }), "socket", "switched off on purpose");
+  assert.equal(mode({ RENDER: "false", ATLAS_TRUST_PROXY: "1" }), "forwarded");
+});
+
+test("behind Cloudflare: CF-Connecting-IP names the visitor, X-Forwarded-For only without it", () => {
+  const before = { trust: process.env.ATLAS_TRUST_PROXY, render: process.env.RENDER };
+  const req = (headers) => ({ socket: { remoteAddress: "::ffff:10.201.3.4" }, headers });
+  try {
+    process.env.RENDER = "";
+    process.env.ATLAS_TRUST_PROXY = "cloudflare";
+    assert.equal(auth.clientAddress(req({ "cf-connecting-ip": "81.107.0.110", "x-forwarded-for": "6.6.6.6, 81.107.0.110, 172.71.10.20, 10.201.3.4" })), "81.107.0.110");
+    // Typed entries in X-Forwarded-For change nothing.
+    assert.equal(auth.clientAddress(req({ "cf-connecting-ip": "81.107.0.110", "x-forwarded-for": "6.6.6.6, 7.7.7.7, 81.107.0.110, 172.71.10.20, 10.201.3.4" })), "81.107.0.110");
+    // A Cloudflare Worker: Cloudflare gives every Worker's request the same address.
+    assert.equal(auth.clientAddress(req({ "cf-connecting-ip": "2a06:98c0:3600::103", "x-forwarded-for": "203.0.113.77, 2a06:98c0:3600::103, 172.71.10.5, 10.214.0.9" })), "2a06:98c0:3600:0::/64");
+    assert.equal(auth.clientAddress(req({ "cf-connecting-ip": "2a02:1210:2c4b:8f00::1" })), "2a02:1210:2c4b:8f00::/64", "an IPv6 visitor, by its /64");
+    // Without the header (said once in the log): X-Forwarded-For.
+    assert.equal(auth.clientAddress(req({ "x-forwarded-for": "203.0.113.77, 2a06:98c0:3600::103, 172.71.10.5, 10.214.0.9" })), "2a06:98c0:3600:0::/64");
+    assert.equal(auth.clientAddress(req({ "cf-connecting-ip": "junk", "x-forwarded-for": "198.51.100.20, 10.214.0.9" })), "198.51.100.20");
+    assert.equal(auth.clientAddress(req({})), "10.201.3.4", "nothing at all: the address that connected");
+    // On Render the same happens with ATLAS_TRUST_PROXY=1 or none.
+    process.env.RENDER = "true";
+    for (const value of ["1", ""]) {
+      process.env.ATLAS_TRUST_PROXY = value;
+      assert.equal(auth.clientAddress(req({ "cf-connecting-ip": "81.107.0.110", "x-forwarded-for": "6.6.6.6, 81.107.0.110, 172.71.10.20, 10.201.3.4" })), "81.107.0.110", JSON.stringify(value));
+    }
+    // Behind one proxy that is not Cloudflare a typed CF-Connecting-IP is
+    // just text the visitor sent: never read.
+    process.env.RENDER = "";
+    process.env.ATLAS_TRUST_PROXY = "1";
+    assert.equal(auth.clientAddress(req({ "cf-connecting-ip": "1.2.3.4", "x-forwarded-for": "203.0.113.9" })), "203.0.113.9");
+    process.env.ATLAS_TRUST_PROXY = "";
+    assert.equal(auth.clientAddress(req({ "cf-connecting-ip": "1.2.3.4" })), "10.201.3.4");
+  } finally {
+    process.env.ATLAS_TRUST_PROXY = before.trust ?? "";
+    process.env.RENDER = before.render ?? "";
+  }
+});
+
+test("addresses are made plain, and IPv6 counts by its /64 network", () => {
+  assert.equal(auth.normalizeIp("::ffff:203.0.113.9"), "203.0.113.9");
+  assert.equal(auth.normalizeIp(" 2001:DB8::1 "), "2001:db8::1");
+  assert.equal(auth.normalizeIp("fe80::1%eth0"), "fe80::1");
+  assert.equal(auth.normalizeIp("not an address"), null);
+  assert.equal(auth.limitKey("203.0.113.9"), "203.0.113.9");
+  assert.equal(auth.limitKey("2a02:1210:2c4b:8f00:1d2c:3b4a:5968:7a8b"), "2a02:1210:2c4b:8f00::/64");
+  assert.equal(auth.limitKey("2a02:1210:2c4b:8f00::1"), "2a02:1210:2c4b:8f00::/64", "same line, another address: the same count");
+  assert.equal(auth.limitKey("2001:db8::1"), "2001:db8:0:0::/64");
+  assert.equal(auth.limitKey("::1"), "0:0:0:0::/64");
+  assert.equal(auth.limitKey("64:ff9b::192.0.2.1"), "64:ff9b:0:0::/64");
+  assert.equal(auth.limitKey(null), "unknown");
+});
+
+test("clientAddress reads X-Forwarded-For only with ATLAS_TRUST_PROXY", () => {
+  const req = { socket: { remoteAddress: "::ffff:10.201.3.4" }, headers: { "x-forwarded-for": "6.6.6.6, 81.107.0.110, 172.71.10.20, 10.201.3.4" } };
+  const before = process.env.ATLAS_TRUST_PROXY;
+  try {
+    process.env.ATLAS_TRUST_PROXY = "";
+    assert.equal(auth.clientAddress(req), "10.201.3.4", "off: the address that connected");
+    process.env.ATLAS_TRUST_PROXY = "1";
+    assert.equal(auth.clientAddress(req), "81.107.0.110");
+    assert.equal(auth.clientAddress({ socket: { remoteAddress: "127.0.0.1" }, headers: {} }), "127.0.0.1", "no header: the address that connected");
+    assert.equal(auth.clientAddress({ headers: {} }), "unknown");
+  } finally {
+    process.env.ATLAS_TRUST_PROXY = before ?? "";
+  }
+});
+
+test("behind Render: one visitor's wrong codes lock only that visitor, whatever it sends", async () => {
+  process.env.ATLAS_ACCESS_CODE = "test123";
+  process.env.ATLAS_TRUST_PROXY = "1";
+  auth.resetLoginLimits();
+  try {
+    const via = (visitor, typed = "") => ({ "X-Forwarded-For": `${typed ? `${typed}, ` : ""}${visitor}, 172.71.10.20, 10.201.3.4`, "X-Forwarded-Proto": "https" });
+    for (let i = 0; i < 10; i += 1) {
+      // A new made-up address every time does not reset the count.
+      const res = await call("POST", "/api/auth/login", { body: { code: `guess-${i}` }, headers: via("81.107.0.110", `198.51.100.${i}`) });
+      assert.equal(res.status, 401);
+    }
+    assert.equal((await call("POST", "/api/auth/login", { body: { code: "test123" }, headers: via("81.107.0.110", "198.51.100.200") })).status, 429);
+    const other = await call("POST", "/api/auth/login", { body: { code: "test123" }, headers: via("203.0.113.50") });
+    assert.equal(other.status, 200, "another visitor through the same load balancer is not locked out");
+    assert.match(other.setCookie, /; Secure$/);
+  } finally {
+    process.env.ATLAS_TRUST_PROXY = "";
+    process.env.ATLAS_ACCESS_CODE = "";
+    auth.resetLoginLimits();
+  }
+});
+
+// ---------- Online (on Render): a code that really locks ----------
+
+test("online a code must be at least 16 characters and not the docs' example", () => {
+  const problem = auth.accessCodeProblem;
+  assert.equal(problem(null), "missing");
+  assert.equal(problem(""), "missing");
+  assert.equal(problem("x"), "short");
+  assert.equal(problem("fifteen-chars!!"), "short");
+  assert.equal(problem("sixteen-chars!!!"), null);
+  for (const example of ["river-tractor-winter-maple", "River Tractor Winter Maple", "river_tractor_winter_maple", "RiverTractorWinterMaple!"]) {
+    assert.equal(problem(example), "published", example);
+  }
+  assert.equal(problem("river-tractor-winter-maple-2"), null, "only the example itself");
+  assert.equal(auth.ACCESS_CODE_MIN_LENGTH, 16);
+});
+
+test("online with no code, a short one or the example, the app stays locked whatever is typed", async () => {
+  const before = process.env.RENDER;
+  process.env.RENDER = "true";
+  auth.resetLoginLimits();
+  try {
+    for (const code of ["", "x", "river-tractor-winter-maple"]) {
+      process.env.ATLAS_ACCESS_CODE = code;
+      const label = JSON.stringify(code);
+      assert.deepEqual((await call("GET", "/api/auth/status")).json, { required: true, signedIn: false, shared: true }, label);
+      assert.equal((await call("GET", "/api/workspace")).status, 401, label);
+      assert.equal((await call("GET", "/api/status")).status, 401, label);
+      const login = await call("POST", "/api/auth/login", { body: { code: code || "anything" } });
+      assert.equal(login.status, 503, label);
+      assert.equal(login.json.error.code, "access_code_off", label);
+      assert.match(login.json.error.message, /at least|shorter than 16/, label);
+      assert.equal(login.setCookie, null, `${label}: no sign-in`);
+      const logout = await call("POST", "/api/auth/logout");
+      assert.equal(logout.json.signedIn, false, label);
+    }
+    // A proper code works online as anywhere.
+    process.env.ATLAS_ACCESS_CODE = "orchard-lantern-pebble-cobalt";
+    assert.equal((await call("POST", "/api/auth/login", { body: { code: "wrong-but-long-enough" } })).status, 401);
+    const ok = await call("POST", "/api/auth/login", { body: { code: "orchard-lantern-pebble-cobalt" } });
+    assert.equal(ok.status, 200);
+    assert.equal((await call("GET", "/api/workspace", { cookie: cookieOf(ok.setCookie) })).status, 200);
+    // A cookie made with a good code stops working once the code becomes a bad one.
+    process.env.ATLAS_ACCESS_CODE = "short";
+    assert.equal((await call("GET", "/api/workspace", { cookie: cookieOf(ok.setCookie) })).status, 401);
+  } finally {
+    process.env.RENDER = before ?? "";
+    process.env.ATLAS_ACCESS_CODE = "";
+    auth.resetLoginLimits();
+  }
+  // On one's own computer (no RENDER) no code still means open.
+  assert.deepEqual((await call("GET", "/api/auth/status")).json, { required: false, signedIn: true, shared: false });
+  assert.equal((await call("GET", "/api/workspace")).status, 200);
 });

@@ -1,0 +1,85 @@
+# WHAT THIS FILE DOES
+# The recipe Render (render.com) follows to run Chernozem online at
+# https://chernozem.app: one web service, built from this repository's
+# main branch and put live again after every push, with a 1 GB disk that
+# keeps the data (the farm, the Atlas areas and months, the team, the
+# chats) through restarts and new versions. docs/DEPLOY.md explains it in
+# plain words.
+#
+# Render reads this file only for a service made from it as a "Blueprint"
+# (Render: New > Blueprint); a change to it pushed to main is then applied
+# too. A service made any other way (by hand, or through Render's API)
+# never reads it: give that service every setting below yourself (the
+# disk, the commands, the health check, the build filter and each envVar).
+#
+# No secrets here: this repository is public. The four settings marked
+# "sync: false" are typed into Render's dashboard (the service's
+# Environment page) and never leave it.
+#
+# The server refuses to start online without a proper access code (at
+# least 16 characters, not the example from the docs) or without the disk
+# (server/online.js): the deploy then fails, with the reason in the log,
+# instead of putting an open or forgetful app live. (HOST is not set: with
+# an access code the server answers on every address by itself.)
+#
+# WHO EDITS IT
+# Nobody, normally. The secrets are changed in the dashboard only.
+
+services:
+  - type: web
+    name: chernozem
+    runtime: node
+    # 0.5 CPU and 512 MB, $7 a month (Render's newer name for it: 0.5c-512mb).
+    plan: starter
+    region: ohio
+    branch: main
+    # Every push to main goes live (the current name of "autoDeploy: true").
+    autoDeployTrigger: commit
+    # ...except a push that changes only the docs: no restart for nothing
+    # (the site is away a few seconds at each one, and a running analysis
+    # stops).
+    buildFilter:
+      ignoredPaths:
+        - "docs/**"
+        - "**/*.md"
+    # NODE_ENV is not set to production: the build needs the
+    # devDependencies (Vite).
+    buildCommand: npm ci && npm run build
+    # node itself, not "npm start": npm would stay running beside it and
+    # use about 70 MB of the 512.
+    startCommand: node server/index.js
+    # Answers { ok: true } without the access code (server/app.js).
+    healthCheckPath: /api/health
+    # Only this folder survives a restart or a new version.
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      # Vite 8 and firebase-admin need Node 22 or newer; this is the Node
+      # the app is built and tested with.
+      - key: NODE_VERSION
+        value: "24"
+      - key: CHERNOZEM_DATA_DIR
+        value: /var/data
+      # Every request comes through Cloudflare, which says who the visitor
+      # is in CF-Connecting-IP (server/auth.js reads it for the limit of
+      # 10 wrong codes per visitor).
+      - key: ATLAS_TRUST_PROXY
+        value: cloudflare
+      - key: GEE_PROJECT_ID
+        value: chernozem-danny
+      - key: GEE_CHERNOZEM_ASSET
+        value: none
+      # Secrets: set in the dashboard.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GEE_SERVICE_ACCOUNT_JSON
+        sync: false
+      # At least 16 characters, made up (never one printed anywhere).
+      - key: ATLAS_ACCESS_CODE
+        sync: false
+      # Only for the one-time upload of the data (docs/DEPLOY.md); remove
+      # it in the dashboard once the upload is done.
+      - key: IMPORT_TOKEN
+        sync: false
