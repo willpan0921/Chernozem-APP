@@ -285,7 +285,8 @@ function SoilTypes({ state, what }) {
       </p>
     );
   } else if (status === "error") {
-    body = <p className="mp-soil-note">The soil types could not be read: {error?.message || "try again later"}.</p>;
+    // (The server's message ends with a full stop of its own.)
+    body = <p className="mp-soil-note">The soil types could not be read: {(error?.message || "try again later").replace(/\.+$/, "")}.</p>;
   } else if (!soil?.available) {
     body = <p className="mp-soil-note">{soil?.message || "The soil type needs Earth Engine."}</p>;
   } else if (!soil.top?.length) {
@@ -743,10 +744,11 @@ function MapView({ held }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [area.id]);
 
-  // Esc closes the picked place.
+  // Esc closes the picked place: not while a dialog ("How it's measured")
+  // is open, when Esc closes the dialog alone.
   useEffect(() => {
     if (!focus || changing) return;
-    const onKey = (event) => event.key === "Escape" && setFocus(null);
+    const onKey = (event) => event.key === "Escape" && !document.querySelector("dialog[open]") && setFocus(null);
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // setFocus only wraps setParams.

@@ -55,12 +55,22 @@
 //                                       host's health check; no data, no code)
 //   POST   /api/admin/import            the one-time data upload, only while
 //                                       IMPORT_TOKEN is set (server/import.js)
+//   POST   /api/contact                 a message from the public website's
+//                                       contact form (no code; 5 an hour per
+//                                       visitor; server/messages.js)
+//   GET    /api/messages                those messages, newest first (Atlas
+//                                       Settings shows them)
+//   DELETE /api/messages/:id            remove one
 //
 // When ATLAS_ACCESS_CODE is set in .env, every address above except the
-// sign-in ones (/api/auth/...), /api/health and /api/admin/import (which
-// has its own token) needs a signed-in browser.
+// sign-in ones (/api/auth/...), /api/health, /api/contact (the website's
+// form) and /api/admin/import (which has its own token) needs a signed-in
+// browser.
 //
-// Errors always come back as { error: { code, message } }.
+// Errors always come back as { error: { code, message } }. A request that
+// changes something (anything but GET or HEAD) sent by another website a
+// visitor has open is refused first of all, with 403 cross_site
+// (server/auth.js assertSameSite).
 //
 // WHO EDITS IT
 // Whoever adds a route. Keep the list above up to date.
@@ -89,8 +99,9 @@ import { checkAreaWar } from "../src/config/conflicts.js";
 import { getProvider, providerStatus, withTimeout } from "./providers/index.js";
 import { schedulerStatus } from "./scheduler.js";
 import { checkSettings } from "../src/lib/atlas/method.js";
-import { handleAuth } from "./auth.js";
+import { assertSameSite, handleAuth } from "./auth.js";
 import { handleAdmin } from "./import.js";
+import { handleContact, handleMessages } from "./messages.js";
 import { handleFieldRoutes } from "./field/routes.js";
 import { unitsForArea } from "./units.js";
 import { soilFor } from "./soil.js";
@@ -426,11 +437,18 @@ async function route(req, res, url) {
   const [first, second, third] = parts;
   const q = url.searchParams;
 
+  // Before anything: a request that changes something must come from this
+  // app's own pages, not from another website a visitor has open
+  // (server/auth.js). Reads (GET, HEAD) are left alone.
+  assertSameSite(req, method);
+
   // Before the access code: the health check (the host asks it every few
-  // seconds; it says nothing about the data) and the data upload, which
-  // has its own token (server/import.js).
+  // seconds; it says nothing about the data), the data upload, which has
+  // its own token (server/import.js), and the public website's contact
+  // form, which has its own limits (server/messages.js).
   if (first === "health" && !second && (method === "GET" || method === "HEAD")) return sendJson(res, 200, { ok: true });
   if (first === "admin") return handleAdmin(req, res, { method, parts, pathname: url.pathname });
+  if (first === "contact") return handleContact(req, res, { method, parts, pathname: url.pathname });
 
   // The access code (server/auth.js) comes before every other route: it
   // answers /api/auth/... and, when a code is set, stops browsers that have
@@ -438,6 +456,9 @@ async function route(req, res, url) {
   if (await handleAuth(req, res, { method, first, second, third })) return;
 
   if (first === "chat" || first === "chats") return handleChat(req, res, url);
+
+  // The messages the contact form brought, for Atlas Settings.
+  if (first === "messages") return handleMessages(req, res, { method, second, third, pathname: url.pathname });
 
   // The Field product (farm, fields, reports, weather, place search).
   if (first === "farm" || first === "geocode") {

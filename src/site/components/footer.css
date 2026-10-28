@@ -1,0 +1,117 @@
+/*
+  WHAT THIS FILE DOES
+  The website's footer (Footer.jsx).
+
+  WHO EDITS IT
+  Whoever works on the website's footer.
+*/
+
+.sf {
+  background: var(--s-soil);
+  color: var(--s-cream);
+  padding: 72px 0 28px;
+  position: relative;
+  overflow: hidden;
+}
+
+.sf-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 2fr);
+  gap: 48px;
+  padding-bottom: 48px;
+  border-bottom: 1px solid var(--s-soil-line);
+}
+
+.sf-brand {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.sf-name {
+  font-family: var(--s-display);
+  font-size: 1.5rem;
+  letter-spacing: -0.01em;
+}
+
+.sf-tag {
+  color: rgba(243, 238, 227, 0.6);
+  font-size: 0.95rem;
+}
+
+.sf-cols {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.sf-col {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.sf-col .sf-head {
+  font-family: var(--s-mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(243, 238, 227, 0.5);
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+
+.sf-col a {
+  color: rgba(243, 238, 227, 0.82);
+  font-size: 0.96rem;
+  width: fit-content;
+  padding: 8px 0;
+  margin: -6px 0;
+  transition: color 0.2s, transform 0.3s var(--ease-out);
+}
+
+.sf-col a:hover {
+  color: var(--s-sage-2);
+  transform: translateX(3px);
+}
+
+.sf-word {
+  font-family: var(--s-display);
+  font-weight: 500;
+  font-size: clamp(4rem, 17vw, 15rem);
+  line-height: 0.85;
+  letter-spacing: -0.04em;
+  margin: 36px 0 0;
+  color: transparent;
+  background: linear-gradient(180deg, rgba(243, 238, 227, 0.16), rgba(243, 238, 227, 0.02));
+  -webkit-background-clip: text;
+  background-clip: text;
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.sf-bottom {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin-top: 24px;
+  font-size: 0.86rem;
+  color: rgba(243, 238, 227, 0.55);
+}
+
+.sf-promise {
+  max-width: 60ch;
+}
+
+@media (max-width: 800px) {
+  .sf-top {
+    grid-template-columns: 1fr;
+    gap: 36px;
+  }
+
+  .sf-cols {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

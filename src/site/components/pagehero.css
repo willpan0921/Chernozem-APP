@@ -1,0 +1,31 @@
+/*
+  WHAT THIS FILE DOES
+  The page headers of the website (PageHero.jsx): the drifting grid of map
+  squares behind them and the words of the headline rising in.
+
+  WHO EDITS IT
+  Whoever works on the website's pages.
+*/
+
+.ph-grid {
+  position: absolute;
+  inset: -40px;
+  background-image:
+    linear-gradient(rgba(184, 203, 159, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(184, 203, 159, 0.07) 1px, transparent 1px);
+  background-size: 34px 34px;
+  mask-image: radial-gradient(70% 90% at 70% 30%, #000 20%, transparent 75%);
+  -webkit-mask-image: radial-gradient(70% 90% at 70% 30%, #000 20%, transparent 75%);
+  animation: ph-drift 30s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes ph-drift {
+  to {
+    transform: translate(34px, 34px);
+  }
+}
+
+.ph-title {
+  max-width: 18ch;
+}

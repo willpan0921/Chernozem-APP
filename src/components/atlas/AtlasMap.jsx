@@ -57,7 +57,10 @@
 // Layers, bottom to top: the base map, the squares (or, in the States
 // view, the units' fills), the units' borders, the marks (picked and
 // highlighted squares or units), the units' names. Only the squares and the
-// fills take clicks; the panes above them let clicks through.
+// fills take clicks; the panes above them let clicks through, and the
+// fills' pane only while the States view is on (its canvas stays on the
+// map after the fills are taken off, and would otherwise sit over the
+// squares and swallow their taps and hovers).
 //
 // The container carries data-zoom="<zoom level>" so tests can check that
 // zooming worked. The colours come from CSS variables in tokens.css.
@@ -87,7 +90,8 @@ const AREA_PADDING = [24, 24];
 const CELL_OPACITY = 0.82;
 const UNIT_OPACITY = 0.86;
 // The panes over the squares (Leaflet's overlay pane is 400): the States
-// view's fills take clicks; the borders, marks and names let them through.
+// view's fills take clicks (only while that view is on: the States view
+// effect below); the borders, marks and names let them through.
 const PANES = [
   ["atlasUnitFill", 405, true],
   ["atlasUnitLines", 420, false],
@@ -603,6 +607,12 @@ export default function AtlasMap({
       if (showUnits && !map.hasLayer(fill)) fill.addTo(map);
       if (!showUnits && map.hasLayer(fill)) fill.remove();
     }
+    // Taking the fills off leaves their canvas in its pane (Leaflet never
+    // removes a renderer with its shapes), above the squares' canvas: it
+    // would take every tap and hover meant for a square. So the pane takes
+    // clicks only while the fills are shown.
+    const fillPane = map.getPane("atlasUnitFill");
+    if (fillPane) fillPane.style.pointerEvents = showUnits ? "" : "none";
     layers.current.unitLines?.setStyle(showUnits ? { weight: 2, opacity: 1 } : { weight: 1.5, opacity: 0.85 });
     wrapRef.current?.classList.toggle("is-unit-view", showUnits);
     layers.current.relayout?.();

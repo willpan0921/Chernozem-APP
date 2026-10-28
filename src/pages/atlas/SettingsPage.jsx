@@ -1,5 +1,5 @@
 // WHAT THIS FILE DOES
-// The Atlas Settings page (/atlas/settings). Five cards:
+// The Atlas Settings page (/atlas/settings). Six cards:
 //   Area   the area being analyzed, "New area" (country, GPS coordinates
 //          or a drawn shape) and the saved areas: open, rename, remove,
 //          with "Analyzing…" or "Waiting" while one is in the line of
@@ -19,6 +19,9 @@
 //   AI     Claude status (the key is tested by "Check connections") and
 //          the .env line that connects it
 //   Team   who has access: add, change role, remove
+//   Messages from the website   what visitors sent through the public
+//          website's contact page (server/messages.js): read, write back
+//          by e-mail (a mailto link), delete. No e-mail is sent by the app
 // Everything is saved on the Atlas server (server/app.js) straight away.
 //
 // WHO EDITS IT
@@ -47,8 +50,9 @@ import {
 import { PageHeader, Card, Badge, Button, Segmented, Toggle } from "../../components/ui/index.js";
 import { AnalysisNotice, AnalysisProgress, AtlasGate, useAtlasData } from "../../state/AtlasData.jsx";
 import AreaPicker from "../../components/atlas/AreaPicker.jsx";
-import { API_ROOT, ApiError, AUTH_REQUIRED_EVENT, listJobs } from "../../api/atlasApi.js";
+import { API_ROOT, ApiError, AUTH_REQUIRED_EVENT, OFFLINE_MESSAGE, deleteMessage, listJobs, listMessages } from "../../api/atlasApi.js";
 import { lineMarks } from "../../lib/atlas/analysisNotice.js";
+import { formatReceived, messageCountText } from "../../lib/atlas/messages.js";
 import { formatAreaSize, formatMonthYear } from "../../lib/format.js";
 import { EARLIEST_WAR_DAY, WAR_NAME_MAX, checkAreaWar, crisisFormFor } from "../../config/conflicts.js";
 import { DISASTER_LABELS, DISASTER_TYPES, isDisaster } from "../../lib/atlas/method.js";
@@ -101,7 +105,7 @@ async function send(method, path, body) {
       cache: "no-store",
     });
   } catch {
-    throw new ApiError("Could not reach the Atlas server. Check that it is running (npm run dev) and try again.", { code: "offline" });
+    throw new ApiError(OFFLINE_MESSAGE, { code: "offline" });
   }
   let json = null;
   try {
@@ -175,7 +179,9 @@ function StatusRow({ icon, title, badge, meta, action }) {
 // "Remove" when it asks, and back to the bin after Keep or an error.
 //   onRemove: async () => {}   (throw to show an error)
 //   onError(message | null)
-function RemoveButton({ label, onRemove, onError, disabled }) {
+//   words: what the asking button says, ["Remove", "Removing…"] unless
+//          given (the messages card says Delete)
+function RemoveButton({ label, onRemove, onError, disabled, words = ["Remove", "Removing…"] }) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const binRef = useRef(null);
@@ -212,7 +218,7 @@ function RemoveButton({ label, onRemove, onError, disabled }) {
     return (
       <div className="aset-confirm" onKeyDown={(event) => event.key === "Escape" && keep()}>
         <Button ref={removeRef} variant="danger" size="sm" disabled={busy} onClick={remove}>
-          {busy ? "Removing…" : "Remove"}
+          {busy ? words[1] : words[0]}
         </Button>
         <Button variant="ghost" size="sm" icon={<X size={14} />} aria-label="Keep" disabled={busy} onClick={keep} />
       </div>
@@ -350,6 +356,10 @@ function useLineMarks() {
   useEffect(() => {
     let stopped = false;
     let timer;
+    const stop = () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
     const tick = async () => {
       if (typeof document === "undefined" || !document.hidden) {
         try {
@@ -362,9 +372,13 @@ function useLineMarks() {
       if (!stopped) timer = setTimeout(tick, LINE_POLL_MS);
     };
     tick();
+    // Signed out (the sidebar's "Sign out", or any call answered 401): the
+    // asking stops at once, rather than going on (and being refused) until
+    // the access card replaces this page.
+    window.addEventListener(AUTH_REQUIRED_EVENT, stop);
     return () => {
-      stopped = true;
-      clearTimeout(timer);
+      stop();
+      window.removeEventListener(AUTH_REQUIRED_EVENT, stop);
     };
   }, []);
   return lineMarks(jobs ?? serverStatus?.jobs ?? []);
@@ -1238,6 +1252,88 @@ function TeamCard() {
   );
 }
 
+// ---------- Messages from the website ----------
+
+// One message: who sent it (their organization, their address as a
+// mailto link), when, the text, and a Delete button that asks first.
+function MessageRow({ message, onRemoved }) {
+  const [error, setError] = useState(null);
+  return (
+    <li className="aset-message" data-message={message.id}>
+      <div className="aset-message-head">
+        <div className="aset-message-who">
+          <span className="aset-message-name">{message.name}</span>
+          {message.organization && <span className="aset-row-meta">{message.organization}</span>}
+          <a className="aset-message-email" href={`mailto:${message.email}`}>
+            {message.email}
+          </a>
+        </div>
+        <time className="aset-row-meta aset-message-when" dateTime={message.receivedAt}>
+          {formatReceived(message.receivedAt)}
+        </time>
+        <RemoveButton
+          label={`Delete the message from ${message.name}`}
+          words={["Delete", "Deleting…"]}
+          onError={setError}
+          onRemove={async () => {
+            await deleteMessage(message.id);
+            onRemoved(message.id);
+          }}
+        />
+      </div>
+      <p className="aset-message-text">{message.message}</p>
+      {error && (
+        <p className="aset-error" role="alert">
+          {error}
+        </p>
+      )}
+    </li>
+  );
+}
+
+// The messages visitors sent through the public website's contact page
+// (server/messages.js), newest first. Asked for once when the page opens.
+function MessagesCard() {
+  const [messages, setMessages] = useState(null); // null while loading
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let stopped = false;
+    listMessages()
+      .then((list) => {
+        if (!stopped) setMessages(list);
+      })
+      .catch((err) => {
+        if (stopped) return;
+        setError(errorText(err));
+        setMessages([]);
+      });
+    return () => {
+      stopped = true;
+    };
+  }, []);
+
+  const count = messages?.length ?? 0;
+  return (
+    <Card className="aset-card" title="Messages from the website" actions={messages && <Badge tone="outline">{count}</Badge>}>
+      {error && (
+        <p className="aset-error" role="alert">
+          {error}
+        </p>
+      )}
+      {messages === null && !error && <p className="aset-hint">Loading…</p>}
+      {messages && count === 0 && !error && <p className="aset-hint">{messageCountText(0)}</p>}
+      {count > 0 && (
+        <ul className="aset-list aset-messages" aria-label={messageCountText(count)}>
+          {messages.map((message) => (
+            <MessageRow key={message.id} message={message} onRemoved={(id) => setMessages((prev) => (prev || []).filter((other) => other.id !== id))} />
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
 // ---------- The page ----------
 
 export default function SettingsPage() {
@@ -1310,6 +1406,7 @@ export default function SettingsPage() {
       <DataCard key={`data-${area?.id || "none"}`} />
       <AiCard ai={ai} checking={checking} />
       <TeamCard />
+      <MessagesCard />
     </div>
   );
 }

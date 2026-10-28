@@ -53,6 +53,7 @@ The online app is **one workspace that everyone shares**:
 - The access code is the only lock. Give it only to people who may see and change everything, in person or by phone, not in the same email as the link.
 - The Field sidebar says so: "Shared with everyone who has the access code" (on your own computer, without a code, it still says "Your fields are private").
 - A browser stays signed in for 30 days. On a shared computer (an office, a library), press **Sign out** at the bottom of the sidebar when you are done, so the next person needs the code again.
+- Messages sent from the public website's contact page arrive in **Atlas > Settings** ("Messages from the website"), where anyone with the code can read and delete them; the server sends no e-mail, so look there.
 
 ## 4. Setting it up (once)
 

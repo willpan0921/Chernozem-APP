@@ -194,10 +194,13 @@ export function cropInfo(field, analysis) {
 
 // The empty choice of the crop select in Settings: what the field shows
 // until the farmer picks a crop. "Detected: Corn", "Detected: Corn
-// (possible)", "Detecting…" while the field is analysed, or "Not detected".
+// (possible)", "Last season: Corn" (as next to the field's name: this
+// season has not peaked yet), "Detecting…" while the field is analysed,
+// or "Not detected". Kept short: the select is 272 px wide
+// (SettingsPage.css) and cuts what does not fit.
 export function detectedChoice(analysis, { analysing = false } = {}) {
   const found = analysis?.cropDetected;
-  if (found?.id && found.id !== "unknown" && found.label && found.season === "last") return `Detected last season: ${found.label}`;
+  if (found?.id && found.id !== "unknown" && found.label && found.season === "last") return `Last season: ${found.label}`;
   if (found?.id && found.id !== "unknown" && found.label) return `Detected: ${found.label}${found.confidence === "possible" ? " (possible)" : ""}`;
   if (analysing || !analysis) return "Detecting…";
   return "Not detected";
@@ -584,7 +587,13 @@ export function fieldTiles(analysis, { units = "ha", weather = null, crop = null
   // An unknown crop that is possibly grass and was cut: harvested, or a
   // hay cut (it is not certain enough to be read as fallow, "Cut or mown").
   const maybeHay = harvest.cropUnknown && harvest.stage === "harvested" && a.cropDetected?.possiblyFallow ? "Possibly grass: may be a hay cut" : null;
-  const unknownNote = harvest.cropUnknown && !["harvested", "notSown", "unknown"].includes(harvest.stage) ? (fallow ? `${FALLOW_LABEL}: no harvest expected` : "Crop unknown: pick it in Settings for a harvest estimate") : maybeHay;
+  // A crop was detected this season but not used for the estimate (its
+  // dry-down did not fit its usual harvest, so the detection is only
+  // "possible": server/field/analysis.js): "not confirmed", since the
+  // page shows it next to the field's name, rather than "unknown".
+  const detectedUnused = Boolean(a.cropDetected?.id) && !["unknown", "fallow"].includes(a.cropDetected.id) && a.cropDetected.season !== "last";
+  const askNote = `${detectedUnused ? "Crop not confirmed" : "Crop unknown"}: pick it in Settings for a harvest estimate`;
+  const unknownNote = harvest.cropUnknown && !["harvested", "notSown", "unknown"].includes(harvest.stage) ? (fallow ? `${FALLOW_LABEL}: no harvest expected` : askNote) : maybeHay;
   const gdd = harvest.gdd;
   // Fallow or grass: nothing to harvest. Cut on radar (or by the optical
   // drop) is "Cut or mown", never "Harvested".

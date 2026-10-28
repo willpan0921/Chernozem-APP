@@ -113,6 +113,9 @@ export default function AccessGate({ children }) {
         <Button variant="primary" size="lg" block type="submit" disabled={busy || !code.trim()}>
           {busy ? "Checking..." : "Enter"}
         </Button>
+        <p className="access-foot">
+          No code yet? <a href="/">Read about Chernozem</a> or <a href="/contact">ask for access</a>.
+        </p>
       </form>
     </main>
   );

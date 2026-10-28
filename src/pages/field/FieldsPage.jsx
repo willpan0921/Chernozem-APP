@@ -19,7 +19,8 @@
 //          measured" link (src/components/field/HowMeasured.jsx, words in
 //          src/config/research.js fieldMethods).
 //          The crop is the farmer's own, else the detected one ("Corn ·
-//          detected", format.js cropInfo). A new field shows "Analysing…"
+//          detected", format.js cropInfo), left out after a "Fallow or
+//          grass" badge, which says it already. A new field shows "Analysing…"
 //          (on the map too) until its first analysis is saved. The legend
 //          always shows the full Poor-to-Very-good scale (a crop now, or
 //          how the season went after harvest) and the usual marks; "Needs
@@ -314,6 +315,7 @@ function FieldPanel({ field, analysis, units, weather, job, analysing, count, on
   const running = job?.status === "running" && updating;
   const failed = job?.status === "error" && updating ? job.error : null;
   const cropTitle = crop.source === "detected" ? [crop.confidence === "possible" ? "Possible crop, detected from the season's curve" : "Detected from the season's curve", crop.reason].filter(Boolean).join(": ") : undefined;
+  const cropText = status?.id === "fallow" ? null : crop.text;
 
   const analyse = async () => {
     setStarting(true);
@@ -346,12 +348,13 @@ function FieldPanel({ field, analysis, units, weather, job, analysing, count, on
         <div className="fp-meta">
           {status ? <Badge tone={status.tone || "outline"}>{status.label}</Badge> : analysing ? <Badge tone="outline">{ANALYSING_LABEL}</Badge> : null}
           <span>
-            {crop.text && (
+            {/* The badge already says "Fallow or grass": the crop is not repeated after it. */}
+            {cropText && (
               <span className={crop.source === "detected" ? "fp-crop is-detected" : "fp-crop"} title={cropTitle}>
-                {crop.text}
+                {cropText}
               </span>
             )}
-            {crop.text ? " · " : ""}
+            {cropText ? " · " : ""}
             {formatArea(field.areaHa, units)}
           </span>
         </div>

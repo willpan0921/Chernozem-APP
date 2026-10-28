@@ -4,9 +4,10 @@
 //
 //   No ATLAS_ACCESS_CODE in .env  ->  everything stays open (local use).
 //   ATLAS_ACCESS_CODE=something   ->  every /api/ address needs a signed-in
-//                                     browser, except these (and the two
+//                                     browser, except these (and the three
 //                                     in server/app.js that need no code:
-//                                     /api/health and /api/admin/import):
+//                                     /api/health, /api/contact and
+//                                     /api/admin/import):
 //
 //   GET  /api/auth/status    { required, signedIn, shared }  (the page asks this first)
 //   POST /api/auth/login     body { code }  ->  sets the sign-in cookie
@@ -16,6 +17,11 @@
 // shared is true when a code is set: the app is then one workspace that
 // everyone with the code sees and can change (the Field sidebar says so
 // instead of "Your fields are private").
+//
+// Also here, for every /api/ route (server/app.js calls assertSameSite
+// first): a request that changes something is refused (403 cross_site)
+// when a browser says another website sent it, code or no code. See
+// "Requests sent by other websites" below.
 //
 // ONLINE (on Render: https://chernozem.app, docs/DEPLOY.md) the code must
 // be at least 16 characters and must not be the example once printed in
@@ -281,6 +287,66 @@ export function parseCookies(header) {
 export function isHttps(req) {
   if (req.socket?.encrypted) return true;
   return String(req.headers?.["x-forwarded-proto"] || "").split(",")[0].trim().toLowerCase() === "https";
+}
+
+// ---------- Requests sent by other websites ----------
+
+// A request that changes something (anything but GET or HEAD) must come
+// from this app's own pages, never from another website a visitor has
+// open: that website could otherwise sign the visitor out, spend their ten
+// wrong-code tries, or change the workspace with their cookie. Browsers
+// say where a request came from:
+//   Sec-Fetch-Site   "same-origin" (our own pages), "none" (the visitor
+//                    typed the address or used a bookmark): allowed;
+//                    "same-site" or "cross-site": refused
+//   Origin           older browsers: the website's address, whose host
+//                    must be the host the request was sent to (Host, or
+//                    X-Forwarded-Host behind a proxy), scheme and port
+//                    aside; "null" or something else: refused
+// A request with neither (curl, scripts/export-data.js, a server) is let
+// through: it brings no visitor's cookie with it. The public website's
+// contact form and the dev server's pages are this same site, so they
+// pass.
+
+// The host name in "chernozem.app", "localhost:5173" or "[::1]:5173"
+// (lower case, no port); null for none.
+function hostName(value) {
+  const text = String(value || "").split(",")[0].trim();
+  if (!text) return null;
+  try {
+    return new URL(`http://${text}`).hostname.toLowerCase() || null;
+  } catch {
+    return null;
+  }
+}
+
+// Why this request is refused as another website's, or null when it is
+// not (see above). headers: the request's, lower-case names.
+export function crossSiteProblem(headers = {}) {
+  const site = String(headers["sec-fetch-site"] || "").trim().toLowerCase();
+  if (site && site !== "same-origin" && site !== "none") {
+    return "This request came from another website, so it was not carried out. Open Chernozem itself and try again.";
+  }
+  const origin = String(headers.origin || "").trim();
+  if (!origin) return null;
+  let originHost = null;
+  try {
+    originHost = new URL(origin).hostname.toLowerCase() || null;
+  } catch {
+    // "null" (a sandboxed page) or junk: not ours.
+  }
+  const ours = [hostName(headers.host), hostName(headers["x-forwarded-host"])].filter(Boolean);
+  if (originHost && ours.includes(originHost)) return null;
+  return "This request came from another website, so it was not carried out. Open Chernozem itself and try again.";
+}
+
+// Called by server/app.js before every /api/ route: refuses (403) a request
+// that would change something when it was sent by another website.
+export function assertSameSite(req, method = req.method) {
+  const verb = String(method || "GET").toUpperCase();
+  if (verb === "GET" || verb === "HEAD") return;
+  const problem = crossSiteProblem(req.headers || {});
+  if (problem) throw new HttpError(403, "cross_site", problem);
 }
 
 // ---------- The visitor's address (see the top of this file) ----------

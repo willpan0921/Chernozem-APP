@@ -144,3 +144,16 @@ svg {
   outline: 2px solid var(--c-green);
   outline-offset: 2px;
 }
+
+/* On a phone, iOS Safari zooms the whole page in when a box with text
+   under 16px is tapped (the access code, a field's name, the AI's
+   question, the area search...), and the page stays zoomed. So on narrow
+   screens every box is 16px, whatever its own styling says: the
+   "!important" is what lets this one rule win over each page's. */
+@media (max-width: 860px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}

@@ -11,6 +11,18 @@ The data comes from Google Earth Engine (Sentinel-2, Sentinel-1, NASA FIRMS, ESA
 
 **The public copy at https://chernozem.app (Render): what runs where, what it costs, how updates go live, the data and the access code: [docs/DEPLOY.md](docs/DEPLOY.md).**
 
+## The public website
+
+The app also carries its own public website: the home page and the Story,
+Product, How to use, Method, Technology, Design and Contact pages, open to
+anyone at https://chernozem.app without an access code. It lives in
+`src/site/` (pages in `src/site/pages/`, shared parts in
+`src/site/components/`, the facts it quotes in `src/site/content/site.js`,
+the real screenshots in `public/site/shots/`). The Ukraine demo on the home
+and Method pages reads `public/site/ukraine-demo.json`, built from the
+latest saved Ukraine month by `node scripts/site-demo-data.js`. Messages
+from the contact page arrive in Atlas > Settings.
+
 ## How to run it
 
 You need [Node.js](https://nodejs.org) (the LTS version). On this Mac Node lives in a private folder, so first run this once per Terminal window:

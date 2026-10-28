@@ -1,0 +1,306 @@
+[
+  {
+    "file": "field-overview.webp",
+    "title": "Field · Demo farm overview",
+    "what": "The Field overview for a 12-field farm in Ukraine: Earth Engine and Sentinel-2 readings up to Oct 26, counts of fields to watch, growing, harvested and fallow, the weather, what needs doing, and the field list beside a satellite map.",
+    "width": 1920,
+    "height": 1200,
+    "bytes": 81234
+  },
+  {
+    "file": "field-fields.webp",
+    "title": "Field · Fields map, Field 11",
+    "what": "The Fields page: every field outlined on satellite imagery and tinted by its condition, with Field 11 (rapeseed, growing well) selected and its Water, Plant health, Stress and Harvest readiness tiles and this season's plant-health curve against the 2019–21 normal.",
+    "width": 1920,
+    "height": 1200,
+    "bytes": 190534
+  },
+  {
+    "file": "field-fields-detail.webp",
+    "title": "Field · Field 11 up close",
+    "what": "A tight crop of the farm map and Field 11's detail cards: near-normal water, plant health 0.79 (above normal), stress under 1%, past peak greenness, and the season chart.",
+    "width": 1920,
+    "height": 1369,
+    "bytes": 219106
+  },
+  {
+    "file": "field-ai.webp",
+    "title": "Field · Ask the AI",
+    "what": "The Field AI chat before any question is asked: what it is using (the farm, the latest Sentinel-2 pass, the weather) and suggested questions such as which field needs attention first.",
+    "width": 1920,
+    "height": 1200,
+    "bytes": 32790
+  },
+  {
+    "file": "field-data.webp",
+    "title": "Field · Data since 2019",
+    "what": "The Field data page: the latest pass, 50 clear passes since March, plant health for Field 12 against the farm average and the normal years since 2019, with the invasion of 24 February 2022 marked, satellite pass table and downloads.",
+    "width": 1920,
+    "height": 1200,
+    "bytes": 67806
+  },
+  {
+    "file": "atlas-overview.webp",
+    "title": "Atlas · Ukraine, September 2026",
+    "what": "The Atlas overview for Ukraine: 34.8M ha of cropland analysed, 26M ha of black soil, 1.8M ha heavily damaged, 1.2M people on damaged land, the priority map with the top areas, next steps and alerts.",
+    "width": 1920,
+    "height": 1200,
+    "bytes": 108352
+  },
+  {
+    "file": "atlas-map-near-micro.webp",
+    "title": "Atlas · Ukraine, Micro view, Near term",
+    "what": "The Atlas map of Ukraine by priority, square by square, in the near term: weights for value and damage with a feasibility cutoff on the left, the ten top areas on the right.",
+    "width": 1920,
+    "height": 1200,
+    "bytes": 109264
+  },
+  {
+    "file": "atlas-map-near-macro.webp",
+    "title": "Atlas · Ukraine, Macro view, Near term",
+    "what": "The same map by whole state (oblast): each state filled by its near-term priority and ranked on the right, Mykolaiv, Kirovohrad and Poltava first.",
+    "width": 1920,
+    "height": 1200,
+    "bytes": 102902
+  },
+  {
+    "file": "atlas-map-post-macro.webp",
+    "title": "Atlas · Ukraine, Macro view, Post-crisis",
+    "what": "The states ranked for the post-crisis time frame, where value, damage and feasibility are weighed together: Kirovohrad, Poltava and Odesa lead and the east counts again.",
+    "width": 1920,
+    "height": 1200,
+    "bytes": 99322
+  },
+  {
+    "file": "atlas-map-damage-micro.webp",
+    "title": "Atlas · Ukraine, Damage map",
+    "what": "The Damage layer from fire and radar change, square by square: the heaviest damage runs along the front in Kharkiv, Luhansk, Donetsk, Zaporizhzhia and Kherson.",
+    "width": 1920,
+    "height": 1200,
+    "bytes": 111356
+  },
+  {
+    "file": "atlas-map-feasibility.webp",
+    "title": "Atlas · Ukraine, Feasibility map",
+    "what": "The Feasibility layer: distance to fighting, from under 20 km near the front to 100 km and more in the west.",
+    "width": 1920,
+    "height": 1200,
+    "bytes": 107542
+  },
+  {
+    "file": "atlas-map-picked.webp",
+    "title": "Atlas · One square in Kharkiv",
+    "what": "One map square in the east picked: highest priority, rank 27 of 748, its value, damage and feasibility scores, soil types read from Earth Engine (meadow black soil 65%, chernozem 30%), hectares, people and a recovery-cost range.",
+    "width": 1920,
+    "height": 1200,
+    "bytes": 115366
+  },
+  {
+    "file": "atlas-map-satellite.webp",
+    "title": "Atlas · Satellite only",
+    "what": "The Atlas map with 'Satellite only' on: the squares, borders and key step aside for satellite imagery of Ukraine and the Black Sea.",
+    "width": 1920,
+    "height": 1200,
+    "bytes": 213676
+  },
+  {
+    "file": "atlas-report.webp",
+    "title": "Atlas · Donor report",
+    "what": "The report page for Ukraine, September 2026: imagery periods, the headline hectares and people, new heavy damage this month and the Top 10 near-term areas with their scores, ready to save as PDF or CSV.",
+    "width": 1920,
+    "height": 1200,
+    "bytes": 72184
+  },
+  {
+    "file": "atlas-data.webp",
+    "title": "Atlas · Data, 12 months",
+    "what": "The Atlas data page: heavily damaged hectares month by month from October 2025 to September 2026, the monthly table, a compare tool and how the method was tested.",
+    "width": 1920,
+    "height": 1200,
+    "bytes": 63036
+  },
+  {
+    "file": "field-settings.webp",
+    "title": "Field · Settings",
+    "what": "The Field settings page: the farm card (Demo farm near Kupiansk, Kharkiv region: 12 fields, 553 ha) with its satellite map of the traced fields, the Add a field and Find fields again buttons, and the list of fields below, each with its detected crop in a dropdown, its hectares and a delete button.",
+    "width": 1920,
+    "height": 1200,
+    "bytes": 95302
+  },
+  {
+    "file": "atlas-settings.webp",
+    "title": "Atlas · Settings",
+    "what": "The Atlas settings page for Ukraine, scrolled to its lower half: the Crisis card (At war since 24 Feb 2022 from the app's list of wars, with the At war, Natural disaster and No crisis choices), the Data card (Google Earth Engine connected, the latest month, and the switch that analyses every saved area each month), the AI card, and the Team card with two names and their role labels, Admin and Analyst.",
+    "width": 1920,
+    "height": 1200,
+    "bytes": 42598
+  },
+  {
+    "file": "phone-field-fields.webp",
+    "title": "Field on a phone · Fields map",
+    "what": "The Fields page on a phone: the satellite map with the field outlines, the condition key and the selected field's details below.",
+    "width": 780,
+    "height": 1688,
+    "bytes": 82540
+  },
+  {
+    "file": "phone-atlas-map.webp",
+    "title": "Atlas on a phone · Priority map",
+    "what": "The Atlas map of Ukraine on a phone, coloured by near-term priority, with the weights and top areas below the map.",
+    "width": 780,
+    "height": 1688,
+    "bytes": 59100
+  },
+  {
+    "file": "phone-atlas-overview.webp",
+    "title": "Atlas on a phone · Ukraine overview",
+    "what": "The Atlas overview on a phone: Ukraine, September 2026, the headline figures and where to start.",
+    "width": 780,
+    "height": 1688,
+    "bytes": 68440
+  },
+  {
+    "file": "phone-field-overview.webp",
+    "title": "Field on a phone · Farm overview",
+    "what": "The Field overview on a phone: the farm's latest Sentinel-2 pass, the fields to watch, growing, harvested and fallow, the weather and what needs doing.",
+    "width": 780,
+    "height": 1688,
+    "bytes": 39206
+  },
+  {
+    "file": "field-overview-960.webp",
+    "title": "Field · Demo farm overview · 960 px",
+    "what": "A 960-px-wide copy of field-overview.webp for small pictures: the Product page's gallery thumbnails and the Guide's pinned picture on a phone.",
+    "width": 960,
+    "height": 600,
+    "bytes": 31836
+  },
+  {
+    "file": "field-fields-960.webp",
+    "title": "Field · Fields map, Field 11 · 960 px",
+    "what": "A 960-px-wide copy of field-fields.webp for small pictures: the Product page's gallery thumbnails and the Guide's pinned picture on a phone.",
+    "width": 960,
+    "height": 600,
+    "bytes": 64790
+  },
+  {
+    "file": "field-fields-detail-960.webp",
+    "title": "Field · Field 11 up close · 960 px",
+    "what": "A 960-px-wide copy of field-fields-detail.webp for small pictures: the Product page's gallery thumbnails and the Guide's pinned picture on a phone.",
+    "width": 960,
+    "height": 684,
+    "bytes": 76854
+  },
+  {
+    "file": "field-ai-960.webp",
+    "title": "Field · Ask the AI · 960 px",
+    "what": "A 960-px-wide copy of field-ai.webp for small pictures: the Product page's gallery thumbnails and the Guide's pinned picture on a phone.",
+    "width": 960,
+    "height": 600,
+    "bytes": 12456
+  },
+  {
+    "file": "field-data-960.webp",
+    "title": "Field · Data since 2019 · 960 px",
+    "what": "A 960-px-wide copy of field-data.webp for small pictures: the Product page's gallery thumbnails and the Guide's pinned picture on a phone.",
+    "width": 960,
+    "height": 600,
+    "bytes": 26762
+  },
+  {
+    "file": "atlas-overview-960.webp",
+    "title": "Atlas · Ukraine, September 2026 · 960 px",
+    "what": "A 960-px-wide copy of atlas-overview.webp for small pictures: the Product page's gallery thumbnails and the Guide's pinned picture on a phone.",
+    "width": 960,
+    "height": 600,
+    "bytes": 42450
+  },
+  {
+    "file": "atlas-map-near-micro-960.webp",
+    "title": "Atlas · Ukraine, Micro view, Near term · 960 px",
+    "what": "A 960-px-wide copy of atlas-map-near-micro.webp for small pictures: the Product page's gallery thumbnails and the Guide's pinned picture on a phone.",
+    "width": 960,
+    "height": 600,
+    "bytes": 43408
+  },
+  {
+    "file": "atlas-map-near-macro-960.webp",
+    "title": "Atlas · Ukraine, Macro view, Near term · 960 px",
+    "what": "A 960-px-wide copy of atlas-map-near-macro.webp for small pictures: the Product page's gallery thumbnails and the Guide's pinned picture on a phone.",
+    "width": 960,
+    "height": 600,
+    "bytes": 40976
+  },
+  {
+    "file": "atlas-map-post-macro-960.webp",
+    "title": "Atlas · Ukraine, Macro view, Post-crisis · 960 px",
+    "what": "A 960-px-wide copy of atlas-map-post-macro.webp for small pictures: the Product page's gallery thumbnails and the Guide's pinned picture on a phone.",
+    "width": 960,
+    "height": 600,
+    "bytes": 39670
+  },
+  {
+    "file": "atlas-map-damage-micro-960.webp",
+    "title": "Atlas · Ukraine, Damage map · 960 px",
+    "what": "A 960-px-wide copy of atlas-map-damage-micro.webp for small pictures: the Product page's gallery thumbnails and the Guide's pinned picture on a phone.",
+    "width": 960,
+    "height": 600,
+    "bytes": 44070
+  },
+  {
+    "file": "atlas-map-feasibility-960.webp",
+    "title": "Atlas · Ukraine, Feasibility map · 960 px",
+    "what": "A 960-px-wide copy of atlas-map-feasibility.webp for small pictures: the Product page's gallery thumbnails and the Guide's pinned picture on a phone.",
+    "width": 960,
+    "height": 600,
+    "bytes": 42506
+  },
+  {
+    "file": "atlas-map-picked-960.webp",
+    "title": "Atlas · One square in Kharkiv · 960 px",
+    "what": "A 960-px-wide copy of atlas-map-picked.webp for small pictures: the Product page's gallery thumbnails and the Guide's pinned picture on a phone.",
+    "width": 960,
+    "height": 600,
+    "bytes": 45926
+  },
+  {
+    "file": "atlas-map-satellite-960.webp",
+    "title": "Atlas · Satellite only · 960 px",
+    "what": "A 960-px-wide copy of atlas-map-satellite.webp for small pictures: the Product page's gallery thumbnails and the Guide's pinned picture on a phone.",
+    "width": 960,
+    "height": 600,
+    "bytes": 66062
+  },
+  {
+    "file": "atlas-report-960.webp",
+    "title": "Atlas · Donor report · 960 px",
+    "what": "A 960-px-wide copy of atlas-report.webp for small pictures: the Product page's gallery thumbnails and the Guide's pinned picture on a phone.",
+    "width": 960,
+    "height": 600,
+    "bytes": 27614
+  },
+  {
+    "file": "atlas-data-960.webp",
+    "title": "Atlas · Data, 12 months · 960 px",
+    "what": "A 960-px-wide copy of atlas-data.webp for small pictures: the Product page's gallery thumbnails and the Guide's pinned picture on a phone.",
+    "width": 960,
+    "height": 600,
+    "bytes": 24254
+  },
+  {
+    "file": "field-settings-960.webp",
+    "title": "Field · Settings · 960 px",
+    "what": "A 960-px-wide copy of field-settings.webp for small pictures: the Product page's gallery thumbnails and the Guide's pinned picture on a phone.",
+    "width": 960,
+    "height": 600,
+    "bytes": 36406
+  },
+  {
+    "file": "atlas-settings-960.webp",
+    "title": "Atlas · Settings · 960 px",
+    "what": "A 960-px-wide copy of atlas-settings.webp for small pictures: the Product page's gallery thumbnails and the Guide's pinned picture on a phone.",
+    "width": 960,
+    "height": 600,
+    "bytes": 16134
+  }
+]

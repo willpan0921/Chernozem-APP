@@ -1139,6 +1139,20 @@ a.scope-card:hover {
   color: var(--c-text);
 }
 
+.access-foot {
+  margin: var(--s-5) 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--c-muted);
+  text-align: center;
+}
+
+.access-foot a {
+  color: var(--c-green);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .access-lead {
   margin: 0 0 var(--s-6);
   font-size: 14px;

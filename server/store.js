@@ -8,6 +8,8 @@
 //   areas/<id>.json   one file per area
 //   runs/<id>.json    one file per monthly run (with its grid cells)
 //   chats/<id>.json   one file per AI chat thread
+//   messages/<id>.json  one file per message from the public website's
+//                     contact form (server/messages.js)
 //   units/<areaId>.json  the area's states or districts with their borders
 //                     (FAO GAUL 2015, server/units.js), worked out once
 //   soil/<areaId>.json   the soil types of the area's squares and states
@@ -447,6 +449,33 @@ export async function deleteChat(id) {
     if (error.code === "ENOENT") return false;
     throw error;
   }
+}
+
+// ---------- Messages from the website's contact form ----------
+// One file per message (server/messages.js says what is in it):
+// messages/<id>.json.
+
+export async function getMessage(id) {
+  if (!isSafeId(id)) return null;
+  return readFile(fileFor("messages", id));
+}
+
+// Every message, newest first.
+export async function listMessages() {
+  const ids = await listFiles("messages");
+  const messages = (await Promise.all(ids.map((id) => getMessage(id)))).filter(Boolean);
+  return messages.sort((a, b) => String(b.receivedAt).localeCompare(String(a.receivedAt)) || String(b.id).localeCompare(String(a.id)));
+}
+
+export async function saveMessage(message) {
+  await writeFile(fileFor("messages", message.id), message);
+  return message;
+}
+
+// True when there was one to remove.
+export async function deleteMessage(id) {
+  if (!isSafeId(id)) return false;
+  return removeFile(fileFor("messages", id));
 }
 
 // ---------- Field: the farm, its analyses, history, reports and photos ----------

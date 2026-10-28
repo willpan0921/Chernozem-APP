@@ -105,6 +105,14 @@
   padding: var(--s-2);
 }
 
+/* "Swipe sideways...": only on a phone (below). */
+.rp-scroll-hint {
+  display: none;
+  margin-bottom: var(--s-1);
+  font-size: 12px;
+  color: var(--c-muted);
+}
+
 .rp-table .num {
   font-family: var(--font-mono);
   font-size: 12px;
@@ -232,6 +240,65 @@
   .rp-alerts li .rp-mono {
     grid-column: 2;
     grid-row: 1;
+  }
+}
+
+/* The Top 10 tables on a phone screen (eight columns in a box a third as
+   wide): the rank and the area stay put while the numbers scroll under
+   them, the hint above the table shows, and a shadow at the right edge
+   says there is more that way (it goes once scrolled to the end: the
+   shadow is painted on the scrolling box, under a cover that moves with
+   the table). Paper is not "screen", so printing keeps the plain table. */
+@media screen and (max-width: 640px) {
+  .rp-toolbar {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .rp-toolbar > :first-child {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .rp-scroll-hint {
+    display: block;
+  }
+
+  .rp-table-wrap {
+    background:
+      linear-gradient(90deg, var(--c-surface) 40%, transparent) 0 0 / 36px 100% no-repeat local,
+      linear-gradient(270deg, var(--c-surface) 40%, transparent) 100% 0 / 36px 100% no-repeat local,
+      linear-gradient(90deg, rgba(0, 0, 0, 0.18), transparent) 0 0 / 18px 100% no-repeat scroll,
+      linear-gradient(270deg, rgba(0, 0, 0, 0.18), transparent) 100% 0 / 18px 100% no-repeat scroll;
+  }
+
+  .rp-table th:first-child,
+  .rp-table td:first-child,
+  .rp-table th:nth-child(2),
+  .rp-table td:nth-child(2) {
+    position: sticky;
+    z-index: 1;
+    background: var(--c-surface);
+  }
+
+  .rp-table th:first-child,
+  .rp-table td:first-child {
+    left: 0;
+    width: 34px;
+    min-width: 34px;
+  }
+
+  .rp-table th:nth-child(2),
+  .rp-table td:nth-child(2) {
+    left: 34px;
+    box-shadow: 1px 0 0 var(--c-border);
+  }
+
+  /* A long name wraps rather than keeping the area column wide. */
+  .rp-place-name,
+  .rp-place-coords {
+    max-width: 150px;
+    white-space: normal;
   }
 }
 

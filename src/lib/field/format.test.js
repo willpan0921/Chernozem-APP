@@ -181,6 +181,7 @@ test("the crop a field shows", () => {
   assert.equal(detectedChoice(detected), "Detected: Corn");
   assert.equal(detectedChoice({ cropDetected: { id: "soybean", label: "Soybean", confidence: "possible" } }), "Detected: Soybean (possible)");
   assert.equal(detectedChoice({ cropDetected: { id: "unknown", label: "Unknown" } }), "Not detected");
+  assert.equal(detectedChoice({ cropDetected: { id: "corn", label: "Corn", season: "last" } }), "Last season: Corn");
   assert.equal(detectedChoice(null), "Detecting…");
 });
 
@@ -328,6 +329,20 @@ test("candidate totals", () => {
   const candidates = [{ id: "cand-1", areaHa: 20.5 }, { id: "cand-2", areaHa: 30.25 }, { id: "cand-3", areaHa: 9 }];
   assert.deepEqual(candidateTotals(candidates, ["cand-1", "cand-2"]), { count: 2, areaHa: 50.75 });
   assert.deepEqual(candidateTotals(candidates, []), { count: 0, areaHa: 0 });
+});
+
+test("a crop detected but not used for the estimate reads 'not confirmed', never 'unknown'", () => {
+  // Its dry-down did not fit its usual harvest (server/field/analysis.js
+  // cropMismatch): the page shows "Rapeseed · detected" next to the name,
+  // so the Harvest tile cannot call the crop unknown.
+  const rapeseed = fieldTiles({ harvest: { stage: "growing", cropUnknown: true, peak: 0.7 }, cropDetected: { id: "rapeseed", label: "Rapeseed", confidence: "possible", reason: "Peak in May" }, cropUsed: { id: null } })[3];
+  assert.equal(rapeseed.note, "Crop not confirmed: pick it in Settings for a harvest estimate");
+  // Last season's crop says nothing about this one; "possibly grass" names
+  // no crop: both stay unknown.
+  const last = fieldTiles({ harvest: { stage: "growing", cropUnknown: true, peak: 0.7 }, cropDetected: { id: "corn", label: "Corn", season: "last" } })[3];
+  assert.equal(last.note, "Crop unknown: pick it in Settings for a harvest estimate");
+  const grass = fieldTiles({ harvest: { stage: "growing", cropUnknown: true, peak: 0.5 }, cropDetected: { id: "unknown", label: "Unknown", possiblyFallow: true } })[3];
+  assert.equal(grass.note, "Crop unknown: pick it in Settings for a harvest estimate");
 });
 
 test("a field with no crop is never 'Healthy' or a condition colour", () => {

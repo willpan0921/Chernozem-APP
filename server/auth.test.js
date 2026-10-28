@@ -2,8 +2,9 @@
 // Tests the optional access code (server/auth.js): signing and checking
 // the sign-in cookie, running out after 30 days, the wrong-code limit (and
 // which visitor it counts behind a proxy such as Render's), "shared" in the
-// status, and that without a code everything stays open. Run with
-// "npm test".
+// status, that without a code everything stays open, and that a change
+// asked for by another website is refused (403 cross_site) while scripts
+// and our own pages go through. Run with "npm test".
 //
 // WHO EDITS IT
 // Whoever changes server/auth.js.
@@ -419,4 +420,62 @@ test("online with no code, a short one or the example, the app stays locked what
   // On one's own computer (no RENDER) no code still means open.
   assert.deepEqual((await call("GET", "/api/auth/status")).json, { required: false, signedIn: true, shared: false });
   assert.equal((await call("GET", "/api/workspace")).status, 200);
+});
+
+test("a change asked for by another website is refused (403); reads, our own pages and scripts are not", async () => {
+  // What the browser's headers say (crossSiteProblem is pure).
+  const refused = /another website/;
+  assert.equal(auth.crossSiteProblem({}), null, "no browser headers: curl, scripts/export-data.js");
+  assert.equal(auth.crossSiteProblem({ "sec-fetch-site": "same-origin" }), null);
+  assert.equal(auth.crossSiteProblem({ "sec-fetch-site": "none" }), null, "a typed address or a bookmark");
+  assert.match(auth.crossSiteProblem({ "sec-fetch-site": "cross-site" }), refused);
+  assert.match(auth.crossSiteProblem({ "sec-fetch-site": "same-site" }), refused);
+  assert.equal(auth.crossSiteProblem({ origin: "https://chernozem.app", host: "chernozem.app" }), null);
+  assert.equal(auth.crossSiteProblem({ origin: "http://localhost:5173", host: "localhost:5173" }), null, "the dev server");
+  assert.equal(auth.crossSiteProblem({ origin: "http://[::1]:5173", host: "[::1]:5173" }), null);
+  assert.equal(auth.crossSiteProblem({ origin: "HTTPS://Chernozem.app:443", host: "chernozem.app:8443" }), null, "scheme, capitals and port aside");
+  assert.equal(auth.crossSiteProblem({ origin: "https://chernozem.app", host: "10.0.0.5:10000", "x-forwarded-host": "chernozem.app, 10.0.0.5" }), null, "behind a proxy");
+  assert.match(auth.crossSiteProblem({ origin: "https://evil.example", host: "chernozem.app" }), refused);
+  assert.match(auth.crossSiteProblem({ origin: "https://chernozem.app.evil.example", host: "chernozem.app" }), refused);
+  assert.match(auth.crossSiteProblem({ origin: "null", host: "chernozem.app" }), refused, "a sandboxed page");
+  assert.match(auth.crossSiteProblem({ origin: "https://chernozem.app" }), refused, "no Host to compare with");
+  assert.match(auth.crossSiteProblem({ "sec-fetch-site": "cross-site", origin: "https://chernozem.app", host: "chernozem.app" }), refused, "Sec-Fetch-Site decides");
+
+  // Through the server, with a code set: the sign-out and sign-in routes.
+  process.env.ATLAS_ACCESS_CODE = "orchard-lantern-pebble-cobalt";
+  auth.resetLoginLimits();
+  try {
+    for (const headers of [{ "Sec-Fetch-Site": "cross-site" }, { Origin: "https://evil.example" }, { "Sec-Fetch-Site": "same-site", Origin: base }]) {
+      const out = await call("POST", "/api/auth/logout", { headers });
+      assert.equal(out.status, 403, JSON.stringify(headers));
+      assert.equal(out.json.error.code, "cross_site", JSON.stringify(headers));
+      assert.match(out.json.error.message, refused);
+      assert.equal(out.setCookie, null, "the cookie is left alone");
+    }
+    // Wrong codes sent from another website never count against the visitor.
+    for (let i = 0; i < 12; i++) {
+      const out = await call("POST", "/api/auth/login", { body: { code: "wrong-code-from-elsewhere" }, headers: { "Sec-Fetch-Site": "cross-site" } });
+      assert.equal(out.status, 403, `try ${i + 1}`);
+    }
+    const own = await call("POST", "/api/auth/login", { body: { code: "orchard-lantern-pebble-cobalt" }, headers: { "Sec-Fetch-Site": "same-origin", Origin: base } });
+    assert.equal(own.status, 200, "our own page signs in");
+    const cookie = cookieOf(own.setCookie);
+    // Reads from anywhere are fine (the cookie never travels to another
+    // website's request for a change anyway: SameSite=Lax), as are changes
+    // asked for by our own pages, a typed address, or with no browser
+    // headers at all.
+    assert.equal((await call("GET", "/api/auth/status", { headers: { "Sec-Fetch-Site": "cross-site" } })).status, 200);
+    assert.equal((await call("GET", "/api/workspace", { cookie, headers: { "Sec-Fetch-Site": "cross-site", Origin: "https://evil.example" } })).status, 200);
+    assert.equal((await call("POST", "/api/auth/logout", { headers: { Origin: base } })).status, 200, "Origin: our own host (an older browser)");
+    assert.equal((await call("POST", "/api/auth/logout", { headers: { "Sec-Fetch-Site": "none" } })).status, 200);
+    assert.equal((await call("POST", "/api/auth/logout")).status, 200, "no browser headers");
+    // The data upload (sent by a script, no Origin) and the public website's
+    // contact form (our own site) are never taken for another website's.
+    assert.notEqual((await call("POST", "/api/admin/import", { body: { files: {} } })).status, 403, "the export script");
+    assert.notEqual((await call("POST", "/api/contact", { body: {}, headers: { "Sec-Fetch-Site": "same-origin", Origin: base } })).status, 403, "the contact form");
+    assert.equal((await call("POST", "/api/contact", { body: {}, headers: { "Sec-Fetch-Site": "cross-site" } })).status, 403, "a form elsewhere");
+  } finally {
+    process.env.ATLAS_ACCESS_CODE = "";
+    auth.resetLoginLimits();
+  }
 });

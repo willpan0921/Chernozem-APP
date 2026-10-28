@@ -411,8 +411,11 @@
   font-size: 14px;
 }
 
+/* Wide enough for its longest choice, "Detected: Fallow or grass
+   (possible)", with the arrow's room (a select cuts text that does not
+   fit, with no sign of it). */
 .select.fset-crop {
-  width: 216px;
+  width: 272px;
   flex: 0 0 auto;
 }
 

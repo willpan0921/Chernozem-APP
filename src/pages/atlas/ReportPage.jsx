@@ -303,45 +303,52 @@ const outOf100 = (value) => (Number.isFinite(value) ? Math.round(value * 100) : 
 // with the group's size, damaged hectares, the three scores and the
 // priority, all 0–100. accessUnknown: feasibility is not measured in this
 // run (at peace, before the war, or no fire looked like fighting), so its
-// column shows "–".
+// column shows "–". On a phone the table scrolls sideways: the rank and
+// the area stay put, a line above says to swipe, and the right edge fades
+// while there is more (ReportPage.css; not on paper).
 function TopTable({ list, accessUnknown = false }) {
   if (!list.length) return <p className="rp-line">No place qualifies with these settings.</p>;
   return (
-    <div className="table-wrap">
-      <table className="table rp-table">
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>Area</th>
-            <th className="num">Black soil</th>
-            <th className="num">Heavily damaged</th>
-            <th className="num">Value</th>
-            <th className="num">Damage</th>
-            <th className="num">Feasibility</th>
-            <th className="num">Priority</th>
-          </tr>
-        </thead>
-        <tbody>
-          {list.map((item) => (
-            <tr key={item.id}>
-              <td>{item.rank}</td>
-              <td className="rp-place">
-                <span className="rp-place-name">{item.title}</span>
-                {item.point && <span className="rp-place-coords">{item.point}</span>}
-              </td>
-              <td className="num">
-                <span className="rp-ha">{haFixed(item.blackSoilHa)}</span>
-                {item.size && <span className="rp-size">{item.size}</span>}
-              </td>
-              <td className="num">{haFixed(item.heavyDamageHa)}</td>
-              <td className="num">{outOf100(item.soil)}</td>
-              <td className="num">{outOf100(item.damage)}</td>
-              <td className="num">{accessUnknown ? "–" : outOf100(item.access)}</td>
-              <td className="num rp-score">{priorityIndex(item) ?? "–"}</td>
+    <div className="rp-table-box">
+      <p className="rp-scroll-hint" aria-hidden="true">
+        Swipe sideways for the other columns
+      </p>
+      <div className="table-wrap rp-table-wrap">
+        <table className="table rp-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Area</th>
+              <th className="num">Black soil</th>
+              <th className="num">Heavily damaged</th>
+              <th className="num">Value</th>
+              <th className="num">Damage</th>
+              <th className="num">Feasibility</th>
+              <th className="num">Priority</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {list.map((item) => (
+              <tr key={item.id}>
+                <td>{item.rank}</td>
+                <td className="rp-place">
+                  <span className="rp-place-name">{item.title}</span>
+                  {item.point && <span className="rp-place-coords">{item.point}</span>}
+                </td>
+                <td className="num">
+                  <span className="rp-ha">{haFixed(item.blackSoilHa)}</span>
+                  {item.size && <span className="rp-size">{item.size}</span>}
+                </td>
+                <td className="num">{haFixed(item.heavyDamageHa)}</td>
+                <td className="num">{outOf100(item.soil)}</td>
+                <td className="num">{outOf100(item.damage)}</td>
+                <td className="num">{accessUnknown ? "–" : outOf100(item.access)}</td>
+                <td className="num rp-score">{priorityIndex(item) ?? "–"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

@@ -20,6 +20,8 @@
 //                                    Earth Engine)
 //   streamChat({ ...body, onEvent })  the AI, streamed as it is written
 //   listChats(product) / getChat(id) / deleteChat(id)
+//   listMessages() / deleteMessage(id)   messages from the public website's
+//                                    contact form (Atlas Settings shows them)
 //   getAuthStatus() / signIn(code) / signOut()   the optional access code
 //
 // THE ACCESS CODE
@@ -43,6 +45,14 @@
 // Where the server answers. The same site in development (the Vite dev
 // server passes /api/ on) and in production (server/index.js).
 export const API_ROOT = "/api";
+
+// What the page says when the server cannot be reached at all. While
+// developing (npm run dev) the server is usually just not running; online
+// (chernozem.app) it is the visitor's connection, and "npm run dev" would
+// mean nothing to them. Also used by src/api/fieldApi.js and Atlas Settings.
+export const OFFLINE_MESSAGE = import.meta.env.DEV
+  ? "Could not reach the Atlas server. Check that it is running (npm run dev) and try again."
+  : "Could not reach Chernozem. Check your internet connection and try again.";
 
 // An error from the server, with its code and HTTP status.
 // Announced on window when the server says this browser is not signed in.
@@ -90,7 +100,7 @@ async function request(method, path, body, { signal, keepalive } = {}) {
     });
   } catch (error) {
     if (error?.name === "AbortError") throw error;
-    throw new ApiError("Could not reach the Atlas server. Check that it is running (npm run dev) and try again.", { code: "offline" });
+    throw new ApiError(OFFLINE_MESSAGE, { code: "offline" });
   }
   if (!response.ok) {
     const error = await readError(response);
@@ -306,7 +316,7 @@ export async function streamChat({ onEvent = () => {}, signal, ...body }) {
     });
   } catch (error) {
     if (error?.name === "AbortError") throw error;
-    const failure = { code: "offline", message: "Could not reach the Atlas server. Check that it is running and try again." };
+    const failure = { code: "offline", message: OFFLINE_MESSAGE };
     onEvent("error", failure);
     return { threadId: body.threadId || null, messageId: null, text: "", error: failure };
   }
@@ -384,5 +394,20 @@ export async function getChat(chatId) {
 
 export async function deleteChat(chatId) {
   await request("DELETE", `/chats/${id(chatId)}`);
+  return true;
+}
+
+// ---------- Messages from the website's contact form ----------
+// Sent by visitors through src/api/siteApi.js sendContact (no code needed
+// for that); read here, with the code (server/messages.js).
+
+// -> [{ id, receivedAt, name, email, organization, message }], newest first
+export async function listMessages() {
+  const { messages } = await request("GET", "/messages");
+  return messages || [];
+}
+
+export async function deleteMessage(messageId) {
+  await request("DELETE", `/messages/${id(messageId)}`);
   return true;
 }

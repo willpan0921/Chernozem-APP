@@ -31,7 +31,7 @@
 // WHO EDITS IT
 // Whoever adds a Field route on the server. Add its function here too.
 
-import { API_ROOT, ApiError, AUTH_REQUIRED_EVENT } from "./atlasApi.js";
+import { API_ROOT, ApiError, AUTH_REQUIRED_EVENT, OFFLINE_MESSAGE } from "./atlasApi.js";
 
 export { ApiError };
 
@@ -65,7 +65,7 @@ async function request(method, path, body, { signal } = {}) {
     });
   } catch (error) {
     if (error?.name === "AbortError") throw error;
-    throw new ApiError("Could not reach the server. Check that it is running and try again.", { code: "offline" });
+    throw new ApiError(OFFLINE_MESSAGE, { code: "offline" });
   }
   if (!response.ok) {
     const error = await readError(response);

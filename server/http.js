@@ -50,7 +50,7 @@ export async function readJson(req, { maxBytes = MAX_BODY_BYTES } = {}) {
 // cut the connection). A body far over the limit cuts the connection.
 function readBody(req, maxBytes = MAX_BODY_BYTES) {
   const limit = Number.isFinite(maxBytes) && maxBytes > 0 ? maxBytes : MAX_BODY_BYTES;
-  const limitText = `${Math.round(limit / (1024 * 1024))} MB`;
+  const limitText = limit >= 1024 * 1024 ? `${Math.round(limit / (1024 * 1024))} MB` : `${Math.round(limit / 1024)} KB`;
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;

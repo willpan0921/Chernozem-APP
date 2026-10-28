@@ -1,7 +1,7 @@
 /*
   WHAT THIS FILE DOES
   The styling for the Atlas Settings page (src/pages/atlas/SettingsPage.jsx):
-  the Area, War, Data, AI and Team cards. Every class starts with "aset-"
+  the Area, War, Data, AI, Team and Messages cards. Every class starts with "aset-"
   (Atlas settings) so nothing here changes another page.
   On phones (under 640 px wide) every button is at least 40 px tall so it
   is easy to tap.
@@ -491,6 +491,73 @@
   inset: -10px -6px;
 }
 
+/* ---------- Messages from the website ---------- */
+
+.aset-message {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3) 0;
+  border-bottom: 1px solid var(--c-border);
+}
+
+.aset-message:first-child {
+  padding-top: 0;
+}
+
+.aset-message:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+/* Who sent it on the left, when and the Delete button on the right. */
+.aset-message-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+  min-width: 0;
+}
+
+.aset-message-who {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+.aset-message-name {
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.aset-message-email {
+  font-size: 12px;
+  color: var(--c-green);
+  overflow-wrap: anywhere;
+}
+
+.aset-message-email:hover {
+  text-decoration: underline;
+}
+
+.aset-message-when {
+  flex: 0 0 auto;
+  padding-top: 2px;
+  white-space: nowrap;
+}
+
+/* The text as typed: its own lines kept, long words broken. */
+.aset-message-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--c-text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* ---------- Phones ---------- */
 
 @media (max-width: 640px) {
@@ -580,5 +647,16 @@
 
   .aset-add .input {
     grid-column: 1 / -1;
+  }
+
+  /* The date goes under the sender when the line is too narrow. */
+  .aset-message-head {
+    flex-wrap: wrap;
+  }
+
+  .aset-message-when {
+    order: 1;
+    flex-basis: 100%;
+    padding-top: 0;
   }
 }
