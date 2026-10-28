@@ -62,7 +62,9 @@ test("index.html loads the website's face, keeps the app's, and has the agreed t
   const html = readFileSync(join(root, "index.html"), "utf8");
   assert.match(html, /family=Schibsted\+Grotesk/);
   assert.match(html, /family=Inter/); // taste-skill-ignore: Inter is the app's face, kept on purpose
-  assert.doesNotMatch(html, /Fraunces|JetBrains/); // taste-skill-ignore: the faces being ruled out
+  assert.match(html, /family=JetBrains\+Mono/); // taste-skill-ignore: the app's figures use it; the website never does
+  assert.doesNotMatch(html, /Fraunces/); // taste-skill-ignore: the first website's face, ruled out
+  assert.doesNotMatch(SITE_CSS, /JetBrains/); // taste-skill-ignore: no monospace on the website
   assert.match(html, /<title>Chernozem, satellite farmland monitoring<\/title>/);
   assert.match(html, /og:image" content="https:\/\/chernozem\.app\/chernozem-logo\.png"/);
   assert.match(html, /classList\.add\("js"\)/);
