@@ -63,8 +63,9 @@ export default function StageSlider() {
       <div className="stages-fields">
         <div className="stages-clause">
           <h2 className="display stages-head" aria-live="polite">
-            {current.lines.map((line) => (
+            {current.lines.map((line, i) => (
               <span className="stages-line" key={`${stage}-${line}`}>
+                {i > 0 ? " " : ""}
                 {line}
               </span>
             ))}

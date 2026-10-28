@@ -151,7 +151,8 @@
 
 /* ---------- Buttons: flat, square, one fill ---------- */
 
-.pg-btn {
+.site .pg-btn,
+.site button.pg-btn {
   display: inline-block;
   padding: 15px 24px;
   border: 0;
@@ -175,7 +176,8 @@
   cursor: default;
 }
 
-.pg-btn-light {
+.site .pg-btn-light,
+.site button.pg-btn-light {
   background: var(--bg);
   color: var(--ink);
 }
@@ -593,6 +595,12 @@
   padding-left: 1.3em;
   display: grid;
   gap: 10px;
+  /* A real list of steps: the numbers show (the site's ol reset hides them elsewhere). */
+  list-style: decimal;
+}
+
+.meth-use-list ol li {
+  display: list-item;
 }
 
 .meth-use-phone {

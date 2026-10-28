@@ -71,7 +71,7 @@ const SHOTS = {
   demo: { src: "/site/shots/atlas-map-near-micro-960.webp", alt: "The demo: Ukraine's squares ranked for the near term", caption: "The demo is Ukraine, September 2026, behind an access code." },
 };
 
-const PRIVACY = "We keep your name, e-mail and the place you gave us on our own server. Google keeps the password. Nothing is sold or shared.";
+const PRIVACY = "We keep your name, e-mail, role, organisation and the place you gave us on our own server. Google holds your sign-in and password. Nothing is sold; how your data is used is on the Methodology page.";
 
 const productName = (product) => (product === "atlas" ? "Atlas" : "Field");
 const productPath = (product) => (product === "atlas" ? "/atlas" : "/field");

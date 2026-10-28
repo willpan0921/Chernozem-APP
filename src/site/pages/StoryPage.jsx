@@ -19,8 +19,8 @@ import "./pages.css";
 // The three editions, in order, with what each picture shows.
 const EDITIONS = [
   { src: "/site/story/edition-1-colab.webp", w: 1340, h: 892, alt: "The first edition: a green map of Ukraine's black soil by oblast on a plain base map", caption: "First edition: a Google Colab notebook over Earth Engine. The black-soil map of Ukraine, oblast by oblast, on a plain base map." },
-  { src: "/site/story/disturbance-map.webp", w: 1600, h: 964, alt: "The disturbance layer: unusual change on the land in orange and red over Ukraine", caption: "The disturbance layer from the same notebook: unusual change on the land in orange and red." },
-  { src: "/site/story/acled-events.webp", w: 1324, h: 942, alt: "ACLED's recorded attacks as orange and red dots laid over the damage map", caption: "The check: ACLED’s recorded attacks, in orange and red dots, laid over the damage." },
+  { src: "/site/story/disturbance-map.webp", w: 1600, h: 964, alt: "A disturbance layer: unusual change on the land in orange and red over Ukraine, oblast by oblast", caption: "A disturbance layer: unusual change on the land in orange and red, oblast by oblast." },
+  { src: "/site/story/acled-events.webp", w: 1324, h: 942, alt: "ACLED's recorded attacks as orange and red dots across Ukraine", caption: "The check: ACLED’s recorded attacks as orange and red dots, used to test the damage map." },
   { src: "/site/story/edition-2-atlas.webp", w: 1497, h: 1280, alt: "The second edition, the Chernozem Recovery Atlas web page with sliders, map layers and a ranked list", caption: "Second edition: the Chernozem Recovery Atlas, a web page with sliders for the weights, map layers and a ranked list." },
   { src: "/site/shots/atlas-overview.webp", w: 1920, h: 1200, alt: "The third edition: the Atlas overview of Ukraine in this app, with the headline figures and the priority map", caption: "Third edition: this app. Field and Atlas, accounts, any crisis, any country." },
 ];
@@ -42,7 +42,7 @@ export default function StoryPage() {
           </div>
           <figure className="pg-fig story-open-pic pg-fade-2">
             <img className="pg-pic" src="/site/story/edition-1-colab.webp" width="1340" height="892" alt="The first edition of Chernozem: a map of Ukraine with its black soil shaded green, oblast by oblast" loading="eager" decoding="async" />
-            <figcaption>The first edition, 2025: Ukraine’s black soil, oblast by oblast.</figcaption>
+            <figcaption>The first edition: Ukraine’s black soil, oblast by oblast.</figcaption>
           </figure>
         </div>
       </section>
@@ -65,7 +65,7 @@ export default function StoryPage() {
           <Reveal className="story-soil-pic" y={36}>
             <figure className="pg-fig">
               <img className="pg-pic" src="/site/shots/atlas-map-satellite.webp" width="1920" height="1200" alt="Satellite imagery of Ukraine and the Black Sea in the Atlas, with the squares and borders switched off" loading="lazy" decoding="async" />
-              <figcaption>Ukraine from orbit in the Atlas: the largest black-soil belt on Earth.</figcaption>
+              <figcaption>Ukraine from orbit in the Atlas: one of the largest black-soil belts on Earth.</figcaption>
             </figure>
           </Reveal>
           <div className="story-soil-text">
@@ -76,7 +76,7 @@ export default function StoryPage() {
             </Reveal>
             <Reveal delay={0.1}>
               <p style={{ marginTop: 22 }}>
-                Chernozem means black earth: deep, dark and full of carbon. It makes up about {NUMBERS.blackSoilCroplandPercent}% of the world’s cropland and grows about {NUMBERS.blackSoilWheatPercent}% of its wheat (FAO, 2022). The two largest belts are in Ukraine and northeastern China.
+                Chernozem means black earth: deep, dark and full of carbon. It makes up about {NUMBERS.blackSoilCroplandPercent}% of the world’s cropland and grows about {NUMBERS.blackSoilWheatPercent}% of its wheat (FAO, 2022). Two of the great belts are Ukraine’s and northeastern China’s.
               </p>
             </Reveal>
           </div>
@@ -92,7 +92,7 @@ export default function StoryPage() {
           </Reveal>
           <Reveal className="story-ua-col" delay={0.08}>
             <p>
-              On 24 February 2022 the war came to the largest black-soil belt on Earth. By 2025 the FAO counted {compactHa(NUMBERS.cratersHa).replace("M", " million")} hectares of cratered land; before the war, Ukraine’s food exports fed about {NUMBERS.peopleFedMillions} million people a year.
+              On 24 February 2022 the war came to one of the largest black-soil belts on Earth. The FAO has found more than a million shell craters in the {compactHa(NUMBERS.surveyedHa).replace("M", " million")} hectares of farmland it surveyed from satellite; before the war, Ukraine’s food exports fed about {NUMBERS.peopleFedMillions} million people a year.
             </p>
           </Reveal>
           <Reveal className="story-ua-col" delay={0.16}>

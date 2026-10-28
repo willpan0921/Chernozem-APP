@@ -57,11 +57,29 @@
 // server, or when the token cannot be checked for a reason other than
 // the token itself (Google unreachable). The register page then says so.
 //
+// WHEN A COOKIE STOPS COUNTING (server/auth.js accountSession asks here)
+//   signOutAccount(uid)   "Sign out": writes the moment into the account's
+//                         session.json (every cookie made before it is
+//                         nobody from then on) and, best-effort, ends the
+//                         account's Firebase sessions (revokeRefreshTokens)
+//   firebaseUserOk(uid)   whether the Firebase user still exists and is not
+//                         disabled, asked of Firebase at most once an hour
+//                         per account; a sign-in counts as "yes" for that
+//                         hour. If Firebase cannot be asked (unreachable,
+//                         or no Google key on this computer), the last
+//                         answer stays good for a day, then the account
+//                         must sign in again (a sign-in needs Firebase, so
+//                         nothing stays open for ever during an outage).
+//                         Deleted or disabled: "no" within the hour.
+//
 // FOR THE TESTS
-//   setDepsForTests({ verifyIdToken })   a stand-in for Firebase's check:
-//                                        (idToken) -> the decoded token
-//                                        { uid, email, name, ... } or a
-//                                        throw with code "auth/..."
+//   setDepsForTests({ verifyIdToken, getUser, revokeRefreshTokens, now })
+//     stand-ins for Firebase: verifyIdToken (idToken) -> the decoded token
+//     { uid, email, name, ... } or a throw with code "auth/...";
+//     getUser (uid) -> { uid, disabled } or a throw with code
+//     "auth/user-not-found"; revokeRefreshTokens (uid); now () -> the
+//     clock (ms) the once-an-hour check reads, to move time forward.
+//     Forgets every answer kept so far.
 //
 // WHO EDITS IT
 // Nobody, normally. The one-time Firebase console steps are in
@@ -69,7 +87,7 @@
 
 import { HttpError, readJson, sendJson } from "./http.js";
 import { config } from "./env.js";
-import { getProfile, saveProfile, userRoot, withDataRoot } from "./store.js";
+import { getProfile, saveProfile, saveSessionFile, userRoot, withDataRoot } from "./store.js";
 // (auth.js imports this file too; both only use each other inside
 // functions, so the circle is harmless.)
 import { accountCookie, deriveAccountSecret, installSalt, isUid, sessionCookie, signAccountSession } from "./auth.js";
@@ -82,15 +100,31 @@ export const AGE_RANGE = { min: 13, max: 120 };
 // A Firebase ID token is a signed JSON text of about 1,000 to 2,000
 // characters; anything far longer is not one.
 const MAX_TOKEN_CHARS = 8192;
+// How often Firebase is asked whether an account still exists (see the
+// top of this file), how soon it is asked again after it could not answer,
+// and how long the last answer stays good while it cannot.
+export const USER_CHECK_MS = 60 * 60 * 1000;
+export const USER_RETRY_MS = 5 * 60 * 1000;
+export const USER_KEEP_MS = 24 * 60 * 60 * 1000;
 
 // Kept on globalThis so the dev server, which reloads this file after
-// edits, keeps the one Firebase connection (and the tests' stand-in).
-const memory = (globalThis.__chernozemAccounts ??= { auth: null, verifyIdToken: null });
+// edits, keeps the one Firebase connection, the answers about accounts
+// (users: uid -> { ok, answeredAt, askedAt }) and the tests' stand-ins.
+const memory = (globalThis.__chernozemAccounts ??= { auth: null, verifyIdToken: null, getUser: null, revokeRefreshTokens: null, now: null, users: new Map() });
+// (An older copy of this file may have made the memory without it.)
+memory.users ??= new Map();
 
-export function setDepsForTests({ verifyIdToken } = {}) {
-  memory.verifyIdToken = typeof verifyIdToken === "function" ? verifyIdToken : null;
+export function setDepsForTests({ verifyIdToken, getUser, revokeRefreshTokens, now } = {}) {
+  const fn = (value) => (typeof value === "function" ? value : null);
+  memory.verifyIdToken = fn(verifyIdToken);
+  memory.getUser = fn(getUser);
+  memory.revokeRefreshTokens = fn(revokeRefreshTokens);
+  memory.now = fn(now);
   memory.auth = null;
+  memory.users = new Map();
 }
+
+const clock = () => (memory.now ? memory.now() : Date.now());
 
 const off = (message) => new HttpError(503, "accounts_off", message);
 const bad = (message) => new HttpError(400, "bad_request", message);
@@ -155,6 +189,72 @@ async function checkedToken(idToken) {
     console.error("[chernozem] A Firebase sign-in could not be checked:", error);
     throw off("Registration is not open right now: the sign-in could not be checked with Firebase. Try again in a few minutes.");
   }
+}
+
+// ---------- Whether an account still exists, and signing out ----------
+// (See "WHEN A COOKIE STOPS COUNTING" at the top of this file.)
+
+// A sign-in is Firebase's own word that the account exists now: it counts
+// as this hour's answer.
+function noteSignedIn(uid) {
+  const now = clock();
+  memory.users.set(uid, { ok: true, answeredAt: now, askedAt: now });
+}
+
+// True while the Firebase user exists and is not disabled, as far as the
+// server knows (asked at most once an hour; see the top of this file).
+export async function firebaseUserOk(uid) {
+  const now = clock();
+  const known = memory.users.get(uid);
+  if (known) {
+    // A real answer is good for an hour; after a failed ask, ask again sooner.
+    const wait = known.answeredAt === known.askedAt ? USER_CHECK_MS : USER_RETRY_MS;
+    if (now - known.askedAt < wait) return known.ok;
+  }
+  let next;
+  try {
+    const user = memory.getUser ? await memory.getUser(uid) : await (await firebaseAuth()).getUser(uid);
+    next = { ok: Boolean(user) && !user.disabled, answeredAt: now, askedAt: now };
+  } catch (error) {
+    if (error?.code === "auth/user-not-found") {
+      next = { ok: false, answeredAt: now, askedAt: now };
+    } else {
+      // Firebase could not be asked. The last answer (or, with none since
+      // the server started, the signed cookie itself) stays good for a day
+      // from the last answer, then the account must sign in again.
+      const answeredAt = known?.answeredAt ?? now;
+      const ok = now - answeredAt < USER_KEEP_MS ? known?.ok ?? true : false;
+      next = { ok, answeredAt, askedAt: now };
+      if (!memory.warnedUserCheck) {
+        memory.warnedUserCheck = true;
+        console.warn(`[chernozem] Could not ask Firebase whether an account still exists (${error.message}). The last answer stays good for a day. Said once.`);
+      }
+    }
+  }
+  memory.users.set(uid, next);
+  return next.ok;
+}
+
+// Ends the account's Firebase sessions (its refresh tokens), best-effort:
+// a failure is logged once and never stops the sign-out.
+async function revokeFirebaseSessions(uid) {
+  try {
+    if (memory.revokeRefreshTokens) await memory.revokeRefreshTokens(uid);
+    else await (await firebaseAuth()).revokeRefreshTokens(uid);
+  } catch (error) {
+    if (memory.warnedRevoke) return;
+    memory.warnedRevoke = true;
+    console.warn(`[chernozem] Could not end an account's Firebase sessions at sign-out (${error.message}); its cookies are ended all the same. Said once.`);
+  }
+}
+
+// "Sign out" for a registered account (server/auth.js handleAuth): from
+// this moment every cookie made for the account before it is nobody.
+export async function signOutAccount(uid) {
+  if (!isUid(uid)) return;
+  const now = new Date().toISOString();
+  await withDataRoot(userRoot(uid), () => saveSessionFile({ sessionsValidFrom: now }));
+  await revokeFirebaseSessions(uid);
 }
 
 // ---------- The profile ----------
@@ -294,6 +394,7 @@ export async function handleFirebaseSignIn(req, res) {
     return saveProfile(next);
   });
 
+  noteSignedIn(uid);
   const token = signAccountSession(deriveAccountSecret(await installSalt()), uid);
   // This browser is the account from now on; the access code's cookie, if
   // it had one, goes (server/auth.js prefers the account cookie).

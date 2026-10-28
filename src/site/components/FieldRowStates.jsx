@@ -26,7 +26,7 @@ function RowArrives() {
       <span className="frow-mark is-reading" aria-hidden="true" />
       <div className="frow-main">
         <strong className="frow-name">{FIELD}</strong>
-        <span className="frow-meta">New pass · Sentinel-2 · September 2026 · clear sky</span>
+        <span className="frow-meta">New pass · Sentinel-2 · {DEMO.field11.latestPass} · clear sky</span>
       </div>
       <span className="frow-chip">Reading</span>
     </div>
@@ -40,9 +40,9 @@ function RowAnswered() {
       <div className="frow-main">
         <strong className="frow-name">{FIELD}</strong>
         <span className="frow-meta">
-          Plant health {DEMO.field11.plantHealth} · Stress {DEMO.field11.stress} · Water normal
+          Plant health {DEMO.field11.plantHealth} · Stress {DEMO.field11.stress} · Water {DEMO.field11.water}
         </span>
-        <span className="frow-answer">Harvest on track for October</span>
+        <span className="frow-answer">Past peak; greenest on {DEMO.field11.peakDate}</span>
       </div>
       <span className="frow-chip is-good">Growing well</span>
     </div>
@@ -58,7 +58,7 @@ function RowRead() {
       <span className="frow-mark is-reading" aria-hidden="true" />
       <div className="frow-main">
         <strong className="frow-name">{FIELD}</strong>
-        <span className="frow-meta">New pass · Sentinel-2 · September 2026 · clear sky</span>
+        <span className="frow-meta">New pass · Sentinel-2 · {DEMO.field11.latestPass} · clear sky</span>
         <span className="frow-actions" aria-label="Row actions">
           <button type="button" className="frow-action" onClick={() => setRead(true)}>
             Open

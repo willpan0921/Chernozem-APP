@@ -31,6 +31,8 @@ const TOPICS = [
 
 export default function ContactPage() {
   usePageTitle("Contact");
+  // The form's entrance: the hook runs on every render, whichever branch shows.
+  const formReveal = useReveal();
   const [role, setRole] = useState("");
   const [form, setForm] = useState(EMPTY);
   const [busy, setBusy] = useState(false);
@@ -91,7 +93,7 @@ export default function ContactPage() {
                 </div>
               </div>
             ) : (
-              <form className="pg-form" onSubmit={submit} noValidate={false} ref={useReveal()}>
+              <form className="pg-form" onSubmit={submit} noValidate={false} ref={formReveal}>
                 <label className="pg-field" data-rise style={{ "--i": 0 }}>
                   <span>Who you are</span>
                   <select name="role" value={role} onChange={(event) => setRole(event.target.value)}>

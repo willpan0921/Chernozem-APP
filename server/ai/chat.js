@@ -26,6 +26,10 @@
 // Without ANTHROPIC_API_KEY in .env the stream sends one "ai_not_configured"
 // error that says exactly how to add it.
 //
+// A registered account may send 40 messages a day (server/quotas.js; the
+// owner's Claude key pays for every one): the 41st gets a plain 429
+// "quota" answer before any stream opens. The demo has no such limit.
+//
 // WHO EDITS IT
 // Whoever changes how the AI talks. The AI's instructions are the
 // ATLAS_SYSTEM and FIELD_SYSTEM texts below; what it knows is in context.js
@@ -34,6 +38,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { buildAtlasContext } from "./context.js";
 import { buildFieldContext } from "./field-context.js";
+import { DAY_MS, inWords, QUOTAS, spend } from "../quotas.js";
 
 // ---------- Settings ----------
 
@@ -138,6 +143,12 @@ export async function handleChatRoutes(req, res, url) {
       const problem = checkBody(body);
       if (problem) {
         http.sendError(res, 400, "bad_request", problem);
+        return true;
+      }
+      // A registered account's daily allowance (the demo: always ok).
+      const turn = spend("chat", QUOTAS.chatMessagesPerDay, DAY_MS);
+      if (!turn.ok) {
+        http.sendError(res, 429, "quota", `An account can send the AI ${QUOTAS.chatMessagesPerDay} messages a day. Try again ${inWords(turn.retryAfterMs)}.`);
         return true;
       }
       const sse = http.openSse(res);

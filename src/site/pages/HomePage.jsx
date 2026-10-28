@@ -162,7 +162,7 @@ export default function HomePage() {
               <span data-rise style={{ "--i": 0 }}>
                 Checked against
               </span>
-            </span>
+            </span>{" "}
             <span className="line proof-head-step">
               <span data-rise style={{ "--i": 1 }}>
                 the record

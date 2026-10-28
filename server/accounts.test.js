@@ -5,10 +5,13 @@
 // token is refused; the sign-in is "off" when the server cannot check
 // tokens; the profile is checked field by field; an account may only use
 // the product it chose (403 wrong_product); two accounts and the shared
-// demo never see each other's areas, farm, jobs or settings; and with an
-// access code set, an account still works without the code. Firebase
-// itself is stood in for (setDepsForTests), so it runs offline. Run with
-// "npm test".
+// demo never see each other's areas, farm, jobs or settings; with an
+// access code set, an account still works without the code; and "Sign
+// out" ends every cookie made for the account, a Firebase user deleted or
+// disabled is signed out within the hour, and the demo's code session is
+// untouched. Firebase itself is stood in for (setDepsForTests), so it runs
+// offline. The limits on what an account may do are in quotas.test.js.
+// Run with "npm test".
 //
 // WHO EDITS IT
 // Whoever changes accounts.js.
@@ -51,7 +54,25 @@ function fakeVerifier(idToken) {
 }
 const tokenFor = (uid, extra = {}) =>
   `fake:${JSON.stringify({ uid, email: `${uid.toLowerCase()}@example.com`, email_verified: true, firebase: { sign_in_provider: "google.com" }, ...extra })}`;
-accounts.setDepsForTests({ verifyIdToken: fakeVerifier });
+
+// The stand-in for the rest of Firebase: which accounts were deleted or
+// disabled there, whether it can be reached at all, which accounts had
+// their Firebase sessions ended, and the clock the once-an-hour check reads.
+const firebase = { gone: new Set(), disabled: new Set(), outage: false, revoked: [], clock: null };
+function fakeGetUser(uid) {
+  if (firebase.outage) throw new Error("getaddrinfo ENOTFOUND www.googleapis.com");
+  if (firebase.gone.has(uid)) throw Object.assign(new Error("There is no user record corresponding to the provided identifier."), { code: "auth/user-not-found" });
+  return { uid, disabled: firebase.disabled.has(uid) };
+}
+const fakeDeps = () => ({
+  verifyIdToken: fakeVerifier,
+  getUser: fakeGetUser,
+  revokeRefreshTokens: async (uid) => {
+    firebase.revoked.push(uid);
+  },
+  now: () => firebase.clock ?? Date.now(),
+});
+accounts.setDepsForTests(fakeDeps());
 
 let server;
 let base;
@@ -114,7 +135,7 @@ test("a Firebase sign-in makes the account's own folder, sets the account cookie
   assert.equal(res.status, 200, JSON.stringify(res.json));
   assert.deepEqual(res.json, { ok: true, account: { uid: "AliceUID001", email: "aliceuid001@example.com", name: "Alice Farmer", product: null, profileComplete: false } });
   const line = res.cookies.find((cookie) => cookie.startsWith("chernozem_account="));
-  assert.match(line, /^chernozem_account=AliceUID001\.\d+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}; Path=\/; Max-Age=2592000; HttpOnly; SameSite=Lax$/);
+  assert.match(line, /^chernozem_account=AliceUID001\.\d+\.\d+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}; Path=\/; Max-Age=2592000; HttpOnly; SameSite=Lax$/);
   assert.ok(res.cookies.some((cookie) => /^atlas_session=; Path=\/; Max-Age=0;/.test(cookie)), "the access code's cookie, if any, is removed: the latest sign-in wins");
 
   // Behind an https proxy the cookie is marked Secure.
@@ -173,7 +194,7 @@ test("accounts are off (503 accounts_off) when the server cannot check tokens: F
     assert.match(res.json.error.message, /switched off/);
   } finally {
     process.env.FIREBASE_PROJECT_ID = "";
-    accounts.setDepsForTests({ verifyIdToken: fakeVerifier });
+    accounts.setDepsForTests(fakeDeps());
   }
 
   // Which project: FIREBASE_PROJECT_ID, else the Earth Engine project, else the default.
@@ -434,4 +455,93 @@ test("with an access code set, an account still works without the code; the code
   assert.equal(toDemo.status, 200);
   assert.ok(toDemo.cookies.some((line) => /^chernozem_account=; Path=\/; Max-Age=0;/.test(line)));
   assert.deepEqual((await call("POST", "/api/auth/login", { body: { code: "" } })).cookies, [], "no cookie to drop: none sent");
+});
+
+test("Sign out ends every cookie made for the account; a Firebase user deleted or disabled is signed out within the hour; a fresh sign-in works again; the demo's code is untouched", async () => {
+  const hour = 60 * 60 * 1000;
+  const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
+  // With a code set, a cookie that no longer counts is refused everywhere
+  // (without one it would be the open demo, as any stranger is).
+  process.env.ATLAS_ACCESS_CODE = "orchard-lantern-pebble-cobalt";
+  firebase.clock = Date.now();
+  firebase.revoked.length = 0;
+  try {
+    // 1. Sign out: a copy of the cookie kept by anyone is nobody from then on.
+    const cookie = await signIn("OutUID000001");
+    assert.equal((await call("GET", "/api/account", { cookie })).status, 200);
+    await pause();
+    const out = await call("POST", "/api/auth/logout", { cookie });
+    assert.equal(out.status, 200);
+    assert.deepEqual(firebase.revoked, ["OutUID000001"], "Firebase's own sessions are ended too");
+    const file = JSON.parse(fs.readFileSync(path.join(folderOf("OutUID000001"), "session.json"), "utf8"));
+    assert.ok(Date.parse(file.sessionsValidFrom) > 0, "the moment is kept in the account's folder");
+    assert.equal(fs.existsSync(path.join(dir, "session.json")), false, "not in the demo's");
+    for (const [method, url, body] of [
+      ["GET", "/api/account"],
+      ["PUT", "/api/account", { name: "x", role: "farmer", product: "field" }],
+      ["GET", "/api/workspace"],
+      ["GET", "/api/farm"],
+    ]) {
+      const res = await call(method, url, { cookie, body });
+      assert.equal(res.status, 401, `${method} ${url} with the old cookie: ${res.status} ${JSON.stringify(res.json)}`);
+      assert.equal(res.json.error.code, "auth_required");
+    }
+    assert.deepEqual((await call("GET", "/api/auth/status", { cookie })).json, { required: true, signedIn: false, shared: true, account: null });
+    // A second Sign out with the dead cookie does nothing more.
+    await call("POST", "/api/auth/logout", { cookie });
+    assert.deepEqual(firebase.revoked, ["OutUID000001"]);
+
+    // 2. A fresh sign-in after it works; the old cookie stays dead.
+    await pause();
+    const again = await signIn("OutUID000001");
+    assert.notEqual(again, cookie);
+    assert.equal((await call("GET", "/api/account", { cookie: again })).status, 200);
+    assert.equal((await call("GET", "/api/account", { cookie })).status, 401);
+
+    // 3. Deleted in Firebase: the cookie works until the hourly check, then not.
+    const gone = await signIn("GoneUID00001");
+    firebase.gone.add("GoneUID00001");
+    assert.equal((await call("GET", "/api/account", { cookie: gone })).status, 200, "the sign-in's own answer is good for an hour");
+    firebase.clock += hour + 1000;
+    assert.equal((await call("GET", "/api/account", { cookie: gone })).status, 401);
+    assert.equal((await call("GET", "/api/account", { cookie: gone })).status, 401, "and stays so");
+
+    // 4. Disabled in Firebase: the same; enabled again, the next check lets the cookie back in.
+    const off = await signIn("OffUID000001");
+    firebase.disabled.add("OffUID000001");
+    assert.equal((await call("GET", "/api/account", { cookie: off })).status, 200);
+    firebase.clock += hour + 1000;
+    assert.equal((await call("GET", "/api/account", { cookie: off })).status, 401);
+    firebase.disabled.delete("OffUID000001");
+    firebase.clock += hour + 1000;
+    assert.equal((await call("GET", "/api/account", { cookie: off })).status, 200);
+
+    // 5. Firebase cannot be asked: the last answer (here the sign-in) stays
+    // good for a day, then the account must sign in again.
+    const outage = await signIn("OutageUID001");
+    firebase.outage = true;
+    firebase.clock += hour + 1000;
+    assert.equal((await call("GET", "/api/account", { cookie: outage })).status, 200, "could not ask: the sign-in's answer is kept");
+    firebase.clock += 23 * hour;
+    assert.equal((await call("GET", "/api/account", { cookie: outage })).status, 401, "a day without an answer: sign in again");
+    firebase.outage = false;
+    const back = await signIn("OutageUID001");
+    assert.equal((await call("GET", "/api/account", { cookie: back })).status, 200);
+
+    // 6. The demo's code session is untouched: Sign out drops the cookie
+    // from that browser and writes nothing; a copy of it works as before
+    // (only a new code ends every code sign-in at once).
+    const login = await call("POST", "/api/auth/login", { body: { code: "orchard-lantern-pebble-cobalt" } });
+    const codeCookie = cookieOf(login.cookies, "atlas_session");
+    assert.equal((await call("GET", "/api/workspace", { cookie: codeCookie })).status, 200);
+    assert.equal((await call("POST", "/api/auth/logout", { cookie: codeCookie })).status, 200);
+    assert.equal(fs.existsSync(path.join(dir, "session.json")), false);
+    assert.equal((await call("GET", "/api/workspace", { cookie: codeCookie })).status, 200);
+    assert.deepEqual(firebase.revoked, ["OutUID000001"], "no account was signed out by it");
+  } finally {
+    process.env.ATLAS_ACCESS_CODE = "";
+    firebase.clock = null;
+    firebase.outage = false;
+    accounts.setDepsForTests(fakeDeps());
+  }
 });

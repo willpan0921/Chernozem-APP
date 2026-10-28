@@ -18,6 +18,7 @@
 //                     the Field product (see the Field section at the end)
 //   users/<id>/       one such folder per registered account (below), with
 //   users/<id>/profile.json   the account's profile (server/accounts.js)
+//   users/<id>/session.json   when the account last signed out (server/auth.js)
 //
 // Files are written safely (to a temporary file first, then renamed), and
 // ids may only contain a-z, 0-9 and "-", so a request can never reach a
@@ -183,7 +184,11 @@ async function listFiles(kind) {
 // ---------- Workspace ----------
 
 // A new workspace has no budget (the page asks for one) and no team (the
-// first person added is its admin): nothing made up.
+// first person added is its admin): nothing made up. The monthly Atlas
+// update is on for the demo (the base folder) and OFF for a registered
+// account's fresh folder (server/quotas.js: a self-registered account
+// should not have Earth Engine work every month unless the person asks
+// for it in Settings).
 function defaultWorkspace() {
   return {
     name: "Regional office",
@@ -191,7 +196,7 @@ function defaultWorkspace() {
     settings: checkSettings(DEFAULT_SETTINGS),
     budgetUsd: null,
     doneSteps: [],
-    schedule: { autoMonthly: true },
+    schedule: { autoMonthly: dataDir() === baseDataDir() },
     team: [],
   };
 }
@@ -709,6 +714,28 @@ export async function deletePhoto(photoId) {
   await Promise.all(Object.keys(PHOTO_TYPES).map((ext) => removeFile(photoFile(photoId, ext))));
 }
 
+// How many bytes the photos in uploads/ take together (0 without any), for
+// a registered account's photo allowance (server/quotas.js).
+export async function uploadsBytes() {
+  const dir = path.join(dataDir(), "uploads");
+  let names;
+  try {
+    names = await fs.readdir(dir);
+  } catch (error) {
+    if (error.code === "ENOENT") return 0;
+    throw error;
+  }
+  let total = 0;
+  for (const name of names) {
+    try {
+      total += (await fs.stat(path.join(dir, name))).size;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+  return total;
+}
+
 // The weather answer kept for an hour: { at, lat, lon, data } or null.
 export async function getWeatherCache() {
   return readFile(path.join(dataDir(), "weather-cache.json"));
@@ -731,4 +758,20 @@ export async function getProfile() {
 export async function saveProfile(profile) {
   await writeFile(path.join(dataDir(), "profile.json"), profile);
   return profile;
+}
+
+// ---------- The account's sign-outs ----------
+// session.json beside profile.json: { sessionsValidFrom } is the moment of
+// the account's last "Sign out" (server/accounts.js signOutAccount); an
+// account cookie made before it is nobody (server/auth.js). Kept apart
+// from profile.json, which holds the person's own words. Null when the
+// account never signed out.
+
+export async function getSessionFile() {
+  return readFile(path.join(dataDir(), "session.json"));
+}
+
+export async function saveSessionFile(value) {
+  await writeFile(path.join(dataDir(), "session.json"), value);
+  return value;
 }

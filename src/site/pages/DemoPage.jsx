@@ -31,6 +31,8 @@ function holdsDemo(status) {
 
 export default function DemoPage() {
   usePageTitle("Demo");
+  // The form's entrance: the hook runs on every render, whichever branch shows.
+  const formReveal = useReveal();
   const [status, setStatus] = useState(null);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -105,7 +107,7 @@ export default function DemoPage() {
                   </div>
                 </div>
               ) : (
-                <form className="pg-form" onSubmit={submit} aria-busy={status === null ? "true" : undefined} ref={useReveal()}>
+                <form className="pg-form" onSubmit={submit} aria-busy={status === null ? "true" : undefined} ref={formReveal}>
                   <label className="pg-field" htmlFor="dm-code" data-rise style={{ "--i": 0 }}>
                     <span>Access code</span>
                     <input id="dm-code" type="password" name="code" autoComplete="off" autoCapitalize="off" spellCheck="false" value={code} onChange={(event) => setCode(event.target.value)} aria-invalid={error ? "true" : undefined} aria-describedby={error ? "dm-code-error" : undefined} />

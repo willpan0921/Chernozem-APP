@@ -31,7 +31,13 @@ workspace of their own. The server checks the sign-in with Firebase
 account's data in its own folder, `server/.data/users/<id>/` (online:
 `/var/data/users/`), with a `profile.json` beside the usual files. The
 demo behind the access code is a separate, shared workspace with both
-products, exactly as before. Settings: `FIREBASE_PROJECT_ID` (optional,
+products, exactly as before. An account has limits the demo does not
+(`server/quotas.js`): 5 areas of at most 1,000,000 km², one analysis at
+a time of at most 12 months, 2 Field searches and 2 updates an hour, 30
+reports and 40 MB of real photos, 40 AI messages a day, and the monthly
+update off until switched on; "Sign out" ends every copy of its cookie,
+and an account deleted in Firebase is signed out within the hour.
+Settings: `FIREBASE_PROJECT_ID` (optional,
 defaults to the Earth Engine project) and, on your own computer only,
 `FIREBASE_AUTH_EMULATOR_HOST`. The one-time switch-on in the Firebase
 console, and the rest, is in [docs/DEPLOY.md](docs/DEPLOY.md), section

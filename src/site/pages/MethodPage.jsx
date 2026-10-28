@@ -40,6 +40,8 @@ const ATLAS_STEPS = ["Register and choose Atlas.", "Pick a country, a region or 
 export default function MethodPage() {
   usePageTitle("Methodology");
   const w = NUMBERS.postWeights;
+  // Near term uses value and damage only, their weights re-shared (30/40 -> 0.43/0.57), as the app does.
+  const nearShares = { value: (w.value / (w.value + w.damage)).toFixed(2), damage: (w.damage / (w.value + w.damage)).toFixed(2) };
   return (
     <div className="pg">
       <section className="pg-sec" aria-labelledby="meth-title">
@@ -74,20 +76,20 @@ export default function MethodPage() {
             </h2>
           </Reveal>
           <Reveal className="meth-body" delay={0.08}>
-            <p>Every square of land gets three numbers between 0 and 100. Priority exists only where all three hold at once.</p>
+            <p>Every square of land gets three numbers between 0 and 100. Value and damage make the priority; feasibility decides whether a square is ranked now or later.</p>
           </Reveal>
           <Stagger as="dl" className="meth-scores">
             <StaggerItem>
               <dt>Value</dt>
-              <dd>How much good soil is in the square: black soil, soil carbon, cropland share.</dd>
+              <dd>How likely the soil is black soil, and how much of the square is cropland.</dd>
             </StaggerItem>
             <StaggerItem>
               <dt>Damage</dt>
-              <dd>What changed since the crisis began: radar change, fire, lost vegetation, compared with the normal years 2019 to 2021.</dd>
+              <dd>Unusual fire and lasting radar change since the crisis began, against the same seasons in 2019 to 2021.</dd>
             </StaggerItem>
             <StaggerItem>
               <dt>Feasibility</dt>
-              <dd>Whether anyone can work there now: distance to fighting, people, night lights, water.</dd>
+              <dd>Distance to recorded fighting; 100 km or more counts as fully feasible.</dd>
             </StaggerItem>
           </Stagger>
         </div>
@@ -110,7 +112,9 @@ export default function MethodPage() {
               </p>
             </Reveal>
             <Reveal delay={0.16}>
-              <p className="meth-formula">Near term: priority = value × damage, where feasibility is above the cutoff</p>
+              <p className="meth-formula">
+                Near term: priority = ({nearShares.value}·value<sup>0.5</sup> + {nearShares.damage}·damage<sup>0.5</sup>)<sup>2</sup>, faded in over the {NUMBERS.rampWidth} ramp above the cutoff; below it, left out
+              </p>
               <p className="meth-formula">
                 Post-crisis: priority = ({w.value}·value<sup>0.5</sup> + {w.damage}·damage<sup>0.5</sup> + {w.feasibility}·feasibility<sup>0.5</sup>)<sup>2</sup>
               </p>
@@ -250,7 +254,7 @@ export default function MethodPage() {
             </Stagger>
             <Reveal className="meth-accounts" delay={0.08}>
               <h3 className="pg-h3">Accounts and privacy</h3>
-              <p>Accounts run on Firebase (Google or e‑mail and password). Your fields, readings and messages stay on our own server and are never sold or shared. The demo is behind one access code.</p>
+              <p>Accounts run on Firebase (Google or e‑mail and password); Google holds your sign-in. Your fields, readings, reports and messages are kept on our own server and never sold. When you ask the assistant, your question and your fields’ readings go to Anthropic’s Claude to be answered; the satellite maths runs on Google Earth Engine. The demo is behind one access code.</p>
               <ul className="meth-links">
                 <li>
                   <a className="pg-link" href={LINKS.github} target="_blank" rel="noreferrer">

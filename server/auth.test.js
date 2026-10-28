@@ -486,12 +486,13 @@ test("a change asked for by another website is refused (403); reads, our own pag
 
 // ---------- A registered account's cookie (server/accounts.js signs people in) ----------
 
-test("an account token is accepted with the same secret only, and gives back the account id", () => {
+test("an account token is accepted with the same secret only, and gives back the account id and when it was made", () => {
   const secret = auth.deriveAccountSecret("a".repeat(64));
-  const token = auth.signAccountSession(secret, "AbC123_-xyz");
-  assert.match(token, /^AbC123_-xyz\.\d+\.[A-Za-z0-9_-]{16,64}\.[A-Za-z0-9_-]{43}$/);
-  assert.equal(auth.verifyAccountSession(token, secret), "AbC123_-xyz");
-  assert.equal(auth.verifyAccountSession(token, auth.deriveAccountSecret("b".repeat(64))), null, "a new salt signs everyone out");
+  const now = Date.UTC(2026, 9, 28);
+  const token = auth.signAccountSession(secret, "AbC123_-xyz", { now });
+  assert.match(token, /^AbC123_-xyz\.\d+\.\d+\.[A-Za-z0-9_-]{16,64}\.[A-Za-z0-9_-]{43}$/);
+  assert.deepEqual(auth.verifyAccountSession(token, secret, { now }), { uid: "AbC123_-xyz", issuedAt: now, expiresAt: now + 30 * 24 * 60 * 60 * 1000 });
+  assert.equal(auth.verifyAccountSession(token, auth.deriveAccountSecret("b".repeat(64)), { now }), null, "a new salt signs everyone out");
   assert.notEqual(Buffer.compare(secret, auth.deriveSecret("accounts", "a".repeat(64))), 0, "not the access code's secret");
   assert.throws(() => auth.signAccountSession(secret, "has.dots"), "dots would split the token");
   assert.throws(() => auth.signAccountSession(secret, ""));
@@ -503,13 +504,16 @@ test("an account token is accepted with the same secret only, and gives back the
 test("a changed account token is refused", () => {
   const secret = auth.deriveAccountSecret("salt".repeat(10));
   const token = auth.signAccountSession(secret, "SomeUID");
-  const [uid, expires, nonce, sig] = token.split(".");
-  assert.equal(auth.verifyAccountSession(`OtherUID.${expires}.${nonce}.${sig}`, secret), null, "another account");
-  assert.equal(auth.verifyAccountSession(`${uid}.${Number(expires) + 1000}.${nonce}.${sig}`, secret), null, "longer expiry");
-  assert.equal(auth.verifyAccountSession(`${uid}.${expires}.${nonce}x.${sig}`, secret), null, "changed random part");
+  const [uid, issued, expires, nonce, sig] = token.split(".");
+  assert.equal(auth.verifyAccountSession(`OtherUID.${issued}.${expires}.${nonce}.${sig}`, secret), null, "another account");
+  assert.equal(auth.verifyAccountSession(`${uid}.${Number(issued) + 1000}.${expires}.${nonce}.${sig}`, secret), null, "a later time made at (it would outlive a sign-out)");
+  assert.equal(auth.verifyAccountSession(`${uid}.${issued}.${Number(expires) + 1000}.${nonce}.${sig}`, secret), null, "longer expiry");
+  assert.equal(auth.verifyAccountSession(`${uid}.${issued}.${expires}.${nonce}x.${sig}`, secret), null, "changed random part");
   const flipped = sig.slice(0, -1) + (sig.endsWith("A") ? "B" : "A");
-  assert.equal(auth.verifyAccountSession(`${uid}.${expires}.${nonce}.${flipped}`, secret), null, "changed signature");
-  for (const junk of ["", "abc", "1.2.3", "a.b.c.d", null, undefined, 42, `${token}.extra`, auth.signSession(secret)]) {
+  assert.equal(auth.verifyAccountSession(`${uid}.${issued}.${expires}.${nonce}.${flipped}`, secret), null, "changed signature");
+  // (The fifth entry is a cookie of the older shape, without the time it
+  // was made at: those browsers sign in again once.)
+  for (const junk of ["", "abc", "1.2.3", "a.b.c.d", `${uid}.${expires}.${nonce}.${sig}`, null, undefined, 42, `${token}.extra`, auth.signSession(secret)]) {
     assert.equal(auth.verifyAccountSession(junk, secret), null, `junk: ${String(junk)}`);
   }
 });
@@ -519,18 +523,21 @@ test("an account token runs out after 30 days", () => {
   const now = Date.UTC(2026, 9, 1);
   const token = auth.signAccountSession(secret, "SomeUID", { now });
   const day = 24 * 60 * 60 * 1000;
-  assert.equal(auth.verifyAccountSession(token, secret, { now: now + 29 * day }), "SomeUID");
+  assert.equal(auth.verifyAccountSession(token, secret, { now: now + 29 * day })?.uid, "SomeUID");
   assert.equal(auth.verifyAccountSession(token, secret, { now: now + 30 * day }), null);
   assert.equal(auth.verifyAccountSession(token, secret, { now: now + 31 * day }), null);
 });
 
 test("through the API: the status names the account, the account works with a code set, and Sign out clears both cookies", async () => {
   const accounts = await import("./accounts.js");
+  const revoked = [];
   accounts.setDepsForTests({
     verifyIdToken: (idToken) => {
       if (idToken === "ok") return { uid: "AuthTestUID1", email: "auth@example.com", name: "Auth Test" };
       throw Object.assign(new Error("bad"), { code: "auth/argument-error" });
     },
+    getUser: (uid) => ({ uid, disabled: false }),
+    revokeRefreshTokens: (uid) => revoked.push(uid),
   });
   try {
     process.env.ATLAS_ACCESS_CODE = "";
@@ -555,6 +562,10 @@ test("through the API: the status names the account, the account works with a co
     assert.deepEqual(out.json, { ok: true, required: true, signedIn: false, shared: true, account: null });
     assert.ok(out.setCookies.some((line) => /^atlas_session=; Path=\/; Max-Age=0; HttpOnly; SameSite=Lax$/.test(line)), out.setCookies.join(" | "));
     assert.ok(out.setCookies.some((line) => /^chernozem_account=; Path=\/; Max-Age=0; HttpOnly; SameSite=Lax$/.test(line)), out.setCookies.join(" | "));
+    // ...and ends the account's cookies everywhere (accounts.test.js has
+    // the details), and Firebase's own sessions.
+    assert.equal((await call("GET", "/api/account", { cookie: account })).status, 401, "a copy of the old cookie is nobody now");
+    assert.deepEqual(revoked, ["AuthTestUID1"]);
 
     // A wrong token: 401 bad_token, no cookie.
     const bad = await call("POST", "/api/auth/firebase", { body: { idToken: "nope" } });

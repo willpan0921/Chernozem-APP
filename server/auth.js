@@ -18,7 +18,9 @@
 //   POST /api/auth/firebase  body { idToken } -> a registered account's
 //                            sign-in (server/accounts.js), sets the
 //                            account cookie
-//   POST /api/auth/logout    removes BOTH cookies (the sidebar's "Sign out")
+//   POST /api/auth/logout    removes BOTH cookies (the sidebar's "Sign out");
+//                            for a registered account it also ends every
+//                            cookie made for the account so far (below)
 //
 // shared is true when a code is set and the browser is in with the code:
 // the app is then one workspace that everyone with the code sees and can
@@ -28,19 +30,35 @@
 //
 // TWO COOKIES
 //   atlas_session       the access code's (30 days): the shared demo
-//   chernozem_account   a registered account's (30 days): "<uid>.<expires
-//                       at>.<random>.<signature>", signed with a secret
-//                       made from this install's salt and the word
-//                       "accounts", checked in constant time. It is set by
-//                       POST /api/auth/firebase once Firebase has said who
-//                       the person is, and carries only the account id:
-//                       the e-mail, name and product are read from the
-//                       account's profile.json on every request.
+//   chernozem_account   a registered account's (30 days): "<uid>.<made
+//                       at>.<expires at>.<random>.<signature>", signed
+//                       with a secret made from this install's salt and
+//                       the word "accounts", checked in constant time. It
+//                       is set by POST /api/auth/firebase once Firebase
+//                       has said who the person is, and carries only the
+//                       account id and the times: the e-mail, name and
+//                       product are read from the account's profile.json
+//                       on every request.
 // A browser with a valid account cookie is that account, code or no code
 // (also online, and also on one's own computer without a code). Without
 // one, the access code's rules apply as before. handleAuth gives
 // server/app.js the session, { kind: "code" | "account", root, account },
 // and app.js runs the route inside that root.
+//
+// WHEN AN ACCOUNT COOKIE STOPS COUNTING (before its 30 days)
+// A cookie is a signed note; the server cannot take it back from a browser
+// that keeps a copy. So, on every request, accountSession also checks:
+//   - the account's session.json (server/store.js): "Sign out" writes the
+//     moment into it (server/accounts.js signOutAccount), and a cookie
+//     made before that moment is nobody. A sign-in after it makes a newer
+//     cookie, which counts. (Firebase's own sessions in that browser are
+//     ended too, best-effort.)
+//   - that the Firebase user still exists and is not disabled, asked of
+//     Firebase at most once an hour per account (server/accounts.js
+//     firebaseUserOk). Deleted or disabled there: the cookie is treated as
+//     run out within the hour.
+// The access code's cookie has no such check: signing out removes it from
+// that browser, and only a new code ends every code sign-in at once.
 //
 // Also here, for every /api/ route (server/app.js calls assertSameSite
 // first): a request that changes something is refused (403 cross_site)
@@ -93,11 +111,11 @@ import path from "node:path";
 import { BlockList, isIP } from "node:net";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { onRender, refreshEnv } from "./env.js";
-import { baseDataDir, getProfile, userRoot, withDataRoot } from "./store.js";
+import { baseDataDir, getProfile, getSessionFile, userRoot, withDataRoot } from "./store.js";
 import { HttpError, readJson, sendJson } from "./http.js";
 // (accounts.js imports this file too; both only use each other inside
 // functions, so the circle is harmless.)
-import { accountSummary, handleFirebaseSignIn } from "./accounts.js";
+import { accountSummary, firebaseUserOk, handleFirebaseSignIn, signOutAccount } from "./accounts.js";
 
 export const COOKIE_NAME = "atlas_session";
 export const ACCOUNT_COOKIE_NAME = "chernozem_account";
@@ -202,25 +220,30 @@ export function deriveAccountSecret(salt) {
   return createHmac("sha256", String(salt)).update("accounts").digest();
 }
 
-// Makes an account token: "<uid>.<expires at, ms>.<random>.<signature>".
+// Makes an account token: "<uid>.<made at, ms>.<expires at, ms>.<random>.
+// <signature>". The time it was made at lets a sign-out end it (see the
+// top of this file).
 export function signAccountSession(secret, uid, { now = Date.now(), maxAgeMs = SESSION_MS } = {}) {
   if (!isUid(uid)) throw new Error("signAccountSession needs a Firebase account id.");
-  const payload = `${uid}.${now + maxAgeMs}.${base64url(randomBytes(16))}`;
+  const payload = `${uid}.${now}.${now + maxAgeMs}.${base64url(randomBytes(16))}`;
   return `${payload}.${signature(secret, payload)}`;
 }
 
-const ACCOUNT_TOKEN = /^([A-Za-z0-9_-]{1,128})\.(\d{1,16})\.([A-Za-z0-9_-]{16,64})\.([A-Za-z0-9_-]{43})$/;
+const ACCOUNT_TOKEN = /^([A-Za-z0-9_-]{1,128})\.(\d{1,16})\.(\d{1,16})\.([A-Za-z0-9_-]{16,64})\.([A-Za-z0-9_-]{43})$/;
 
-// The account id the token was made for, when it was made by
-// signAccountSession with this secret and has not run out; else null.
+// { uid, issuedAt, expiresAt } (the account id and the times, ms) when the
+// token was made by signAccountSession with this secret and has not run
+// out; else null. (A cookie of the older shape, without the time it was
+// made at, is null too: those browsers sign in again once.)
 export function verifyAccountSession(token, secret, { now = Date.now() } = {}) {
   const match = typeof token === "string" ? ACCOUNT_TOKEN.exec(token) : null;
   if (!match) return null;
-  const [, uid, expires, nonce, given] = match;
-  const expected = Buffer.from(signature(secret, `${uid}.${expires}.${nonce}`));
+  const [, uid, issued, expires, nonce, given] = match;
+  const expected = Buffer.from(signature(secret, `${uid}.${issued}.${expires}.${nonce}`));
   const actual = Buffer.from(given);
   if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null;
-  return Number(expires) > now ? uid : null;
+  if (!(Number(expires) > now)) return null;
+  return { uid, issuedAt: Number(issued), expiresAt: Number(expires) };
 }
 
 // ---------- Wrong-code limit ----------
@@ -571,10 +594,12 @@ export async function isSignedIn(req, code = accessCode()) {
   return verifySession(token, deriveSecret(code, await installSalt()));
 }
 
-// The account id in this request's account cookie, when the cookie is
-// valid and has not run out; else null (no cookie, a changed one, an old
-// one: all the same, not signed in).
-export async function accountUidOf(req) {
+// What this request's account cookie says, { uid, issuedAt, expiresAt },
+// when the cookie is properly signed and has not run out; else null (no
+// cookie, a changed one, an old one: all the same, not signed in). Only
+// the cookie itself is checked here; accountSession adds the sign-out and
+// Firebase checks.
+export async function accountTokenOf(req) {
   const token = parseCookies(req.headers?.cookie)[ACCOUNT_COOKIE_NAME];
   if (!token) return null;
   return verifyAccountSession(token, deriveAccountSecret(await installSalt()));
@@ -582,12 +607,18 @@ export async function accountUidOf(req) {
 
 // The registered account this request belongs to, with its profile read
 // from its own folder: { kind: "account", root, account }, or null when
-// the request carries no valid account cookie.
+// the request carries no valid account cookie, the account signed out
+// since the cookie was made, or the Firebase user is gone or disabled
+// (see the top of this file).
 async function accountSession(req) {
-  const uid = await accountUidOf(req);
-  if (!uid) return null;
+  const token = await accountTokenOf(req);
+  if (!token) return null;
+  const { uid, issuedAt } = token;
   const root = userRoot(uid);
-  const profile = await withDataRoot(root, () => getProfile());
+  const [profile, signedOut] = await withDataRoot(root, () => Promise.all([getProfile(), getSessionFile()]));
+  const validFrom = Date.parse(signedOut?.sessionsValidFrom || "");
+  if (Number.isFinite(validFrom) && issuedAt < validFrom) return null;
+  if (!(await firebaseUserOk(uid))) return null;
   return { kind: "account", root, account: accountSummary(uid, profile) };
 }
 
@@ -669,6 +700,13 @@ export async function handleAuth(req, res, { method, first, second, third }) {
   }
 
   if (second === "logout" && !third && method === "POST") {
+    // A registered account: every cookie made for it so far stops
+    // counting (server/accounts.js signOutAccount), not only the one this
+    // browser drops. Only a cookie that still counts can do that: a copy
+    // kept from before an earlier sign-out cannot sign the person out of
+    // Firebase on their other devices again and again.
+    const account = await accountSession(req);
+    if (account) await signOutAccount(account.account.uid);
     res.setHeader("Set-Cookie", [sessionCookie(req, "", 0), accountCookie(req, "", 0)]);
     sendJson(res, 200, { ok: true, required, signedIn: !required, shared: required, account: null });
     return false;

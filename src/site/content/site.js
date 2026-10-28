@@ -88,7 +88,7 @@ export const NUMBERS = {
   blackSoilCroplandPercent: 17,
   blackSoilWheatPercent: 30,
   // The war on the land (FAO, 2025).
-  cratersHa: 2370000,
+  surveyedHa: 2370000, // farmland the FAO surveyed from satellite; it found more than a million shell craters there
   peopleFedMillions: 400, // people a year fed by Ukraine's food exports before the war
   // The wider need.
   armedConflicts: 130, // armed conflicts in the world, about
@@ -100,7 +100,10 @@ export const DEMO = {
   place: "Kupiansk, Kharkiv region, Ukraine",
   fields: 12, // the demo farm (public/site/shots/manifest.json, field-settings)
   farmHa: 553,
-  field11: { name: "Field 11", crop: "Rapeseed", plantHealth: 0.79, stress: "under 1%" }, // field-fields-detail
+  // Field 11's latest reading (the demo farm's saved analysis, pass of 26 October 2026):
+  // plant health 0.79 (above normal), stress 0.1 ha (under 1%), water 0.24 (near normal),
+  // harvest: past peak, greenest 0.90 on 29 June; the crop is unknown to the app, so no date.
+  field11: { name: "Field 11", crop: "Rapeseed", plantHealth: 0.79, stress: "under 1%", water: "near normal", latestPass: "26 October 2026", peakDate: "29 June" },
   passesSinceMarch: 50, // field-data
 };
 

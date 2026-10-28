@@ -59,7 +59,10 @@ export default function Nav() {
       <div className="sn-inner wrap">
         <Link to="/" className="sn-brand" aria-label={`${SITE.name} home`}>
           {/* The PNG, not the webp: only the PNG has a transparent background. */}
-          <img src="/site/wordmark.png" alt={SITE.name} width="150" height="34" decoding="async" fetchPriority="high" />
+          <picture>
+            <source srcSet="/site/wordmark.webp" type="image/webp" />
+            <img src="/site/wordmark.png" alt={SITE.name} width="150" height="34" decoding="async" fetchPriority="high" />
+          </picture>
         </Link>
 
         <nav className="sn-links" aria-label="Website pages">

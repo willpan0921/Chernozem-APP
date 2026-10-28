@@ -44,10 +44,13 @@ export default function SiteShell() {
           exit={reduced ? { opacity: 1 } : { opacity: 0 }}
           transition={{ duration: reduced ? 0 : 0.38, ease: [0.16, 1, 0.3, 1] }}
         >
-          <Suspense fallback={<div style={{ minHeight: "70svh" }} aria-busy="true" />}>{outlet}</Suspense>
+          {/* The footer is inside the waiting boundary, so it never shows up early and then jumps away when the page's code arrives. */}
+          <Suspense fallback={<div style={{ minHeight: "100svh" }} aria-busy="true" />}>
+            {outlet}
+            <Footer />
+          </Suspense>
         </motion.main>
       </AnimatePresence>
-      <Footer />
     </div>
   );
 }

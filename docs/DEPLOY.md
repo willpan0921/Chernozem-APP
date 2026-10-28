@@ -190,6 +190,15 @@ The website's **Register** page lets a person make an account (with Google, or a
 - The monthly Atlas update and the daily Field refresh run for every account's folder too, one after the other after the demo's, inside the Earth Engine allowance (section 11). Every account's analysis waits in the same line as the demo's: one at a time for the whole server.
 - Messages from the contact page still arrive in the **demo's** Atlas Settings only.
 
+**What one account may do** (anyone can register, so one account cannot fill the disk, hold the Earth Engine line for hours or spend the Claude key without end; the numbers are in `server/quotas.js`; the demo has none of these limits)
+
+- Atlas: at most **5 areas**, each at most **1,000,000 km²** (a country the size of Ukraine, not Russia) and 1,500 map squares, drawn with at most 1,000 points; **one analysis at a time**, of at most **12 months**; the monthly update is **off** until the person switches it on in Settings.
+- Field: **one job at a time** (a search for fields or an analysis), and at most **2 searches and 2 "update now" an hour**; outlines of at most 1,000 points; at most **30 reports** and **40 MB of photos** in all, and every photo must be a real JPEG, PNG or WebP picture of at most 8,000 pixels a side.
+- The AI chat: at most **40 messages a day**.
+- A limit reached answers with a plain sentence (the code `quota`; `busy` while the account's other analysis runs).
+
+**Signing out**: "Sign out" ends every copy of that account's cookie at once (the moment is kept in the account's `session.json`) and ends its Firebase sessions. The server also asks Firebase once an hour whether each signed-in account still exists, so an account deleted or disabled in the Firebase console is signed out within the hour. If Firebase cannot be asked (an outage, or a computer without the Google key), the last answer stays good for a day, then the person signs in again.
+
 **What you must do once (the owner, in the Firebase console)**
 
 Registration is **not open** until Firebase Authentication is switched on for the project. Until then the Register page says "Registration is not open yet" and offers the demo and the contact page.
@@ -206,5 +215,5 @@ The server also needs the `firebase-admin` package in `package.json` (`npm insta
 
 **Signing everyone out at once** (accounts and the demo): delete `auth.json` on the disk (the sign-in secret's salt; the server makes a new one at once). Changing the access code (section 8) signs out the demo only.
 
-**Removing an account**: delete its folder under `/var/data/users/` (the person can register again and starts empty) and, in the Firebase console, the user under Authentication > Users (or the person deletes it themselves in the app, when that exists).
+**Removing an account**: delete its folder under `/var/data/users/` (the person can register again and starts empty) and, in the Firebase console, the user under Authentication > Users (its cookies stop working within the hour; or the person deletes it themselves in the app, when that exists).
 

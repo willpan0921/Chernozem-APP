@@ -251,3 +251,27 @@ test("withDataRoot: reads and writes inside it go to that folder, also after awa
   });
   await withFreshDir(async () => assert.deepEqual(await store.listUserRoots(), [], "no users/ folder yet"));
 });
+
+test("a fresh account folder starts with the monthly update off (the demo's is on); uploadsBytes measures its photos", async () => {
+  await withFreshDir(async () => {
+    assert.equal((await store.getWorkspace()).schedule.autoMonthly, true, "the base folder: the demo");
+    await store.withDataRoot(store.userRoot("auto-off"), async () => {
+      assert.equal((await store.getWorkspace()).schedule.autoMonthly, false, "an account's folder");
+      await store.updateWorkspace((ws) => {
+        ws.schedule.autoMonthly = true;
+      });
+      assert.equal((await store.getWorkspace()).schedule.autoMonthly, true, "switched on, it stays on");
+      assert.equal(await store.uploadsBytes(), 0, "no photos yet");
+      await store.savePhoto("photo-a", "png", Buffer.alloc(1000));
+      await store.savePhoto("photo-b", "jpg", Buffer.alloc(2500));
+      assert.equal(await store.uploadsBytes(), 3500);
+      await store.deletePhoto("photo-a");
+      assert.equal(await store.uploadsBytes(), 2500);
+      assert.equal(await store.getSessionFile(), null, "never signed out");
+      await store.saveSessionFile({ sessionsValidFrom: "2026-10-28T10:00:00.000Z" });
+      assert.deepEqual(await store.getSessionFile(), { sessionsValidFrom: "2026-10-28T10:00:00.000Z" });
+    });
+    assert.equal(await store.uploadsBytes(), 0, "the base folder has none of them");
+    assert.equal(await store.getSessionFile(), null);
+  });
+});

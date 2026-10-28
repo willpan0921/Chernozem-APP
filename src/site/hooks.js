@@ -34,13 +34,23 @@ export function useScrollTop() {
   const { pathname, hash } = useLocation();
   useEffect(() => {
     if (hash) {
-      const target = document.getElementById(hash.slice(1));
-      if (target) {
-        target.scrollIntoView({ block: "start" });
-        return;
-      }
+      // The part may not exist yet (the page's code is still arriving): keep
+      // looking for up to two seconds, then give up quietly.
+      let tries = 0;
+      let timer = 0;
+      const look = () => {
+        const target = document.getElementById(hash.slice(1));
+        if (target) {
+          target.scrollIntoView({ block: "start" });
+          return;
+        }
+        if (tries++ < 40) timer = window.setTimeout(look, 50);
+      };
+      look();
+      return () => window.clearTimeout(timer);
     }
     window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+    return undefined;
   }, [pathname, hash]);
 }
 

@@ -82,6 +82,8 @@ const GZIP_MIN_BYTES = 1024;
 
 // The website's film lives here (public/site/film/ -> dist/site/film/).
 const FILM_DIR = `${path.sep}site${path.sep}film${path.sep}`;
+// Everything else the website ships under public/site/ (-> dist/site/).
+const SITE_DIR = `${path.sep}site${path.sep}`;
 const WEEK_SECONDS = 7 * 24 * 60 * 60;
 
 // The safety headers above, on every answer.
@@ -117,6 +119,11 @@ export function cacheControlFor(file) {
   // Built files under assets/ have a fingerprint in their name: cache them.
   if (file.includes(`${path.sep}assets${path.sep}`)) return "public, max-age=31536000, immutable";
   if (file.includes(FILM_DIR)) return `public, max-age=${WEEK_SECONDS}`;
+  // The website's pictures (screenshots, the story's maps, the wordmark, the
+  // globe's still) change only with a new build: a day in browsers and
+  // Cloudflare. Its data files (the demo, the countries, the trade table)
+  // an hour, so a rebuilt file reaches visitors the same day.
+  if (file.includes(SITE_DIR)) return file.endsWith(".json") ? "public, max-age=3600" : "public, max-age=86400";
   return "no-cache";
 }
 
