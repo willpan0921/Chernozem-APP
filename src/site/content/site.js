@@ -7,24 +7,31 @@
 // WHO EDITS IT
 // Whoever updates the website's figures. Keep each number's source note.
 
-// The website's menu, in order. "Open the app" is added by the menu itself.
+// The website's four tabs, in order. The two actions (Demo, Register) are
+// added by the menu itself.
 export const SITE_PAGES = [
+  { path: "/", label: "About" },
   { path: "/story", label: "Story" },
-  { path: "/product", label: "Product" },
-  { path: "/guide", label: "How to use" },
-  { path: "/method", label: "Method" },
-  { path: "/technology", label: "Technology" },
-  { path: "/design", label: "Design" },
+  { path: "/method", label: "Methodology" },
   { path: "/contact", label: "Contact" },
 ];
 
+// The two actions in the menu bar and in the footer.
+export const SITE_ACTIONS = {
+  demo: { path: "/demo", label: "Demo" },
+  register: { path: "/register", label: "Register" },
+  signin: { path: "/signin", label: "Sign in" },
+};
+
 export const SITE = {
   name: "Chernozem",
-  tagline: "From a pin to an atlas.",
+  tagline: "Satellite farmland monitoring.",
   description:
-    "Chernozem turns free satellite data into clear answers about farmland after war and disaster, anywhere in the world.",
+    "Chernozem reads free satellite data over farmland and says what changed: Field for a farmer's own fields, Atlas for governments and NGOs ranking whole regions.",
   appPath: "/field",
   atlasPath: "/atlas",
+  demoPath: "/demo",
+  registerPath: "/register",
   madeIn: "Pasadena, California",
   year: 2026,
 };
@@ -88,6 +95,22 @@ export const NUMBERS = {
   farmsMillions: 570, // farms in the world
 };
 
+// The demo (the owner's own Ukraine workspace, behind the access code).
+export const DEMO = {
+  place: "Kupiansk, Kharkiv region, Ukraine",
+  fields: 12, // the demo farm (public/site/shots/manifest.json, field-settings)
+  farmHa: 553,
+  field11: { name: "Field 11", crop: "Rapeseed", plantHealth: 0.79, stress: "under 1%" }, // field-fields-detail
+  passesSinceMarch: 50, // field-data
+};
+
+// Where the globe's live markers come from.
+export const WORLD_SOURCES = [
+  { name: "GDACS", url: "https://www.gdacs.org/", what: "Floods, droughts, wildfires, storms, earthquakes and volcanoes, as they happen." },
+  { name: "Reviewed list", url: "/method#technology", what: "Armed conflicts, reviewed by hand (there is no free live feed of wars)." },
+  { name: "WITS", url: "https://wits.worldbank.org/", what: "Who buys whose food: agricultural trade by country (World Bank, 2023)." },
+];
+
 // What the app reads, in the order the website lists them.
 export const DATASETS = [
   { name: "Sentinel-1", org: "ESA Copernicus", role: "Radar", what: "Lasting change in the ground itself, seen through clouds and at night." },
@@ -118,7 +141,7 @@ export const STACK = [
 
 // The pages' titles in the browser tab.
 export function pageTitle(sub) {
-  return sub ? `${sub} · Chernozem` : "Chernozem — from a pin to an atlas";
+  return sub ? `${sub} · Chernozem` : "Chernozem, satellite farmland monitoring";
 }
 
 export function formatInt(n) {

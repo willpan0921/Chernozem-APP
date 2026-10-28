@@ -98,6 +98,7 @@ import { listConflictForArea } from "./conflicts.js";
 import { checkAreaWar } from "../src/config/conflicts.js";
 import { getProvider, providerStatus, withTimeout } from "./providers/index.js";
 import { schedulerStatus } from "./scheduler.js";
+import { handleWorld } from "./world/index.js";
 import { checkSettings } from "../src/lib/atlas/method.js";
 import { assertSameSite, handleAuth } from "./auth.js";
 import { handleAdmin } from "./import.js";
@@ -449,6 +450,8 @@ async function route(req, res, url) {
   if (first === "health" && !second && (method === "GET" || method === "HEAD")) return sendJson(res, 200, { ok: true });
   if (first === "admin") return handleAdmin(req, res, { method, parts, pathname: url.pathname });
   if (first === "contact") return handleContact(req, res, { method, parts, pathname: url.pathname });
+  // The website's globe (server/world/index.js): public, read-only.
+  if (first === "world") return handleWorld(req, res, { method, parts, pathname: url.pathname });
 
   // The access code (server/auth.js) comes before every other route: it
   // answers /api/auth/... and, when a code is set, stops browsers that have
