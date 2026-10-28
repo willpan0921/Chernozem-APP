@@ -111,6 +111,11 @@
   margin-top: 0.9em;
 }
 
+/* The lead sits a clear step under its headline (".pg p" above would zero it). */
+.pg .pg-lead {
+  margin-top: 32px;
+}
+
 .pg-muted {
   color: var(--muted);
 }

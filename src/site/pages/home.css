@@ -597,11 +597,14 @@
   line-height: 1.3;
 }
 
-.site .feature-line {
+.site .feature-line,
+.site .feature-text .feature-line {
   margin-top: 0.6em;
-  font-size: 15px;
-  line-height: 1.45;
+  /* Running text: readable size, the full ink (the blueprint's 15px grey read thin). */
+  font-size: 16px;
+  line-height: 1.5;
   max-width: none;
+  color: var(--ink);
 }
 
 .site .feature-line + .feature-line {
