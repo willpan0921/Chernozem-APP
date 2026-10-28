@@ -22,7 +22,7 @@
 // Whoever changes how a place's soil type is found. Tested in soil.test.js.
 
 import { HttpError } from "./http.js";
-import { getArea, getRun, getSoilCache, listRuns, updateSoilCache } from "./store.js";
+import { dataDir, getArea, getRun, getSoilCache, listRuns, updateSoilCache } from "./store.js";
 import { getProvider, unavailableError } from "./providers/index.js";
 import { pointInGeometry } from "./geo.js";
 import { BUILT_IN_CLASSES, soilMix } from "./soil-names.js";
@@ -84,7 +84,11 @@ async function measure(key, geometry, place) {
   if (provider?.id !== "gee") return unavailable(unavailableError(provider) ? "gee-unavailable" : "no-gee", place);
   // Connected, but the server still runs an older copy of the code.
   if (typeof provider.soilHistogram !== "function") return unavailable("gee-failed", { ...place, message: "The soil type needs a restart of the server: Earth Engine is connected, but the server still runs an older copy of the app." });
-  if (!state.inFlight.has(key)) {
+  // One request at a time per place AND per data folder (store.js
+  // dataDir()): a registered account's square is never answered from the
+  // demo's request, whose result is saved in the demo's folder.
+  const slot = `${dataDir()}\0${key}`;
+  if (!state.inFlight.has(slot)) {
     const work = (async () => {
       const started = Date.now();
       const counted = await provider.soilHistogram({ geometry });
@@ -98,14 +102,14 @@ async function measure(key, geometry, place) {
         tookMs: Date.now() - started,
       };
     })();
-    state.inFlight.set(key, work);
+    state.inFlight.set(slot, work);
     work.then(
-      () => state.inFlight.delete(key),
-      () => state.inFlight.delete(key),
+      () => state.inFlight.delete(slot),
+      () => state.inFlight.delete(slot),
     );
   }
   try {
-    return await state.inFlight.get(key);
+    return await state.inFlight.get(slot);
   } catch (error) {
     console.warn(`[chernozem] Soil type for ${key} failed: ${error?.message || error}`);
     return unavailable("gee-failed", { ...place, error: error?.message || String(error) });

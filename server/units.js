@@ -42,7 +42,7 @@
 // units.test.js (the Earth Engine part with server/providers/fake-ee.js).
 
 import { HttpError } from "./http.js";
-import { getArea, getRun, getUnitsCache, listRuns, saveUnitsCache } from "./store.js";
+import { dataDir, getArea, getRun, getUnitsCache, listRuns, saveUnitsCache } from "./store.js";
 import { getProvider, unavailableError } from "./providers/index.js";
 import { areaHa, bboxOf, displayTolerance, distanceToGeometry, labelPoint, pointInGeometry, roundGeometry, simplifyGeometry, squaresOutline } from "./geo.js";
 import { displayPlaceName, nameKey } from "../src/lib/atlas/placeNames.js";
@@ -305,6 +305,12 @@ export function assignCells(cells, units, sizeDeg) {
 
 const state = (globalThis.__chernozemUnits ??= { inFlight: new Map(), failures: new Map(), assigned: new Map() });
 
+// What is remembered in memory is remembered per data folder (store.js
+// dataDir(): the shared demo's, or a registered account's), so two
+// accounts with the same country (the same area id) each get their own
+// saved file, and one's failure does not pause the other's.
+const slotOf = (id) => `${dataDir()}\0${id}`;
+
 // The area's saved GAUL units, worked out now when there are none (one
 // request at a time per area). Gives back { file } or, when Earth Engine
 // cannot give them, { reason, error? } with reason "no-gee" (sample data),
@@ -317,9 +323,10 @@ async function gaulUnitsOf(area) {
   // Earth Engine is connected but the server still runs an older copy of
   // the code without the borders: not "no Earth Engine".
   if (typeof provider.adminUnits !== "function") return { reason: "gee-failed", restart: true };
-  const failed = state.failures.get(area.id);
+  const slot = slotOf(area.id);
+  const failed = state.failures.get(slot);
   if (failed && Date.now() - failed.at < FAILURE_PAUSE_MS) return { reason: "gee-failed", error: failed.message };
-  if (!state.inFlight.has(area.id)) {
+  if (!state.inFlight.has(slot)) {
     const work = (async () => {
       const started = Date.now();
       const result = await computeGaulUnits(area, provider);
@@ -339,19 +346,19 @@ async function gaulUnitsOf(area) {
       };
       // Not for an area removed meanwhile.
       if (await getArea(area.id)) await saveUnitsCache(area.id, file);
-      state.failures.delete(area.id);
+      state.failures.delete(slot);
       return file;
     })();
-    state.inFlight.set(area.id, work);
+    state.inFlight.set(slot, work);
     work.then(
-      () => state.inFlight.delete(area.id),
-      () => state.inFlight.delete(area.id),
+      () => state.inFlight.delete(slot),
+      () => state.inFlight.delete(slot),
     );
   }
   try {
-    return { file: await state.inFlight.get(area.id) };
+    return { file: await state.inFlight.get(slot) };
   } catch (error) {
-    state.failures.set(area.id, { at: Date.now(), message: error?.message || String(error) });
+    state.failures.set(slot, { at: Date.now(), message: error?.message || String(error) });
     console.warn(`[chernozem] The states and regions of ${area.id} could not be loaded from Earth Engine: ${error?.message || error}`);
     return { reason: "gee-failed", error: error?.message || String(error) };
   }
@@ -393,7 +400,7 @@ export async function unitsForArea(areaId, { runId = null } = {}) {
     // The squares' units, kept for the latest few runs (they never change
     // for a run and its saved units), so the run's squares are read only
     // the first time.
-    const key = `${area.id}|${summary?.id || ""}|${summary?.createdAt || ""}|${file.computedAt}`;
+    const key = slotOf(`${area.id}|${summary?.id || ""}|${summary?.createdAt || ""}|${file.computedAt}`);
     let cellUnit = state.assigned.get(key);
     if (!cellUnit) {
       const run = summary ? await getRun(summary.id) : null;

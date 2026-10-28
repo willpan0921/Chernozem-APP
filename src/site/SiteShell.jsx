@@ -1,9 +1,10 @@
 // WHAT THIS FILE DOES
 // The frame of the public website: the menu bar at the top, the page in
-// the middle (src/site/pages/*), the footer at the bottom. Pages slide in
-// softly when the address changes, and the window scrolls back to the top.
-// The website needs no access code; "Open the app" in the menu leads to
-// the app, which asks for the code if one is set.
+// the middle (src/site/pages/*), the footer line at the bottom. When the
+// address changes the new page rises in softly and the window goes back
+// to the top. Everything inside is scoped by the class "site", so the
+// website's styling (site.css) never touches the app's pages and the
+// app's never touches the website.
 //
 // WHO EDITS IT
 // Whoever works on the website's frame. The menu's links come from
@@ -11,7 +12,7 @@
 
 import { Suspense, useEffect, useRef } from "react";
 import { useLocation, useOutlet } from "react-router-dom";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import Nav from "./components/Nav.jsx";
 import Footer from "./components/Footer.jsx";
 import { useScrollTop } from "./hooks.js";
@@ -20,9 +21,10 @@ import "./site.css";
 export default function SiteShell() {
   const outlet = useOutlet();
   const { pathname } = useLocation();
+  const reduced = useReducedMotion();
   useScrollTop();
-  // The page wrapper only slides in from the second page on: on the first
-  // load the page's own entrances (the hero, the rising headlines) play.
+  // The page only rises in from the second page on: on the first load the
+  // page's own entrance (the headline rising from its baseline) plays.
   const first = useRef(true);
   useEffect(() => {
     first.current = false;
@@ -33,19 +35,22 @@ export default function SiteShell() {
         Skip to content
       </a>
       <Nav />
-      <AnimatePresence mode="wait">
+      <AnimatePresence mode="wait" initial={false}>
         <motion.main
           id="main"
           key={pathname}
-          initial={first.current ? false : { opacity: 0, y: 14 }}
+          initial={first.current || reduced ? false : { opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -10 }}
-          transition={{ duration: 0.38, ease: [0.22, 1, 0.36, 1] }}
+          exit={reduced ? { opacity: 1 } : { opacity: 0 }}
+          transition={{ duration: reduced ? 0 : 0.38, ease: [0.16, 1, 0.3, 1] }}
         >
-          <Suspense fallback={<div style={{ minHeight: "70vh" }} aria-busy="true" />}>{outlet}</Suspense>
+          {/* The footer is inside the waiting boundary, so it never shows up early and then jumps away when the page's code arrives. */}
+          <Suspense fallback={<div style={{ minHeight: "100svh" }} aria-busy="true" />}>
+            {outlet}
+            <Footer />
+          </Suspense>
         </motion.main>
       </AnimatePresence>
-      <Footer />
     </div>
   );
 }

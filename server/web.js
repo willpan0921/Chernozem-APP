@@ -22,10 +22,18 @@
 // sendJson. The AI chat's live stream is never gzipped.
 //
 // Built files under assets/ have a fingerprint in their name, so browsers
-// keep them for a year. Every other file (index.html, the logo, the
-// icons) is checked again on each visit, but with ETag and Last-Modified:
-// unchanged since the browser's copy, the answer is a short 304 ("use
-// yours") instead of the whole file again.
+// keep them for a year. The website's film (site/film/) is kept for a week
+// by browsers and by Cloudflare, so a play does not fetch 36 MB from this
+// server every time. Every other file (index.html, the logo, the icons) is
+// checked again on each visit, but with ETag and Last-Modified: unchanged
+// since the browser's copy, the answer is a short 304 ("use yours")
+// instead of the whole file again.
+//
+// Files that are not gzipped (pictures, fonts, the film) can be asked for
+// in pieces: a "Range: bytes=start-end" request gets just those bytes
+// (206 Partial Content, with Content-Range saying which), which is how a
+// browser plays a video and jumps around in it; a range outside the file
+// gets 416. HEAD answers the same headers without the bytes.
 //
 // WHO EDITS IT
 // Nobody, normally.
@@ -62,11 +70,21 @@ const TYPES = {
   ".pdf": "application/pdf",
   ".csv": "text/csv; charset=utf-8",
   ".geojson": "application/geo+json",
+  ".mp4": "video/mp4",
+  ".m4v": "video/mp4",
+  ".webm": "video/webm",
+  ".vtt": "text/vtt; charset=utf-8",
 };
 
-// Worth gzipping (pictures and fonts are compressed already).
-const TEXT = new Set([".html", ".js", ".mjs", ".css", ".json", ".svg", ".txt", ".map", ".csv", ".geojson"]);
+// Worth gzipping (pictures, fonts and video are compressed already).
+const TEXT = new Set([".html", ".js", ".mjs", ".css", ".json", ".svg", ".txt", ".map", ".csv", ".geojson", ".vtt"]);
 const GZIP_MIN_BYTES = 1024;
+
+// The website's film lives here (public/site/film/ -> dist/site/film/).
+const FILM_DIR = `${path.sep}site${path.sep}film${path.sep}`;
+// Everything else the website ships under public/site/ (-> dist/site/).
+const SITE_DIR = `${path.sep}site${path.sep}`;
+const WEEK_SECONDS = 7 * 24 * 60 * 60;
 
 // The safety headers above, on every answer.
 export function securityHeaders(req, res) {
@@ -96,30 +114,100 @@ export function stillFresh(headers, tag, mtimeMs) {
   return Number.isFinite(since) && Math.floor(mtimeMs / 1000) * 1000 <= since;
 }
 
+// How long a file may be kept without asking again.
+export function cacheControlFor(file) {
+  // Built files under assets/ have a fingerprint in their name: cache them.
+  if (file.includes(`${path.sep}assets${path.sep}`)) return "public, max-age=31536000, immutable";
+  if (file.includes(FILM_DIR)) return `public, max-age=${WEEK_SECONDS}`;
+  // The website's pictures (screenshots, the story's maps, the wordmark, the
+  // globe's still) change only with a new build: a day in browsers and
+  // Cloudflare. Its data files (the demo, the countries, the trade table)
+  // an hour, so a rebuilt file reaches visitors the same day.
+  if (file.includes(SITE_DIR)) return file.endsWith(".json") ? "public, max-age=3600" : "public, max-age=86400";
+  return "no-cache";
+}
+
+// Reads one "Range: bytes=start-end" for a file of `size` bytes. Gives
+// null when there is no usable range (so the whole file is sent: no
+// header, several ranges at once, or one that cannot be read),
+// "unsatisfiable" when the range lies outside the file (416), else
+// { start, end } with both ends inside the file. "bytes=100-" means from
+// byte 100 to the end; "bytes=-100" means the last 100 bytes.
+export function parseRange(header, size) {
+  const match = /^\s*bytes\s*=\s*(\d*)\s*-\s*(\d*)\s*$/i.exec(String(header ?? ""));
+  if (!match || (match[1] === "" && match[2] === "")) return null;
+  let start;
+  let end;
+  if (match[1] === "") {
+    const last = Number(match[2]);
+    if (last === 0) return "unsatisfiable";
+    start = Math.max(0, size - last);
+    end = size - 1;
+  } else {
+    start = Number(match[1]);
+    end = match[2] === "" ? size - 1 : Math.min(Number(match[2]), size - 1);
+  }
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start >= size || start > end) return "unsatisfiable";
+  return { start, end };
+}
+
+// If-Range: a range is honoured only when the browser's copy is still this
+// file (it sends back the ETag or the Last-Modified date it was given);
+// otherwise the whole file is sent, so pieces of two builds never mix.
+function rangeStillValid(headers, tag, lastModified) {
+  const given = headers?.["if-range"];
+  if (!given) return true;
+  const value = String(given).trim();
+  return value === tag || value === lastModified;
+}
+
+function streamFile(res, stages, file) {
+  // A file that cannot be read (removed by a new build meanwhile) ends the
+  // answer instead of taking the server down.
+  pipeline(...stages, res, (error) => {
+    if (error && error.code !== "ERR_STREAM_PREMATURE_CLOSE") console.warn(`[chernozem] Could not send ${path.basename(file)}: ${error.message}`);
+  });
+}
+
 function sendFile(req, res, file, stat) {
   const ext = path.extname(file).toLowerCase();
+  const head = req.method === "HEAD";
   res.statusCode = 200;
   res.setHeader("Content-Type", TYPES[ext] || "application/octet-stream");
-  // Built files under assets/ have a fingerprint in their name: cache them.
-  res.setHeader("Cache-Control", file.includes(`${path.sep}assets${path.sep}`) ? "public, max-age=31536000, immutable" : "no-cache");
+  res.setHeader("Cache-Control", cacheControlFor(file));
   const tag = fileTag(stat);
+  const lastModified = stat.mtime.toUTCString();
   res.setHeader("ETag", tag);
-  res.setHeader("Last-Modified", stat.mtime.toUTCString());
+  res.setHeader("Last-Modified", lastModified);
   const compressible = TEXT.has(ext) && stat.size >= GZIP_MIN_BYTES;
   if (compressible) res.setHeader("Vary", "Accept-Encoding");
+  // A gzipped answer has other bytes than the file, so only files sent as
+  // they are can be asked for in pieces.
+  else res.setHeader("Accept-Ranges", "bytes");
   if (stillFresh(req.headers, tag, stat.mtimeMs)) {
     res.statusCode = 304;
     return res.end();
   }
+  if (!compressible && req.headers?.range !== undefined && rangeStillValid(req.headers, tag, lastModified)) {
+    const range = parseRange(req.headers.range, stat.size);
+    if (range === "unsatisfiable") {
+      res.statusCode = 416;
+      res.setHeader("Content-Range", `bytes */${stat.size}`);
+      return res.end();
+    }
+    if (range) {
+      res.statusCode = 206;
+      res.setHeader("Content-Range", `bytes ${range.start}-${range.end}/${stat.size}`);
+      res.setHeader("Content-Length", range.end - range.start + 1);
+      if (head) return res.end();
+      return streamFile(res, [fs.createReadStream(file, { start: range.start, end: range.end })], file);
+    }
+  }
   const gzip = compressible && acceptsGzip(req.headers?.["accept-encoding"]);
   if (gzip) res.setHeader("Content-Encoding", "gzip");
-  if (req.method === "HEAD") return res.end();
-  const stages = gzip ? [fs.createReadStream(file), createGzip(), res] : [fs.createReadStream(file), res];
-  // A file that cannot be read (removed by a new build meanwhile) ends the
-  // answer instead of taking the server down.
-  pipeline(...stages, (error) => {
-    if (error && error.code !== "ERR_STREAM_PREMATURE_CLOSE") console.warn(`[chernozem] Could not send ${path.basename(file)}: ${error.message}`);
-  });
+  else res.setHeader("Content-Length", stat.size);
+  if (head) return res.end();
+  streamFile(res, gzip ? [fs.createReadStream(file), createGzip()] : [fs.createReadStream(file)], file);
 }
 
 function plainText(res, status, text) {

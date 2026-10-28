@@ -32,13 +32,18 @@ export const products = {
     // and fields from the Field data); only the icon is set here.
     scope: { icon: Grid2x2 },
     // The small note near the bottom of the sidebar: "private" on one's
-    // own computer, "shared" when the owner set an access code (everyone
-    // with the code sees and can change the same farm). Which one shows is
-    // worked out in src/lib/access.js from the server's answer.
+    // own computer, "shared" when the owner set an access code (the demo:
+    // everyone with the code sees and can change the same farm), "account"
+    // for a person registered on the website (their own farm, nobody
+    // else's). Which one shows is worked out in src/lib/access.js from the
+    // server's answer.
     privacyNote: {
       private: "Your fields are private",
       shared: "Shared with everyone who has the access code",
+      account: "Your fields are private to your account",
     },
+    // The account row for the demo visitor. A registered account shows the
+    // person's own name and initials instead (src/lib/access.js accountLabel).
     account: { initials: "MF", label: "Account", tone: "farm" },
     pages: [
       { id: "overview", label: "Overview", path: "/field", icon: LayoutGrid },
@@ -56,6 +61,7 @@ export const products = {
     // The box under the switch shows the current area (Sidebar.jsx reads
     // its name from the Atlas data); only the icon is set here.
     scope: { icon: Map },
+    // The account row for the demo visitor (an account shows its own name).
     account: { initials: "RO", label: "Regional office", tone: "atlas" },
     pages: [
       { id: "overview", label: "Overview", path: "/atlas", icon: LayoutGrid },

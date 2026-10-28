@@ -1,5 +1,7 @@
 // WHAT THIS FILE DOES
-// The Field Settings page (/field/settings). Four cards, nothing else:
+// The Field Settings page (/field/settings). Four cards, nothing else (a
+// registered account sees a fifth, "Account", at the top: their name,
+// e-mail, place and "Sign out"; src/components/atlas/AccessGate.jsx):
 //   Farm   the farm's name (click to rename), its place, how many fields and
 //          how big; a map of the fields; "Change farm" (the farm setup:
 //          search, coordinates or draw, then pick the fields found);
@@ -42,6 +44,7 @@ import {
 } from "lucide-react";
 import { PageHeader, Card, Badge, Button, Segmented, Toggle } from "../../components/ui/index.js";
 import { FarmGate, FieldProgress, useFieldData } from "../../state/FieldData.jsx";
+import { AccountCard } from "../../components/atlas/AccessGate.jsx";
 import { API_ROOT, getStatus } from "../../api/atlasApi.js";
 import { checkPolygon, pointsToGeometry } from "../../lib/atlas/coords.js";
 import { STATUS_GROUPS, UNITS } from "../../lib/field/method.js";
@@ -1050,6 +1053,8 @@ export default function SettingsPage() {
   return (
     <div className="page fset">
       <PageHeader title="Settings" />
+      {/* Only for a registered account; nothing for the demo. */}
+      <AccountCard />
       <FarmCard onChangeFarm={() => setChanging(true)} />
       <UnitsCard />
       <DataCard />

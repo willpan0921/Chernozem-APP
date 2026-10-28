@@ -51,6 +51,10 @@
 //   /api/chat, /api/chats...            the AI (server/ai/chat.js)
 //   /api/farm..., /api/geocode          the Field product (server/field/routes.js)
 //   /api/auth/status, login, logout     the optional access code (server/auth.js)
+//   POST   /api/auth/firebase           a registered account's sign-in
+//                                       (server/accounts.js)
+//   GET    /api/account                 the signed-in account and its profile
+//   PUT    /api/account                 change the profile (server/accounts.js)
 //   GET    /api/health                  { ok: true }: the server is up (for the
 //                                       host's health check; no data, no code)
 //   POST   /api/admin/import            the one-time data upload, only while
@@ -66,6 +70,33 @@
 // sign-in ones (/api/auth/...), /api/health, /api/contact (the website's
 // form) and /api/admin/import (which has its own token) needs a signed-in
 // browser.
+//
+// WHOSE DATA (server/auth.js handleAuth, server/store.js withDataRoot)
+// Every route after the sign-in check runs inside the data folder of the
+// session that asked: the shared demo's (the access code, or everything
+// on one's own computer without a code) or a registered account's own
+// folder (users/<id>/). The route handlers do not know which: the store
+// reads and writes the right folder by itself, and a job they start
+// carries the folder with it (server/jobs.js).
+//
+// A registered account chose one product, and may only use that one:
+// an account for Field gets 403 wrong_product on the Atlas routes (status,
+// areas, workspace, team, analyze, the jobs list and cancel, runs, soil,
+// messages, and the Atlas AI chat), an account for Atlas on the Field
+// ones (farm, the Field AI chat; /api/geocode is open to every account); an account that has not chosen
+// yet gets it on both. GET /api/jobs/:id is both products' (the Field
+// pages follow their field jobs with it; an account only ever sees its
+// own jobs). The shared demo is never restricted. The website's messages
+// (/api/messages) live in the demo's folder, so an account's list of them
+// is simply empty.
+//
+// WHAT AN ACCOUNT MAY DO (server/quotas.js has the numbers)
+// A registered account keeps at most 5 areas, each at most 1,000,000 km²
+// and 1,500 squares (400 too_big), drawn with at most 1,000 points; runs
+// one Atlas analysis at a time (429 busy) of at most 12 months; and the
+// Field and the AI chat have their own limits (server/field/routes.js,
+// server/ai/chat.js). A limit reached answers 429 (or 413) with the code
+// "quota" and a plain sentence. The demo has none of these limits.
 //
 // Errors always come back as { error: { code, message } }. A request that
 // changes something (anything but GET or HEAD) sent by another website a
@@ -89,6 +120,7 @@ import {
   saveArea,
   updateArea,
   updateWorkspace,
+  withDataRoot,
 } from "./store.js";
 import { areaHa, bboxOf, displayTolerance, planGrid, simplifyGeometry, splitAntimeridian } from "./geo.js";
 import { getCountry, searchCountries } from "./countries.js";
@@ -98,17 +130,22 @@ import { listConflictForArea } from "./conflicts.js";
 import { checkAreaWar } from "../src/config/conflicts.js";
 import { getProvider, providerStatus, withTimeout } from "./providers/index.js";
 import { schedulerStatus } from "./scheduler.js";
+import { handleWorld } from "./world/index.js";
 import { checkSettings } from "../src/lib/atlas/method.js";
 import { assertSameSite, handleAuth } from "./auth.js";
+import { handleAccountRoutes } from "./accounts.js";
 import { handleAdmin } from "./import.js";
 import { handleContact, handleMessages } from "./messages.js";
 import { handleFieldRoutes } from "./field/routes.js";
 import { unitsForArea } from "./units.js";
 import { soilFor } from "./soil.js";
+import { isAccount, QUOTAS, quotaError } from "./quotas.js";
 
 const MIN_AREA_HA = 0.5;
 const MAX_CUSTOM_AREA_HA = 3000000 * 100; // 3,000,000 km²
+const MAX_POINTS = 5000;
 const ROLES = ["admin", "analyst", "viewer"];
+const MAX_MONTHS = 24;
 
 const bad = (message, code = "bad_request") => new HttpError(400, code, message);
 const notFound = (message) => new HttpError(404, "not_found", message);
@@ -136,8 +173,9 @@ function checkLatLon(lat, lon, label) {
   if (!Number.isFinite(lon) || lon < -180 || lon > 180) throw bad(`${label}: longitude must be a number from -180 to 180.`);
 }
 
-// [[lat, lon], ...] -> a closed GeoJSON ring of [lon, lat].
-function ringFromPoints(points) {
+// [[lat, lon], ...] -> a closed GeoJSON ring of [lon, lat]. maxPoints: the
+// demo's 5,000, or an account's (server/quotas.js).
+function ringFromPoints(points, maxPoints = MAX_POINTS) {
   if (!Array.isArray(points)) throw bad("Send the corners as points: [[lat, lon], ...].");
   const ring = [];
   points.forEach((point, i) => {
@@ -150,7 +188,7 @@ function ringFromPoints(points) {
   });
   if (ring.length > 1 && ring[0][0] === ring[ring.length - 1][0] && ring[0][1] === ring[ring.length - 1][1]) ring.pop();
   if (ring.length < 3) throw bad("An area needs at least 3 different corner points.");
-  if (ring.length > 5000) throw bad("Too many points (the limit is 5,000).");
+  if (ring.length > maxPoints) throw bad(`Too many points (the limit is ${maxPoints.toLocaleString("en-US")}).`);
   const lons = ring.map(([lon]) => lon);
   if (Math.max(...lons) - Math.min(...lons) > 180) throw bad("Areas that cross the 180° line are not supported. Split the area in two.");
   ring.push([...ring[0]]);
@@ -164,9 +202,20 @@ function checkCustomSize(geometry) {
   return ha;
 }
 
-// Finishes an area: works out its box, size and grid, and saves it.
-async function finishArea(base) {
+// Finishes an area: works out its box, size and grid, and saves it. limits:
+// a registered account's (server/quotas.js), or null for the demo.
+async function finishArea(base, limits = null) {
   const grid = planGrid(base.geometry);
+  if (limits) {
+    if ((await listAreas()).length >= limits.areas) throw quotaError(`An account can keep ${limits.areas} areas; delete one first.`);
+    const km2 = Math.round(grid.areaHa / 100);
+    if (km2 > limits.areaKm2 || grid.cells.length > limits.areaSquares) {
+      throw bad(
+        `${base.name} is too large for an account: ${km2.toLocaleString("en-US")} km² in ${grid.cells.length.toLocaleString("en-US")} squares. An account's area can be ${limits.areaKm2.toLocaleString("en-US")} km² (about the size of Ukraine) and ${limits.areaSquares.toLocaleString("en-US")} squares at most; pick a region inside it, or draw a smaller area.`,
+        "too_big"
+      );
+    }
+  }
   const area = {
     ...base,
     bbox: grid.bbox,
@@ -179,15 +228,17 @@ async function finishArea(base) {
   return area;
 }
 
-async function createArea(body) {
+// limits: a registered account's (server/quotas.js), or null for the demo.
+async function createArea(body, limits = null) {
   const source = body.source;
+  const maxPoints = limits ? limits.points : MAX_POINTS;
   if (source === "country") {
     const country = getCountry(body.id);
     if (!country) throw bad("Unknown country. Search for it first.", "unknown_country");
     const id = `country-${slug(country.id)}`;
     const existing = await getArea(id);
     if (existing) return existing;
-    return finishArea({ id, name: country.name, kind: "country", source: "country", countryId: country.id, geometry: country.geometry });
+    return finishArea({ id, name: country.name, kind: "country", source: "country", countryId: country.id, geometry: country.geometry }, limits);
   }
 
   if (source === "admin1") {
@@ -205,14 +256,14 @@ async function createArea(body) {
     const geometry = raw && bboxOf(raw) ? splitAntimeridian(raw) : null;
     if (!geometry) throw bad("Earth Engine did not return an outline for that region.");
     const name = cleanName(body.name || result?.name || result?.properties?.name, `Region ${body.id}`);
-    return finishArea({ id, name, kind: "admin1", source: "admin1", country: body.country || result?.country || result?.properties?.country, geometry });
+    return finishArea({ id, name, kind: "admin1", source: "admin1", country: body.country || result?.country || result?.properties?.country, geometry }, limits);
   }
 
   if (source === "coordinates" || source === "draw") {
-    const geometry = { type: "Polygon", coordinates: [ringFromPoints(body.points)] };
+    const geometry = { type: "Polygon", coordinates: [ringFromPoints(body.points, maxPoints)] };
     checkCustomSize(geometry);
     const fallback = source === "draw" ? "Drawn area" : "Custom area";
-    return finishArea({ id: newId("area"), name: cleanName(body.name, fallback), kind: "custom", source, geometry });
+    return finishArea({ id: newId("area"), name: cleanName(body.name, fallback), kind: "custom", source, geometry }, limits);
   }
 
   if (source === "bbox") {
@@ -227,7 +278,7 @@ async function createArea(body) {
     const ring = [[west, south], [east, south], [east, north], [west, north], [west, south]];
     const geometry = { type: "Polygon", coordinates: [ring] };
     checkCustomSize(geometry);
-    return finishArea({ id: newId("area"), name: cleanName(body.name, "Custom area"), kind: "custom", source: "bbox", geometry });
+    return finishArea({ id: newId("area"), name: cleanName(body.name, "Custom area"), kind: "custom", source: "bbox", geometry }, limits);
   }
 
   throw bad('Unknown source. Use "country", "admin1", "coordinates", "bbox" or "draw".');
@@ -429,13 +480,49 @@ async function handleChat(req, res, url) {
   return true;
 }
 
+// ---------- Which product a route belongs to (registered accounts) ----------
+
+const ATLAS_ROUTES = new Set(["status", "areas", "workspace", "team", "analyze", "jobs", "runs", "soil", "messages"]);
+// /api/geocode (a place lookup, no one's data) is open to every account:
+// the register page uses it before the person has chosen a product.
+const FIELD_ROUTES = new Set(["farm"]);
+const PRODUCT_NAMES = { field: "Chernozem Field", atlas: "Chernozem Atlas" };
+
+// The product this request is for: "atlas", "field", or null for routes
+// that belong to neither (one job by its id, which the Field pages follow
+// too, src/api/fieldApi.js; one chat thread by its id; /api/account). The
+// AI chat says which product in its body (POST /api/chat) or query (GET
+// /api/chats); the body read here is kept on the request for chat.js
+// (server/http.js readJson gives it back).
+async function productOf(req, { method, first, second, third, q }) {
+  if (first === "jobs" && second && !third && method === "GET") return null;
+  if (ATLAS_ROUTES.has(first)) return "atlas";
+  if (FIELD_ROUTES.has(first)) return "field";
+  if (first === "chat" && !second && method === "POST") {
+    req.body = await readJson(req);
+    return req.body.product === "field" ? "field" : "atlas";
+  }
+  if (first === "chats" && !second && method === "GET") return q.get("product") === "field" ? "field" : "atlas";
+  return null;
+}
+
+// A registered account may only use the product it chose (see the top of
+// this file); the shared demo may use both.
+async function assertProduct(req, session, context) {
+  if (session.kind !== "account") return;
+  const wanted = await productOf(req, context);
+  if (!wanted) return;
+  const chosen = session.account.product;
+  if (!chosen) throw new HttpError(403, "wrong_product", "Finish registering first: choose Field or Atlas on the register page.");
+  if (chosen !== wanted) throw new HttpError(403, "wrong_product", `This account is for ${PRODUCT_NAMES[chosen]}, so it cannot use ${PRODUCT_NAMES[wanted]}.`);
+}
+
 // ---------- Router ----------
 
 async function route(req, res, url) {
   const method = (req.method || "GET").toUpperCase();
   const parts = url.pathname.replace(/\/+$/, "").split("/").slice(2); // after "/api"
   const [first, second, third] = parts;
-  const q = url.searchParams;
 
   // Before anything: a request that changes something must come from this
   // app's own pages, not from another website a visitor has open
@@ -449,11 +536,31 @@ async function route(req, res, url) {
   if (first === "health" && !second && (method === "GET" || method === "HEAD")) return sendJson(res, 200, { ok: true });
   if (first === "admin") return handleAdmin(req, res, { method, parts, pathname: url.pathname });
   if (first === "contact") return handleContact(req, res, { method, parts, pathname: url.pathname });
+  // The website's globe (server/world/index.js): public, read-only.
+  if (first === "world") return handleWorld(req, res, { method, parts, pathname: url.pathname });
 
-  // The access code (server/auth.js) comes before every other route: it
-  // answers /api/auth/... and, when a code is set, stops browsers that have
-  // not signed in (the AI chat included).
-  if (await handleAuth(req, res, { method, first, second, third })) return;
+  // The sign-in check (server/auth.js) comes before every other route: it
+  // answers /api/auth/... itself (and gives back false), and for anything
+  // else says whose data the route works on: the shared demo's or a
+  // registered account's folder (the session). When a code is set, a
+  // browser that has neither is stopped here with 401 (the AI chat
+  // included).
+  const session = await handleAuth(req, res, { method, first, second, third });
+  if (!session) return;
+  // Everything from here reads and writes that folder (server/store.js).
+  return withDataRoot(session.root, () => dispatch(req, res, url, { method, parts, session }));
+}
+
+// The routes after the sign-in check, inside the session's data folder.
+async function dispatch(req, res, url, { method, parts, session }) {
+  const [first, second, third] = parts;
+  const q = url.searchParams;
+
+  // A registered account uses the product it chose, Field or Atlas.
+  await assertProduct(req, session, { method, first, second, third, q });
+
+  // The signed-in account and its profile (server/accounts.js).
+  if (first === "account") return handleAccountRoutes(req, res, { method, parts, pathname: url.pathname, session });
 
   if (first === "chat" || first === "chats") return handleChat(req, res, url);
 
@@ -488,7 +595,8 @@ async function route(req, res, url) {
       return sendJson(res, 200, { results });
     }
     if (!second && method === "POST") {
-      const area = await createArea(await readJson(req));
+      // A registered account has limits (server/quotas.js); the demo none.
+      const area = await createArea(await readJson(req), isAccount() ? QUOTAS : null);
       return sendJson(res, 201, { area: areaForClient(area) });
     }
     if (!second && method === "GET") {
@@ -568,7 +676,15 @@ async function route(req, res, url) {
     if (!isSafeId(body.areaId)) throw bad("Send the areaId to analyze.");
     if (body.months !== undefined) {
       const months = toNumber(body.months);
-      if (!Number.isInteger(months) || months < 1 || months > 24) throw bad("months must be a whole number from 1 to 24.");
+      if (!Number.isInteger(months) || months < 1 || months > MAX_MONTHS) throw bad(`months must be a whole number from 1 to ${MAX_MONTHS}.`);
+    }
+    if (isAccount()) {
+      // A registered account (server/quotas.js): fewer months at a time,
+      // and one analysis at a time (its own area asked again joins the
+      // running job as always; another area waits until it has ended).
+      if ((body.months ?? 12) > QUOTAS.monthsPerAnalysis) throw bad(`An account can analyze ${QUOTAS.monthsPerAnalysis} months at a time.`, "quota");
+      const other = listJobs({ status: "running" }).find((job) => job.kind === "atlas" && job.areaId !== body.areaId);
+      if (other) throw new HttpError(429, "busy", `Your other analysis (${other.areaName}) is still running. Wait for it to finish, or stop it, then start this one.`);
     }
     const job = await startAnalysis({ areaId: body.areaId, months: body.months ?? 12, rerun: Boolean(body.rerun) });
     return sendJson(res, 202, { job });
@@ -616,7 +732,7 @@ async function route(req, res, url) {
 
   // A known path with the wrong method, or an unknown path. The number is
   // how many parts after /api/ the route can have (/api/runs/:id = 2).
-  const known = { status: 1, health: 1, areas: 2, workspace: 1, team: 2, analyze: 1, jobs: 2, runs: 2, soil: 1 };
+  const known = { status: 1, health: 1, areas: 2, workspace: 1, team: 2, analyze: 1, jobs: 2, runs: 2, soil: 1, account: 1 };
   if (first === "areas" && second && third === "units" && parts.length === 3) {
     throw new HttpError(405, "method_not_allowed", `${method} is not supported on ${url.pathname}.`);
   }

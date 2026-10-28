@@ -30,9 +30,11 @@ import http from "node:http";
 import { config } from "./env.js";
 import { createHandler } from "./web.js";
 import { startScheduler } from "./scheduler.js";
+import { warmWorldFeed } from "./world/index.js";
 import { accessCode } from "./auth.js";
+import { accountsProblem, firebaseProjectId } from "./accounts.js";
 import { startProblems } from "./online.js";
-import { dataDir, releaseLock } from "./store.js";
+import { baseDataDir, releaseLock } from "./store.js";
 
 const KEEP_ALIVE_MS = 125 * 1000;
 
@@ -59,12 +61,21 @@ function start() {
     if (protectedByCode) console.log("  Access code: on (ATLAS_ACCESS_CODE). Visitors must enter it first.");
     else if (everywhere) console.log("  Warning: no access code is set, so anyone on the network can use the app. Set ATLAS_ACCESS_CODE in .env.");
     else console.log("  Access code: off (only this computer can open the app).");
-    console.log(`  Data folder: ${dataDir()}`);
+    // The shared demo's folder; registered accounts' folders are under
+    // its users/ (server/store.js).
+    console.log(`  Data folder: ${baseDataDir()}`);
+    const accountsOff = accountsProblem();
+    if (accountsOff) console.log("  Accounts: off (FIREBASE_PROJECT_ID=off).");
+    else console.log(`  Accounts: Firebase project ${firebaseProjectId()} (each account's data under users/ in the data folder).`);
     startScheduler();
+    // The website's globe feed (GDACS) is fetched now, so the first visitor
+    // after a start does not wait for it; it never throws.
+    warmWorldFeed();
   });
 
   // Stopping (Control + C here, or the host replacing this copy): let go of
-  // the monthly check's locks, then end.
+  // the monthly check's locks (the shared demo's; an account's stale lock
+  // is taken over by the next check), then end.
   let stopping = false;
   async function stop(signal) {
     if (stopping) return;

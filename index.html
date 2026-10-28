@@ -3,38 +3,40 @@
   WHAT THIS FILE DOES
   The single web page the browser opens. It is almost empty on purpose: the
   app draws itself inside the "root" box below, starting from src/main.jsx.
+  The one-line script adds the class "js" to the page as soon as it runs, so
+  the website's entrance animations (src/site/site.css) only hide things
+  that a script will reveal; without it everything is simply visible.
 
   WHO EDITS IT
-  Nobody, normally. Edit it only to change the browser tab title or the
-  fonts loaded from Google Fonts.
+  Nobody, normally. Edit it only to change the browser tab title, the
+  sharing text (og:*) or the fonts loaded from Google Fonts.
 -->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Chernozem</title>
-    <meta name="description" content="Chernozem turns free satellite data into clear answers about farmland after war and disaster, anywhere in the world: Field for farmers, Atlas for governments and NGOs." />
-    <meta name="theme-color" content="#0d0b09" />
+    <title>Chernozem, satellite farmland monitoring</title>
+    <meta name="description" content="Chernozem reads free satellite data over farmland and says what changed: Field for a farmer's own fields, Atlas for governments and NGOs ranking whole regions." />
+    <meta name="theme-color" content="#1c1611" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Chernozem" />
-    <meta property="og:title" content="Chernozem — from a pin to an atlas" />
-    <meta property="og:description" content="Drop a pin anywhere on Earth. Chernozem reads the satellites, shows what happened to the land, and says where recovery should begin." />
+    <meta property="og:title" content="Chernozem, satellite farmland monitoring" />
+    <meta property="og:description" content="Chernozem reads free satellite data over farmland and says what changed: Field for a farmer's own fields, Atlas for governments and NGOs ranking whole regions." />
     <meta property="og:url" content="https://chernozem.app/" />
     <meta property="og:image" content="https://chernozem.app/chernozem-logo.png" />
     <meta name="twitter:card" content="summary" />
+    <script>
+      document.documentElement.classList.add("js");
+    </script>
     <!-- The logo in the browser tab and on phone home screens (public/). -->
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="icon" type="image/png" sizes="64x64" href="/favicon-64.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <!-- The fonts: Inter for text and JetBrains Mono for numbers (named in
-         src/styles/tokens.css), and Fraunces for the public website's
-         headlines (src/site/site.css). -->
+    <!-- The fonts: Schibsted Grotesk for the public website (src/site/site.css)
+         and Inter for the app itself (src/styles/tokens.css). -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..700&display=swap"
-      rel="stylesheet"
-    />
+    <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:ital,wght@0,400;0,600;0,800;1,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   </head>
   <body>
     <div id="root"></div>

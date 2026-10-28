@@ -1,7 +1,9 @@
 // WHAT THIS FILE DOES
 // Tests for server/store.js: files are saved in the data folder, ids that
-// could reach other files are refused, and changes to an area run one at a
-// time. Run with "npm test".
+// could reach other files are refused, changes to an area run one at a
+// time, and a registered account's folder (withDataRoot) keeps its files
+// apart from the base folder's and every other account's. Run with
+// "npm test".
 //
 // WHO EDITS IT
 // Whoever changes store.js.
@@ -11,6 +13,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "chernozem-store-"));
 process.env.CHERNOZEM_DATA_DIR = dir;
@@ -157,4 +160,118 @@ test("changes to an area run one at a time: a new name and a war setting sent to
   assert.equal(late, null);
   assert.equal(await store.getArea(area.id), null);
   assert.equal(fs.existsSync(path.join(dir, "areas", `${area.id}.json`)), false);
+});
+
+// ---------- One folder per registered account ----------
+
+test("each registered account has a folder of its own under users/, named by a hash of its id", () => {
+  const root = store.userRoot("AbC123xyz");
+  assert.equal(path.dirname(root), path.join(dir, "users"));
+  assert.match(path.basename(root), /^[0-9a-f]{32}$/);
+  assert.ok(store.isSafeId(path.basename(root)), "fits the id rules");
+  assert.equal(path.basename(root), createHash("sha256").update("AbC123xyz").digest("hex").slice(0, 32));
+  assert.equal(store.userRoot("AbC123xyz"), root, "the same account, the same folder");
+  assert.notEqual(store.userRoot("abc123xyz"), root, "capitals count");
+  for (const bad of ["", null, 42, "x".repeat(257)]) assert.throws(() => store.userRoot(bad), String(bad));
+  assert.equal(store.dataDir(), store.baseDataDir(), "outside withDataRoot the base folder is used");
+  assert.equal(store.baseDataDir(), dir);
+});
+
+test("withDataRoot: reads and writes inside it go to that folder, also after awaits; the other folders see none of it", async () => {
+  await withFreshDir(async (fresh) => {
+    const a = store.userRoot("account-a");
+    const b = store.userRoot("account-b");
+    assert.equal(
+      await store.withDataRoot(a, async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return store.dataDir();
+      }),
+      a,
+      "the folder follows the awaits",
+    );
+    assert.equal(await store.withDataRoot(null, () => store.dataDir()), fresh, "null means the base folder");
+    assert.equal(store.dataDir(), fresh, "and outside it is the base folder again");
+
+    await store.withDataRoot(a, async () => {
+      await store.saveArea({ id: "area-a", name: "A's", kind: "custom", bbox: [30, 50, 30.1, 50.1], createdAt: "2026-10-01T00:00:00.000Z" });
+      await store.saveFarm({ id: "farm-a", fields: [] });
+      await store.saveChat({ id: "chat-a", product: "field", title: "A", updatedAt: "2026-10-01", messages: [] });
+      await store.saveRun({ id: "run-a", areaId: "area-a", month: "2026-07", createdAt: "1", cells: [], alerts: [] });
+      // The one-at-a-time queues (updateWorkspace, updateFarm...) keep the folder too.
+      await store.updateWorkspace((ws) => {
+        ws.name = "A office";
+      });
+      await store.updateFarm((farm) => ({ ...farm, name: "A farm" }));
+      await store.saveProfile({ uid: "account-a", name: "A" });
+    });
+
+    // From B: nothing of A's, and a fresh folder needs nothing made first.
+    await store.withDataRoot(b, async () => {
+      assert.deepEqual(await store.listAreas(), []);
+      assert.equal(await store.getArea("area-a"), null);
+      assert.equal(await store.getFarm(), null);
+      assert.deepEqual(await store.listChats(), []);
+      assert.deepEqual(await store.listRuns(), []);
+      assert.equal(await store.getProfile(), null);
+      const ws = await store.getWorkspace();
+      assert.equal(ws.name, "Regional office");
+      assert.deepEqual(ws.team, []);
+      assert.ok(fs.existsSync(path.join(b, "workspace.json")), "made on first read, in B's folder");
+    });
+
+    // The base folder has none of it either (A's writes never touched it).
+    assert.deepEqual(await store.listAreas(), []);
+    assert.equal(await store.getFarm(), null);
+    assert.deepEqual(await store.listRuns(), []);
+    assert.equal(await store.getProfile(), null);
+    for (const name of ["areas", "farm.json", "runs", "chats", "profile.json", "workspace.json"]) {
+      assert.equal(fs.existsSync(path.join(fresh, name)), false, `${name} in the base folder`);
+    }
+
+    // A's files are where they should be, and read back from there.
+    for (const name of ["areas/area-a.json", "farm.json", "chats/chat-a.json", "runs/run-a.json", "profile.json", "workspace.json"]) {
+      assert.ok(fs.existsSync(path.join(a, name)), name);
+    }
+    assert.equal(JSON.parse(fs.readFileSync(path.join(a, "workspace.json"), "utf8")).name, "A office");
+    assert.equal((await store.withDataRoot(a, () => store.getFarm())).name, "A farm");
+    assert.equal((await store.withDataRoot(a, () => store.getProfile())).name, "A");
+    // The run list kept in memory is per folder.
+    assert.deepEqual((await store.withDataRoot(a, () => store.listRuns("area-a"))).map((run) => run.id), ["run-a"]);
+    assert.deepEqual(await store.withDataRoot(b, () => store.listRuns("area-a")), []);
+    // The lock files too.
+    assert.equal(await store.withDataRoot(a, () => store.acquireLock("scheduler", 60000)), true);
+    assert.ok(fs.existsSync(path.join(a, "scheduler.lock")));
+    assert.equal(fs.existsSync(path.join(fresh, "scheduler.lock")), false);
+    await store.withDataRoot(a, () => store.releaseLock("scheduler"));
+
+    // Every account folder, in order; anything else under users/ is left out.
+    fs.mkdirSync(path.join(fresh, "users", "not-an-account"), { recursive: true });
+    fs.writeFileSync(path.join(fresh, "users", "0123456789abcdef0123456789abcdef.txt"), "");
+    assert.deepEqual(await store.listUserRoots(), [a, b].sort());
+  });
+  await withFreshDir(async () => assert.deepEqual(await store.listUserRoots(), [], "no users/ folder yet"));
+});
+
+test("a fresh account folder starts with the monthly update off (the demo's is on); uploadsBytes measures its photos", async () => {
+  await withFreshDir(async () => {
+    assert.equal((await store.getWorkspace()).schedule.autoMonthly, true, "the base folder: the demo");
+    await store.withDataRoot(store.userRoot("auto-off"), async () => {
+      assert.equal((await store.getWorkspace()).schedule.autoMonthly, false, "an account's folder");
+      await store.updateWorkspace((ws) => {
+        ws.schedule.autoMonthly = true;
+      });
+      assert.equal((await store.getWorkspace()).schedule.autoMonthly, true, "switched on, it stays on");
+      assert.equal(await store.uploadsBytes(), 0, "no photos yet");
+      await store.savePhoto("photo-a", "png", Buffer.alloc(1000));
+      await store.savePhoto("photo-b", "jpg", Buffer.alloc(2500));
+      assert.equal(await store.uploadsBytes(), 3500);
+      await store.deletePhoto("photo-a");
+      assert.equal(await store.uploadsBytes(), 2500);
+      assert.equal(await store.getSessionFile(), null, "never signed out");
+      await store.saveSessionFile({ sessionsValidFrom: "2026-10-28T10:00:00.000Z" });
+      assert.deepEqual(await store.getSessionFile(), { sessionsValidFrom: "2026-10-28T10:00:00.000Z" });
+    });
+    assert.equal(await store.uploadsBytes(), 0, "the base folder has none of them");
+    assert.equal(await store.getSessionFile(), null);
+  });
 });

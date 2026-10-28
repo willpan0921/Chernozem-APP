@@ -1,6 +1,6 @@
 // WHAT THIS FILE DOES
-// The optional access code, so the owner can hand the app to officials
-// safely.
+// Who is asking: the optional access code (the shared demo), and the
+// registered accounts (each with a folder of its own, server/accounts.js).
 //
 //   No ATLAS_ACCESS_CODE in .env  ->  everything stays open (local use).
 //   ATLAS_ACCESS_CODE=something   ->  every /api/ address needs a signed-in
@@ -9,14 +9,56 @@
 //                                     /api/health, /api/contact and
 //                                     /api/admin/import):
 //
-//   GET  /api/auth/status    { required, signedIn, shared }  (the page asks this first)
+//   GET  /api/auth/status    { required, signedIn, shared, account }
+//                            (the page asks this first; account is null for
+//                            the code's shared workspace, or { uid, email,
+//                            name, product, profileComplete } for a
+//                            registered account)
 //   POST /api/auth/login     body { code }  ->  sets the sign-in cookie
-//   POST /api/auth/logout    removes the sign-in cookie (the sidebar's
-//                            "Sign out")
+//   POST /api/auth/firebase  body { idToken } -> a registered account's
+//                            sign-in (server/accounts.js), sets the
+//                            account cookie
+//   POST /api/auth/logout    removes BOTH cookies (the sidebar's "Sign out");
+//                            for a registered account it also ends every
+//                            cookie made for the account so far (below)
 //
-// shared is true when a code is set: the app is then one workspace that
-// everyone with the code sees and can change (the Field sidebar says so
-// instead of "Your fields are private").
+// shared is true when a code is set and the browser is in with the code:
+// the app is then one workspace that everyone with the code sees and can
+// change (the Field sidebar says so instead of "Your fields are private").
+// A registered account is never shared (shared: false): it has a folder
+// of its own, <data folder>/users/<id>/ (server/store.js userRoot).
+//
+// TWO COOKIES
+//   atlas_session       the access code's (30 days): the shared demo
+//   chernozem_account   a registered account's (30 days): "<uid>.<made
+//                       at>.<expires at>.<random>.<signature>", signed
+//                       with a secret made from this install's salt and
+//                       the word "accounts", checked in constant time. It
+//                       is set by POST /api/auth/firebase once Firebase
+//                       has said who the person is, and carries only the
+//                       account id and the times: the e-mail, name and
+//                       product are read from the account's profile.json
+//                       on every request.
+// A browser with a valid account cookie is that account, code or no code
+// (also online, and also on one's own computer without a code). Without
+// one, the access code's rules apply as before. handleAuth gives
+// server/app.js the session, { kind: "code" | "account", root, account },
+// and app.js runs the route inside that root.
+//
+// WHEN AN ACCOUNT COOKIE STOPS COUNTING (before its 30 days)
+// A cookie is a signed note; the server cannot take it back from a browser
+// that keeps a copy. So, on every request, accountSession also checks:
+//   - the account's session.json (server/store.js): "Sign out" writes the
+//     moment into it (server/accounts.js signOutAccount), and a cookie
+//     made before that moment is nobody. A sign-in after it makes a newer
+//     cookie, which counts. (Firebase's own sessions in that browser are
+//     ended too, best-effort.)
+//   - that the Firebase user still exists and is not disabled, asked of
+//     Firebase at most once an hour per account (server/accounts.js
+//     firebaseUserOk). Deleted or disabled there: the cookie is treated as
+//     run out within the hour.
+// The access code's cookie has no such check: signing out removes it from
+// that browser, and only a new code ends every code sign-in at once.
 //
 // Also here, for every /api/ route (server/app.js calls assertSameSite
 // first): a request that changes something is refused (403 cross_site)
@@ -69,10 +111,14 @@ import path from "node:path";
 import { BlockList, isIP } from "node:net";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { onRender, refreshEnv } from "./env.js";
-import { dataDir } from "./store.js";
+import { baseDataDir, getProfile, getSessionFile, userRoot, withDataRoot } from "./store.js";
 import { HttpError, readJson, sendJson } from "./http.js";
+// (accounts.js imports this file too; both only use each other inside
+// functions, so the circle is harmless.)
+import { accountSummary, firebaseUserOk, handleFirebaseSignIn, signOutAccount } from "./accounts.js";
 
 export const COOKIE_NAME = "atlas_session";
+export const ACCOUNT_COOKIE_NAME = "chernozem_account";
 export const SESSION_DAYS = 30;
 export const SESSION_MS = SESSION_DAYS * 24 * 60 * 60 * 1000;
 export const MAX_FAILED_LOGINS = 10;
@@ -159,6 +205,47 @@ export function codesMatch(given, actual) {
   return timingSafeEqual(hash(given), hash(actual));
 }
 
+// ---------- Signing a registered account's cookie (pure too) ----------
+
+// A Firebase account id: letters, digits, "_" and "-" (Firebase makes 28
+// letters and digits; custom ids may be longer). No dots, so the token's
+// parts stay apart.
+const UID = /^[A-Za-z0-9_-]{1,128}$/;
+export const isUid = (value) => typeof value === "string" && UID.test(value);
+
+// The secret for account cookies: this install's salt and the word
+// "accounts". Not the access code, so changing the code does not sign the
+// accounts out (and a new salt signs everyone out, accounts included).
+export function deriveAccountSecret(salt) {
+  return createHmac("sha256", String(salt)).update("accounts").digest();
+}
+
+// Makes an account token: "<uid>.<made at, ms>.<expires at, ms>.<random>.
+// <signature>". The time it was made at lets a sign-out end it (see the
+// top of this file).
+export function signAccountSession(secret, uid, { now = Date.now(), maxAgeMs = SESSION_MS } = {}) {
+  if (!isUid(uid)) throw new Error("signAccountSession needs a Firebase account id.");
+  const payload = `${uid}.${now}.${now + maxAgeMs}.${base64url(randomBytes(16))}`;
+  return `${payload}.${signature(secret, payload)}`;
+}
+
+const ACCOUNT_TOKEN = /^([A-Za-z0-9_-]{1,128})\.(\d{1,16})\.(\d{1,16})\.([A-Za-z0-9_-]{16,64})\.([A-Za-z0-9_-]{43})$/;
+
+// { uid, issuedAt, expiresAt } (the account id and the times, ms) when the
+// token was made by signAccountSession with this secret and has not run
+// out; else null. (A cookie of the older shape, without the time it was
+// made at, is null too: those browsers sign in again once.)
+export function verifyAccountSession(token, secret, { now = Date.now() } = {}) {
+  const match = typeof token === "string" ? ACCOUNT_TOKEN.exec(token) : null;
+  if (!match) return null;
+  const [, uid, issued, expires, nonce, given] = match;
+  const expected = Buffer.from(signature(secret, `${uid}.${issued}.${expires}.${nonce}`));
+  const actual = Buffer.from(given);
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null;
+  if (!(Number(expires) > now)) return null;
+  return { uid, issuedAt: Number(issued), expiresAt: Number(expires) };
+}
+
 // ---------- Wrong-code limit ----------
 
 // Counts wrong codes per visitor. After `max` wrong codes inside `windowMs`
@@ -236,9 +323,11 @@ async function readSalt(file) {
 }
 
 // Reads the salt, making it the first time. Two servers sharing the data
-// folder ("npm run dev" and "npm start") end up with the same salt.
+// folder ("npm run dev" and "npm start") end up with the same salt. The
+// salt is the install's, so it lives in the base folder, whatever account
+// is asking.
 export async function installSalt() {
-  const dir = dataDir();
+  const dir = baseDataDir();
   if (memory.salts.has(dir)) return memory.salts.get(dir);
   const file = path.join(dir, "auth.json");
   let salt = await readSalt(file);
@@ -478,13 +567,25 @@ export function clientAddress(req) {
   return limitKey(ip || normalizeIp(req.socket?.remoteAddress));
 }
 
-function sessionCookie(req, token, maxAgeSec) {
-  const parts = [`${COOKIE_NAME}=${token}`, "Path=/", `Max-Age=${maxAgeSec}`, "HttpOnly", "SameSite=Lax"];
+function cookieLine(req, name, token, maxAgeSec) {
+  const parts = [`${name}=${token}`, "Path=/", `Max-Age=${maxAgeSec}`, "HttpOnly", "SameSite=Lax"];
   if (isHttps(req)) parts.push("Secure");
   return parts.join("; ");
 }
 
-// True when this request carries a valid sign-in cookie.
+// The Set-Cookie line for the access code's cookie (token "" with 0
+// seconds removes it; server/accounts.js does that at an account sign-in).
+export function sessionCookie(req, token, maxAgeSec) {
+  return cookieLine(req, COOKIE_NAME, token, maxAgeSec);
+}
+
+// The Set-Cookie line for a registered account's cookie (server/accounts.js
+// sets it after a Firebase sign-in).
+export function accountCookie(req, token, maxAgeSec = Math.floor(SESSION_MS / 1000)) {
+  return cookieLine(req, ACCOUNT_COOKIE_NAME, token, maxAgeSec);
+}
+
+// True when this request carries a valid sign-in cookie (the access code's).
 export async function isSignedIn(req, code = accessCode()) {
   if (codeRefusedOnline(code)) return false;
   if (!code) return true;
@@ -493,10 +594,46 @@ export async function isSignedIn(req, code = accessCode()) {
   return verifySession(token, deriveSecret(code, await installSalt()));
 }
 
+// What this request's account cookie says, { uid, issuedAt, expiresAt },
+// when the cookie is properly signed and has not run out; else null (no
+// cookie, a changed one, an old one: all the same, not signed in). Only
+// the cookie itself is checked here; accountSession adds the sign-out and
+// Firebase checks.
+export async function accountTokenOf(req) {
+  const token = parseCookies(req.headers?.cookie)[ACCOUNT_COOKIE_NAME];
+  if (!token) return null;
+  return verifyAccountSession(token, deriveAccountSecret(await installSalt()));
+}
+
+// The registered account this request belongs to, with its profile read
+// from its own folder: { kind: "account", root, account }, or null when
+// the request carries no valid account cookie, the account signed out
+// since the cookie was made, or the Firebase user is gone or disabled
+// (see the top of this file).
+async function accountSession(req) {
+  const token = await accountTokenOf(req);
+  if (!token) return null;
+  const { uid, issuedAt } = token;
+  const root = userRoot(uid);
+  const [profile, signedOut] = await withDataRoot(root, () => Promise.all([getProfile(), getSessionFile()]));
+  const validFrom = Date.parse(signedOut?.sessionsValidFrom || "");
+  if (Number.isFinite(validFrom) && issuedAt < validFrom) return null;
+  if (!(await firebaseUserOk(uid))) return null;
+  return { kind: "account", root, account: accountSummary(uid, profile) };
+}
+
+// The shared workspace (the demo): the base folder, no account.
+const codeSession = () => ({ kind: "code", root: baseDataDir(), account: null });
+
 // Called by server/app.js for every /api/ request, before any route.
-// Answers /api/auth/... itself (gives back true). For everything else it
-// gives back false to let the route run, or refuses with 401 when a code
-// is set and this browser has not signed in.
+// Answers /api/auth/... itself (gives back false: nothing more to do). For
+// everything else it gives back the session the route runs in,
+//   { kind: "account", root: <the account's folder>, account: { uid,
+//     email, name, product, profileComplete } }  a registered account
+//   { kind: "code", root: <the base folder>, account: null }  the access
+//     code's shared workspace (or everything, without a code)
+// or refuses with 401 when a code is set and this browser has neither
+// signed in with it nor a registered account.
 export async function handleAuth(req, res, { method, first, second, third }) {
   const code = accessCode();
   // Online with a code that cannot lock the app: locked whatever is typed.
@@ -504,15 +641,19 @@ export async function handleAuth(req, res, { method, first, second, third }) {
   const required = Boolean(code) || refused;
 
   if (first !== "auth") {
+    const account = await accountSession(req);
+    if (account) return account;
     if (required && !(await isSignedIn(req, code))) {
       throw new HttpError(401, "auth_required", "Enter the access code to continue.");
     }
-    return false;
+    return codeSession();
   }
 
   if (second === "status" && !third && method === "GET") {
-    sendJson(res, 200, { required, signedIn: await isSignedIn(req, code), shared: required });
-    return true;
+    const account = await accountSession(req);
+    if (account) sendJson(res, 200, { required, signedIn: true, shared: false, account: account.account });
+    else sendJson(res, 200, { required, signedIn: await isSignedIn(req, code), shared: required, account: null });
+    return false;
   }
 
   if (second === "login" && !third && method === "POST") {
@@ -525,8 +666,11 @@ export async function handleAuth(req, res, { method, first, second, third }) {
       );
     }
     if (!code) {
-      sendJson(res, 200, { ok: true, required: false, signedIn: true, shared: false });
-      return true;
+      // Nothing to sign in to; but a browser that was a registered account
+      // asked for the shared workspace, so that cookie goes.
+      if (parseCookies(req.headers?.cookie)[ACCOUNT_COOKIE_NAME]) res.setHeader("Set-Cookie", accountCookie(req, "", 0));
+      sendJson(res, 200, { ok: true, required: false, signedIn: true, shared: false, account: null });
+      return false;
     }
     const who = clientAddress(req);
     const wait = limiter().check(who);
@@ -542,18 +686,33 @@ export async function handleAuth(req, res, { method, first, second, third }) {
     }
     limiter().reset(who);
     const token = signSession(deriveSecret(code, await installSalt()));
-    res.setHeader("Set-Cookie", sessionCookie(req, token, Math.floor(SESSION_MS / 1000)));
-    sendJson(res, 200, { ok: true, required: true, signedIn: true, shared: true });
-    return true;
+    // The code's workspace from now on: an account cookie left in this
+    // browser would otherwise still win (see handleAuth above).
+    res.setHeader("Set-Cookie", [sessionCookie(req, token, Math.floor(SESSION_MS / 1000)), accountCookie(req, "", 0)]);
+    sendJson(res, 200, { ok: true, required: true, signedIn: true, shared: true, account: null });
+    return false;
+  }
+
+  // A registered account's sign-in (server/accounts.js).
+  if (second === "firebase" && !third && method === "POST") {
+    await handleFirebaseSignIn(req, res);
+    return false;
   }
 
   if (second === "logout" && !third && method === "POST") {
-    res.setHeader("Set-Cookie", sessionCookie(req, "", 0));
-    sendJson(res, 200, { ok: true, required, signedIn: !required, shared: required });
-    return true;
+    // A registered account: every cookie made for it so far stops
+    // counting (server/accounts.js signOutAccount), not only the one this
+    // browser drops. Only a cookie that still counts can do that: a copy
+    // kept from before an earlier sign-out cannot sign the person out of
+    // Firebase on their other devices again and again.
+    const account = await accountSession(req);
+    if (account) await signOutAccount(account.account.uid);
+    res.setHeader("Set-Cookie", [sessionCookie(req, "", 0), accountCookie(req, "", 0)]);
+    sendJson(res, 200, { ok: true, required, signedIn: !required, shared: required, account: null });
+    return false;
   }
 
-  if (["status", "login", "logout"].includes(second) && !third) {
+  if (["status", "login", "firebase", "logout"].includes(second) && !third) {
     throw new HttpError(405, "method_not_allowed", `${method} is not supported on /api/auth/${second}.`);
   }
   throw new HttpError(404, "not_found", "No such sign-in route.");

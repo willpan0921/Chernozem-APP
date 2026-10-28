@@ -3,10 +3,11 @@
 // "npm start"): the safety headers on every answer (Strict-Transport-
 // Security only over https), gzip for text files and larger /api/ answers
 // when the browser accepts it but never for the AI chat's live stream,
-// ETag and Last-Modified (304 for an unchanged file), the health check
-// without an access code, and that only files inside dist/ are ever
-// served. Uses a temporary dist/ and data folder and sample
-// data. Run with "npm test".
+// ETag and Last-Modified (304 for an unchanged file), the website's film
+// (video types, a week of caching, byte ranges with 206 and 416, HEAD,
+// If-Range), the health check without an access code, and that only
+// files inside dist/ are ever served. Uses a temporary dist/ and data
+// folder and sample data. Run with "npm test".
 //
 // WHO EDITS IT
 // Whoever changes server/web.js, server/index.js or sendJson in
@@ -39,6 +40,11 @@ fs.writeFileSync(path.join(dist, "index.html"), `<!doctype html><title>Chernozem
 fs.writeFileSync(path.join(dist, "assets", "index-abc123.js"), APP_JS);
 fs.writeFileSync(path.join(dist, "assets", "tiny-abc123.css"), "a{}");
 fs.writeFileSync(path.join(dist, "chernozem-logo.png"), Buffer.alloc(4096, 7));
+// A stand-in film: 10,000 bytes that count, so any piece can be checked.
+const FILM = Buffer.from(Array.from({ length: 10000 }, (_, i) => i % 251));
+fs.mkdirSync(path.join(dist, "site", "film"), { recursive: true });
+fs.writeFileSync(path.join(dist, "site", "film", "clip.mp4"), FILM);
+fs.writeFileSync(path.join(dist, "site", "film", "clip.webm"), FILM.subarray(0, 100));
 fs.writeFileSync(path.join(scratch, "secret.txt"), "outside dist");
 
 let server;
@@ -257,6 +263,130 @@ test("the app not built yet: a plain message (the API still works)", async () =>
   } finally {
     other.close();
   }
+});
+
+test("the film streams: video types, a week of caching, never gzipped", async () => {
+  const whole = await call("GET", "/site/film/clip.mp4", { headers: GZIP });
+  assert.equal(whole.status, 200);
+  assert.equal(whole.headers["content-type"], "video/mp4");
+  assert.equal(whole.headers["cache-control"], "public, max-age=604800", "a week, for Cloudflare and the browser");
+  assert.equal(whole.headers["accept-ranges"], "bytes");
+  assert.equal(whole.headers["content-encoding"], undefined, "video is never gzipped");
+  assert.equal(whole.headers["content-length"], "10000");
+  assert.ok(whole.raw.equals(FILM));
+  assert.match(whole.headers.etag, /^W\/"[0-9a-f]+-[0-9a-f]+"$/);
+  assertSafetyHeaders(whole, "film");
+  assert.equal((await call("GET", "/site/film/clip.webm")).headers["content-type"], "video/webm");
+  // Only the film gets the week; other files are checked again each visit.
+  assert.equal((await call("GET", "/chernozem-logo.png")).headers["cache-control"], "no-cache");
+  assert.equal((await call("GET", "/chernozem-logo.png")).headers["accept-ranges"], "bytes", "any file sent as it is can be asked for in pieces");
+  const head = await call("HEAD", "/site/film/clip.mp4");
+  assert.equal(head.status, 200);
+  assert.equal(head.raw.length, 0);
+  assert.equal(head.headers["content-length"], "10000");
+  assert.equal(head.headers["accept-ranges"], "bytes");
+});
+
+test("a byte range of the film answers 206 with just those bytes; outside the file, 416", async () => {
+  const whole = await call("GET", "/site/film/clip.mp4");
+  const first = await call("GET", "/site/film/clip.mp4", { headers: { Range: "bytes=0-99" } });
+  assert.equal(first.status, 206);
+  assert.equal(first.headers["content-range"], "bytes 0-99/10000");
+  assert.equal(first.headers["content-length"], "100");
+  assert.equal(first.headers["accept-ranges"], "bytes");
+  assert.equal(first.headers["content-type"], "video/mp4");
+  assert.equal(first.headers["cache-control"], "public, max-age=604800");
+  assert.equal(first.headers.etag, whole.headers.etag);
+  assert.equal(first.headers["content-encoding"], undefined);
+  assert.ok(first.raw.equals(FILM.subarray(0, 100)));
+  assertSafetyHeaders(first, "206");
+
+  const middle = await call("GET", "/site/film/clip.mp4", { headers: { Range: "bytes=250-252" } });
+  assert.equal(middle.headers["content-range"], "bytes 250-252/10000");
+  assert.deepEqual([...middle.raw], [250, 0, 1]);
+  const open = await call("GET", "/site/film/clip.mp4", { headers: { Range: "bytes=9900-" } });
+  assert.equal(open.status, 206);
+  assert.equal(open.headers["content-range"], "bytes 9900-9999/10000");
+  assert.ok(open.raw.equals(FILM.subarray(9900)));
+  const suffix = await call("GET", "/site/film/clip.mp4", { headers: { Range: "bytes=-100" } });
+  assert.equal(suffix.headers["content-range"], "bytes 9900-9999/10000");
+  assert.ok(suffix.raw.equals(FILM.subarray(9900)));
+  const clipped = await call("GET", "/site/film/clip.mp4", { headers: { Range: "bytes=5000-99999" } });
+  assert.equal(clipped.status, 206, "an end past the file is cut to the file");
+  assert.equal(clipped.headers["content-range"], "bytes 5000-9999/10000");
+  assert.equal(clipped.raw.length, 5000);
+  assert.equal((await call("GET", "/site/film/clip.mp4", { headers: { Range: "bytes=-99999" } })).headers["content-range"], "bytes 0-9999/10000");
+
+  for (const range of ["bytes=10000-", "bytes=5-2", "bytes=-0", "bytes=20000-30000"]) {
+    const res = await call("GET", "/site/film/clip.mp4", { headers: { Range: range } });
+    assert.equal(res.status, 416, range);
+    assert.equal(res.headers["content-range"], "bytes */10000", range);
+    assert.equal(res.raw.length, 0, range);
+    assertSafetyHeaders(res, range);
+  }
+  // A range that cannot be read, or several at once: the whole file.
+  for (const range of ["bytes=0-1,5-6", "bytes=abc", "items=0-1", "bytes=-", ""]) {
+    const res = await call("GET", "/site/film/clip.mp4", { headers: { Range: range } });
+    assert.equal(res.status, 200, range);
+    assert.equal(res.headers["content-range"], undefined, range);
+    assert.equal(res.raw.length, 10000, range);
+  }
+
+  // HEAD says the same without the bytes.
+  const head = await call("HEAD", "/site/film/clip.mp4", { headers: { Range: "bytes=0-99" } });
+  assert.equal(head.status, 206);
+  assert.equal(head.headers["content-range"], "bytes 0-99/10000");
+  assert.equal(head.headers["content-length"], "100");
+  assert.equal(head.raw.length, 0);
+  assert.equal((await call("HEAD", "/site/film/clip.mp4", { headers: { Range: "bytes=10000-" } })).status, 416);
+
+  // The browser's copy still the file: 304, range or not.
+  const same = await call("GET", "/site/film/clip.mp4", { headers: { Range: "bytes=0-99", "If-None-Match": whole.headers.etag } });
+  assert.equal(same.status, 304);
+  assert.equal(same.raw.length, 0);
+  // If-Range: the piece only when the file is still the one the browser
+  // has, else the whole file (pieces of two builds must never mix).
+  assert.equal((await call("GET", "/site/film/clip.mp4", { headers: { Range: "bytes=0-99", "If-Range": whole.headers.etag } })).status, 206);
+  assert.equal((await call("GET", "/site/film/clip.mp4", { headers: { Range: "bytes=0-99", "If-Range": whole.headers["last-modified"] } })).status, 206);
+  const changed = await call("GET", "/site/film/clip.mp4", { headers: { Range: "bytes=0-99", "If-Range": 'W/"other"' } });
+  assert.equal(changed.status, 200);
+  assert.equal(changed.raw.length, 10000);
+
+  // Any file sent as it is (a picture) can be asked for in pieces...
+  const logo = await call("GET", "/chernozem-logo.png", { headers: { Range: "bytes=0-9" } });
+  assert.equal(logo.status, 206);
+  assert.equal(logo.headers["content-range"], "bytes 0-9/4096");
+  assert.equal(logo.raw.length, 10);
+  // ...but a gzipped text file has other bytes than the file, so no pieces.
+  const script = await call("GET", "/assets/index-abc123.js", { headers: { ...GZIP, Range: "bytes=0-9" } });
+  assert.equal(script.status, 200);
+  assert.equal(script.headers["content-encoding"], "gzip");
+  assert.equal(script.headers["accept-ranges"], undefined);
+  assert.equal(script.headers["content-range"], undefined);
+  assert.equal(script.text, APP_JS);
+  const plainScript = await call("GET", "/assets/index-abc123.js", { headers: { Range: "bytes=0-9" } });
+  assert.equal(plainScript.status, 200, "even without gzip: the same file must answer the same way");
+  assert.equal(plainScript.text, APP_JS);
+});
+
+test("parseRange on its own", async () => {
+  const { parseRange } = await import("./web.js");
+  assert.deepEqual(parseRange("bytes=0-99", 1000), { start: 0, end: 99 });
+  assert.deepEqual(parseRange("bytes=900-", 1000), { start: 900, end: 999 });
+  assert.deepEqual(parseRange("bytes=-100", 1000), { start: 900, end: 999 });
+  assert.deepEqual(parseRange("bytes=-5000", 1000), { start: 0, end: 999 });
+  assert.deepEqual(parseRange("bytes=500-5000", 1000), { start: 500, end: 999 });
+  assert.deepEqual(parseRange(" Bytes = 0 - 0 ", 1000), { start: 0, end: 0 });
+  assert.equal(parseRange("bytes=1000-", 1000), "unsatisfiable");
+  assert.equal(parseRange("bytes=5-2", 1000), "unsatisfiable");
+  assert.equal(parseRange("bytes=-0", 1000), "unsatisfiable");
+  assert.equal(parseRange("bytes=0-", 0), "unsatisfiable", "an empty file has no bytes to give");
+  assert.equal(parseRange("bytes=0-1,5-6", 1000), null);
+  assert.equal(parseRange("bytes=abc", 1000), null);
+  assert.equal(parseRange("bytes=-", 1000), null);
+  assert.equal(parseRange("items=0-1", 1000), null);
+  assert.equal(parseRange(undefined, 1000), null);
+  assert.equal(parseRange("", 1000), null);
 });
 
 test("acceptsGzip reads Accept-Encoding", () => {

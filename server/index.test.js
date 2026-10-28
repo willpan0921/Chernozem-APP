@@ -138,7 +138,7 @@ test("on Render: no start without a proper access code or without the disk, and 
       assert.match(server.log, /Access code: on/, server.log);
       assert.equal((await fetch(`http://127.0.0.1:${port}/api/health`)).status, 200);
       const status = await (await fetch(`http://127.0.0.1:${port}/api/auth/status`)).json();
-      assert.deepEqual(status, { required: true, signedIn: false, shared: true });
+      assert.deepEqual(status, { required: true, signedIn: false, shared: true, account: null });
       server.child.kill("SIGTERM");
       assert.equal((await server.exited).code, 0, server.log);
     } finally {

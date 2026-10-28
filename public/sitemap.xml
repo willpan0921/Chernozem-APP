@@ -2,10 +2,8 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>https://chernozem.app/</loc><changefreq>monthly</changefreq><priority>1.0</priority></url>
   <url><loc>https://chernozem.app/story</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://chernozem.app/product</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://chernozem.app/guide</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://chernozem.app/method</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://chernozem.app/technology</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://chernozem.app/design</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
-  <url><loc>https://chernozem.app/contact</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://chernozem.app/contact</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>
+  <url><loc>https://chernozem.app/demo</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://chernozem.app/register</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
 </urlset>

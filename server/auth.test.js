@@ -4,7 +4,9 @@
 // which visitor it counts behind a proxy such as Render's), "shared" in the
 // status, that without a code everything stays open, and that a change
 // asked for by another website is refused (403 cross_site) while scripts
-// and our own pages go through. Run with "npm test".
+// and our own pages go through. Also a registered account's cookie: signed
+// and checked the same way, named in the status, working with a code set,
+// and cleared by Sign out together with the code's. Run with "npm test".
 //
 // WHO EDITS IT
 // Whoever changes server/auth.js.
@@ -55,7 +57,7 @@ async function call(method, url, { body, cookie, headers = {} } = {}) {
   } catch {
     // not JSON
   }
-  return { status: res.status, json, setCookie: res.headers.get("set-cookie"), retryAfter: res.headers.get("retry-after") };
+  return { status: res.status, json, setCookie: res.headers.get("set-cookie"), setCookies: res.headers.getSetCookie(), retryAfter: res.headers.get("retry-after") };
 }
 
 // "atlas_session=abc; Path=/; ..." -> "atlas_session=abc"
@@ -158,7 +160,7 @@ test("open mode: without a code everything works as before", async () => {
   process.env.ATLAS_ACCESS_CODE = "";
   const status = await call("GET", "/api/auth/status");
   assert.equal(status.status, 200);
-  assert.deepEqual(status.json, { required: false, signedIn: true, shared: false });
+  assert.deepEqual(status.json, { required: false, signedIn: true, shared: false, account: null });
   assert.equal((await call("GET", "/api/workspace")).status, 200);
   assert.equal((await call("GET", "/api/status")).status, 200);
   const login = await call("POST", "/api/auth/login", { body: { code: "anything" } });
@@ -171,7 +173,7 @@ test("with a code: the API needs the cookie, the chat too", async () => {
   process.env.ATLAS_ACCESS_CODE = "test123";
   auth.resetLoginLimits();
 
-  assert.deepEqual((await call("GET", "/api/auth/status")).json, { required: true, signedIn: false, shared: true });
+  assert.deepEqual((await call("GET", "/api/auth/status")).json, { required: true, signedIn: false, shared: true, account: null });
   for (const [method, url] of [["GET", "/api/workspace"], ["GET", "/api/status"], ["GET", "/api/runs"], ["GET", "/api/chats?product=atlas"]]) {
     const res = await call(method, url);
     assert.equal(res.status, 401, url);
@@ -187,10 +189,12 @@ test("with a code: the API needs the cookie, the chat too", async () => {
 
   const ok = await call("POST", "/api/auth/login", { body: { code: " test123 " } });
   assert.equal(ok.status, 200);
-  assert.match(ok.setCookie, /^atlas_session=[^;]+; Path=\/; Max-Age=2592000; HttpOnly; SameSite=Lax$/);
+  // (The second Set-Cookie line removes any account cookie: the latest
+  // sign-in wins.)
+  assert.match(ok.setCookie, /^atlas_session=[^;]+; Path=\/; Max-Age=2592000; HttpOnly; SameSite=Lax(, chernozem_account=; Path=\/; Max-Age=0; HttpOnly; SameSite=Lax)?$/);
   const cookie = cookieOf(ok.setCookie);
 
-  assert.deepEqual((await call("GET", "/api/auth/status", { cookie })).json, { required: true, signedIn: true, shared: true });
+  assert.deepEqual((await call("GET", "/api/auth/status", { cookie })).json, { required: true, signedIn: true, shared: true, account: null });
   assert.equal(ok.json.shared, true, "the sign-in answer says so too");
   assert.equal((await call("GET", "/api/workspace", { cookie })).status, 200);
   assert.equal((await call("GET", "/api/workspace", { cookie: cookie + "x" })).status, 401, "a changed cookie is refused");
@@ -392,7 +396,7 @@ test("online with no code, a short one or the example, the app stays locked what
     for (const code of ["", "x", "river-tractor-winter-maple"]) {
       process.env.ATLAS_ACCESS_CODE = code;
       const label = JSON.stringify(code);
-      assert.deepEqual((await call("GET", "/api/auth/status")).json, { required: true, signedIn: false, shared: true }, label);
+      assert.deepEqual((await call("GET", "/api/auth/status")).json, { required: true, signedIn: false, shared: true, account: null }, label);
       assert.equal((await call("GET", "/api/workspace")).status, 401, label);
       assert.equal((await call("GET", "/api/status")).status, 401, label);
       const login = await call("POST", "/api/auth/login", { body: { code: code || "anything" } });
@@ -418,7 +422,7 @@ test("online with no code, a short one or the example, the app stays locked what
     auth.resetLoginLimits();
   }
   // On one's own computer (no RENDER) no code still means open.
-  assert.deepEqual((await call("GET", "/api/auth/status")).json, { required: false, signedIn: true, shared: false });
+  assert.deepEqual((await call("GET", "/api/auth/status")).json, { required: false, signedIn: true, shared: false, account: null });
   assert.equal((await call("GET", "/api/workspace")).status, 200);
 });
 
@@ -476,6 +480,101 @@ test("a change asked for by another website is refused (403); reads, our own pag
     assert.equal((await call("POST", "/api/contact", { body: {}, headers: { "Sec-Fetch-Site": "cross-site" } })).status, 403, "a form elsewhere");
   } finally {
     process.env.ATLAS_ACCESS_CODE = "";
+    auth.resetLoginLimits();
+  }
+});
+
+// ---------- A registered account's cookie (server/accounts.js signs people in) ----------
+
+test("an account token is accepted with the same secret only, and gives back the account id and when it was made", () => {
+  const secret = auth.deriveAccountSecret("a".repeat(64));
+  const now = Date.UTC(2026, 9, 28);
+  const token = auth.signAccountSession(secret, "AbC123_-xyz", { now });
+  assert.match(token, /^AbC123_-xyz\.\d+\.\d+\.[A-Za-z0-9_-]{16,64}\.[A-Za-z0-9_-]{43}$/);
+  assert.deepEqual(auth.verifyAccountSession(token, secret, { now }), { uid: "AbC123_-xyz", issuedAt: now, expiresAt: now + 30 * 24 * 60 * 60 * 1000 });
+  assert.equal(auth.verifyAccountSession(token, auth.deriveAccountSecret("b".repeat(64)), { now }), null, "a new salt signs everyone out");
+  assert.notEqual(Buffer.compare(secret, auth.deriveSecret("accounts", "a".repeat(64))), 0, "not the access code's secret");
+  assert.throws(() => auth.signAccountSession(secret, "has.dots"), "dots would split the token");
+  assert.throws(() => auth.signAccountSession(secret, ""));
+  assert.equal(auth.isUid("x".repeat(128)), true);
+  assert.equal(auth.isUid("x".repeat(129)), false);
+  assert.equal(auth.isUid("spaced out"), false);
+});
+
+test("a changed account token is refused", () => {
+  const secret = auth.deriveAccountSecret("salt".repeat(10));
+  const token = auth.signAccountSession(secret, "SomeUID");
+  const [uid, issued, expires, nonce, sig] = token.split(".");
+  assert.equal(auth.verifyAccountSession(`OtherUID.${issued}.${expires}.${nonce}.${sig}`, secret), null, "another account");
+  assert.equal(auth.verifyAccountSession(`${uid}.${Number(issued) + 1000}.${expires}.${nonce}.${sig}`, secret), null, "a later time made at (it would outlive a sign-out)");
+  assert.equal(auth.verifyAccountSession(`${uid}.${issued}.${Number(expires) + 1000}.${nonce}.${sig}`, secret), null, "longer expiry");
+  assert.equal(auth.verifyAccountSession(`${uid}.${issued}.${expires}.${nonce}x.${sig}`, secret), null, "changed random part");
+  const flipped = sig.slice(0, -1) + (sig.endsWith("A") ? "B" : "A");
+  assert.equal(auth.verifyAccountSession(`${uid}.${issued}.${expires}.${nonce}.${flipped}`, secret), null, "changed signature");
+  // (The fifth entry is a cookie of the older shape, without the time it
+  // was made at: those browsers sign in again once.)
+  for (const junk of ["", "abc", "1.2.3", "a.b.c.d", `${uid}.${expires}.${nonce}.${sig}`, null, undefined, 42, `${token}.extra`, auth.signSession(secret)]) {
+    assert.equal(auth.verifyAccountSession(junk, secret), null, `junk: ${String(junk)}`);
+  }
+});
+
+test("an account token runs out after 30 days", () => {
+  const secret = auth.deriveAccountSecret("salt".repeat(10));
+  const now = Date.UTC(2026, 9, 1);
+  const token = auth.signAccountSession(secret, "SomeUID", { now });
+  const day = 24 * 60 * 60 * 1000;
+  assert.equal(auth.verifyAccountSession(token, secret, { now: now + 29 * day })?.uid, "SomeUID");
+  assert.equal(auth.verifyAccountSession(token, secret, { now: now + 30 * day }), null);
+  assert.equal(auth.verifyAccountSession(token, secret, { now: now + 31 * day }), null);
+});
+
+test("through the API: the status names the account, the account works with a code set, and Sign out clears both cookies", async () => {
+  const accounts = await import("./accounts.js");
+  const revoked = [];
+  accounts.setDepsForTests({
+    verifyIdToken: (idToken) => {
+      if (idToken === "ok") return { uid: "AuthTestUID1", email: "auth@example.com", name: "Auth Test" };
+      throw Object.assign(new Error("bad"), { code: "auth/argument-error" });
+    },
+    getUser: (uid) => ({ uid, disabled: false }),
+    revokeRefreshTokens: (uid) => revoked.push(uid),
+  });
+  try {
+    process.env.ATLAS_ACCESS_CODE = "";
+    const signedIn = await call("POST", "/api/auth/firebase", { body: { idToken: "ok" } });
+    assert.equal(signedIn.status, 200, JSON.stringify(signedIn.json));
+    const account = cookieOf(signedIn.setCookies.find((line) => line.startsWith("chernozem_account=")));
+    const expected = { uid: "AuthTestUID1", email: "auth@example.com", name: "Auth Test", product: null, profileComplete: false };
+    assert.deepEqual(signedIn.json, { ok: true, account: expected });
+    assert.deepEqual((await call("GET", "/api/auth/status", { cookie: account })).json, { required: false, signedIn: true, shared: false, account: expected });
+
+    // With a code set the account still works, without the code.
+    process.env.ATLAS_ACCESS_CODE = "orchard-lantern-pebble-cobalt";
+    auth.resetLoginLimits();
+    assert.deepEqual((await call("GET", "/api/auth/status", { cookie: account })).json, { required: true, signedIn: true, shared: false, account: expected });
+    assert.equal((await call("GET", "/api/account", { cookie: account })).status, 200);
+    assert.deepEqual((await call("GET", "/api/auth/status")).json, { required: true, signedIn: false, shared: true, account: null });
+    assert.equal((await call("GET", "/api/account")).status, 401);
+    assert.equal((await call("GET", "/api/account", { cookie: `${account}x` })).status, 401, "a changed cookie is nobody");
+
+    // Sign out clears both cookies.
+    const out = await call("POST", "/api/auth/logout", { cookie: account });
+    assert.deepEqual(out.json, { ok: true, required: true, signedIn: false, shared: true, account: null });
+    assert.ok(out.setCookies.some((line) => /^atlas_session=; Path=\/; Max-Age=0; HttpOnly; SameSite=Lax$/.test(line)), out.setCookies.join(" | "));
+    assert.ok(out.setCookies.some((line) => /^chernozem_account=; Path=\/; Max-Age=0; HttpOnly; SameSite=Lax$/.test(line)), out.setCookies.join(" | "));
+    // ...and ends the account's cookies everywhere (accounts.test.js has
+    // the details), and Firebase's own sessions.
+    assert.equal((await call("GET", "/api/account", { cookie: account })).status, 401, "a copy of the old cookie is nobody now");
+    assert.deepEqual(revoked, ["AuthTestUID1"]);
+
+    // A wrong token: 401 bad_token, no cookie.
+    const bad = await call("POST", "/api/auth/firebase", { body: { idToken: "nope" } });
+    assert.equal(bad.status, 401);
+    assert.equal(bad.json.error.code, "bad_token");
+    assert.equal(bad.setCookie, null);
+  } finally {
+    process.env.ATLAS_ACCESS_CODE = "";
+    accounts.setDepsForTests({});
     auth.resetLoginLimits();
   }
 });

@@ -4,8 +4,9 @@
 // sample data but Earth Engine is now connected; it does so for every
 // saved area, the current one first and then by name, one at a time
 // (server/jobs.js), and a failed area does not stop the next. With the
-// switch off it starts none; another server's lock stops it. Run with
-// "npm test".
+// switch off it starts none; another server's lock stops it. And it
+// visits every registered account's folder after the demo's, each with
+// its own areas, farm, switch and lock. Run with "npm test".
 //
 // WHO EDITS IT
 // Whoever changes scheduler.js.
@@ -20,7 +21,7 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), "chernozem-scheduler-"));
 process.env.CHERNOZEM_DATA_DIR = dir;
 process.env.GEE_DISABLED = "1";
 const store = await import("./store.js");
-const { checkNow } = await import("./scheduler.js");
+const { checkNow, checkFieldsNow, holdKey, schedulerStatus } = await import("./scheduler.js");
 const { getJob, listJobs } = await import("./jobs.js");
 const { getProvider } = await import("./providers/index.js");
 const { planGrid } = await import("./geo.js");
@@ -250,8 +251,9 @@ test("the lock is held until every job of every check has ended, also when a che
   await freshSetup(provider);
   // A fresh hold, renewed on a clock the test moves (every 30 s).
   const holds = schedulerState().holds;
-  clearInterval(holds.scheduler?.timer);
-  delete holds.scheduler;
+  const key = holdKey("scheduler", process.env.CHERNOZEM_DATA_DIR);
+  clearInterval(holds[key]?.timer);
+  delete holds[key];
   t.mock.timers.enable({ apis: ["setInterval"] });
   const settled = () => new Promise((resolve) => setTimeout(resolve, 100));
   try {
@@ -289,5 +291,114 @@ test("the lock is held until every job of every check has ended, also when a che
     provider.open("area-golf");
     provider.open("area-hotel");
     t.mock.timers.reset();
+  }
+});
+
+// ---------- Every folder: the demo's and each registered account's ----------
+
+test("the monthly check visits the demo's folder and every account's folder, each with its own areas, switch, lock and result", async () => {
+  const provider = heldProvider();
+  await freshSetup(provider);
+  const base = process.env.CHERNOZEM_DATA_DIR;
+  const mine = store.userRoot("sched-account-1");
+  const other = store.userRoot("sched-account-2");
+  try {
+    await store.saveArea(boxArea("area-demo", "Demo", 38));
+    await store.updateWorkspace((ws) => {
+      ws.currentAreaId = "area-demo";
+      ws.schedule = { autoMonthly: true };
+    });
+    // The account's area has the demo's id (a country's id is the same
+    // for everyone): separate all the same.
+    await store.withDataRoot(mine, async () => {
+      await store.saveArea(boxArea("area-demo", "Mine", 39));
+      await store.updateWorkspace((ws) => {
+        ws.schedule = { autoMonthly: true };
+      });
+    });
+    // The other account switched the monthly check off.
+    await store.withDataRoot(other, async () => {
+      await store.saveArea(boxArea("area-other", "Other", 40));
+      await store.updateWorkspace((ws) => {
+        ws.schedule = { autoMonthly: false };
+      });
+    });
+
+    const jobs = await checkNow();
+    assert.deepEqual(jobs.map((job) => [job.areaId, job.areaName]), [["area-demo", "Demo"], ["area-demo", "Mine"]], "the demo's folder first, then the account's; the switched-off account is left alone");
+    assert.notEqual(jobs[0].id, jobs[1].id);
+    assert.match(schedulerState().lastResult, /^started 1 area: /);
+    assert.match(schedulerState().roots[mine].lastResult, /^started 1 area: /);
+    assert.equal(schedulerState().roots[other].lastResult, "nothing to do");
+    // Each folder's own lock, and the status for the folder asking.
+    assert.equal(fs.existsSync(path.join(base, "scheduler.lock")), true);
+    assert.equal(fs.existsSync(path.join(mine, "scheduler.lock")), true);
+    assert.equal(fs.existsSync(path.join(other, "scheduler.lock")), false);
+    assert.match((await schedulerStatus()).lastResult, /^started 1 area/);
+    const otherStatus = await store.withDataRoot(other, () => schedulerStatus());
+    assert.equal(otherStatus.lastResult, "nothing to do");
+    assert.equal(otherStatus.autoMonthly, false);
+    // Each job is seen from its own folder only; the account's waits for
+    // the demo's (one at a time), named as another workspace's.
+    assert.equal(getJob(jobs[0].id).queued, false);
+    assert.equal(getJob(jobs[1].id), null);
+    const waiting = await store.withDataRoot(mine, () => getJob(jobs[1].id));
+    assert.equal(waiting.queued, true);
+    assert.equal(waiting.waiting, "Waiting for another workspace's analysis to finish");
+
+    provider.open("area-demo");
+    assert.equal((await waitFor(jobs[0].id)).status, "done");
+    assert.equal((await store.withDataRoot(mine, () => waitFor(jobs[1].id))).status, "done");
+    assert.equal((await store.listRuns("area-demo")).length, 12);
+    assert.equal((await store.withDataRoot(mine, () => store.listRuns("area-demo"))).length, 12);
+    assert.equal((await store.withDataRoot(other, () => store.listRuns("area-other"))).length, 0);
+    assert.deepEqual(await checkNow(), [], "up to date everywhere");
+  } finally {
+    provider.open("area-demo");
+    provider.open("area-other");
+  }
+});
+
+test("the Field check visits the accounts' folders too", async () => {
+  // The weather services are not called from the tests (offline at once).
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    if (/^https:\/\/(api|archive-api)\.open-meteo\.com\//.test(String(url))) throw new Error("offline in the tests");
+    return realFetch(url, options);
+  };
+  const provider = heldProvider();
+  await freshSetup(provider);
+  const mine = store.userRoot("sched-field-1");
+  const geometry = { type: "Polygon", coordinates: [[[37.5, 49.7], [37.506, 49.7], [37.506, 49.704], [37.5, 49.704], [37.5, 49.7]]] };
+  const farm = {
+    id: "farm-acc00001",
+    name: "Account farm",
+    location: null,
+    boundary: null,
+    fields: [{ id: "fld-acc00001", name: "Field 1", geometry, areaHa: 19, crop: "Corn", source: "drawn", createdAt: "2026-01-01" }],
+    units: "ha",
+    autoUpdate: true,
+    demo: false,
+    createdAt: "2026-01-01",
+    updatedAt: "2026-01-01",
+  };
+  try {
+    await store.withDataRoot(mine, () => store.saveFarm(farm));
+    assert.equal(await store.getFarm(), null, "the demo has no farm");
+    const job = await checkFieldsNow();
+    assert.ok(job, "the account's farm is analysed");
+    assert.equal(job.kind, "field-analyze");
+    assert.equal(job.trigger, "auto");
+    assert.equal(getJob(job.id), null, "the demo's folder does not see it");
+    assert.equal((await store.withDataRoot(mine, () => waitFor(job.id))).status, "done");
+    assert.ok(await store.withDataRoot(mine, () => store.getFieldAnalysis("fld-acc00001")));
+    assert.equal(await store.getFieldAnalysis("fld-acc00001"), null, "nothing in the demo's folder");
+    assert.equal(schedulerState().fieldsLastResult, "nothing to do");
+    assert.match(schedulerState().roots[mine].fieldsLastResult, /^started /);
+    assert.equal(fs.existsSync(path.join(mine, "field-scheduler.lock")), true);
+    assert.equal(fs.existsSync(path.join(process.env.CHERNOZEM_DATA_DIR, "field-scheduler.lock")), false);
+    await store.withDataRoot(mine, () => store.releaseLock("field-scheduler"));
+  } finally {
+    globalThis.fetch = realFetch;
   }
 });

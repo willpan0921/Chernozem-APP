@@ -136,6 +136,14 @@ export function config() {
     acledCsvPath: acled ? (path.isAbsolute(acled) ? acled : path.join(ROOT, acled)) : null,
     geeDisabled: flag(env.GEE_DISABLED),
     port: Number(env.PORT) || 8787,
+    // Registered accounts (server/accounts.js): the Firebase project whose
+    // sign-ins are accepted. Blank: the Earth Engine project (same Google
+    // Cloud project), else "chernozem-danny". "none" or "off" switches
+    // accounts off (the register page then says so).
+    firebaseProjectId: (env.FIREBASE_PROJECT_ID || "").trim() || null,
+    // Only on one's own computer: the local Firebase Auth emulator, for
+    // example 127.0.0.1:9099. The Firebase library reads it itself.
+    firebaseEmulatorHost: (env.FIREBASE_AUTH_EMULATOR_HOST || "").trim() || null,
   };
 }
 

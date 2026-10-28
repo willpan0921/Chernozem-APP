@@ -36,6 +36,15 @@
 //
 // Errors are thrown as HttpError and answered by app.js as { error: { code, message } }.
 //
+// WHAT A REGISTERED ACCOUNT MAY DO (server/quotas.js has the numbers)
+// An account draws outlines of at most 1,000 points; runs one Field job
+// at a time (a search for fields or an analysis: 429 busy while one runs)
+// and asks for at most 2 searches and 2 "update now" an hour (429 quota);
+// keeps at most 30 reports and 40 MB of photos in all (413 quota); and its
+// photos must be real JPEG, PNG or WebP pictures of at most 8,000 pixels a
+// side whose declared type matches the bytes (server/field/images.js).
+// The demo has none of these limits (its photos keep the first-bytes check).
+//
 // WHO EDITS IT
 // Whoever adds a Field route. Keep the list above up to date.
 
@@ -56,8 +65,12 @@ import {
   savePhoto,
   saveReport,
   updateFarm,
+  uploadsBytes,
 } from "../store.js";
 import { createHash } from "node:crypto";
+import { listJobs } from "../jobs.js";
+import { HOUR_MS, inWords, isAccount, QUOTAS, quotaError, sizeWords, spend } from "../quotas.js";
+import { imageInfo } from "./images.js";
 import { areaHa as sphericalAreaHa, bboxAreaKm2, bboxOf, FIELD_SEARCH_MAX_KM2, formatCoord } from "../geo.js";
 import { fieldProviderStatus, getFieldProvider } from "../providers/index.js";
 import { UNITS } from "../../src/lib/field/method.js";
@@ -123,7 +136,8 @@ function cleanRing(ring, label) {
   });
   if (out.length > 1 && out[0][0] === out[out.length - 1][0] && out[0][1] === out[out.length - 1][1]) out.pop();
   if (out.length < 3) throw bad(`${label}: an outline needs at least 3 different corners.`);
-  if (out.length > LIMITS.points) throw bad(`${label}: too many points (the limit is ${LIMITS.points.toLocaleString("en-US")}).`);
+  const maxPoints = isAccount() ? QUOTAS.points : LIMITS.points;
+  if (out.length > maxPoints) throw bad(`${label}: too many points (the limit is ${maxPoints.toLocaleString("en-US")}).`);
   const lons = out.map(([lon]) => lon);
   if (Math.max(...lons) - Math.min(...lons) > 180) throw bad(`${label}: outlines that cross the 180° line are not supported.`);
   out.push([...out[0]]);
@@ -294,6 +308,28 @@ function locationFor(farm) {
   return centre ? { label: formatCoord(centre.lat, centre.lon), lat: Math.round(centre.lat * 1e5) / 1e5, lon: Math.round(centre.lon * 1e5) / 1e5 } : null;
 }
 
+// ---------- A registered account's limits (server/quotas.js) ----------
+
+// A registered account runs one Field job at a time: while a search for
+// fields or an analysis runs, nothing that would start another is begun
+// (429 busy). The demo runs them as before (server/field/run.js).
+function assertNoFieldJobRunning() {
+  if (!isAccount()) return;
+  const running = listJobs({ status: "running" }).find((job) => job.kind === "field-detect" || job.kind === "field-analyze");
+  if (!running) return;
+  const what = running.kind === "field-detect" ? "search for fields" : "analysis";
+  throw new HttpError(429, "busy", `Your other ${what} is still running. Wait for it to finish, then try again.`);
+}
+
+// One of an account's searches or "update now" an hour (the demo: as many
+// as it likes).
+function spendFieldJob(what) {
+  const turn = spend(what, QUOTAS.fieldJobsPerHour, HOUR_MS);
+  if (turn.ok) return;
+  const name = what === "field-detect" ? "searches for fields" : "analyses on request";
+  throw quotaError(`An account can start ${QUOTAS.fieldJobsPerHour} ${name} an hour. Try again ${inWords(turn.retryAfterMs)}.`);
+}
+
 // ---------- Farm ----------
 
 const withCropSource = (field) => ({ ...field, cropSource: cropSourceOf(field) });
@@ -339,6 +375,7 @@ async function removeOldFieldData(oldFields, keepIds) {
 }
 
 async function replaceFarm(body, { demo = false } = {}) {
+  assertNoFieldJobRunning();
   const old = await getFarm();
   const fields = buildFields(body.fields, old?.fields || [], demo ? "demo" : "detected");
   const now = new Date().toISOString();
@@ -390,6 +427,7 @@ async function patchFarm(body) {
 }
 
 async function addField(body) {
+  assertNoFieldJobRunning();
   let field;
   await updateFarm((farm) => {
     const now = new Date().toISOString();
@@ -486,21 +524,31 @@ async function fieldOf(id) {
 const searchKey = (input) => createHash("sha1").update(JSON.stringify(input)).digest("hex").slice(0, 16);
 
 async function detect(body) {
+  let search;
   if (body.source === "boundary") {
     const boundary = body.points !== undefined ? polygonFromPoints(body.points) : cleanBoundaryGeometry(body.boundary ?? body.geometry);
     checkBoundarySize(boundary);
-    return startFieldDetection({ boundary, key: searchKey({ boundary }) });
-  }
-  if (body.source === "point") {
+    search = { boundary, key: searchKey({ boundary }) };
+  } else if (body.source === "point") {
     const lat = toNumber(body.lat);
     const lon = toNumber(body.lon);
     checkLatLon(lat, lon, "The place");
     let radiusM = body.radiusM === undefined || body.radiusM === null ? LIMITS.radiusM.default : toNumber(body.radiusM);
     if (!Number.isFinite(radiusM)) throw bad("radiusM must be a number of metres.");
     radiusM = Math.min(LIMITS.radiusM.max, Math.max(LIMITS.radiusM.min, Math.round(radiusM)));
-    return startFieldDetection({ center: { lat, lon }, radiusM, key: searchKey({ lat, lon, radiusM }) });
+    search = { center: { lat, lon }, radiusM, key: searchKey({ lat, lon, radiusM }) };
+  } else {
+    throw bad('source must be "boundary" (with points) or "point" (with lat and lon).');
   }
-  throw bad('source must be "boundary" (with points) or "point" (with lat and lon).');
+  if (isAccount()) {
+    // The same search again (a double click) joins the running one, as for
+    // the demo; anything else waits for the running job and counts.
+    const same = listJobs({ kind: "field-detect", status: "running" }).find((job) => job.key === search.key);
+    if (same) return same;
+    assertNoFieldJobRunning();
+    spendFieldJob("field-detect");
+  }
+  return startFieldDetection(search);
 }
 
 // ---------- Reports and photos ----------
@@ -513,6 +561,26 @@ const MAGIC = [
 
 export function photoKind(buffer) {
   return MAGIC.find((item) => item.test(buffer))?.ext || null;
+}
+
+// What a photo says it is ("image/png"...), as "png" | "jpg" | "webp", or
+// null when it says nothing (or something that is no photo type at all).
+const DECLARED = { "image/png": "png", "image/jpeg": "jpg", "image/jpg": "jpg", "image/webp": "webp" };
+const KIND_NAMES = { png: "PNG", jpg: "JPEG", webp: "WebP" };
+
+// A registered account's photo (server/field/images.js): a real picture
+// of a known kind and size, that is what it says it is. Gives back its
+// kind ("png" | "jpg" | "webp").
+function checkRealImage(photo, buffer, label) {
+  const info = imageInfo(buffer);
+  if (!info) throw bad(`${label} is not a readable image. Send a JPEG, PNG or WebP photo.`, "bad_photo");
+  const side = QUOTAS.photoMaxSide;
+  if (info.width > side || info.height > side) {
+    throw bad(`${label} is ${info.width.toLocaleString("en-US")} × ${info.height.toLocaleString("en-US")} pixels; the limit is ${side.toLocaleString("en-US")} pixels a side. Make it smaller and try again.`, "bad_photo");
+  }
+  const declared = typeof photo.type === "string" ? DECLARED[photo.type.trim().toLowerCase()] || null : null;
+  if (declared && declared !== info.kind) throw bad(`${label} says it is a ${KIND_NAMES[declared]}, but the file is a ${KIND_NAMES[info.kind]}.`, "bad_photo");
+  return info.kind;
 }
 
 function decodePhoto(photo, i) {
@@ -528,9 +596,31 @@ function decodePhoto(photo, i) {
   if ((data.length * 3) / 4 > LIMITS.photoBytes + 4) throw tooLarge((data.length * 3) / 4);
   const buffer = Buffer.from(data, "base64");
   if (buffer.length > LIMITS.photoBytes) throw tooLarge(buffer.length);
-  const ext = photoKind(buffer);
+  // The demo: the first bytes decide. An account: the whole header must
+  // read as a picture (server/field/images.js).
+  const ext = isAccount() ? checkRealImage(photo, buffer, label) : photoKind(buffer);
   if (!ext) throw bad(`${label} must be a JPEG, PNG or WebP image.`, "bad_photo");
   return { buffer, ext };
+}
+
+// A registered account keeps at most so many reports, and so many bytes of
+// photos in all (the uploads/ folder is measured before anything is
+// saved). 413 "quota" with a plain sentence; the demo is never asked.
+async function assertReportAllowed(decoded) {
+  if (!isAccount()) return;
+  const count = (await listReports()).length;
+  if (count >= QUOTAS.reports) {
+    throw quotaError(`An account can keep ${QUOTAS.reports} reports, and this farm already has ${count}. Starting over (Settings) removes them.`, 413);
+  }
+  const adding = decoded.reduce((sum, photo) => sum + photo.buffer.length, 0);
+  if (!adding) return;
+  const have = await uploadsBytes();
+  if (have + adding > QUOTAS.uploadBytes) {
+    throw quotaError(
+      `An account's photos can take ${sizeWords(QUOTAS.uploadBytes)} in all; this farm's take ${sizeWords(have)} already, and these would add ${sizeWords(adding)}. Send fewer or smaller photos.`,
+      413
+    );
+  }
 }
 
 async function createReport(body) {
@@ -549,6 +639,7 @@ async function createReport(body) {
   }
   // Check every photo before saving any.
   const decoded = photos.map(decodePhoto);
+  await assertReportAllowed(decoded);
   const photoIds = [];
   for (const photo of decoded) {
     const photoId = newId("photo");
@@ -631,6 +722,10 @@ export async function handleFieldRoutes(req, res, url) {
     if (body.fieldIds != null) {
       if (!Array.isArray(body.fieldIds) || !body.fieldIds.every(isSafeId)) throw bad("fieldIds must be a list of field ids.");
       fieldIds = body.fieldIds;
+    }
+    if (isAccount()) {
+      assertNoFieldJobRunning();
+      spendFieldJob("field-analyze");
     }
     return sendJson(res, 202, { job: await startFieldAnalysis({ fieldIds, trigger: "manual" }) }), true;
   }

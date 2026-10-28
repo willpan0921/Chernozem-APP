@@ -25,3 +25,11 @@ server/.data
 # Private keys: never commit an Earth Engine service-account key.
 *.key.json
 service-account*.json
+
+# The design skill the owner installed with "npx skills add" (skills-lock.json says where it comes from)
+.agents/
+# The design inspector's screenshots and reports; the dealt direction sheet is kept
+.taste-skill/*
+!.taste-skill/direction.json
+# The owner's mockup PDFs and reference pictures, kept next to the code but not in git
+Other Files/

@@ -17,11 +17,18 @@
 //   farm (fields near Kupiansk, Ames or Chivilcoy) and analyses it at once.
 //   Any other place on Earth works the same way.
 //
+// A REGISTERED ACCOUNT (src/state/useAccess.js) starts near home: the
+// Search tab begins with the place they gave when registering (the pin on
+// it, the map flown there), the example row is not shown (their farm is
+// their own, not an example), and the grey example coordinates are drawn
+// around their place instead of Iowa (src/lib/profile.js). The demo
+// visitor sees everything exactly as before.
+//
 // WHAT IT RECEIVES
 //   onDone()    called once the farm is saved (or an example loaded), e.g. to close Settings' panel
 //   onCancel()  shows a "Cancel" button when given
 //   title       the heading (default "Set up your farm")
-//   showDemo    false hides the example farms
+//   showDemo    false hides the example farms (an account never sees them)
 //   current     the example loaded now (farm.example), left out of the row
 //
 // WHO EDITS IT
@@ -33,9 +40,11 @@ import { ArrowLeft, Check, MapPin, Search, Undo2, X } from "lucide-react";
 import { Button, Segmented, Tabs } from "../ui/index.js";
 import FieldMap from "./FieldMap.jsx";
 import { useFieldData } from "../../state/FieldData.jsx";
+import { useAccess } from "../../state/useAccess.js";
 import { EXAMPLE_FARMS, geocode } from "../../api/fieldApi.js";
 import { checkPolygon, parseCoordinates } from "../../lib/atlas/coords.js";
 import { candidateTotals, formatArea } from "../../lib/field/format.js";
+import { cornersPlaceholder, profilePlace } from "../../lib/profile.js";
 import "./field.css";
 
 const TABS = [
@@ -68,8 +77,11 @@ const pointsBounds = (points) => {
 
 // ---------- Search ----------
 
-function SearchTab({ picked, onPick }) {
-  const [query, setQuery] = useState("");
+// initialQuery: the words in the box to begin with (an account's home
+// place); they are not looked up until the person types or presses Enter,
+// since the pin is already there.
+function SearchTab({ picked, onPick, initialQuery = "" }) {
+  const [query, setQuery] = useState(initialQuery);
   const [results, setResults] = useState([]);
   const [state, setState] = useState("idle"); // idle | searching | done | error
   const [error, setError] = useState("");
@@ -105,6 +117,9 @@ function SearchTab({ picked, onPick }) {
   // Look up as the person types (a short pause first; the server asks
   // OpenStreetMap at most once a second).
   useEffect(() => {
+    // The prefilled home place: no lookup until it is changed (compared by
+    // value, so React's development double-run of effects changes nothing).
+    if (initialQuery && query === initialQuery) return undefined;
     const timer = setTimeout(() => run(query), 450);
     return () => clearTimeout(timer);
     // run reads the latest query itself.
@@ -188,6 +203,11 @@ function Examples({ current, busy, onPick }) {
 
 export default function FarmSetup({ onDone, onCancel, title = "Set up your farm", showDemo = true, current = null }) {
   const { provider, actions } = useFieldData();
+  const { account, profile } = useAccess();
+  // An account's home place (the one given when registering), or null.
+  const home = useMemo(() => (account ? profilePlace(profile) : null), [account, profile]);
+  // The example farms are the demo's; an account never sees them.
+  const examples = showDemo && !account;
   const [tab, setTab] = useState("search");
   const [step, setStep] = useState("find"); // find | choose
   const [busy, setBusy] = useState(null); // null | "detect" | "save" | "demo:<example id>"
@@ -195,8 +215,9 @@ export default function FarmSetup({ onDone, onCancel, title = "Set up your farm"
   const [error, setError] = useState(null);
 
   // Search tab: the picked place and the pin (moved by clicking the map).
-  const [picked, setPicked] = useState(null);
-  const [pin, setPin] = useState(null);
+  // An account starts with the pin on its home place and the map there.
+  const [picked, setPicked] = useState(home);
+  const [pin, setPin] = useState(home ? [home.lat, home.lon] : null);
   const [radiusM, setRadiusM] = useState(1000);
   // Coordinates tab
   const [coordsText, setCoordsText] = useState("");
@@ -205,7 +226,7 @@ export default function FarmSetup({ onDone, onCancel, title = "Set up your farm"
   // Step 2
   const [found, setFound] = useState(null); // { candidates, boundary, provider, warnings, source }
   const [chosen, setChosen] = useState([]);
-  const [focus, setFocus] = useState(null);
+  const [focus, setFocus] = useState(home ? pinBounds(home.lat, home.lon, 1000) : null);
   const abortRef = useRef(null);
 
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -377,7 +398,7 @@ export default function FarmSetup({ onDone, onCancel, title = "Set up your farm"
 
             <Tabs bar tabs={TABS} active={tab} onChange={(next) => { setTab(next); setError(null); }} ariaLabel="How to find your land" />
 
-            {tab === "search" && <SearchTab picked={picked} onPick={pickPlace} />}
+            {tab === "search" && <SearchTab picked={picked} onPick={pickPlace} initialQuery={home?.label || ""} />}
 
             {tab === "coordinates" && (
               <div className="fs-tab">
@@ -389,7 +410,7 @@ export default function FarmSetup({ onDone, onCancel, title = "Set up your farm"
                   className="textarea fs-coords"
                   rows={5}
                   spellCheck={false}
-                  placeholder={COORDS_EXAMPLE}
+                  placeholder={account ? cornersPlaceholder(home) : COORDS_EXAMPLE}
                   value={coordsText}
                   onChange={(event) => setCoordsText(event.target.value)}
                 />
@@ -441,7 +462,7 @@ export default function FarmSetup({ onDone, onCancel, title = "Set up your farm"
             )}
 
             <div className="fs-foot">
-              {showDemo && <Examples current={current} busy={busy} onPick={tryExample} />}
+              {examples && <Examples current={current} busy={busy} onPick={tryExample} />}
               {onCancel && (
                 <Button variant="ghost" size="sm" onClick={onCancel}>
                   Cancel

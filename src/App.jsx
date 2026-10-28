@@ -1,14 +1,17 @@
 // WHAT THIS FILE DOES
 // The list of pages and their web addresses. There are two kinds:
 //
-// The public website (src/site/), open to anyone, no access code:
-//   /             Home                     /method       How the ranking works
-//   /story        The founding story       /technology   What it is built on
-//   /product      Field and Atlas          /design       How it was designed
-//   /guide        How to use it            /contact      Contact
+// The public website (src/site/), open to anyone, no sign-in:
+//   /             About: what Chernozem is   /contact      Contact
+//   /story        The story                  /demo         Try the Ukraine demo (with a code)
+//   /method       Methodology                /register     Make an account (Field or Atlas)
+//                                            /signin       Sign in to an account
+//   Old addresses (/about, /product, /guide, /technology, /design) go to
+//   the page that now holds that content.
 //
 // The app itself, inside the AppShell (the sidebar frame), behind the
-// access code when the owner has set one (src/components/atlas/AccessGate.jsx):
+// AccessGate (src/components/atlas/AccessGate.jsx): the demo's access code
+// opens both products; a registered account opens the one it chose.
 //   /field            Field: Overview        /atlas            Atlas: Overview
 //   /field/fields     Field: Fields (map)    /atlas/map        Atlas: Atlas (map)
 //   /field/ai         Field: AI chat         /atlas/ai         Atlas: AI chat
@@ -30,11 +33,12 @@ import ErrorBoundary from "./layout/ErrorBoundary.jsx";
 import { AtlasDataProvider } from "./state/AtlasData.jsx";
 import { FieldDataProvider } from "./state/FieldData.jsx";
 import AccessGate from "./components/atlas/AccessGate.jsx";
+import ProductGuard from "./components/ProductGuard.jsx";
 
 // Each page is loaded only when it is first opened ("lazy"), so the app
 // starts faster and the map library (Leaflet) is only downloaded by the
-// pages that show a map. The website's pages and its animation library
-// are likewise only downloaded by visitors who open the website.
+// pages that show a map. The website's pages, its animation library and
+// the 3D globe are likewise only downloaded by visitors who open them.
 const FieldOverviewPage = lazy(() => import("./pages/field/OverviewPage.jsx"));
 const FieldFieldsPage = lazy(() => import("./pages/field/FieldsPage.jsx"));
 const FieldAiPage = lazy(() => import("./pages/field/AiPage.jsx"));
@@ -51,25 +55,28 @@ const AtlasReportPage = lazy(() => import("./pages/atlas/ReportPage.jsx"));
 const SiteShell = lazy(() => import("./site/SiteShell.jsx"));
 const HomePage = lazy(() => import("./site/pages/HomePage.jsx"));
 const StoryPage = lazy(() => import("./site/pages/StoryPage.jsx"));
-const ProductPage = lazy(() => import("./site/pages/ProductPage.jsx"));
-const GuidePage = lazy(() => import("./site/pages/GuidePage.jsx"));
 const MethodPage = lazy(() => import("./site/pages/MethodPage.jsx"));
-const TechnologyPage = lazy(() => import("./site/pages/TechnologyPage.jsx"));
-const DesignPage = lazy(() => import("./site/pages/DesignPage.jsx"));
 const ContactPage = lazy(() => import("./site/pages/ContactPage.jsx"));
+const DemoPage = lazy(() => import("./site/pages/DemoPage.jsx"));
+const RegisterPage = lazy(() => import("./site/pages/RegisterPage.jsx"));
+const SignInPage = lazy(() => import("./site/pages/SignInPage.jsx"));
 const NotFoundPage = lazy(() => import("./site/pages/NotFoundPage.jsx"));
 
 // The Atlas data and the Field data are each loaded once for the whole app
 // (the first time one of their pages opens), so moving between pages is
 // instant and the sidebar can show the current area or farm. See
 // src/state/AtlasData.jsx and src/state/FieldData.jsx. The AccessGate around
-// them only lets the app open once the visitor may use it; the website
-// outside it needs no sign-in. <Suspense> shows nothing for the moment a
-// page's code is first downloading; after that, moving between pages keeps
-// the old page on screen until the new one is ready. A page that fails to
-// show (its code gone after an update, or any error) gets a message with a
-// Reload button, never a blank screen: the ErrorBoundary here, and the one
-// around each page in AppShell.jsx.
+// them only lets the app open once the visitor may use it (the demo's
+// access code, or an account signed in on the website); the website
+// outside it needs no sign-in. Inside, a ProductGuard around each product's
+// routes keeps a registered account on the product it chose: an Atlas
+// account that opens a Field address lands on /atlas, and the other way
+// round. The demo visitor passes both. <Suspense> shows nothing for the
+// moment a page's code is first downloading; after that, moving between
+// pages keeps the old page on screen until the new one is ready. A page
+// that fails to show (its code gone after an update, or any error) gets a
+// message with a Reload button, never a blank screen: the ErrorBoundary
+// here, and the one around each page in AppShell.jsx.
 function GatedApp() {
   return (
     <AccessGate>
@@ -90,31 +97,42 @@ export default function App() {
           <Route element={<SiteShell />}>
             <Route index element={<HomePage />} />
             <Route path="/story" element={<StoryPage />} />
-            <Route path="/product" element={<ProductPage />} />
-            <Route path="/guide" element={<GuidePage />} />
             <Route path="/method" element={<MethodPage />} />
-            <Route path="/technology" element={<TechnologyPage />} />
-            <Route path="/design" element={<DesignPage />} />
             <Route path="/contact" element={<ContactPage />} />
+            <Route path="/demo" element={<DemoPage />} />
+            <Route path="/register" element={<RegisterPage />} />
+            <Route path="/signin" element={<SignInPage />} />
+            {/* The first website's addresses, kept so old links still land somewhere. */}
+            <Route path="/about" element={<Navigate to="/" replace />} />
+            <Route path="/product" element={<Navigate to="/method#product" replace />} />
+            <Route path="/guide" element={<Navigate to="/method#use" replace />} />
+            <Route path="/technology" element={<Navigate to="/method#technology" replace />} />
+            <Route path="/design" element={<Navigate to="/method#design" replace />} />
             <Route path="*" element={<NotFoundPage />} />
           </Route>
 
           <Route element={<GatedApp />}>
-            <Route path="/field" element={<FieldOverviewPage />} />
-            <Route path="/field/fields" element={<FieldFieldsPage />} />
-            <Route path="/field/ai" element={<FieldAiPage />} />
-            <Route path="/field/data" element={<FieldDataPage />} />
-            <Route path="/field/settings" element={<FieldSettingsPage />} />
-            {/* An old or mistyped Field address goes to the Field overview. */}
-            <Route path="/field/*" element={<Navigate to="/field" replace />} />
+            {/* Field: an Atlas account is sent to /atlas from any of these. */}
+            <Route element={<ProductGuard product="field" />}>
+              <Route path="/field" element={<FieldOverviewPage />} />
+              <Route path="/field/fields" element={<FieldFieldsPage />} />
+              <Route path="/field/ai" element={<FieldAiPage />} />
+              <Route path="/field/data" element={<FieldDataPage />} />
+              <Route path="/field/settings" element={<FieldSettingsPage />} />
+              {/* An old or mistyped Field address goes to the Field overview. */}
+              <Route path="/field/*" element={<Navigate to="/field" replace />} />
+            </Route>
 
-            <Route path="/atlas" element={<AtlasOverviewPage />} />
-            <Route path="/atlas/map" element={<AtlasMapPage />} />
-            <Route path="/atlas/ai" element={<AtlasAiPage />} />
-            <Route path="/atlas/data" element={<AtlasDataPage />} />
-            <Route path="/atlas/settings" element={<AtlasSettingsPage />} />
-            <Route path="/atlas/report" element={<AtlasReportPage />} />
-            <Route path="/atlas/*" element={<Navigate to="/atlas" replace />} />
+            {/* Atlas: a Field account is sent to /field from any of these. */}
+            <Route element={<ProductGuard product="atlas" />}>
+              <Route path="/atlas" element={<AtlasOverviewPage />} />
+              <Route path="/atlas/map" element={<AtlasMapPage />} />
+              <Route path="/atlas/ai" element={<AtlasAiPage />} />
+              <Route path="/atlas/data" element={<AtlasDataPage />} />
+              <Route path="/atlas/settings" element={<AtlasSettingsPage />} />
+              <Route path="/atlas/report" element={<AtlasReportPage />} />
+              <Route path="/atlas/*" element={<Navigate to="/atlas" replace />} />
+            </Route>
           </Route>
         </Routes>
       </Suspense>

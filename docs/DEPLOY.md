@@ -14,6 +14,7 @@ This page explains how the public copy of Chernozem works: where it runs, what i
 - [10. Going back (rollback)](#10-going-back-rollback)
 - [11. Earth Engine: noncommercial use](#11-earth-engine-noncommercial-use)
 - [12. If something goes wrong](#12-if-something-goes-wrong)
+- [13. Accounts](#13-accounts)
 
 ---
 
@@ -46,7 +47,7 @@ So about **$7.25 a month**, plus the AI questions people ask.
 
 ## 3. One shared workspace
 
-The online app is **one workspace that everyone shares**:
+The online app's **demo** (the Ukraine farm and areas behind the access code) is **one workspace that everyone with the code shares**. People who **register** on the website get a workspace of their own instead (section 13); this section is about the demo.
 
 - There is one farm, one set of Atlas areas, one team list and one set of AI chats. Everyone who has the access code sees the same data and can change or delete any of it.
 - There are no personal accounts and no record of who changed what. The team list in Atlas Settings is a list of names, not logins.
@@ -175,3 +176,44 @@ Never delete the access code online, or make it short: the server then refuses t
 | The AI pages say "Connect Claude" | `ANTHROPIC_API_KEY` is missing in Render. |
 | The upload (section 5) says the server already has data | Nothing was written. To write over it, add `--replace`. |
 | The upload says the address does not exist | `IMPORT_TOKEN` is not set in Render (or the deploy after setting it has not finished). |
+
+## 13. Accounts
+
+The website's **Register** page lets a person make an account (with Google, or an e-mail and password), choose who they are, and get **Field** or **Atlas** with an **empty workspace of their own**. The demo behind the access code (section 3) is untouched: both products, the same data, the same code.
+
+**How it works**
+
+- The sign-in itself is **Firebase Authentication** (Google's), in the project `chernozem-danny`, the same Google Cloud project as Earth Engine. Google keeps the passwords; the server never sees them.
+- After the sign-in, the browser hands the server a token from Google. The server checks it with Firebase's own library and gives the browser an **account cookie** (30 days, separate from the access code's). From then on every request from that browser works in that account's own folder.
+- Each account's data lives on the disk under **`/var/data/users/<id>/`** (the id is a hash of the account's Firebase id): its `profile.json` (name, e-mail, role, product, the place to watch), and the same files as the demo has (`farm.json`, `areas/`, `runs/`, `chats/`...). Nothing is copied into it: a new account starts empty. The daily disk snapshot (section 9) covers these folders; the data upload and export of section 5 leave them alone.
+- An account is for **one product**: the one chosen at registration. Its Field pages cannot open Atlas data and the other way round (the server answers `wrong_product`). The demo has both.
+- The monthly Atlas update and the daily Field refresh run for every account's folder too, one after the other after the demo's, inside the Earth Engine allowance (section 11). Every account's analysis waits in the same line as the demo's: one at a time for the whole server.
+- Messages from the contact page still arrive in the **demo's** Atlas Settings only.
+
+**What one account may do** (anyone can register, so one account cannot fill the disk, hold the Earth Engine line for hours or spend the Claude key without end; the numbers are in `server/quotas.js`; the demo has none of these limits)
+
+- Atlas: at most **5 areas**, each at most **1,000,000 km²** (a country the size of Ukraine, not Russia) and 1,500 map squares, drawn with at most 1,000 points; **one analysis at a time**, of at most **12 months**; the monthly update is **off** until the person switches it on in Settings.
+- Field: **one job at a time** (a search for fields or an analysis), and at most **2 searches and 2 "update now" an hour**; outlines of at most 1,000 points; at most **30 reports** and **40 MB of photos** in all, and every photo must be a real JPEG, PNG or WebP picture of at most 8,000 pixels a side.
+- The AI chat: at most **40 messages a day**.
+- A limit reached answers with a plain sentence (the code `quota`; `busy` while the account's other analysis runs).
+
+**Signing out**: "Sign out" ends every copy of that account's cookie at once (the moment is kept in the account's `session.json`) and ends its Firebase sessions. The server also asks Firebase once an hour whether each signed-in account still exists, so an account deleted or disabled in the Firebase console is signed out within the hour. If Firebase cannot be asked (an outage, or a computer without the Google key), the last answer stays good for a day, then the person signs in again.
+
+**What you must do once (the owner, in the Firebase console)**
+
+Registration is **not open** until Firebase Authentication is switched on for the project. Until then the Register page says "Registration is not open yet" and offers the demo and the contact page.
+
+1. Open https://console.firebase.google.com, project **chernozem-danny**.
+2. Left menu: **Build > Authentication**, then **Get started**.
+3. **Sign-in method** tab: enable **Email/Password**, then enable **Google** (it asks for a support e-mail: yours).
+4. **Settings** tab > **Authorized domains**: add **chernozem.app** (and **www.chernozem.app**). Without this Google's pop-up refuses the site.
+5. Nothing to change in Render: the server uses the Earth Engine key it already has (same project) and the project id from `GEE_PROJECT_ID`. To use another Firebase project, set `FIREBASE_PROJECT_ID` on the Environment page; `FIREBASE_PROJECT_ID=off` switches registration off.
+
+The server also needs the `firebase-admin` package in `package.json` (`npm install firebase-admin`); without it, registration answers "not open yet" and the log says so at the first sign-in.
+
+**Trying it on your own computer without Google**: install the Firebase tools once (`npm install -g firebase-tools`), run `firebase emulators:start --only auth --project chernozem-danny` (port 9099), and put `FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099` in `.env` and `VITE_FIREBASE_AUTH_EMULATOR=http://127.0.0.1:9099` for the pages. Accounts made there exist only on your computer. Never set the emulator address online.
+
+**Signing everyone out at once** (accounts and the demo): delete `auth.json` on the disk (the sign-in secret's salt; the server makes a new one at once). Changing the access code (section 8) signs out the demo only.
+
+**Removing an account**: delete its folder under `/var/data/users/` (the person can register again and starts empty) and, in the Firebase console, the user under Authentication > Users (its cookies stop working within the hour; or the person deletes it themselves in the app, when that exists).
+
