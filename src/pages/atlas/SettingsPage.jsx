@@ -1,5 +1,7 @@
 // WHAT THIS FILE DOES
-// The Atlas Settings page (/atlas/settings). Six cards:
+// The Atlas Settings page (/atlas/settings). Six cards (a registered
+// account sees a seventh, "Account", at the top: their name, e-mail,
+// organisation and "Sign out"; src/components/atlas/AccessGate.jsx):
 //   Area   the area being analyzed, "New area" (country, GPS coordinates
 //          or a drawn shape) and the saved areas: open, rename, remove,
 //          with "Analyzing…" or "Waiting" while one is in the line of
@@ -50,6 +52,7 @@ import {
 import { PageHeader, Card, Badge, Button, Segmented, Toggle } from "../../components/ui/index.js";
 import { AnalysisNotice, AnalysisProgress, AtlasGate, useAtlasData } from "../../state/AtlasData.jsx";
 import AreaPicker from "../../components/atlas/AreaPicker.jsx";
+import { AccountCard } from "../../components/atlas/AccessGate.jsx";
 import { API_ROOT, ApiError, AUTH_REQUIRED_EVENT, OFFLINE_MESSAGE, deleteMessage, listJobs, listMessages } from "../../api/atlasApi.js";
 import { lineMarks } from "../../lib/atlas/analysisNotice.js";
 import { formatReceived, messageCountText } from "../../lib/atlas/messages.js";
@@ -1398,6 +1401,8 @@ export default function SettingsPage() {
           {checkError}
         </p>
       )}
+      {/* Only for a registered account; nothing for the demo. */}
+      <AccountCard />
       <AreaCard />
       {/* Started again for each area, so a re-run's result (or an open
           "Re-run 12 months?") never shows under another area opened

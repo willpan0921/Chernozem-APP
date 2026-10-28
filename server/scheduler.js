@@ -29,10 +29,19 @@
 // still on sample data are analysed once when Earth Engine is connected,
 // so the pages never show sample readings next to a working Earth Engine.
 //
+// EVERY FOLDER (registered accounts, server/store.js)
+// Each check looks at the shared demo's data folder first and then at
+// every registered account's folder (users/*), one after the other, each
+// inside its own folder (withDataRoot): an account's saved areas get
+// their monthly month and its farm its daily refresh like the demo's,
+// from its own workspace and farm settings. The lock files and "what the
+// last check found" (schedulerStatus) are per folder too; the jobs all
+// wait in the server's one Atlas line (server/jobs.js).
+//
 // WHO EDITS IT
 // Nobody, normally.
 
-import { acquireLock, getFarm, getWorkspace, listAreas, listFieldAnalyses, listRuns, releaseLock } from "./store.js";
+import { acquireLock, baseDataDir, dataDir, getFarm, getWorkspace, listAreas, listFieldAnalyses, listRuns, listUserRoots, releaseLock, withDataRoot } from "./store.js";
 import { latestCompleteMonth } from "./runs.js";
 import { getJob, startAnalysis } from "./jobs.js";
 import { fieldUnavailableError, getFieldProvider, getProvider, unavailableError } from "./providers/index.js";
@@ -41,51 +50,83 @@ import { needsRefresh, sampleWhileEarthEngine, startFieldAnalysis } from "./fiel
 const EVERY_MS = 6 * 60 * 60 * 1000;
 const LOCK_MAX_AGE_MS = 30 * 60 * 1000; // renewed every 30 s while a job runs
 const state = (globalThis.__chernozemScheduler ??= { started: false, timer: null, lastCheck: null, lastResult: null });
-// Per lock: the jobs it is held for and the timer that renews it
-// (releaseWhenDone).
+// Per lock and folder: the jobs it is held for and the timer that renews
+// it (releaseWhenDone).
 const holds = (state.holds ??= {});
 
+// What the last check found, for the folder the work runs in: the shared
+// demo's is `state` itself (where it always was: /api/status and the
+// tests read it there), a registered account's is kept under state.roots.
+function stateOf(root = dataDir()) {
+  if (root === baseDataDir()) return state;
+  return ((state.roots ??= {})[root] ??= {});
+}
+
+// The folders to check: the shared demo's, then every registered
+// account's. A folder that cannot be listed is a warning, not a crash
+// (the timers call this with nobody to catch an error).
+async function rootsToCheck() {
+  const users = await listUserRoots().catch((error) => {
+    console.warn(`[chernozem] Could not list the accounts' folders: ${error.message}`);
+    return [];
+  });
+  return [baseDataDir(), ...users];
+}
+
+// Runs one check in every folder, the demo's first, each inside its own
+// folder, and gives back what each gave, as one list.
+async function sweep(fn) {
+  const results = [];
+  for (const root of await rootsToCheck()) results.push(...[].concat(await withDataRoot(root, fn)));
+  return results;
+}
+
 // Only one check at a time in this server. Gives back the Atlas jobs it
-// started or joined ([] when none); the Field check runs alongside.
+// started or joined, in every folder ([] when none); the Field check runs
+// alongside.
 export function checkNow() {
   if (state.checking) return state.checking;
   checkFieldsNow();
-  state.checking = check().finally(() => {
+  state.checking = sweep(check).finally(() => {
     state.checking = null;
   });
   return state.checking;
 }
 
-// The Field check. Gives back the field job it started (or null).
+// The Field check in every folder. Gives back the first field job it
+// started (the demo's folder comes first), or null.
 export function checkFieldsNow() {
   if (state.checkingFields) return state.checkingFields;
-  state.checkingFields = checkFields().finally(() => {
-    state.checkingFields = null;
-  });
+  state.checkingFields = sweep(checkFields)
+    .then((jobs) => jobs.find(Boolean) || null)
+    .finally(() => {
+      state.checkingFields = null;
+    });
   return state.checkingFields;
 }
 
 async function checkFields() {
-  state.fieldsLastCheck = new Date().toISOString();
+  const mine = stateOf();
+  mine.fieldsLastCheck = new Date().toISOString();
   try {
     const farm = await getFarm();
     if (!farm || !farm.fields?.length) {
-      state.fieldsLastResult = "nothing to do";
+      mine.fieldsLastResult = "nothing to do";
       return null;
     }
     const provider = await getFieldProvider();
     if (fieldUnavailableError(provider)) {
-      state.fieldsLastResult = "Earth Engine unavailable; trying again later";
+      mine.fieldsLastResult = "Earth Engine unavailable; trying again later";
       return null;
     }
     const analyses = Object.fromEntries((await listFieldAnalyses()).map((analysis) => [analysis.fieldId, analysis]));
     const stale = farm.autoUpdate === false ? sampleWhileEarthEngine(farm, analyses, provider.id) : needsRefresh(farm, analyses, provider.id);
     if (!stale.length) {
-      state.fieldsLastResult = "up to date";
+      mine.fieldsLastResult = "up to date";
       return null;
     }
     if (!(await acquireLock("field-scheduler", LOCK_MAX_AGE_MS))) {
-      state.fieldsLastResult = "another server is analysing";
+      mine.fieldsLastResult = "another server is analysing";
       return null;
     }
     let job;
@@ -96,31 +137,32 @@ async function checkFields() {
       throw error;
     }
     releaseWhenDone(job.id, "field-scheduler");
-    state.fieldsLastResult = `started ${job.id}`;
+    mine.fieldsLastResult = `started ${job.id}`;
     return job;
   } catch (error) {
-    state.fieldsLastResult = `error: ${error.message}`;
+    mine.fieldsLastResult = `error: ${error.message}`;
     console.warn(`[chernozem] Field check failed: ${error.message}`);
     return null;
   }
 }
 
 async function check() {
-  state.lastCheck = new Date().toISOString();
+  const mine = stateOf();
+  mine.lastCheck = new Date().toISOString();
   try {
     const ws = await getWorkspace();
     if (!ws.schedule?.autoMonthly) {
-      state.lastResult = "nothing to do";
+      mine.lastResult = "nothing to do";
       return [];
     }
     const areas = inOrder(await listAreas(), ws.currentAreaId);
     if (!areas.length) {
-      state.lastResult = "nothing to do";
+      mine.lastResult = "nothing to do";
       return [];
     }
     const provider = await getProvider();
     if (unavailableError(provider)) {
-      state.lastResult = "Earth Engine unavailable; trying again later";
+      mine.lastResult = "Earth Engine unavailable; trying again later";
       return [];
     }
     const month = latestCompleteMonth();
@@ -133,12 +175,12 @@ async function check() {
       if (!upToDate) stale.push(area);
     }
     if (!stale.length) {
-      state.lastResult = "up to date";
+      mine.lastResult = "up to date";
       return [];
     }
     // Another server using the same data folder may be doing this already.
     if (!(await acquireLock("scheduler", LOCK_MAX_AGE_MS))) {
-      state.lastResult = "another server is analyzing";
+      mine.lastResult = "another server is analyzing";
       return [];
     }
     const started = [];
@@ -153,14 +195,14 @@ async function check() {
     if (!started.length) {
       // Jobs of an earlier check may still hold it.
       if (!holding("scheduler")) await releaseLock("scheduler");
-      state.lastResult = "nothing could be started";
+      mine.lastResult = "nothing could be started";
       return [];
     }
     releaseWhenDone(started.map((job) => job.id));
-    state.lastResult = `started ${started.length === 1 ? "1 area" : `${started.length} areas`}: ${started.map((job) => job.id).join(", ")}`;
+    mine.lastResult = `started ${started.length === 1 ? "1 area" : `${started.length} areas`}: ${started.map((job) => job.id).join(", ")}`;
     return started;
   } catch (error) {
-    state.lastResult = `error: ${error.message}`;
+    mine.lastResult = `error: ${error.message}`;
     console.warn(`[chernozem] Monthly check failed: ${error.message}`);
     return [];
   }
@@ -177,31 +219,39 @@ function inOrder(areas, currentAreaId) {
   );
 }
 
+// The hold for a lock in the folder the work runs in ("scheduler" of the
+// demo's folder, "scheduler" of an account's...).
+export const holdKey = (lockName, root = dataDir()) => `${lockName}@${root}`;
+
 // Keeps the lock while the jobs run or wait for their turn (a long Earth
 // Engine job can take hours) and frees it once every one has ended. One
-// hold per lock: the jobs of a later check join it, so the lock is not
-// freed while some of them still run.
+// hold per lock and folder: the jobs of a later check join it, so the
+// lock is not freed while some of them still run. The timer remembers the
+// folder it was made in (a timer runs in none by itself).
 //   jobIds  one job id or a list of them
 function releaseWhenDone(jobIds, lockName = "scheduler") {
-  const hold = (holds[lockName] ??= { ids: new Set(), timer: null });
+  const root = dataDir();
+  const hold = (holds[holdKey(lockName, root)] ??= { ids: new Set(), timer: null });
   for (const id of [].concat(jobIds)) hold.ids.add(id);
   if (hold.timer) return;
   hold.timer = setInterval(() => {
-    for (const id of hold.ids) if (getJob(id)?.status !== "running") hold.ids.delete(id);
-    if (hold.ids.size) {
-      acquireLock(lockName, LOCK_MAX_AGE_MS).catch(() => {});
-      return;
-    }
-    clearInterval(hold.timer);
-    hold.timer = null;
-    releaseLock(lockName);
+    withDataRoot(root, () => {
+      for (const id of hold.ids) if (getJob(id)?.status !== "running") hold.ids.delete(id);
+      if (hold.ids.size) {
+        acquireLock(lockName, LOCK_MAX_AGE_MS).catch(() => {});
+        return;
+      }
+      clearInterval(hold.timer);
+      hold.timer = null;
+      releaseLock(lockName);
+    });
   }, 30 * 1000);
   hold.timer.unref?.();
 }
 
-// True while a job this server started still holds the lock.
+// True while a job this server started in this folder still holds the lock.
 function holding(lockName) {
-  return [...(holds[lockName]?.ids || [])].some((id) => getJob(id)?.status === "running");
+  return [...(holds[holdKey(lockName)]?.ids || [])].some((id) => getJob(id)?.status === "running");
 }
 
 export function startScheduler() {
@@ -213,6 +263,7 @@ export function startScheduler() {
   state.timer.unref?.();
 }
 
+// For /api/status: the folder asking (the demo's, or the account's).
 export async function schedulerStatus() {
   let autoMonthly = true;
   try {
@@ -220,10 +271,11 @@ export async function schedulerStatus() {
   } catch {
     // keep the default
   }
+  const mine = stateOf();
   return {
     autoMonthly,
-    lastCheck: state.lastCheck,
-    lastResult: state.lastResult,
-    fields: { lastCheck: state.fieldsLastCheck || null, lastResult: state.fieldsLastResult || null },
+    lastCheck: mine.lastCheck || null,
+    lastResult: mine.lastResult || null,
+    fields: { lastCheck: mine.fieldsLastCheck || null, lastResult: mine.fieldsLastResult || null },
   };
 }

@@ -71,6 +71,12 @@ services:
         value: chernozem-danny
       - key: GEE_CHERNOZEM_ASSET
         value: none
+      # Registered accounts (server/accounts.js, docs/DEPLOY.md section
+      # 13) check their sign-ins with Firebase in the Earth Engine project
+      # above, with its key: nothing more to set. Only to use another
+      # Firebase project (or "off" to close registration):
+      # - key: FIREBASE_PROJECT_ID
+      #   value: chernozem-danny
       # Secrets: set in the dashboard.
       - key: ANTHROPIC_API_KEY
         sync: false

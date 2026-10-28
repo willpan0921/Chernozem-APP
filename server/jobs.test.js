@@ -17,7 +17,9 @@
 // ending), a monthly request joining a person's waiting job, a Stop during
 // the final linking; a person's request while the monthly update analyzes
 // the area (a follow-up), and the last monthly update's failure kept for
-// the pages. Run with:
+// the pages. And that a job belongs to the data folder it was started in
+// (a registered account's, or the shared demo's): invisible from the
+// others. Run with:
 //   node --test server/jobs.test.js
 //
 // WHO EDITS IT
@@ -1051,4 +1053,57 @@ test("a natural disaster set on the war's day redoes the months (another crisis)
   const fire = await finished((await startAnalysis({ areaId: area.id, months: 2 })).id);
   assert.equal(fire.analyzed, 2);
   assert.ok((await listRuns(area.id)).every((run) => run.conflict.type === "wildfire" && run.conflict.name === "Wildfire (set for this area)"));
+});
+
+// ---------- One folder per registered account ----------
+
+test("a job belongs to the folder it was started in: another folder does not see, join or stop it, and its runs land in its own folder", async () => {
+  const { baseDataDir, userRoot, withDataRoot } = await import("./store.js");
+  const a = userRoot("jobs-account-a");
+  const b = userRoot("jobs-account-b");
+  // The same area id in both folders (a country's id is the same for
+  // everyone): still two areas, two jobs.
+  const area = { ...AREA, id: "area-mine", name: "Mine" };
+  await withDataRoot(a, () => saveArea(area));
+  await withDataRoot(b, () => saveArea({ ...area, name: "Theirs" }));
+  const held = holdAnalyses([area.id]);
+  try {
+    const started = await withDataRoot(a, () => startAnalysis({ areaId: area.id, months: 1 }));
+    assert.equal(started.root, undefined, "the folder is not sent to the pages");
+    assert.equal(started.queued, false);
+    // From B, and from the base folder: it does not exist.
+    await withDataRoot(b, async () => {
+      assert.equal(getJob(started.id), null);
+      assert.deepEqual(listJobs({ areaId: area.id }), []);
+      assert.equal(cancelAnalysis(started.id), null);
+      assert.equal(lastMonthlyProblem(area.id), null);
+    });
+    assert.equal(getJob(started.id), null, "the base folder does not see it either");
+    assert.ok(!listJobs().some((job) => job.id === started.id));
+
+    // B's own analysis of the same area id is a new job, waiting behind A's,
+    // and told so without A's area name.
+    const theirs = await withDataRoot(b, () => startAnalysis({ areaId: area.id, months: 1 }));
+    assert.notEqual(theirs.id, started.id);
+    assert.equal(theirs.queued, true);
+    assert.equal(theirs.waiting, "Waiting for another workspace's analysis to finish");
+    assert.equal(theirs.message, "Theirs: waiting for another workspace's analysis to finish");
+    // A asking again gets its own job back, not B's.
+    assert.equal((await withDataRoot(a, () => startAnalysis({ areaId: area.id, months: 1 }))).id, started.id);
+    assert.deepEqual(withDataRoot(a, () => listJobs({ status: "running", areaId: area.id }).map((job) => job.id)), [started.id]);
+    assert.deepEqual(withDataRoot(b, () => listJobs({ status: "running", areaId: area.id }).map((job) => job.id)), [theirs.id]);
+
+    held.open();
+    const done = await withDataRoot(a, () => finished(started.id));
+    assert.equal(done.status, "done", done.error);
+    assert.equal((await withDataRoot(b, () => finished(theirs.id))).status, "done");
+    // Each folder's runs are its own.
+    assert.equal((await withDataRoot(a, () => listRuns(area.id))).length, 1);
+    assert.equal((await withDataRoot(b, () => listRuns(area.id))).length, 1);
+    assert.equal((await listRuns(area.id)).length, 0, "none in the base folder");
+    assert.ok(fs.existsSync(path.join(a, "runs", `${done.runIds[0]}.json`)));
+    assert.equal(fs.existsSync(path.join(baseDataDir(), "runs", `${done.runIds[0]}.json`)), false);
+  } finally {
+    held.restore();
+  }
 });

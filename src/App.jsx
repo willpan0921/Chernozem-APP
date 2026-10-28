@@ -33,6 +33,7 @@ import ErrorBoundary from "./layout/ErrorBoundary.jsx";
 import { AtlasDataProvider } from "./state/AtlasData.jsx";
 import { FieldDataProvider } from "./state/FieldData.jsx";
 import AccessGate from "./components/atlas/AccessGate.jsx";
+import ProductGuard from "./components/ProductGuard.jsx";
 
 // Each page is loaded only when it is first opened ("lazy"), so the app
 // starts faster and the map library (Leaflet) is only downloaded by the
@@ -65,13 +66,17 @@ const NotFoundPage = lazy(() => import("./site/pages/NotFoundPage.jsx"));
 // (the first time one of their pages opens), so moving between pages is
 // instant and the sidebar can show the current area or farm. See
 // src/state/AtlasData.jsx and src/state/FieldData.jsx. The AccessGate around
-// them only lets the app open once the visitor may use it; the website
-// outside it needs no sign-in. <Suspense> shows nothing for the moment a
-// page's code is first downloading; after that, moving between pages keeps
-// the old page on screen until the new one is ready. A page that fails to
-// show (its code gone after an update, or any error) gets a message with a
-// Reload button, never a blank screen: the ErrorBoundary here, and the one
-// around each page in AppShell.jsx.
+// them only lets the app open once the visitor may use it (the demo's
+// access code, or an account signed in on the website); the website
+// outside it needs no sign-in. Inside, a ProductGuard around each product's
+// routes keeps a registered account on the product it chose: an Atlas
+// account that opens a Field address lands on /atlas, and the other way
+// round. The demo visitor passes both. <Suspense> shows nothing for the
+// moment a page's code is first downloading; after that, moving between
+// pages keeps the old page on screen until the new one is ready. A page
+// that fails to show (its code gone after an update, or any error) gets a
+// message with a Reload button, never a blank screen: the ErrorBoundary
+// here, and the one around each page in AppShell.jsx.
 function GatedApp() {
   return (
     <AccessGate>
@@ -107,21 +112,27 @@ export default function App() {
           </Route>
 
           <Route element={<GatedApp />}>
-            <Route path="/field" element={<FieldOverviewPage />} />
-            <Route path="/field/fields" element={<FieldFieldsPage />} />
-            <Route path="/field/ai" element={<FieldAiPage />} />
-            <Route path="/field/data" element={<FieldDataPage />} />
-            <Route path="/field/settings" element={<FieldSettingsPage />} />
-            {/* An old or mistyped Field address goes to the Field overview. */}
-            <Route path="/field/*" element={<Navigate to="/field" replace />} />
+            {/* Field: an Atlas account is sent to /atlas from any of these. */}
+            <Route element={<ProductGuard product="field" />}>
+              <Route path="/field" element={<FieldOverviewPage />} />
+              <Route path="/field/fields" element={<FieldFieldsPage />} />
+              <Route path="/field/ai" element={<FieldAiPage />} />
+              <Route path="/field/data" element={<FieldDataPage />} />
+              <Route path="/field/settings" element={<FieldSettingsPage />} />
+              {/* An old or mistyped Field address goes to the Field overview. */}
+              <Route path="/field/*" element={<Navigate to="/field" replace />} />
+            </Route>
 
-            <Route path="/atlas" element={<AtlasOverviewPage />} />
-            <Route path="/atlas/map" element={<AtlasMapPage />} />
-            <Route path="/atlas/ai" element={<AtlasAiPage />} />
-            <Route path="/atlas/data" element={<AtlasDataPage />} />
-            <Route path="/atlas/settings" element={<AtlasSettingsPage />} />
-            <Route path="/atlas/report" element={<AtlasReportPage />} />
-            <Route path="/atlas/*" element={<Navigate to="/atlas" replace />} />
+            {/* Atlas: a Field account is sent to /field from any of these. */}
+            <Route element={<ProductGuard product="atlas" />}>
+              <Route path="/atlas" element={<AtlasOverviewPage />} />
+              <Route path="/atlas/map" element={<AtlasMapPage />} />
+              <Route path="/atlas/ai" element={<AtlasAiPage />} />
+              <Route path="/atlas/data" element={<AtlasDataPage />} />
+              <Route path="/atlas/settings" element={<AtlasSettingsPage />} />
+              <Route path="/atlas/report" element={<AtlasReportPage />} />
+              <Route path="/atlas/*" element={<Navigate to="/atlas" replace />} />
+            </Route>
           </Route>
         </Routes>
       </Suspense>

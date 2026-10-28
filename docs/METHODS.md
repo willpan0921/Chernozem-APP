@@ -573,6 +573,8 @@ The paper finds 2.23 million ha of heavily damaged chernozem, 83.7 % of it in th
 | MODIS burned area (`MODIS/061/MCD64A1`) and VIIRS burned area (`NASA/VIIRS/002/VNP64A1`) | 500 m | monthly, about 2.5 months late | Wildfires: burned land |
 | MODIS NDVI 250 m (`MODIS/061/MOD13Q1`); VIIRS NDVI (`NASA/VIIRS/002/VNP13A1`, fallback) | 250 m; 500 m | 16 days | Droughts: crop greenness |
 
+The public website's globe (not the app's numbers) reads three more sources: **GDACS** (the Global Disaster Alert and Coordination System, European Commission and United Nations) for floods, droughts, wildfires, storms, earthquakes and volcanoes as they happen, with GDACS's own green, orange and red alert levels (`server/world/gdacs.js`); a **reviewed list of armed conflicts** kept by hand in `server/world/conflicts.js`, because no free live feed of wars exists without a key; and **World Bank WITS TradeStats** for who buys whose food: each importer's agricultural imports by partner in three sectors (HS 01-05 live animals and animal products, 06-15 vegetable products, 16-24 prepared food), latest year with data, importer-reported (`scripts/world-trade.js`, `server/world/trade.js`).
+
 ---
 
 ## Where the rules live

@@ -89,7 +89,8 @@
   color: var(--c-text);
 }
 
-/* The Field / Atlas switch. */
+/* The Field / Atlas switch (the demo visitor only; an account's sidebar
+   has none, Sidebar.jsx leaves it out). */
 .product-switch {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -244,7 +245,16 @@
   text-decoration: none;
 }
 
-/* "Sign out" (only when an access code is set). */
+/* An account's name can be long: one line, cut with "…" (the full name is
+   in the row's title and tooltip). */
+.sidebar-account .sidebar-label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* "Sign out" (when an access code is set, or an account is signed in). */
 .sidebar-signout {
   display: flex;
   align-items: center;

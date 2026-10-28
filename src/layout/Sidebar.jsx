@@ -12,15 +12,21 @@
 // (in the farm's unit) from src/state/FieldData.jsx, or "No farm yet".
 // Clicking it opens Field Settings, where the farm is changed.
 //
-// The note above the account row says who sees the farm: "Your fields are
-// private" on one's own computer, or "Shared with everyone who has the
-// access code" when the owner set one (src/config/navigation.js,
-// src/state/useAccess.js). No note while that is not known.
+// TWO KINDS OF VISITOR (src/state/useAccess.js, rules in src/lib/access.js):
+// The demo visitor (the access code) sees the Field / Atlas switch, the
+// demo's "Account" / "Regional office" row and the note "Shared with
+// everyone who has the access code". A person registered on the website
+// sees no switch (they chose one product when they registered;
+// src/components/ProductGuard.jsx keeps them on it), their own name and
+// initials in the account row, and the note "Your fields are private to
+// your account". On one's own computer without a code the note says "Your
+// fields are private". No note while that is not known.
 //
-// "Sign out" under the account row, only when an access code is set (on a
-// shared computer, so the next person needs the code again): the access
-// card comes back (src/components/atlas/AccessGate.jsx). Without a code
-// there is nothing to sign out of, so it is not shown.
+// "Sign out" under the account row, when an access code is set (on a
+// shared computer, so the next person needs the code again) or an account
+// is signed in: the access card comes back
+// (src/components/atlas/AccessGate.jsx). Without either there is nothing
+// to sign out of, so it is not shown.
 //
 // FOLDED TO A RAIL (wider screens): the button next to the logo folds the
 // sidebar to a narrow rail of icons (and unfolds it again), so the pages,
@@ -46,7 +52,7 @@ import { NavLink, Link, useLocation } from "react-router-dom";
 import { ChevronDown, Lock, LogOut, MapPin, PanelLeftClose, PanelLeftOpen, Users } from "lucide-react";
 import { products, productForPath } from "../config/navigation.js";
 import { signOut } from "../api/atlasApi.js";
-import { canSignOut, privacyNoteFor } from "../lib/access.js";
+import { accountLabel, canSignOut, canSwitchProduct, privacyNoteFor } from "../lib/access.js";
 import { useAccess } from "../state/useAccess.js";
 import { useFieldData } from "../state/FieldData.jsx";
 import { farmLine } from "../lib/field/format.js";
@@ -115,7 +121,7 @@ function FieldScope({ icon: Icon, collapsed, tipFor }) {
 // "Sign out": the server removes this browser's sign-in, and the access card
 // comes back. If the server cannot be reached the browser stays signed in
 // (the page cannot remove the sign-in by itself), so it says so.
-function SignOutButton({ collapsed, tipFor, hideTip }) {
+function SignOutButton({ collapsed, tipFor, hideTip, account = false }) {
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const label = failed ? "Could not sign out: try again" : "Sign out";
@@ -126,7 +132,7 @@ function SignOutButton({ collapsed, tipFor, hideTip }) {
     setFailed(false);
     try {
       // On success the access card replaces the whole app.
-      await signOut();
+      await signOut({ account });
     } catch {
       setFailed(true);
     } finally {
@@ -180,9 +186,13 @@ export default function Sidebar({ collapsed = false, onToggle }) {
   const ScopeIcon = product.scope.icon;
   const { tip, tipFor, hideTip } = useRailTips(collapsed);
   const toggleLabel = collapsed ? "Expand sidebar" : "Collapse sidebar";
-  const { shared } = useAccess();
-  const note = product.id !== "atlas" ? privacyNoteFor(product.privacyNote, shared) : null;
+  const access = useAccess();
+  const { shared, account } = access;
+  const note = product.id !== "atlas" ? privacyNoteFor(product.privacyNote, shared, account) : null;
   const NoteIcon = note?.kind === "shared" ? Users : Lock;
+  // The account row: the person's own name for an account, the demo's
+  // "Account" / "Regional office" otherwise.
+  const who = account ? accountLabel(account) : product.account;
 
   return (
     <aside id="app-sidebar" className={collapsed ? "sidebar is-rail" : "sidebar"} onScroll={hideTip}>
@@ -212,22 +222,24 @@ export default function Sidebar({ collapsed = false, onToggle }) {
         )}
       </div>
 
-      {/* Field / Atlas switch. */}
-      <nav className="product-switch" aria-label="Product">
-        {Object.values(products).map((item) => (
-          <Link
-            key={item.id}
-            to={item.basePath}
-            className={
-              item.id === product.id
-                ? "product-switch-option is-active"
-                : "product-switch-option"
-            }
-          >
-            {item.label}
-          </Link>
-        ))}
-      </nav>
+      {/* Field / Atlas switch: the demo visitor only. An account has one product. */}
+      {canSwitchProduct(access) && (
+        <nav className="product-switch" aria-label="Product">
+          {Object.values(products).map((item) => (
+            <Link
+              key={item.id}
+              to={item.basePath}
+              className={
+                item.id === product.id
+                  ? "product-switch-option is-active"
+                  : "product-switch-option"
+              }
+            >
+              {item.label}
+            </Link>
+          ))}
+        </nav>
+      )}
 
       {/* The farm, or the Atlas's current area. */}
       {product.id === "atlas" ? (
@@ -269,15 +281,16 @@ export default function Sidebar({ collapsed = false, onToggle }) {
         <Link
           to={`${product.basePath}/settings`}
           className="sidebar-account"
-          aria-label={collapsed ? product.account.label : undefined}
-          {...tipFor(product.account.label)}
+          aria-label={collapsed ? who.label : undefined}
+          title={collapsed || !account ? undefined : who.label}
+          {...tipFor(who.label)}
         >
           <span className={`avatar avatar-${product.account.tone}`}>
-            {product.account.initials}
+            {who.initials}
           </span>
-          <span className="sidebar-label">{product.account.label}</span>
+          <span className="sidebar-label">{who.label}</span>
         </Link>
-        {canSignOut(shared) && <SignOutButton collapsed={collapsed} tipFor={tipFor} hideTip={hideTip} />}
+        {canSignOut(shared, account) && <SignOutButton collapsed={collapsed} tipFor={tipFor} hideTip={hideTip} account={Boolean(account)} />}
       </div>
 
       {/* Only for the eye: each item already carries its name (aria-label). */}

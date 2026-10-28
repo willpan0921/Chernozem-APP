@@ -51,6 +51,10 @@
 //   /api/chat, /api/chats...            the AI (server/ai/chat.js)
 //   /api/farm..., /api/geocode          the Field product (server/field/routes.js)
 //   /api/auth/status, login, logout     the optional access code (server/auth.js)
+//   POST   /api/auth/firebase           a registered account's sign-in
+//                                       (server/accounts.js)
+//   GET    /api/account                 the signed-in account and its profile
+//   PUT    /api/account                 change the profile (server/accounts.js)
 //   GET    /api/health                  { ok: true }: the server is up (for the
 //                                       host's health check; no data, no code)
 //   POST   /api/admin/import            the one-time data upload, only while
@@ -66,6 +70,25 @@
 // sign-in ones (/api/auth/...), /api/health, /api/contact (the website's
 // form) and /api/admin/import (which has its own token) needs a signed-in
 // browser.
+//
+// WHOSE DATA (server/auth.js handleAuth, server/store.js withDataRoot)
+// Every route after the sign-in check runs inside the data folder of the
+// session that asked: the shared demo's (the access code, or everything
+// on one's own computer without a code) or a registered account's own
+// folder (users/<id>/). The route handlers do not know which: the store
+// reads and writes the right folder by itself, and a job they start
+// carries the folder with it (server/jobs.js).
+//
+// A registered account chose one product, and may only use that one:
+// an account for Field gets 403 wrong_product on the Atlas routes (status,
+// areas, workspace, team, analyze, the jobs list and cancel, runs, soil,
+// messages, and the Atlas AI chat), an account for Atlas on the Field
+// ones (farm, the Field AI chat; /api/geocode is open to every account); an account that has not chosen
+// yet gets it on both. GET /api/jobs/:id is both products' (the Field
+// pages follow their field jobs with it; an account only ever sees its
+// own jobs). The shared demo is never restricted. The website's messages
+// (/api/messages) live in the demo's folder, so an account's list of them
+// is simply empty.
 //
 // Errors always come back as { error: { code, message } }. A request that
 // changes something (anything but GET or HEAD) sent by another website a
@@ -89,6 +112,7 @@ import {
   saveArea,
   updateArea,
   updateWorkspace,
+  withDataRoot,
 } from "./store.js";
 import { areaHa, bboxOf, displayTolerance, planGrid, simplifyGeometry, splitAntimeridian } from "./geo.js";
 import { getCountry, searchCountries } from "./countries.js";
@@ -101,6 +125,7 @@ import { schedulerStatus } from "./scheduler.js";
 import { handleWorld } from "./world/index.js";
 import { checkSettings } from "../src/lib/atlas/method.js";
 import { assertSameSite, handleAuth } from "./auth.js";
+import { handleAccountRoutes } from "./accounts.js";
 import { handleAdmin } from "./import.js";
 import { handleContact, handleMessages } from "./messages.js";
 import { handleFieldRoutes } from "./field/routes.js";
@@ -430,13 +455,49 @@ async function handleChat(req, res, url) {
   return true;
 }
 
+// ---------- Which product a route belongs to (registered accounts) ----------
+
+const ATLAS_ROUTES = new Set(["status", "areas", "workspace", "team", "analyze", "jobs", "runs", "soil", "messages"]);
+// /api/geocode (a place lookup, no one's data) is open to every account:
+// the register page uses it before the person has chosen a product.
+const FIELD_ROUTES = new Set(["farm"]);
+const PRODUCT_NAMES = { field: "Chernozem Field", atlas: "Chernozem Atlas" };
+
+// The product this request is for: "atlas", "field", or null for routes
+// that belong to neither (one job by its id, which the Field pages follow
+// too, src/api/fieldApi.js; one chat thread by its id; /api/account). The
+// AI chat says which product in its body (POST /api/chat) or query (GET
+// /api/chats); the body read here is kept on the request for chat.js
+// (server/http.js readJson gives it back).
+async function productOf(req, { method, first, second, third, q }) {
+  if (first === "jobs" && second && !third && method === "GET") return null;
+  if (ATLAS_ROUTES.has(first)) return "atlas";
+  if (FIELD_ROUTES.has(first)) return "field";
+  if (first === "chat" && !second && method === "POST") {
+    req.body = await readJson(req);
+    return req.body.product === "field" ? "field" : "atlas";
+  }
+  if (first === "chats" && !second && method === "GET") return q.get("product") === "field" ? "field" : "atlas";
+  return null;
+}
+
+// A registered account may only use the product it chose (see the top of
+// this file); the shared demo may use both.
+async function assertProduct(req, session, context) {
+  if (session.kind !== "account") return;
+  const wanted = await productOf(req, context);
+  if (!wanted) return;
+  const chosen = session.account.product;
+  if (!chosen) throw new HttpError(403, "wrong_product", "Finish registering first: choose Field or Atlas on the register page.");
+  if (chosen !== wanted) throw new HttpError(403, "wrong_product", `This account is for ${PRODUCT_NAMES[chosen]}, so it cannot use ${PRODUCT_NAMES[wanted]}.`);
+}
+
 // ---------- Router ----------
 
 async function route(req, res, url) {
   const method = (req.method || "GET").toUpperCase();
   const parts = url.pathname.replace(/\/+$/, "").split("/").slice(2); // after "/api"
   const [first, second, third] = parts;
-  const q = url.searchParams;
 
   // Before anything: a request that changes something must come from this
   // app's own pages, not from another website a visitor has open
@@ -453,10 +514,28 @@ async function route(req, res, url) {
   // The website's globe (server/world/index.js): public, read-only.
   if (first === "world") return handleWorld(req, res, { method, parts, pathname: url.pathname });
 
-  // The access code (server/auth.js) comes before every other route: it
-  // answers /api/auth/... and, when a code is set, stops browsers that have
-  // not signed in (the AI chat included).
-  if (await handleAuth(req, res, { method, first, second, third })) return;
+  // The sign-in check (server/auth.js) comes before every other route: it
+  // answers /api/auth/... itself (and gives back false), and for anything
+  // else says whose data the route works on: the shared demo's or a
+  // registered account's folder (the session). When a code is set, a
+  // browser that has neither is stopped here with 401 (the AI chat
+  // included).
+  const session = await handleAuth(req, res, { method, first, second, third });
+  if (!session) return;
+  // Everything from here reads and writes that folder (server/store.js).
+  return withDataRoot(session.root, () => dispatch(req, res, url, { method, parts, session }));
+}
+
+// The routes after the sign-in check, inside the session's data folder.
+async function dispatch(req, res, url, { method, parts, session }) {
+  const [first, second, third] = parts;
+  const q = url.searchParams;
+
+  // A registered account uses the product it chose, Field or Atlas.
+  await assertProduct(req, session, { method, first, second, third, q });
+
+  // The signed-in account and its profile (server/accounts.js).
+  if (first === "account") return handleAccountRoutes(req, res, { method, parts, pathname: url.pathname, session });
 
   if (first === "chat" || first === "chats") return handleChat(req, res, url);
 
@@ -619,7 +698,7 @@ async function route(req, res, url) {
 
   // A known path with the wrong method, or an unknown path. The number is
   // how many parts after /api/ the route can have (/api/runs/:id = 2).
-  const known = { status: 1, health: 1, areas: 2, workspace: 1, team: 2, analyze: 1, jobs: 2, runs: 2, soil: 1 };
+  const known = { status: 1, health: 1, areas: 2, workspace: 1, team: 2, analyze: 1, jobs: 2, runs: 2, soil: 1, account: 1 };
   if (first === "areas" && second && third === "units" && parts.length === 3) {
     throw new HttpError(405, "method_not_allowed", `${method} is not supported on ${url.pathname}.`);
   }

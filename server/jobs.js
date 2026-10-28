@@ -15,6 +15,18 @@
 // Every job has a kind: "atlas" (an area analysis), "field-detect" or
 // "field-analyze". Atlas jobs keep their old shape (areaId, runIds...).
 //
+// WHOSE JOB (registered accounts, server/store.js withDataRoot)
+// Every job belongs to the data folder it was started in (job.root: the
+// shared demo's or a registered account's) and does its work inside that
+// folder again when its turn comes, whoever's request or timer happens to
+// start it (begin, startJob). getJob, listJobs, lastMonthlyProblem,
+// cancelAnalysis and the "same area again" rules only ever see the jobs
+// of the folder asking, so one account never sees, joins or stops
+// another's analysis; the folder itself is never sent to the pages. The
+// one-at-a-time line below is still for the whole server (Earth Engine's
+// limits are the project's): a job waiting behind another folder's says
+// "Waiting for another workspace's analysis to finish", never its name.
+//
 // ONE ATLAS ANALYSIS AT A TIME, for the whole server. Two areas at once
 // would share the project's Earth Engine requests and limits and both go
 // slower. Another area's analysis, asked for by a person or by the monthly
@@ -108,7 +120,7 @@
 // WHO EDITS IT
 // Nobody, normally.
 
-import { getArea, getRun, listRuns, newId, saveRun } from "./store.js";
+import { baseDataDir, dataDir, getArea, getRun, listRuns, newId, saveRun, withDataRoot } from "./store.js";
 import { planGrid } from "./geo.js";
 import { buildRun, latestCompleteMonth, linkNewDamage, monthLabel, monthsBack } from "./runs.js";
 import { getProvider, unavailableError } from "./providers/index.js";
@@ -128,24 +140,36 @@ export function staleMethod(run) {
 const jobs = (globalThis.__chernozemJobs ??= new Map());
 const KEEP_FINISHED_MS = 60 * 60 * 1000;
 
+// The data folder a job belongs to (one started by an older copy of this
+// file, before folders were kept on jobs, is the shared demo's).
+const rootOf = (job) => job.root || baseDataDir();
+// True when the job belongs to the folder asking now.
+const mine = (job) => rootOf(job) === dataDir();
+// The folder and the area together, for the rules that are "per area".
+const areaKey = (job) => `${rootOf(job)}\0${job.areaId}`;
+
 function publicJob(job) {
   if (!job) return null;
-  const { internal, ...rest } = job;
+  // The folder is this computer's business, never the pages'.
+  const { internal, root, ...rest } = job;
   return job.runIds ? { ...rest, runIds: [...job.runIds] } : { ...rest };
 }
 
+// The job, when it belongs to the folder asking; else null.
 export function getJob(id) {
-  return publicJob(jobs.get(id));
+  const job = jobs.get(id);
+  return job && mine(job) ? publicJob(job) : null;
 }
 
-// Running jobs first (the Atlas job analyzing now, then the ones waiting
-// for their turn, in line order), then the others, newest first.
+// The folder's jobs: running first (the Atlas job analyzing now, then the
+// ones waiting for their turn, in line order), then the others, newest
+// first.
 export function listJobs({ areaId, status, kind } = {}) {
   prune();
   const rank = (job) => (job.status !== "running" ? 2 : job.queued ? 1 : 0);
   const place = (job) => line.ids.indexOf(job.id);
   return [...jobs.values()]
-    .filter((job) => (!areaId || job.areaId === areaId) && (!status || job.status === status) && (!kind || job.kind === kind))
+    .filter((job) => mine(job) && (!areaId || job.areaId === areaId) && (!status || job.status === status) && (!kind || job.kind === kind))
     .sort((a, b) => rank(a) - rank(b) || (rank(a) === 1 ? place(a) - place(b) : 0) || b.startedAt.localeCompare(a.startedAt))
     .map(publicJob);
 }
@@ -161,17 +185,19 @@ function prune() {
   }
 }
 
-// For each area: its last failed monthly job (status "error") when no
-// analysis of the area has ended "done" since. -> Map areaId -> job
+// For each area (of each folder): its last failed monthly job (status
+// "error") when no analysis of the area has ended "done" since.
+// -> Map areaKey -> job
 function monthlyProblems() {
   const failed = new Map();
   const doneAt = new Map();
   for (const job of jobs.values()) {
     if (job.kind !== "atlas" || !job.finishedAt) continue;
-    if (job.status === "done" && !(doneAt.get(job.areaId) >= job.finishedAt)) doneAt.set(job.areaId, job.finishedAt);
-    if (job.status === "error" && job.trigger === "monthly" && !(failed.get(job.areaId)?.finishedAt >= job.finishedAt)) failed.set(job.areaId, job);
+    const key = areaKey(job);
+    if (job.status === "done" && !(doneAt.get(key) >= job.finishedAt)) doneAt.set(key, job.finishedAt);
+    if (job.status === "error" && job.trigger === "monthly" && !(failed.get(key)?.finishedAt >= job.finishedAt)) failed.set(key, job);
   }
-  for (const [areaId, job] of failed) if (doneAt.get(areaId) > job.finishedAt) failed.delete(areaId);
+  for (const [key, job] of failed) if (doneAt.get(key) > job.finishedAt) failed.delete(key);
   return failed;
 }
 
@@ -193,7 +219,7 @@ function monthlyProblems() {
 //           not known
 // Null when the last monthly update went well, or there was none.
 export function lastMonthlyProblem(areaId) {
-  const job = monthlyProblems().get(areaId);
+  const job = monthlyProblems().get(`${dataDir()}\0${areaId}`);
   if (!job) return null;
   const failed = job.failedMonths || [];
   const it = failed.length === 1 ? "it" : "them";
@@ -305,13 +331,16 @@ function nextInLine() {
 
 // What each waiting job waits for: the analysis running now, with how far
 // it is ("Waiting for Ukraine's analysis (3 of 12 months) and 1 other to
-// finish"), and the others in line before it.
+// finish"), and the others in line before it. Another folder's analysis
+// is "another workspace's": its area's name stays its own.
 function describeLine() {
   const busy = analyzingNow();
   const busyProgress = busy?.done > 0 ? `${busy.done} of ${busy.total} months` : "";
   const waiting = line.ids.map((id) => jobs.get(id)).filter((job) => job && job.status === "running" && job.queued);
   waiting.forEach((job, i) => {
-    job.waiting = waitingText(busy?.areaName, i, busyProgress, { sameArea: Boolean(busy) && busy.areaId === job.areaId, busyTrigger: busy?.trigger });
+    const sameRoot = Boolean(busy) && rootOf(busy) === rootOf(job);
+    const busyName = busy ? (sameRoot ? busy.areaName : "another workspace") : undefined;
+    job.waiting = waitingText(busyName, i, busyProgress, { sameArea: sameRoot && busy.areaId === job.areaId, busyTrigger: busy?.trigger });
     job.message = `${job.areaName}: ${lowerFirst(job.waiting)}`;
   });
 }
@@ -330,7 +359,9 @@ function placeInLine(job) {
 
 // A job's turn: the area is read again (a new name or war setting saved
 // while it waited is used; an area removed meanwhile ends the job), then
-// its months are analyzed. When it ends, the next job in line starts.
+// its months are analyzed. When it ends, the next job in line starts. The
+// work runs inside the job's own data folder, whoever's request or timer
+// called nextInLine.
 function begin(job) {
   job.queued = false;
   job.waiting = null;
@@ -338,12 +369,12 @@ function begin(job) {
   // What a person's Stop aborts (cancelAnalysis).
   job.internal.stop = new AbortController();
   const { count, rerun } = job.internal;
-  (async () => {
+  withDataRoot(rootOf(job), async () => {
     const area = await getArea(job.areaId);
     if (!area) throw notFound("The area was removed before its analysis could start.");
     job.areaName = area.name;
     await runJob(job, area, count, rerun);
-  })()
+  })
     .catch((error) => {
       job.status = "error";
       job.error = error.message || String(error);
@@ -390,9 +421,11 @@ export async function startAnalysis({ areaId, months = 12, rerun = false, trigge
   const area = await getArea(areaId);
   if (!area) throw notFound("That area does not exist.");
   const count = Math.min(24, Math.max(1, Math.round(Number(months) || 12)));
+  // The folder this request works in: the job's from now on.
+  const root = dataDir();
   // From here to jobs.set nothing waits, so two requests at once cannot
   // both start a job for the same area.
-  const ofArea = [...jobs.values()].filter((job) => job.kind === "atlas" && job.areaId === areaId && job.status === "running");
+  const ofArea = [...jobs.values()].filter((job) => job.kind === "atlas" && job.areaId === areaId && job.status === "running" && rootOf(job) === root);
   const waiting = ofArea.find((job) => job.queued && job.internal);
   if (waiting) {
     joinRequest(waiting, { count, rerun: Boolean(rerun), trigger });
@@ -404,6 +437,7 @@ export async function startAnalysis({ areaId, months = 12, rerun = false, trigge
   const job = {
     id: newId("job"),
     kind: "atlas",
+    root,
     areaId,
     areaName: area.name,
     trigger,
@@ -441,7 +475,8 @@ export async function startAnalysis({ areaId, months = 12, rerun = false, trigge
 // "stopping…" would stay on screen while it went on.
 export function cancelAnalysis(jobId) {
   const job = jobs.get(jobId);
-  if (!job || job.kind !== "atlas") return null;
+  // Another folder's job is none of this one's business: as if it did not exist.
+  if (!job || job.kind !== "atlas" || !mine(job)) return null;
   if (job.status === "running" && job.queued) {
     job.status = "cancelled";
     job.queued = false;
@@ -677,8 +712,11 @@ async function runJob(job, area, count, rerun) {
 //            gives back the result (job.result). Throwing marks the job failed.
 export function startJob({ kind, key = null, total = 1, message = "Working…", trigger = "manual", info = {}, run }) {
   if (!kind || kind === "atlas") throw new Error('startJob needs a kind other than "atlas" (use startAnalysis).');
+  // The folder this request works in: the job's from now on, also for
+  // "the same job again" (two folders may each have a job with key "farm").
+  const root = dataDir();
   if (key != null) {
-    const running = [...jobs.values()].find((job) => job.kind === kind && job.key === key && job.status === "running");
+    const running = [...jobs.values()].find((job) => job.kind === kind && job.key === key && job.status === "running" && rootOf(job) === root);
     if (running) return publicJob(running);
   }
   const job = {
@@ -686,6 +724,7 @@ export function startJob({ kind, key = null, total = 1, message = "Working…", 
     id: newId("job"),
     kind,
     key,
+    root,
     trigger,
     status: "running",
     done: 0,
@@ -698,14 +737,14 @@ export function startJob({ kind, key = null, total = 1, message = "Working…", 
   };
   jobs.set(job.id, job);
   prune();
-  (async () => {
+  withDataRoot(root, async () => {
     await pause();
     const result = await run(job);
     job.result = result ?? null;
     job.status = "done";
     job.done = job.total;
     job.finishedAt = new Date().toISOString();
-  })().catch((error) => {
+  }).catch((error) => {
     job.status = "error";
     job.error = error.message || String(error);
     job.errorCode = error.code || null;

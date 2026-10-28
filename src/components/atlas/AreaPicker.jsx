@@ -7,6 +7,12 @@
 // "Analyze" saves the area, makes it the current one and analyzes the last
 // 12 months. Used by the first screen, the map page and Settings.
 //
+// A REGISTERED ACCOUNT (src/state/useAccess.js) starts near home: the
+// country search begins with the country they gave when registering (its
+// results already listed), and the grey example coordinates are drawn
+// around their place instead of Kupiansk (src/lib/profile.js). The demo
+// visitor sees everything exactly as before.
+//
 // WHAT IT RECEIVES
 //   onDone(area)  called once the analysis has started (optional), e.g. to
 //                 close a dialog
@@ -22,9 +28,11 @@ import { Check, Globe2, MapPin, Search, Undo2, X } from "lucide-react";
 import { Button, Segmented, Tabs } from "../ui/index.js";
 import AtlasMap from "./AtlasMap.jsx";
 import { useAtlasData } from "../../state/AtlasData.jsx";
+import { useAccess } from "../../state/useAccess.js";
 import { searchAreas } from "../../api/atlasApi.js";
 import { boxToPoints, checkBox, checkPolygon, parseCoordinates, pointsToGeometry } from "../../lib/atlas/coords.js";
 import { formatAreaSize } from "../../lib/format.js";
+import { boxPlaceholder, cornersPlaceholder, profileCountry, profilePlace } from "../../lib/profile.js";
 import "./atlas.css";
 
 const TABS = [
@@ -38,7 +46,9 @@ const COORD_MODES = [
   { value: "box", label: "Box" },
 ];
 
+// The demo's example corners and box (near Kupiansk); an account gets its own.
 const POINTS_EXAMPLE = "49.7400, 37.5400\n49.7400, 37.5499\n49.7464, 37.5499\n49.7464, 37.5400";
+const BOX_EXAMPLE = { north: "49.7464", south: "49.7400", west: "37.5400", east: "37.5499" };
 
 // A stand-in "area" so the map can draw and fit a shape before it is saved.
 function usePreviewArea(points, enabled) {
@@ -51,8 +61,10 @@ function usePreviewArea(points, enabled) {
 
 // ---------- Country search ----------
 
-function CountryTab({ selected, onSelect, onSubmit }) {
-  const [query, setQuery] = useState("");
+// initialQuery: the words in the box to begin with (an account's country),
+// looked up at once so the country is there to pick.
+function CountryTab({ selected, onSelect, onSubmit, initialQuery = "" }) {
+  const [query, setQuery] = useState(initialQuery);
   const [results, setResults] = useState([]);
   const [state, setState] = useState("idle"); // idle | searching | done | error
   const inputRef = useRef(null);
@@ -145,6 +157,14 @@ function CountryTab({ selected, onSelect, onSubmit }) {
 
 export default function AreaPicker({ onDone, months = 12, defaultTab = "country" }) {
   const { area: currentArea, actions } = useAtlasData();
+  const { account, profile } = useAccess();
+  // An account's home: its country for the search, its place for the examples.
+  const homeCountry = account ? profileCountry(profile) : "";
+  const examples = useMemo(() => {
+    if (!account) return { points: POINTS_EXAMPLE, box: BOX_EXAMPLE };
+    const place = profilePlace(profile);
+    return { points: cornersPlaceholder(place), box: boxPlaceholder(place) };
+  }, [account, profile]);
   const [tab, setTab] = useState(defaultTab);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -205,7 +225,7 @@ export default function AreaPicker({ onDone, months = 12, defaultTab = "country"
     <div className="area-picker">
       <Tabs bar tabs={TABS} active={tab} onChange={(next) => { setTab(next); setError(null); }} ariaLabel="How to choose the area" />
 
-      {tab === "country" && <CountryTab selected={picked} onSelect={setPicked} onSubmit={(item) => submit(item)} />}
+      {tab === "country" && <CountryTab selected={picked} onSelect={setPicked} onSubmit={(item) => submit(item)} initialQuery={homeCountry} />}
 
       {tab === "coordinates" && (
         <div className="area-tab">
@@ -222,7 +242,7 @@ export default function AreaPicker({ onDone, months = 12, defaultTab = "country"
                     className="textarea area-points"
                     rows={6}
                     spellCheck={false}
-                    placeholder={POINTS_EXAMPLE}
+                    placeholder={examples.points}
                     value={pointsText}
                     onChange={(event) => setPointsText(event.target.value)}
                   />
@@ -235,7 +255,7 @@ export default function AreaPicker({ onDone, months = 12, defaultTab = "country"
                       <input
                         className="input mono"
                         inputMode="decimal"
-                        placeholder={{ north: "49.7464", south: "49.7400", west: "37.5400", east: "37.5499" }[key]}
+                        placeholder={examples.box[key]}
                         value={box[key]}
                         onChange={(event) => setBox((prev) => ({ ...prev, [key]: event.target.value }))}
                       />

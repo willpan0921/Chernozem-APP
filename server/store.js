@@ -16,10 +16,32 @@
 //                     looked at so far (server/soil.js)
 //   farm.json, field-analysis/, field-history/, reports/, uploads/
 //                     the Field product (see the Field section at the end)
+//   users/<id>/       one such folder per registered account (below), with
+//   users/<id>/profile.json   the account's profile (server/accounts.js)
 //
 // Files are written safely (to a temporary file first, then renamed), and
 // ids may only contain a-z, 0-9 and "-", so a request can never reach a
 // file outside this folder.
+//
+// ONE FOLDER PER ACCOUNT (added with the registered accounts, 2026-10)
+// The folder above is the BASE folder: the demo everyone with the access
+// code shares. A person who registered (server/accounts.js) gets a folder
+// of their own under it, users/<32 hex characters made from their id>/,
+// with the same files inside (workspace.json, areas/, farm.json...) and a
+// profile.json on top. Nothing is copied into it: a fresh folder simply
+// has no areas and no farm yet.
+//
+// Which folder a read or write goes to is decided by dataDir(): the base
+// folder, unless the work runs inside withDataRoot(folder, work). The
+// server opens that scope once per request (server/app.js) for the
+// signed-in account's folder, and background jobs and the monthly check
+// open it again for the folder they belong to (server/jobs.js,
+// server/scheduler.js). Everything else in this file, and every module
+// that calls it, needs no change: the scope follows the awaits.
+//
+// Always on the base folder, whatever the scope: baseDataDir(), used for
+// the sign-in salt (server/auth.js), the data upload (server/import.js)
+// and the lock release at shutdown (server/index.js).
 //
 // WHO EDITS IT
 // Nobody, normally. To move to a real database later, replace the inside of
@@ -27,16 +49,68 @@
 
 import fs from "node:fs/promises";
 import path from "node:path";
-import { randomBytes } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash, randomBytes } from "node:crypto";
 import { ROOT, refreshEnv } from "./env.js";
 import { checkSettings, DEFAULT_SETTINGS } from "../src/lib/atlas/method.js";
 
 const SAFE_ID = /^[a-z0-9-]{1,64}$/;
 
-export function dataDir() {
+// The base folder: CHERNOZEM_DATA_DIR, or server/.data. Read again on
+// every call, so a change of the setting (the tests do this) is followed.
+export function baseDataDir() {
   refreshEnv();
   const custom = (process.env.CHERNOZEM_DATA_DIR || "").trim();
   return custom ? path.resolve(custom) : path.join(ROOT, "server", ".data");
+}
+
+// The folder the work running now belongs to (see the top of this file).
+// Kept on globalThis so the dev server, which reloads this file after
+// edits, keeps one scope for every copy of the server's files.
+const scope = (globalThis.__chernozemDataScope ??= new AsyncLocalStorage());
+
+// The folder every read and write in this file goes to right now: the
+// account's folder inside withDataRoot, else the base folder.
+export function dataDir() {
+  const current = scope.getStore();
+  return current?.root || baseDataDir();
+}
+
+// Runs work() (a function; it may return a promise) with every read and
+// write inside it going to `root`, whatever called it. A root of null
+// means the base folder. The scope reaches everything the work awaits or
+// starts, so a route handler that calls store functions, or a job's
+// run(), needs no root of its own.
+export function withDataRoot(root, work) {
+  return scope.run({ root: root || null }, work);
+}
+
+// The folder of one registered account: users/<the first 32 hex
+// characters of the SHA-256 of the account id>/ under the base folder. A
+// hash, because Firebase ids have capitals (SAFE_ID would refuse them) and
+// so that a folder name says nothing about who it belongs to.
+export function userRoot(uid) {
+  if (typeof uid !== "string" || !uid || uid.length > 256) throw new Error("userRoot needs the account's id.");
+  const name = createHash("sha256").update(uid).digest("hex").slice(0, 32);
+  return path.join(baseDataDir(), "users", name);
+}
+
+// Every account folder on disk (full paths), for the monthly check. Only
+// folders named like userRoot makes them count; anything else under
+// users/ is left alone.
+export async function listUserRoots() {
+  const parent = path.join(baseDataDir(), "users");
+  let names;
+  try {
+    names = await fs.readdir(parent, { withFileTypes: true });
+  } catch (error) {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  }
+  return names
+    .filter((entry) => entry.isDirectory() && /^[0-9a-f]{32}$/.test(entry.name))
+    .map((entry) => path.join(parent, entry.name))
+    .sort();
 }
 
 export function isSafeId(id) {
@@ -643,4 +717,18 @@ export async function getWeatherCache() {
 export async function saveWeatherCache(entry) {
   await writeFile(path.join(dataDir(), "weather-cache.json"), entry);
   return entry;
+}
+
+// ---------- The account's profile (registered accounts) ----------
+// profile.json at the top of an account's folder (server/accounts.js says
+// what is in it: the id, e-mail, name, role, product...). The base folder
+// (the demo) has none. Null when there is none yet.
+
+export async function getProfile() {
+  return readFile(path.join(dataDir(), "profile.json"));
+}
+
+export async function saveProfile(profile) {
+  await writeFile(path.join(dataDir(), "profile.json"), profile);
+  return profile;
 }

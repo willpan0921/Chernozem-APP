@@ -1,0 +1,336 @@
+/*
+  WHAT THIS FILE DOES
+  The globe block (WorldGlobe.jsx): the square stage the Earth is drawn
+  on, the markers (small coloured squares, one per war or disaster, with a
+  thumb-sized hit area), the one-line readout under the globe, the list of
+  events as buttons, and the panel that opens beside the globe on a
+  desktop or as a sheet under it on a phone. The block sits on the hero's
+  dark field; the only colours are the site's data colours.
+
+  WHO EDITS IT
+  Whoever works on the globe.
+*/
+
+.site .globe {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--field-dark-ink);
+  font-family: var(--font);
+  font-size: 13px;
+  letter-spacing: -0.01em;
+  line-height: 1.4;
+}
+
+.site .globe-stage {
+  position: relative;
+  width: min(450px, 100%);
+  aspect-ratio: 1;
+  flex: 0 0 auto;
+  transition: transform 450ms var(--ease-out);
+}
+
+/* The still picture (if one exists) shows until the globe has drawn its first frame. */
+.site .globe-still {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  transition: opacity 600ms ease;
+}
+
+.site .globe.is-ready .globe-still {
+  opacity: 0;
+}
+
+.site .globe-canvas {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 900ms ease;
+}
+
+.site .globe.is-ready .globe-canvas {
+  opacity: 1;
+}
+
+.site .globe-canvas canvas {
+  display: block;
+  outline: 0;
+}
+
+/* The markers: a square of the kind's colour, sized by the alert level,
+   inside a 28px hit area. */
+.site .globe-marker {
+  display: block;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  pointer-events: auto;
+}
+
+.site .globe-marker i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  background: var(--data-quake);
+  transition: transform var(--t-hover) var(--ease-out);
+}
+
+.site .globe-marker.is-red i {
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+}
+
+.site .globe-marker.is-orange i {
+  width: 13px;
+  height: 13px;
+  margin: -6.5px 0 0 -6.5px;
+}
+
+.site .globe-marker.is-war i,
+.site .globe-list-item.is-war::before {
+  background: var(--data-war);
+}
+
+.site .globe-marker.is-flood i,
+.site .globe-list-item.is-flood::before {
+  background: var(--data-flood);
+}
+
+.site .globe-marker.is-wildfire i,
+.site .globe-list-item.is-wildfire::before {
+  background: var(--data-fire);
+}
+
+.site .globe-marker.is-drought i,
+.site .globe-list-item.is-drought::before {
+  background: var(--data-drought);
+}
+
+.site .globe-marker.is-storm i,
+.site .globe-list-item.is-storm::before {
+  background: var(--data-storm);
+}
+
+.site .globe-marker.is-earthquake i,
+.site .globe-marker.is-volcano i,
+.site .globe-list-item.is-earthquake::before,
+.site .globe-list-item.is-volcano::before {
+  background: var(--data-quake);
+}
+
+.site .globe-marker.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .site .globe-marker:hover i {
+    transform: scale(1.35);
+  }
+}
+
+/* The readout: one line, 13px, in the field's ink. */
+.site .globe-readout {
+  margin: 0;
+  max-width: none;
+  min-height: 1.4em;
+  text-align: center;
+  font-size: 13px;
+  color: var(--field-dark-ink);
+}
+
+/* The list of events: a compact row of names that wraps on a desktop and
+   scrolls sideways on a phone. */
+.site .globe-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 14px;
+  max-width: 560px;
+  /* Three rows show; the rest of the 150-odd events scroll inside the
+     strip, so the hero stays one screen whatever the feed brings. */
+  max-height: 88px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: 0;
+  padding: 0 2px;
+  list-style: none;
+  scrollbar-width: thin;
+}
+
+.site .globe-list-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 0 2px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--field-dark-muted);
+  white-space: nowrap;
+  transition: color var(--t-hover) ease;
+}
+
+.site .globe-list-item::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+}
+
+.site .globe-list-item.is-selected,
+.site .globe-list-item:focus-visible {
+  color: var(--field-dark-ink);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .site .globe-list-item:hover {
+    color: var(--field-dark-ink);
+  }
+}
+
+/* The panel: beside the globe on a desktop, a sheet under it on a phone. */
+.site .globe-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 3;
+  width: min(300px, 44%);
+  max-height: 100%;
+  overflow: auto;
+  padding: 20px 22px 24px;
+  background: var(--field-dark-3);
+  color: var(--field-dark-ink);
+  font-size: 15px;
+  outline: 0;
+}
+
+.site .globe-panel:focus-visible {
+  outline: 2px solid var(--field-dark-ink);
+  outline-offset: -4px;
+}
+
+.site .globe.has-panel .globe-stage {
+  transform: translateX(-120px);
+}
+
+.site .globe-close {
+  position: absolute;
+  top: 18px;
+  right: 22px;
+  font-size: 13px;
+  color: var(--field-dark-ink);
+}
+
+.site .globe-panel-name {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  padding-right: 3.5rem;
+  margin-bottom: 8px;
+}
+
+.site .globe-panel-meta {
+  font-size: 15px;
+  color: var(--field-dark-muted);
+  max-width: none;
+}
+
+.site .globe-panel-note {
+  font-size: var(--step-body);
+  line-height: 1.4;
+  margin-top: 12px;
+  max-width: none;
+}
+
+.site .globe-panel-block {
+  margin-top: 18px;
+}
+
+.site .globe-panel-sub {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.site .globe-panel-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.site .globe-panel-list li + li {
+  margin-top: 2px;
+}
+
+.site .globe-panel-source {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--field-dark-muted);
+  max-width: none;
+}
+
+.site .globe-panel-block p {
+  max-width: none;
+}
+
+.site .globe-panel-block .link {
+  display: inline-block;
+  margin-top: 8px;
+}
+
+@media (max-width: 1180px) {
+  .site .globe.has-panel .globe-stage {
+    transform: translateX(-70px);
+  }
+}
+
+@media (max-width: 860px) {
+  .site .globe-stage {
+    width: 78vw;
+    max-width: 450px;
+  }
+
+  .site .globe.has-panel .globe-stage {
+    transform: none;
+  }
+
+  .site .globe-list {
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scrollbar-width: thin;
+  }
+
+  .site .globe-list-item {
+    min-height: 32px;
+  }
+
+  .site .globe-panel {
+    position: static;
+    width: 100%;
+    max-height: none;
+    margin-top: 6px;
+  }
+}

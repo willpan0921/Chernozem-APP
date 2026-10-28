@@ -1,0 +1,666 @@
+/*
+  WHAT THIS FILE DOES
+  The look of the website's Register and Sign in pages
+  (src/site/pages/RegisterPage.jsx, SignInPage.jsx). Every colour and size
+  comes from the site's tokens in src/site/site.css (--bg, --surface, --ink,
+  --muted, --accent, the --step-* sizes); the second value in each var() is
+  the same token's value, so the pages still look right if site.css is
+  loaded late or changed.
+
+  The pages follow the site's house rules: no hairlines, boxes, shadows or
+  gradients outside the form; the form itself is allowed its own lines
+  (filled fields on --surface, the focus ring in the accent). Inputs never
+  go below 16px on a phone, so the phone does not zoom in on them.
+
+  Motion: the headline rises from behind its baseline on load, the rest
+  fades up; all of it only when the visitor has not asked for reduced
+  motion (the block at the end), and nothing is ever hidden without it.
+
+  WHO EDITS IT
+  Whoever changes the Register or Sign in page. Class names start with
+  reg- (both pages) and sgn- (Sign in only).
+*/
+
+.site .reg {
+  --r-bg: var(--bg, #f3f3f0);
+  --r-surface: var(--surface, #e8e7e2);
+  --r-ink: var(--ink, #1b1713);
+  --r-muted: var(--muted, #5b554c);
+  --r-accent: var(--accent, #1f4a2a);
+  --r-accent-ink: var(--accent-ink, #ffffff);
+  --r-dark-muted: var(--field-dark-muted, #b9b2a8);
+  --r-font: var(--font, "Schibsted Grotesk", "Helvetica Neue", Arial, sans-serif);
+  --r-small: var(--step-small, clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem));
+  --r-body: var(--step-body, clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem));
+  --r-lead: var(--step-lead, clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem));
+  --r-display: var(--step-display, clamp(2.6rem, 1rem + 4.6vw, 4.75rem));
+  /* The part headings: between the lead and the section step, so a form
+     page does not shout. */
+  --r-head: clamp(1.625rem, 1.2rem + 1.4vw, 2.25rem);
+  --r-margin: var(--margin, clamp(1rem, 2.2vw, 2rem));
+  --r-gutter: var(--gutter, clamp(0.75rem, 1.4vw, 1.5rem));
+  --r-ease: var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+  --r-control: 48px;
+
+  font-family: var(--r-font);
+  font-size: var(--r-body);
+  line-height: 1.4;
+  letter-spacing: -0.01em;
+  color: var(--r-ink);
+  background: var(--r-bg);
+  padding: 0 var(--r-margin) clamp(4rem, 8vw, 7rem);
+}
+
+.site .reg p {
+  margin: 0;
+  text-wrap: pretty;
+}
+
+.site .reg a {
+  color: var(--r-ink);
+  text-decoration: underline;
+  text-underline-offset: 0.14em;
+  text-decoration-thickness: 0.08em;
+}
+
+/* ---- The first screen: title and lead at the left, the picture at the right ---- */
+.site .reg-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: var(--r-gutter);
+  align-items: end;
+  padding: clamp(2rem, 4vw, 3.5rem) 0 clamp(3rem, 6vw, 5rem);
+}
+
+.site .reg-hero-text {
+  display: grid;
+  gap: 1.25rem;
+  align-content: end;
+  padding-bottom: 0.5rem;
+}
+
+.site .reg-title {
+  margin: 0;
+  font-size: var(--r-display);
+  font-weight: 800;
+  line-height: 0.92;
+  letter-spacing: -0.05em;
+  text-wrap: balance;
+}
+
+/* The masked line: the heading's box clips its text, which starts below
+   the box and rises into it on load. */
+.site .reg-line {
+  display: block;
+  overflow: hidden;
+  padding-bottom: 0.1em;
+  margin-bottom: -0.1em;
+}
+
+.site .reg-line-in {
+  display: block;
+}
+
+.site .reg-lead {
+  font-size: var(--r-lead);
+  line-height: 1.3;
+  max-width: 28ch;
+  color: var(--r-ink);
+}
+
+.site .reg-hero-pic,
+.site .reg-side-pic,
+.site .reg-done-pic,
+.site .sgn-pic {
+  margin: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.site .reg figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: var(--r-surface);
+}
+
+.site .reg-hero-pic img {
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  object-position: left top;
+}
+
+.site .reg figcaption {
+  font-size: var(--r-small);
+  color: var(--r-muted);
+}
+
+/* ---- The parts: words at the left, the form at the right ---- */
+.site .reg-part {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: var(--r-gutter);
+  align-items: start;
+  padding: clamp(2.5rem, 5vw, 4.5rem) 0;
+}
+
+.site .reg-part-text {
+  display: grid;
+  gap: 1rem;
+  align-content: start;
+  max-width: 40ch;
+  position: sticky;
+  top: 2rem;
+}
+
+.site .reg-part-text h2 {
+  margin: 0;
+  font-size: var(--r-head);
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+}
+
+.site .reg-side-pic {
+  margin-top: 1rem;
+  max-width: 300px;
+}
+
+.site .reg-side-pic img {
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  object-position: left top;
+}
+
+.site .reg-side-pic.is-phone {
+  max-width: 220px;
+}
+
+.site .reg-side-pic.is-phone img {
+  aspect-ratio: 780 / 1688;
+}
+
+/* ---- The role tiles: two radio inputs dressed as big choices ---- */
+.site .reg-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--r-gutter);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+}
+
+.site .reg-tile {
+  display: grid;
+  gap: 0.75rem;
+  align-content: start;
+  padding: 1rem;
+  background: var(--r-surface);
+  color: var(--r-ink);
+  cursor: pointer;
+  transition: background-color 180ms var(--r-ease), color 180ms var(--r-ease);
+}
+
+.site .reg-tile img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  object-position: left top;
+}
+
+.site .reg-tile-title {
+  font-size: var(--r-body);
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.site .reg-tile-text {
+  font-size: var(--r-body);
+  color: var(--r-muted);
+}
+
+.site .reg-tile-state {
+  font-size: var(--r-small);
+  font-weight: 600;
+  min-height: 1.3em;
+}
+
+.site .reg-tile:has(.reg-radio:checked) {
+  background: var(--r-ink);
+  color: var(--r-bg);
+}
+
+.site .reg-tile:has(.reg-radio:checked) .reg-tile-text {
+  color: var(--r-dark-muted);
+}
+
+.site .reg-tile:has(.reg-radio:focus-visible) {
+  outline: 3px solid var(--r-accent);
+  outline-offset: 3px;
+}
+
+/* Hidden from sight, still a real radio button for the keyboard and
+   screen readers. */
+.site .reg-tile {
+  position: relative;
+}
+
+.site .reg-sr-only,
+.site .reg input.reg-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---- The form ---- */
+.site .reg-form {
+  display: grid;
+  gap: 1.25rem;
+  max-width: 720px;
+  align-content: start;
+}
+
+.site .reg-field {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.site .reg-field-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.25rem 1rem;
+}
+
+.site .reg-field label,
+.site .reg-label {
+  font-size: var(--r-body);
+  font-weight: 600;
+}
+
+.site .reg-opt {
+  font-weight: 400;
+  color: var(--r-muted);
+}
+
+.site .reg-hint {
+  font-size: var(--r-small);
+  color: var(--r-muted);
+}
+
+.site .reg input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: var(--r-control);
+  padding: 0.6rem 0.875rem;
+  border: 0;
+  border-radius: 0;
+  background: var(--r-surface);
+  color: var(--r-ink);
+  font: inherit;
+  font-size: max(16px, var(--r-body));
+  line-height: 1.3;
+  cursor: text;
+}
+
+.site .reg input:read-only {
+  color: var(--r-muted);
+}
+
+.site .reg input:focus-visible {
+  outline: 3px solid var(--r-accent);
+  outline-offset: 0;
+}
+
+.site .reg-field.is-wrong input {
+  outline: 2px solid var(--r-ink);
+  outline-offset: 0;
+}
+
+.site .reg-field.is-wrong input:focus-visible {
+  outline: 3px solid var(--r-accent);
+}
+
+.site .reg-error {
+  font-size: var(--r-small);
+  font-weight: 600;
+  color: var(--r-ink);
+}
+
+.site .reg-error a,
+.site .reg-note a {
+  font-weight: 600;
+}
+
+.site .reg-note {
+  font-size: var(--r-small);
+  color: var(--r-ink);
+}
+
+.site .reg-note:empty {
+  display: none;
+}
+
+/* A short row of radio choices inside the form ("Farmer or landowner?"). */
+.site .reg-choices {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+}
+
+.site .reg-choices legend {
+  padding: 0;
+  margin-bottom: 0.5rem;
+}
+
+.site .reg-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: var(--r-body);
+  cursor: pointer;
+}
+
+.site .reg .reg-choice input {
+  width: 1.25rem;
+  height: 1.25rem;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--r-accent);
+  cursor: pointer;
+}
+
+.site .reg .reg-choice input:focus-visible {
+  outline: 3px solid var(--r-accent);
+  outline-offset: 2px;
+}
+
+/* The "or" between Google and the e-mail fields. */
+.site .reg-or {
+  font-size: var(--r-small);
+  color: var(--r-muted);
+  text-align: left;
+}
+
+/* ---- Buttons: flat, square, one fill ---- */
+.site .reg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: var(--r-control);
+  padding: 0.6rem 1.5rem;
+  border: 0;
+  border-radius: 0;
+  font: inherit;
+  font-size: var(--r-body);
+  font-weight: 600;
+  line-height: 1.2;
+  text-decoration: none;
+  cursor: pointer;
+  transition: transform 160ms var(--r-ease), opacity 160ms var(--r-ease);
+  justify-self: start;
+}
+
+/* A link dressed as a button (Open Field, Try the demo) loses the
+   underline the site gives links. */
+.site .reg a.reg-btn {
+  text-decoration: none;
+}
+
+.site .reg a.reg-btn-primary {
+  color: var(--r-accent-ink);
+}
+
+.site .reg a.reg-btn-second {
+  color: var(--r-bg);
+}
+
+.site .reg-btn:hover {
+  transform: translateY(-1px);
+}
+
+.site .reg-btn:active {
+  transform: translateY(0);
+}
+
+.site .reg-btn:focus-visible,
+.site .reg-textbtn:focus-visible,
+.site .reg a:focus-visible {
+  outline: 3px solid var(--r-accent);
+  outline-offset: 3px;
+}
+
+.site .reg-btn[disabled] {
+  cursor: default;
+  opacity: 0.6;
+  transform: none;
+}
+
+.site .reg-btn-primary {
+  background: var(--r-accent);
+  color: var(--r-accent-ink);
+}
+
+.site .reg-btn-second {
+  background: var(--r-ink);
+  color: var(--r-bg);
+}
+
+.site .reg-btn-quiet {
+  background: var(--r-surface);
+  color: var(--r-ink);
+}
+
+.site .reg-btn-wide {
+  justify-self: stretch;
+}
+
+.site .reg-textbtn {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--r-ink);
+  text-decoration: underline;
+  text-underline-offset: 0.14em;
+  cursor: pointer;
+}
+
+.site .reg-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem 1.5rem;
+}
+
+/* ---- The place search: a field with its button beside it ---- */
+.site .reg-place-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+}
+
+.site .reg-offer {
+  justify-self: start;
+  text-align: left;
+  padding: 0.6rem 0.875rem;
+  min-height: var(--r-control);
+  border: 0;
+  border-radius: 0;
+  background: var(--r-surface);
+  color: var(--r-ink);
+  font: inherit;
+  font-size: var(--r-body);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.site .reg-offer:focus-visible {
+  outline: 3px solid var(--r-accent);
+  outline-offset: 2px;
+}
+
+/* ---- Someone Firebase already knows ---- */
+.site .reg-known {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: var(--r-surface);
+}
+
+.site .reg-known p {
+  font-size: var(--r-body);
+}
+
+/* ---- The lines at the end of a part ---- */
+.site .reg-aside {
+  font-size: var(--r-body);
+}
+
+.site .reg-privacy {
+  font-size: 0.9375rem; /* 15px, as the brief says */
+  color: var(--r-muted);
+  max-width: 60ch;
+}
+
+.site .reg-form .reg-privacy {
+  margin-top: 0.5rem;
+}
+
+/* ---- The done state's picture ---- */
+.site .reg-done-pic img {
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  object-position: left top;
+}
+
+/* ---- Sign in: the form sits in the first screen ---- */
+.site .sgn .reg-hero {
+  align-items: start;
+}
+
+.site .sgn .reg-hero-text {
+  align-content: start;
+  gap: 1.5rem;
+}
+
+.site .sgn .reg-form {
+  margin-top: 0.5rem;
+}
+
+.site .sgn-pics {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--r-gutter);
+  align-items: start;
+}
+
+.site .sgn-pic img {
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  object-position: left top;
+}
+
+.site .sgn-pic.is-wide {
+  grid-column: 1 / -1;
+}
+
+.site .sgn-pic.is-wide img {
+  aspect-ratio: 16 / 8;
+}
+
+/* While the page asks the server who this is: room, no words. */
+.site .reg-wait {
+  min-height: 40vh;
+}
+
+/* ---- Phones and narrow windows ---- */
+@media (max-width: 760px) {
+  .site .reg-hero,
+  .site .reg-part {
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+
+  .site .reg-hero {
+    padding-top: 1.5rem;
+  }
+
+  .site .reg-part {
+    padding: 2.25rem 0;
+  }
+
+  .site .reg-part-text {
+    position: static;
+    max-width: none;
+  }
+
+  .site .reg-tiles {
+    grid-template-columns: 1fr;
+  }
+
+  .site .reg-side-pic {
+    max-width: none;
+  }
+
+  .site .reg-side-pic.is-phone {
+    max-width: 180px;
+  }
+
+  .site .reg-place-row {
+    grid-template-columns: 1fr;
+  }
+
+  .site .reg-btn {
+    justify-self: stretch;
+  }
+
+  .site .sgn-pics {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---- Motion: only for visitors who have not asked for less ---- */
+@media (prefers-reduced-motion: no-preference) {
+  .site .reg-line-in {
+    transform: translateY(105%);
+    animation: reg-line-up 700ms var(--r-ease) 100ms forwards;
+  }
+
+  .site .reg [data-rise] {
+    opacity: 0;
+    transform: translateY(14px);
+    animation: reg-rise 600ms var(--r-ease) forwards;
+    animation-delay: var(--d, 300ms);
+  }
+}
+
+@keyframes reg-line-up {
+  to {
+    transform: none;
+  }
+}
+
+@keyframes reg-rise {
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

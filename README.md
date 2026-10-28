@@ -23,6 +23,36 @@ and Method pages reads `public/site/ukraine-demo.json`, built from the
 latest saved Ukraine month by `node scripts/site-demo-data.js`. Messages
 from the contact page arrive in Atlas > Settings.
 
+**Accounts.** The website's Register page makes a personal account
+(Google, or e-mail and password, through Firebase Authentication): the
+person chooses who they are and gets Field or Atlas with an empty
+workspace of their own. The server checks the sign-in with Firebase
+(`server/accounts.js`, the `firebase-admin` package) and keeps each
+account's data in its own folder, `server/.data/users/<id>/` (online:
+`/var/data/users/`), with a `profile.json` beside the usual files. The
+demo behind the access code is a separate, shared workspace with both
+products, exactly as before. Settings: `FIREBASE_PROJECT_ID` (optional,
+defaults to the Earth Engine project) and, on your own computer only,
+`FIREBASE_AUTH_EMULATOR_HOST`. The one-time switch-on in the Firebase
+console, and the rest, is in [docs/DEPLOY.md](docs/DEPLOY.md), section
+"Accounts".
+
+**World feed and trade data.** The globe on the home page reads
+`GET /api/world/crises` (`server/world/index.js`, open to anyone): the
+natural disasters come live from GDACS (`server/world/gdacs.js`: floods of
+the last 45 days, droughts of the last 120, wildfires burning now gathered
+per country, storms of the last 21 days, orange and red earthquakes and
+volcanoes), the wars from the reviewed list in `server/world/conflicts.js`
+(re-check it every few months), and the Ukraine numbers are the app's own.
+The answer is kept in memory for an hour; when GDACS is down the last good
+copy is served for up to a day, and the wars always answer. The arrows
+("who buys its food") come from `public/site/world/trade.json`, built from
+World Bank WITS by `node scripts/world-trade.js` (a 20 to 30 minute crawl;
+`--raw <file>` rebuilds from a saved crawl), with the rules in
+`server/world/trade.js`. Country centres are in
+`public/site/world/countries.json`. The film in `public/site/film/` is
+served in byte ranges and cached for a week (`server/web.js`).
+
 ## How to run it
 
 You need [Node.js](https://nodejs.org) (the LTS version). On this Mac Node lives in a private folder, so first run this once per Terminal window:
@@ -78,7 +108,7 @@ Weather (Open-Meteo) and place search (OpenStreetMap) need no key. `GEE_DISABLED
 
 ## Where the data lives
 
-The server keeps everything in `server/.data/` (never uploaded to GitHub): the farm and its fields, each field's latest analysis and monthly history, the farmer's reports and photos, the Atlas areas and monthly runs, the team and the AI chats. `CHERNOZEM_DATA_DIR` points the server elsewhere (used for testing on a copy, see CONNECT-DATA section 8). Deleting the folder starts the app fresh.
+The server keeps everything in `server/.data/` (never uploaded to GitHub): the farm and its fields, each field's latest analysis and monthly history, the farmer's reports and photos, the Atlas areas and monthly runs, the team and the AI chats. Registered accounts each have the same set of files in their own folder under `server/.data/users/`. `CHERNOZEM_DATA_DIR` points the server elsewhere (used for testing on a copy, see CONNECT-DATA section 8). Deleting the folder starts the app fresh.
 
 ## How the code is organised
 

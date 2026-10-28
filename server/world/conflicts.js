@@ -25,7 +25,11 @@
 // summaries, ReliefWeb). Re-check every few months: wars end, fronts move.
 //
 // WHO EDITS IT
-// Whoever reviews the list. Keep it honest: if a war has stopped, remove it.
+// Whoever reviews the list. Keep it honest: if a war has stopped, remove it,
+// and move the date below to the day of the review.
+
+// The day the list was last reviewed (the feed tells visitors).
+export const WORLD_CONFLICTS_REVIEWED = "2026-10-28";
 
 export const WORLD_CONFLICTS = [
   {

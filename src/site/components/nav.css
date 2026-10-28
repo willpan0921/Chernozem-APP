@@ -1,204 +1,150 @@
 /*
   WHAT THIS FILE DOES
-  The website's menu bar (Nav.jsx): the floating glass strip, the links,
-  the "Open the app" button and the phone menu.
+  The menu bar (Nav.jsx): a plain bar on the page ground, on the same
+  margins as the page, with no border, no blur and no animation. On a
+  phone the links fold into a full-screen sheet.
 
   WHO EDITS IT
-  Whoever works on the website's menu.
+  Whoever changes the website's menu.
 */
 
-.sn {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 50;
-  color: var(--s-cream);
-  transition: background-color 0.35s, box-shadow 0.35s, backdrop-filter 0.35s;
-  background: linear-gradient(rgba(15, 13, 10, 0.55), rgba(15, 13, 10, 0));
+.site .sn {
+  position: relative;
+  z-index: 20;
+  background: var(--bg);
+  color: var(--ink);
 }
 
-.sn.is-scrolled,
-.sn.is-open {
-  background: rgba(15, 13, 10, 0.72);
-  backdrop-filter: blur(16px) saturate(140%);
-  -webkit-backdrop-filter: blur(16px) saturate(140%);
-  box-shadow: 0 1px 0 rgba(243, 238, 227, 0.08);
-}
-
-/* While the phone menu is open the glass blur is dropped: a backdrop
-   filter makes the bar the containing block of the fixed menu, which would
-   then be only as tall as the bar. */
-.sn.is-open {
-  background: var(--s-soil);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-.sn-inner {
+.site .sn-inner {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  height: 68px;
+  gap: var(--gutter);
+  min-height: var(--nav-h);
 }
 
-.sn-brand {
+.site .sn-brand {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  font-family: var(--s-display);
-  font-size: 1.3rem;
-  font-weight: 500;
+  flex: 0 0 auto;
+}
+
+.site .sn-brand img {
+  width: 150px;
+  height: auto;
+}
+
+.site .sn-links {
+  display: flex;
+  gap: 1.75rem;
+  margin-inline: auto;
+}
+
+.site .sn-link {
+  font-size: 15px;
+  font-weight: 600;
   letter-spacing: -0.01em;
-  color: var(--s-cream);
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 0.25em;
+  text-decoration-thickness: 0.09em;
+  transition: text-decoration-color var(--t-hover) ease;
 }
 
-.sn-brand .logo {
-  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.4));
-  transition: transform 0.4s var(--ease-out);
+.site .sn-link.is-active {
+  text-decoration-color: currentColor;
 }
 
-.sn-brand:hover .logo {
-  transform: translateY(-2px) rotate(-6deg);
-}
-
-.sn-links {
+.site .sn-right {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 1.5rem;
+  flex: 0 0 auto;
 }
 
-.sn-link {
-  position: relative;
-  padding: 8px 12px;
-  border-radius: 999px;
-  font-size: 0.92rem;
-  font-weight: 500;
-  color: rgba(243, 238, 227, 0.78);
-  transition: color 0.2s, background-color 0.2s;
-}
-
-.sn-link:hover {
-  color: var(--s-cream);
-  background: rgba(243, 238, 227, 0.08);
-}
-
-.sn-link.is-active {
-  color: var(--s-cream);
-}
-
-.sn-link.is-active::after {
-  content: "";
-  position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: 3px;
-  height: 2px;
-  border-radius: 2px;
-  background: var(--s-sage-2);
-}
-
-.sn-right {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.sn-burger {
+.site .sn-menu-button {
   display: none;
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  border: 1px solid rgba(243, 238, 227, 0.25);
-  background: transparent;
-  cursor: pointer;
-  position: relative;
+  font-size: 15px;
+  font-weight: 600;
+  min-height: 40px;
+  padding: 0 0.25rem;
 }
 
-.sn-burger span {
-  position: absolute;
-  left: 13px;
-  right: 13px;
-  height: 2px;
-  background: var(--s-cream);
-  border-radius: 2px;
-  transition: transform 0.35s var(--ease-out), top 0.35s var(--ease-out);
+@media (hover: hover) and (pointer: fine) {
+  .site .sn-link:hover {
+    text-decoration-color: currentColor;
+  }
 }
 
-.sn-burger span:first-child {
-  top: 17px;
-}
-
-.sn-burger span:last-child {
-  top: 25px;
-}
-
-.sn.is-open .sn-burger span:first-child {
-  top: 21px;
-  transform: rotate(45deg);
-}
-
-.sn.is-open .sn-burger span:last-child {
-  top: 21px;
-  transform: rotate(-45deg);
-}
-
-.sn-menu {
+/* The phone sheet: the whole screen, six links, nothing else. */
+.site .sn-sheet {
   position: fixed;
-  inset: 68px 0 0 0;
-  z-index: 60;
-  background: var(--s-soil);
-  padding: 24px var(--gutter) 40px;
-  overflow-y: auto;
+  inset: 0;
+  z-index: 30;
+  background: var(--bg);
+  padding: calc(var(--nav-h) + 1rem) var(--margin) 2rem;
+  overflow: auto;
 }
 
-.sn-menu-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 4px;
+.site .sn-sheet-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
 }
 
-.sn-menu-link {
+.site .sn-sheet-link {
   display: block;
-  padding: 14px 6px;
-  font-family: var(--s-display);
-  font-size: 2rem;
-  letter-spacing: -0.02em;
-  color: rgba(243, 238, 227, 0.8);
-  border-bottom: 1px solid rgba(243, 238, 227, 0.08);
+  padding: 0.6rem 0;
+  font-size: var(--step-head);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1;
 }
 
-.sn-menu-link.is-active {
-  color: var(--s-sage-2);
+.site .sn-sheet-link.is-active {
+  color: var(--accent);
 }
 
-.sn-menu-cta {
-  margin-top: 22px;
-}
-
-.sn-menu-cta .btn {
-  width: 100%;
+.site .sn.is-open .sn-inner {
+  position: relative;
+  z-index: 31;
 }
 
 html.site-menu-open {
   overflow: hidden;
 }
 
-@media (max-width: 960px) {
-  .sn-links {
+@media (max-width: 860px) {
+  .site .sn-inner {
+    min-height: 60px;
+  }
+
+  .site .sn-brand img {
+    width: 124px;
+  }
+
+  .site .sn-links,
+  .site .sn-demo {
     display: none;
   }
 
-  .sn-burger {
-    display: block;
+  .site .sn-right {
+    gap: 1rem;
+  }
+
+  .site .sn-menu-button {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .site .sn-sheet {
+    padding-top: calc(60px + 1rem);
   }
 }
 
-@media (max-width: 400px) {
-  .sn .sn-cta {
-    display: none;
+@media (max-width: 380px) {
+  .site .sn-brand img {
+    width: 108px;
   }
 }

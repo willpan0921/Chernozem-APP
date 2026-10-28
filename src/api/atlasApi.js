@@ -22,13 +22,20 @@
 //   listChats(product) / getChat(id) / deleteChat(id)
 //   listMessages() / deleteMessage(id)   messages from the public website's
 //                                    contact form (Atlas Settings shows them)
-//   getAuthStatus() / signIn(code) / signOut()   the optional access code
+//   getAuthStatus() / signIn(code) / signOut()   the access code, or an account's sign-in
+//   getAccount()                     a registered person's account and profile
 //
-// THE ACCESS CODE
+// THE ACCESS CODE, AND ACCOUNTS
 // When the owner sets ATLAS_ACCESS_CODE on the server, every call needs the
-// sign-in cookie (the browser sends it by itself). If the server answers
-// "not signed in" (401), this file announces AUTH_REQUIRED_EVENT and the
-// access screen (src/components/atlas/AccessGate.jsx) comes back.
+// sign-in cookie (the browser sends it by itself). A person registered on
+// the website has an account cookie instead (set by the website's sign-in
+// page, server/auth.js). If the server answers "not signed in" (401), this
+// file announces AUTH_REQUIRED_EVENT and the access screen
+// (src/components/atlas/AccessGate.jsx) comes back; it offers the code and
+// the website's sign-in. signOut() ends either kind of sign-in and also
+// announces ACCOUNT_SIGNED_OUT_EVENT, so the website's Firebase sign-in
+// (src/lib/firebase.js, loaded only by its pages) can end its own session
+// when it happens to be loaded; nothing here imports Firebase.
 //
 // Every function gives back the server's answer, or throws an ApiError with
 // a message a person can read ("The area is too small (0.2 ha)...") and the
@@ -54,9 +61,12 @@ export const OFFLINE_MESSAGE = import.meta.env.DEV
   ? "Could not reach the Atlas server. Check that it is running (npm run dev) and try again."
   : "Could not reach Chernozem. Check your internet connection and try again.";
 
-// An error from the server, with its code and HTTP status.
 // Announced on window when the server says this browser is not signed in.
 export const AUTH_REQUIRED_EVENT = "atlas:auth-required";
+// Announced on window after signOut() ended the sign-in on the server, so
+// a loaded Firebase module can sign out of Firebase too (the access screen
+// itself listens to AUTH_REQUIRED_EVENT, announced right after).
+export const ACCOUNT_SIGNED_OUT_EVENT = "chernozem:account-signed-out";
 
 // Tells the access screen to show again (only for "not signed in", not for
 // a wrong code typed into it).
@@ -124,21 +134,47 @@ const id = (value) => encodeURIComponent(value);
 //   scheduler: { autoMonthly, lastCheck }, jobs: [running jobs] }
 export const getStatus = (options) => request("GET", "/status", undefined, options);
 
-// ---------- Access code ----------
+// ---------- Access code and accounts ----------
 
-// -> { required, signedIn }. required is false when no code is set.
+// -> { required, signedIn, shared, account }. required is false when no
+// code is set. account is null for the demo (the code) and for a visitor
+// who is not signed in; for a registered person { uid, email, name,
+// product: "field" | "atlas" | null, profileComplete }.
 export const getAuthStatus = (options) => request("GET", "/auth/status", undefined, options);
 
-// Signs this browser in for 30 days. Throws an ApiError with code
-// "wrong_code" or "too_many_attempts" (wait 10 minutes).
+// Signs this browser in with the access code for 30 days. Throws an
+// ApiError with code "wrong_code" or "too_many_attempts" (wait 10 minutes).
 export const signIn = (code) => request("POST", "/auth/login", { code });
 
-// Signs this browser out; the access screen shows again.
-export async function signOut() {
+// Signs this browser out (the code's cookie and the account's cookie both
+// end on the server); the access screen shows again. For a registered
+// account the browser's own Firebase sign-in is ended too (the website's
+// sign-in page would otherwise offer "Continue as ..." to the next person
+// at this computer); Firebase is downloaded only for that, and only then.
+export async function signOut({ account = false } = {}) {
   await request("POST", "/auth/logout", {});
-  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT));
+  if (account) {
+    try {
+      const { loadFirebaseAuth } = await import("../lib/firebase.js");
+      const fb = await loadFirebaseAuth();
+      await fb.signOut(fb.auth);
+    } catch {
+      // Offline or Firebase unreachable: the server's sign-out already took
+      // effect; the website's sign-in page asks before continuing anyway.
+    }
+  }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(ACCOUNT_SIGNED_OUT_EVENT));
+    window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT));
+  }
   return true;
 }
+
+// A registered person's account and what they told the register page:
+// -> { account, profile: { name, age?, organization?, role, product,
+//    country?, address?, place?: { lat, lng, label } } | null }.
+// 401 "auth_required" without an account (the demo has none).
+export const getAccount = (options) => request("GET", "/account", undefined, options);
 
 // ---------- Areas ----------
 
