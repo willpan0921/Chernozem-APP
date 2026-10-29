@@ -33,7 +33,12 @@
 
 export const firebaseConfig = {
   apiKey: "AIzaSyCoWnw8uxTEM7kBl7-wq6sghIxhGblkyFg",
-  authDomain: "chernozem-danny.firebaseapp.com",
+  // The address the Google sign-in popup shows ("continue to ..."). It is
+  // the "chernozem" Hosting site in the same project, not the default
+  // chernozem-danny.firebaseapp.com. It must stay in Firebase's authorized
+  // domains, and https://chernozem.web.app/__/auth/handler in the OAuth
+  // client's redirect URIs (Google Cloud > APIs & Services > Credentials).
+  authDomain: "chernozem.web.app",
   projectId: "chernozem-danny",
   storageBucket: "chernozem-danny.firebasestorage.app",
   messagingSenderId: "141737473069",
