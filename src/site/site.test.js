@@ -21,16 +21,19 @@
 //     the slider's one small picture at a time, the demo built only when
 //     near, the closing tile without an empty block or app buttons, and
 //     every section on the menu's frame;
-//   - the About page names the app challenge once, and only there; no
-//     part of it mentions a demo code;
+//   - the About page opens, after the globe, with "What is Chernozem" and
+//     the owner's eight reasons ("Why Chernozem"), each beside a true-size
+//     picture of the app that exists and stays small, in honest words;
+//   - no part of the website names the app challenge (the owner's rule
+//     since 31 October 2026), and no part of the About page mentions a
+//     demo code; the film is "Chernozem in three minutes";
 //   - the globe draws on three.js with its own pictures (no hexagon land,
 //     no world-atlas or topojson in the browser), the pictures it names
 //     exist and stay small, and the old single still is gone;
 //   - the film has chapters and no caption; the field row is one row.
 //
 // The challenge's name (and the old demo wording) is assembled below rather
-// than written out, so a search of src/ for it finds only the About page
-// and site.js.
+// than written out, so a search of src/site for it finds nothing.
 //
 // WHO EDITS IT
 // Whoever changes the website's frame or About page.
@@ -167,6 +170,59 @@ test("no part of the website names the app challenge (the owner's rule since 31 
   }
 });
 
+test("the About page says what Chernozem is and why, after the globe, beside true-size pictures of the app that exist and stay small", () => {
+  const home = read("pages", "HomePage.jsx");
+  const text = words(home);
+  const at = (part) => {
+    const index = text.indexOf(part);
+    assert.ok(index >= 0, `${part} is on the page`);
+    return index;
+  };
+  // The order: the globe's hero, then What is Chernozem, then Why Chernozem, then the showcase.
+  assert.ok(at('id="hero-title"') < at('id="what-title"'), "What is Chernozem comes right after the hero");
+  assert.ok(at('id="what-title"') < at('id="why-title"'), "then Why Chernozem");
+  assert.ok(at('id="why-title"') < at('id="showcase-title"'), "then the rest of the page");
+  assert.match(text, />\s*What is Chernozem\s*</);
+  assert.match(text, />\s*Why Chernozem\s*</);
+  // What it is, in words a stranger understands: what it does, Field and Atlas, the name.
+  for (const part of ["satellite farmland monitoring", "not scientists", "Field watches a farmer", "Atlas scores a whole region", "black soil of Ukraine and northeast China"]) {
+    assert.ok(text.includes(part), `What is Chernozem says: ${part}`);
+  }
+  // The owner's eight reasons, each a claim with one plain sentence.
+  const claims = ["No hardware, only software", "Free satellite data on Google Earth Engine", "It plans recovery, not only health", "For one farm or a whole country", "You choose what matters: the weights", "Drop a pin, see the field", "From satellite images to an answer in a few clicks", "All it needs is a place"];
+  for (const claim of claims) assert.ok(text.includes(`claim: "${claim}"`), `the reason "${claim}"`);
+  assert.equal((text.match(/\bclaim: "/g) || []).length, claims.length, "eight reasons, no more");
+  assert.equal((text.match(/\n\s+text: /g) || []).length, claims.length, "each with its sentence");
+  // Honest wording: "most tools", never "competitors"; the one number is read from site.js; the farm's field count is never printed.
+  assert.match(text, /Most tools/);
+  assert.doesNotMatch(text, /competitor/i);
+  assert.match(text, /NUMBERS\.tenFieldsSeconds/);
+  assert.doesNotMatch(text, /\b(12|13|twelve|thirteen) fields\b/i);
+  // The pictures: the Fields map and the Atlas weights panel, cut at true size, exist, stay small and are in the crops' manifest.
+  const crops = join(root, "public", "site", "shots", "crops");
+  const manifest = JSON.parse(readFileSync(join(crops, "manifest.json"), "utf8"));
+  for (const [name, max] of [["field-fields-map-720.webp", 90e3], ["atlas-weights-726.webp", 80e3]]) {
+    assert.ok(home.includes(`/site/shots/crops/${name}`), `the page shows ${name}`);
+    const bytes = statSync(join(crops, name)).size;
+    assert.ok(bytes > 1000 && bytes <= max, `${name} is ${bytes} bytes (at most ${max})`);
+    assert.ok(manifest.some((entry) => entry.file === name && entry.from), `${name} is in the crops' manifest with its source`);
+  }
+  // Each picture says what it is and opens its place in the demo.
+  assert.equal((text.match(/className="window-caption/g) || []).length, 2);
+  assert.match(text, /to="\/field\/fields" className="link link-under" onClick=\{enterDemo\}/);
+  assert.match(text, /to="\/atlas\/map" className="link link-under" onClick=\{enterDemo\}/);
+  // The layout: both windows keep the app at its true size (no scaling), and the claims sit in two columns beside the panel.
+  const css = read("pages", "home.css");
+  assert.match(css, /\.site \.what-window img \{[^}]*object-fit: none/);
+  assert.match(css, /\.site \.why-window img \{[^}]*width: 726px/);
+  assert.match(css, /\.site \.why-list \{[^}]*grid-template-columns: 1fr 1fr/);
+  assert.doesNotMatch(css, /letter-made/, "the removed line's style is gone too");
+  // The page's last three parts reveal together once the film is near, so a
+  // long phone page never leaves the letter's words hidden to a fast scroll.
+  assert.match(home, /useNear\("2400px 0px"\)/);
+  for (const part of ["film-section on-dark section${tail}", "letter-section section${tail}", "close${tail}"]) assert.ok(home.includes(part), `${part} reveals with the tail`);
+});
+
 test("the globe draws on three.js with its own pictures, which exist and stay small", () => {
   const globe = read("components", "WorldGlobe.jsx");
   const scene = read("components", "globeScene.js");
@@ -202,6 +258,11 @@ test("the film has chapters and no caption, and a smaller copy for phones; the f
   for (const [label, t] of [["Northeastern China", 4], ["Ukraine", 17], ["How it reads the land", 34], ["Field", 71], ["Atlas", 108]]) {
     assert.match(home, new RegExp(`label: "${label}", t: ${t} \\}`), `chapter ${label} at ${t} s`);
   }
+  assert.equal((home.match(/\{ label: "[^"]+", t: \d+ \}/g) || []).length, 5, "five chapters, none about anything else");
+  // The film's heading, without the challenge; no caption under the film.
+  assert.match(words(home), />\s*Chernozem in three minutes\s*</);
+  assert.doesNotMatch(home, /Three minutes on Chernozem/);
+  assert.doesNotMatch(home, /<Film [^>]*caption=/);
   const row = words(read("components", "FieldRowStates.jsx"));
   for (const gone of [">Open<", ">Ask<", ">Export<"]) assert.ok(!row.replace(/\s+/g, "").includes(gone), `the row no longer has ${gone}`);
   assert.match(row, /aria-pressed/);
@@ -233,18 +294,19 @@ test("page changes are quick: a short fade out, and a page's code fetched when i
   assert.ok(exit && Number(exit[1]) <= 0.15, "the old page fades out in 150 ms at most");
   assert.match(shell, /addEventListener\("pointerover"/);
   assert.match(shell, /addEventListener\("focusin"/);
-  // Every website page App.jsx routes to can be warmed.
+  // The warming fetches through the one list of pages (src/lazyPages.js),
+  // the same files App.jsx draws, so a page warmed here is simply ready
+  // when it is opened; src/lib/lazyPage.test.js checks that list against
+  // App.jsx's routes.
+  assert.match(shell, /import \{ preloadFor \} from "\.\.\/lazyPages\.js"/);
+  assert.match(shell, /preload\(path\)/);
+  assert.doesNotMatch(shell, /=> import\("\.\/pages\//, "no second list of the pages' files");
   const app = readFileSync(join(root, "src", "App.jsx"), "utf8");
-  const sitePages = new Set([...app.matchAll(/const (\w+) = lazy\(\(\) => import\("\.\/site\/pages\/\w+\.jsx"\)\)/g)].map((m) => m[1]));
-  assert.ok(sitePages.size >= 8, "App.jsx's website pages were found");
-  let checked = 0;
-  for (const [, path, name] of app.matchAll(/<Route path="(\/[a-z]*)" element=\{<(\w+) \/>\}/g)) {
-    if (!sitePages.has(name) || name === "OwnerPage" || name === "NotFoundPage") continue;
-    assert.ok(shell.includes(`"${path}": () => import("./pages/${name}.jsx")`), `${path} (${name}) is warmed`);
-    checked += 1;
-  }
-  assert.ok(checked >= 6, "the six public pages and sign-in");
-  assert.ok(shell.includes(`"/": () => import("./pages/HomePage.jsx")`));
+  assert.match(app, /from "\.\/lazyPages\.js"/);
+  assert.doesNotMatch(app, /\blazy\(\(\) => import/, "App.jsx takes its pages from lazyPages.js, not React's lazy()");
+  // The first page of a visit is fetched before anything is drawn.
+  const main = readFileSync(join(root, "src", "main.jsx"), "utf8");
+  assert.match(main, /preloadFor\(window\.location\.pathname\)/);
 });
 
 test("the About page credits the globe's sources in full, with their licences and links", () => {

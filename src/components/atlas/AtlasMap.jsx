@@ -62,8 +62,19 @@
 // map after the fills are taken off, and would otherwise sit over the
 // squares and swallow their taps and hovers).
 //
+// Zooming: the zoom is continuous (any fraction of a level, zoomSnap 0).
+// The wheel and a trackpad scroll go through src/lib/wheelZoom.js, which
+// adds every tick up and follows the goal a little each frame, round the
+// point under the pointer (Leaflet's own wheel handler animated each step
+// and dropped the ticks that arrived meanwhile, so a trackpad crawled). A
+// pinch on a trackpad (ctrlKey wheel) scales the map with the fingers;
+// a pinch on a touch screen is Leaflet's own. The +/- buttons, the
+// keyboard and a double-click step one level, animated.
+//
 // The container carries data-zoom="<zoom level>" so tests can check that
-// zooming worked. The colours come from CSS variables in tokens.css.
+// zooming worked; with ?map-debug=1 in the address the Leaflet map itself
+// is kept in window.__maps (wheelZoom.js registerMapForChecks). The
+// colours come from CSS variables in tokens.css.
 //
 // WHO EDITS IT
 // Whoever changes how the Atlas map looks or behaves. The colour rules are
@@ -77,6 +88,7 @@ import { COLOR_MODES, colorStep, colorVar, rankedCount, valueText } from "../../
 import { placeLabel } from "../../lib/atlas/hotspots.js";
 import { placeLabels, pointInGeometry } from "../../lib/atlas/labels.js";
 import { settleView, showsFit, watchMapSize } from "../../lib/mapResize.js";
+import { createWheelZoom, registerMapForChecks } from "../../lib/wheelZoom.js";
 import { LIGHT_GREY, SATELLITE } from "../../config/maps.js";
 import "./atlas.css";
 
@@ -291,6 +303,8 @@ export default function AtlasMap({
   const fitAreaNow = useRef(null);
   const [zoom, setZoom] = useState(null);
   const [hover, setHover] = useState(null);
+  // The continuous wheel zoom (src/lib/wheelZoom.js).
+  const wheelRef = useRef(null);
 
   // The latest props, for the map's own event handlers.
   const latest = useRef({});
@@ -305,15 +319,23 @@ export default function AtlasMap({
       zoomControl: false,
       preferCanvas: true,
       renderer,
-      zoomSnap: 0.25,
+      // Any fraction of a level; the buttons, keys and double-click step one.
+      zoomSnap: 0,
       zoomDelta: 1,
-      wheelPxPerZoomLevel: 110,
-      wheelDebounceTime: 30,
+      zoomAnimation: true,
+      touchZoom: true,
+      // The wheel is handled by wheelZoom.js (below); these two only matter
+      // on a Leaflet it cannot handle, where its own handler is turned on.
+      scrollWheelZoom: false,
+      wheelPxPerZoomLevel: 45,
+      wheelDebounceTime: 10,
       minZoom: 1,
       maxZoom: 19,
       worldCopyJump: true,
     });
     map.attributionControl.setPrefix(false);
+    wheelRef.current = createWheelZoom(map);
+    const unregister = registerMapForChecks(map);
     tiles.current.base = L.tileLayer(BASEMAP.url, { attribution: BASEMAP.attribution, maxNativeZoom: BASEMAP.maxNativeZoom, maxZoom: 20 });
     if (!latest.current.satelliteOnly) tiles.current.base.addTo(map);
     map.setView(WORLD_VIEW.center, WORLD_VIEW.zoom);
@@ -377,6 +399,9 @@ export default function AtlasMap({
 
     return () => {
       stopWatching();
+      wheelRef.current?.remove();
+      wheelRef.current = null;
+      unregister();
       // A names layout still waiting for the next frame would run on this
       // map once it is gone (with the next map's names: React draws a page
       // twice while developing), so it is called off.
@@ -417,10 +442,15 @@ export default function AtlasMap({
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    for (const handler of ["dragging", "scrollWheelZoom", "doubleClickZoom", "boxZoom", "touchZoom", "keyboard"]) {
+    for (const handler of ["dragging", "doubleClickZoom", "boxZoom", "touchZoom", "keyboard"]) {
       if (interactive) map[handler]?.enable();
       else map[handler]?.disable();
     }
+    // The wheel: ours, or Leaflet's own where ours cannot work.
+    const wheel = wheelRef.current;
+    const own = wheel?.supported ? wheel : map.scrollWheelZoom;
+    if (interactive) own?.enable();
+    else own?.disable();
   }, [interactive]);
 
   // ---------- The area's border, and fitting to it ----------

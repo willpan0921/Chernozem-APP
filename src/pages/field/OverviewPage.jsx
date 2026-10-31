@@ -13,8 +13,12 @@
 //   - "What needs doing": only things worked out from the analyses
 //     (recovery of damaged fields with its cost, fields ready to harvest
 //     before the rain, stress patches...), or "Nothing urgent",
-//   - "Tell us what happened": a report with up to 4 photos; Send saves it
-//     and opens the AI chat about it (/field/ai?report=<id>). "Shelling" is
+//   - "Tell us what happened": a report with up to 4 photos. Send keeps the
+//     words on screen while it says "Sending…", then "Sent. The assistant
+//     is reading it…" for a moment, and only then opens the AI chat about
+//     it (/field/ai?report=<id>), where the report (what happened, which
+//     field, the words, the photos) is the chat's first message. If the
+//     sending fails the words stay with the reason. "Shelling" is
 //     offered only where a known war covers the farm (analysis.conflict),
 //   - on the right, "Your fields": a small satellite map and the list of
 //     fields, each with its square in the map's colour and pattern
@@ -405,6 +409,10 @@ function TodoItem({ item, onRun, retry }) {
 // Shelling is a choice only where a known war covers the farm.
 const kindsFor = (inWar) => (inWar ? REPORT_KINDS : REPORT_KINDS.filter((item) => item.id !== "shelling"));
 
+// How long "Sent. The assistant is reading it…" stays before the chat opens.
+const SENT_PAUSE_MS = 900;
+const SENT_TEXT = "Sent. The assistant is reading it…";
+
 function TellUs({ farm, inWar, onSent }) {
   const { actions } = useFieldData();
   // The demo: Send and Add photos open the "This is the demo" dialog.
@@ -413,14 +421,25 @@ function TellUs({ farm, inWar, onSent }) {
   const [kind, setKind] = useState(null);
   const [text, setText] = useState("");
   const [photos, setPhotos] = useState([]); // [{ id, file, url }]
-  const [sending, setSending] = useState(false);
+  // "" (the form), "sending" (the server has it), "sent" (saved; the chat
+  // opens in a moment). The words stay on screen throughout.
+  const [stage, setStage] = useState("");
+  const sending = stage !== "";
   const [error, setError] = useState(null);
   const fileRef = useRef(null);
   const photosRef = useRef(photos);
   photosRef.current = photos;
+  const sentTimer = useRef(0);
 
-  // Free the photo previews when the page closes.
-  useEffect(() => () => photosRef.current.forEach((photo) => URL.revokeObjectURL(photo.url)), []);
+  // Free the photo previews when the page closes, and never open the chat
+  // from a page that has gone.
+  useEffect(
+    () => () => {
+      photosRef.current.forEach((photo) => URL.revokeObjectURL(photo.url));
+      clearTimeout(sentTimer.current);
+    },
+    []
+  );
 
   const addPhotos = (fileList) => {
     const files = Array.from(fileList || []);
@@ -451,14 +470,18 @@ function TellUs({ farm, inWar, onSent }) {
     if (readOnly) return ask();
     if (!kind) return setError("Choose what happened.");
     if (!text.trim() && photos.length === 0) return setError("Add a few words or a photo.");
-    setSending(true);
+    setStage("sending");
     setError(null);
     try {
       const report = await actions.report({ fieldId: fieldId || null, kind, text: text.trim(), files: photos.map((photo) => photo.file) });
-      onSent(report);
+      // Saved: say so where the farmer is looking, then open the chat.
+      setStage("sent");
+      clearTimeout(sentTimer.current);
+      sentTimer.current = setTimeout(() => onSent(report), SENT_PAUSE_MS);
     } catch (err) {
+      // The words stay, with the reason, so nothing has to be typed again.
       setError(err.message || String(err));
-      setSending(false);
+      setStage("");
     }
   };
 
@@ -537,8 +560,14 @@ function TellUs({ farm, inWar, onSent }) {
               {error}
             </span>
           )}
-          <Button variant="primary" type="submit" className="fo-send" disabled={sending}>
-            {sending ? "Sending…" : "Send"}
+          {stage === "sent" && (
+            <span className="fo-tell-sent" role="status">
+              <CircleCheck size={14} aria-hidden="true" />
+              {SENT_TEXT}
+            </span>
+          )}
+          <Button variant="primary" type="submit" className="fo-send" disabled={sending} aria-live="polite">
+            {stage === "sending" ? "Sending…" : stage === "sent" ? "Sent" : "Send"}
             {!sending && <Send size={14} />}
           </Button>
         </div>

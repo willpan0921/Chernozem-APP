@@ -1,0 +1,88 @@
+{
+ "field": {
+  "src": "/site/film/field-walkthrough.mp4",
+  "poster": "/site/film/field-walkthrough-poster.jpg",
+  "width": 1440,
+  "height": 900,
+  "seconds": 168.3,
+  "chapters": [
+   {
+    "label": "The farm",
+    "t": 3.3
+   },
+   {
+    "label": "Weather",
+    "t": 16.6
+   },
+   {
+    "label": "Fields",
+    "t": 20.5
+   },
+   {
+    "label": "Data",
+    "t": 38.4
+   },
+   {
+    "label": "Tell us what happened",
+    "t": 59.2
+   },
+   {
+    "label": "The assistant",
+    "t": 82
+   },
+   {
+    "label": "Settings",
+    "t": 94.3
+   },
+   {
+    "label": "Change farm",
+    "t": 133.4
+   }
+  ]
+ },
+ "atlas": {
+  "src": "/site/film/atlas-walkthrough.mp4",
+  "poster": "/site/film/atlas-walkthrough-poster.jpg",
+  "width": 1440,
+  "height": 900,
+  "seconds": 169.3,
+  "chapters": [
+   {
+    "label": "The overview",
+    "t": 3.3
+   },
+   {
+    "label": "The map",
+    "t": 33.2
+   },
+   {
+    "label": "Weights and the cutoff",
+    "t": 61.4
+   },
+   {
+    "label": "A place's details",
+    "t": 74.1
+   },
+   {
+    "label": "Data",
+    "t": 79.9
+   },
+   {
+    "label": "The report",
+    "t": 98.6
+   },
+   {
+    "label": "The assistant",
+    "t": 114.3
+   },
+   {
+    "label": "Choose an area",
+    "t": 127.3
+   },
+   {
+    "label": "Team and crisis",
+    "t": 152.5
+   }
+  ]
+ }
+}

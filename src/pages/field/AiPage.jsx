@@ -15,9 +15,14 @@
 //   - "Try asking": four questions that name the farm's real fields.
 //   - /field/ai?report=<id> (from "Tell us what happened" on the Overview)
 //     starts a new chat about that report by itself; the server shows
-//     Claude the report's photos for the whole chat. Reopening that chat
-//     later (from the Chats list, or a ?chat= link) shows the report again:
-//     the server remembers it with the chat (thread.reportId).
+//     Claude the report's photos for the whole chat. The report itself
+//     (what happened, which field, the farmer's words, the photos) is the
+//     chat's first message (ChatConversation's "about.report"), so it is
+//     on screen whether the answer streams under it, the assistant is off
+//     or over its limit (a plain sentence then), or the sending failed.
+//     Reopening that chat later (from the Chats list, or a ?chat= link)
+//     shows the report again: the server remembers it with the chat
+//     (thread.reportId).
 //   - /field/ai?about=<fieldId> (from "Ask AI about <field>" on the Fields
 //     page) puts "Tell me about <field>" in the message box.
 //   - No AI key yet: the shared "Connect Claude" card.
@@ -35,9 +40,9 @@ import { useSearchParams } from "react-router-dom";
 import "./AiPage.css";
 import ChatScreen from "../../components/chat/ChatScreen.jsx";
 import { FarmGate, useFieldData } from "../../state/FieldData.jsx";
-import { listReports } from "../../api/fieldApi.js";
+import { listReports, photoUrl } from "../../api/fieldApi.js";
 import { farmLine } from "../../lib/field/format.js";
-import { reportFirstQuestion, reportLine, reportRow, sourceRow, starterFields, weatherLine } from "../../lib/chat/fieldChat.js";
+import { reportFirstQuestion, reportLine, reportMessage, reportRow, sourceRow, starterFields, weatherLine } from "../../lib/chat/fieldChat.js";
 import { composer, fieldSuggestions } from "../../data/chats.js";
 
 function FieldAi() {
@@ -151,7 +156,7 @@ function FieldAi() {
         initialDraft={aboutField ? `Tell me about ${aboutField.name}` : ""}
         autoSend={activeReport && reportId && !chatId ? reportFirstQuestion(activeReport, farm) : ""}
         onThread={handleThread}
-        about={activeReport ? { icon: "camera", text: reportLine(activeReport, farm) } : null}
+        about={activeReport ? { icon: "camera", text: reportLine(activeReport, farm), report: reportMessage(activeReport, farm, photoUrl) } : null}
       />
     </div>
   );

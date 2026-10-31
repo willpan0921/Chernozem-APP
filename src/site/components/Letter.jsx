@@ -4,9 +4,8 @@
 // columns in (the same line as the field row and "the record" above): the
 // pin mark (there is no photograph of the founder and none is invented),
 // five short paragraphs in the first person, the sign-off, and whatever
-// the page adds under it (<Letter>...</Letter>: the line on what Chernozem
-// was made for). The Story page links here as /#letter. Styles:
-// src/site/pages/home.css (.letter).
+// the page adds under it (<Letter>...</Letter>; today nothing). The Story
+// page links here as /#letter. Styles: src/site/pages/home.css (.letter).
 //
 // WHO EDITS IT
 // The founder. It is his letter.

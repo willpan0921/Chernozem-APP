@@ -23,6 +23,19 @@
 //   - dragging turns the Earth (no text is selected while it turns, and no
 //     arc is ever drawn over the words); the keyboard reaches every event
 //     through one list (Tab to the globe, then the arrow keys and Enter).
+//   - zooming, between a height that shows one country and today's layout
+//     (src/lib/wheelZoom.js globeZoomLimits): a pinch on a trackpad (the
+//     browser sends it as wheel events with ctrlKey) or on a phone zooms at
+//     once, a double-click on the bare Earth zooms in one step, and so do
+//     the + and - keys while the globe (its list) has the focus. A plain
+//     two-finger scroll keeps scrolling the page, unless the visitor has
+//     clicked, dragged or zoomed the Earth in the last 10 seconds
+//     ("engaged"): then the wheel zooms it, and the quiet line says
+//     "Scroll to zoom. Esc to let the page scroll." Leaving the hero,
+//     scrolling it away or pressing Esc disengages. The tour waits while
+//     the visitor is zoomed in, and goes on when they zoom back out or
+//     press Play. The camera eases towards each zoom (no easing for
+//     visitors who asked for reduced motion).
 //
 // Order of arrival: the words, the controls and a still picture of the
 // Earth come first (index.html already asks for the still at high priority
@@ -90,6 +103,7 @@ import {
   tradeYear,
   viewAlong,
 } from "./globeMath.js";
+import { GLOBE_ZOOM_STEP, approach, globeZoomFactor, globeZoomLimits, isZoomedIn } from "../../lib/wheelZoom.js";
 import "./globe.css";
 
 // The pictures of the Earth shown until the 3D is drawn, made from the real
@@ -123,6 +137,11 @@ const LAT_LIMIT = { min: (25 * Math.PI) / 180, max: (155 * Math.PI) / 180 }; // 
 const COLOURS = { war: "#e2603f", alert: "#f3f3f0", soil: "#b8733a" };
 const SCRIM_FADE = 160; // px over which the scrim under the words fades out
 const ARC_CLEARANCE = 16; // px an arc keeps from the words and the controls
+const ENGAGED_MS = 10000; // after a click, drag or zoom, the wheel zooms the Earth this long
+const ZOOM_SHARE = 0.3; // of the remaining way to the zoom goal, each frame (light damping)
+const ZOOM_HINT = "Scroll to zoom. Esc to let the page scroll.";
+const SHARP_PX = 3600; // the largest Earth picture, fetched for a close-up on a screen that started smaller
+const SHARP_BELOW = 0.55; // of the layout's height: zoomed in past this, the sharp picture is wanted
 
 // ---------- Small helpers ----------
 
@@ -323,6 +342,13 @@ function Globe({ params, children }) {
   const [risen, setRisen] = useState(false); // 600 ms after the words
   const [dimKind, setDimKind] = useState(null);
   const [brightBuyer, setBrightBuyer] = useState(null);
+  // The visitor has clicked, dragged or zoomed the Earth in the last 10 s:
+  // the wheel zooms it instead of scrolling the page.
+  const [engaged, setEngaged] = useState(false);
+  const engageTimer = useRef(0);
+  // The visitor has zoomed in close on a screen that started with the
+  // smaller Earth picture: the sharp one is wanted (see the pictures below).
+  const [sharp, setSharp] = useState(false);
 
   const live = scene === "live";
   const no3D = policy === "off" || scene === "failed" || (policy === "ask" && !live);
@@ -401,6 +427,13 @@ function Globe({ params, children }) {
       captionAt: null,
       skins: null,
       downloads: null, // the AbortController of the 3D's pictures
+      // Zooming (see the top of this file).
+      zoomGoal: null, // the altitude the camera is easing towards, or null
+      userZoom: false, // the camera is where the visitor zoomed it (not a flight)
+      zoomPaused: false, // the tour was paused by a zoom and resumes on zooming out
+      engagedUntil: 0,
+      altAtDragStart: null,
+      sharpAsked: false, // the sharp Earth picture has been asked for (once per 3D)
       state: {},
     };
   }
@@ -599,6 +632,10 @@ function Globe({ params, children }) {
       c.update();
       c.enableDamping = true;
       e.easing = false;
+      // A flight owns the camera: any zoom still easing is let go, and
+      // where the flight lands is not the visitor's own zoom any more.
+      e.zoomGoal = null;
+      e.userZoom = false;
       const now = performance.now();
       const from = api.getView();
       e.flight = { from, to: target, start: now, ms, kind, onProgress, onDone };
@@ -813,8 +850,58 @@ function Globe({ params, children }) {
       note("end", {});
     }
     if (e.flight?.kind === "tour") e.flight = null;
+    e.zoomPaused = false;
     setCaptionGone(false);
   }, [note]);
+
+  // ---------- Zooming ----------
+
+  // The visitor has just clicked, dragged or zoomed the Earth: for the
+  // next 10 s the wheel zooms it (and the quiet line says so).
+  const engage = useCallback(() => {
+    const e = eng.current;
+    e.engagedUntil = performance.now() + ENGAGED_MS;
+    clearTimeout(engageTimer.current);
+    engageTimer.current = setTimeout(() => {
+      eng.current.engagedUntil = 0;
+      setEngaged(false);
+    }, ENGAGED_MS);
+    setEngaged(true);
+  }, []);
+
+  const disengage = useCallback(() => {
+    eng.current.engagedUntil = 0;
+    clearTimeout(engageTimer.current);
+    engageTimer.current = 0;
+    setEngaged(false);
+  }, []);
+  useEffect(() => () => clearTimeout(engageTimer.current), []);
+
+  // Where the camera may be: from one country to today's layout.
+  const zoomLimits = useCallback(() => globeZoomLimits(eng.current.state.layout.altitude), []);
+
+  // Multiplies the camera's altitude (below 1 zooms in) and lets the loop
+  // ease there. A tour flight under way is cut (the tour then waits).
+  const zoomBy = useCallback(
+    (factor) => {
+      const e = eng.current;
+      const api = e.api;
+      if (!api || !Number.isFinite(factor) || factor <= 0) return;
+      const { near, far } = zoomLimits();
+      const from = e.zoomGoal ?? api.getAltitude();
+      const goal = clamp(from * factor, near, far);
+      if (e.flight) {
+        if (e.flight.kind === "tour") e.hold = { left: 0, since: null }; // the cut flight is flown again on resuming
+        e.flight = null;
+      }
+      e.zoomGoal = goal;
+      e.userZoom = true;
+      note("zoom", { goal: Math.round(goal * 1000) / 1000 });
+      invalidate(true);
+    },
+    [invalidate, note, zoomLimits]
+  );
+  const togglePlayRef = useRef(null);
 
   // ---------- The loop ----------
 
@@ -828,7 +915,15 @@ function Globe({ params, children }) {
     const dt = Math.min(100, Math.max(0, now - e.lastTick));
     e.lastTick = now;
     const api = e.api;
-    // The camera: a flight, or a drag and its easing out.
+    // The camera: a zoom easing towards its goal, a flight, or a drag and
+    // its easing out.
+    if (e.zoomGoal !== null && !e.flight) {
+      const next = e.state.reduced ? e.zoomGoal : approach(api.getAltitude(), e.zoomGoal, ZOOM_SHARE, 0.0005);
+      api.setAltitude(next);
+      api.setDragSpeed();
+      if (next === e.zoomGoal) e.zoomGoal = null;
+      e.needsRender = true;
+    }
     if (e.flight) {
       const f = e.flight;
       const t = clamp((now - f.start) / f.ms, 0, 1);
@@ -857,6 +952,29 @@ function Globe({ params, children }) {
       e.ringClock += dt;
       e.dashClock += dt;
     }
+    // The tour waits while the visitor is zoomed in, and goes on once they
+    // are back out (or press Play).
+    if (e.userZoom && !e.flight) {
+      const zoomedIn = isZoomedIn(api.getAltitude(), e.state.layout.altitude);
+      // Close up on a screen that started with the smaller picture: the
+      // sharp one is fetched (once) and swapped in by the pictures' effect.
+      if (!e.sharpAsked && e.skins && e.skins.px < SHARP_PX && api.getAltitude() < e.state.layout.altitude * SHARP_BELOW) {
+        e.sharpAsked = true;
+        note("sharp", { from: e.skins.px });
+        setSharp(true);
+      }
+      if (zoomedIn && e.state.tour === "running") {
+        e.zoomPaused = true;
+        e.state.tour = "paused";
+        setTour("paused");
+        note("zoom-pause", {});
+      } else if (!zoomedIn && e.zoomPaused && e.state.tour === "paused" && e.zoomGoal === null) {
+        e.zoomPaused = false;
+        e.userZoom = false;
+        note("zoom-resume", {});
+        togglePlayRef.current?.();
+      }
+    }
     // The tour moves on when the stop has been held long enough.
     syncHold(now);
     if (e.state.tour === "running" && !e.flight && e.hold.left <= 0 && !e.state.selectedId) {
@@ -864,7 +982,7 @@ function Globe({ params, children }) {
       e.hold.left = Infinity;
       advance();
     }
-    const high = !!e.flight || e.dragging || e.easing || now < e.entranceUntil;
+    const high = !!e.flight || e.dragging || e.easing || e.zoomGoal !== null || now < e.entranceUntil;
     const low = motionOn();
     if (e.needsRender || high || (low && now - e.lastRender >= LOW_FPS_GAP)) draw(now);
     // One loop only: something that happened during this frame (a stop
@@ -957,6 +1075,8 @@ function Globe({ params, children }) {
       io = new IntersectionObserver(
         ([entry]) => {
           e.visible = entry.isIntersecting ? entry.intersectionRatio : 0;
+          // The hero scrolled away: the wheel is the page's again.
+          if (e.visible < 0.15) disengage();
           wake();
         },
         { threshold: [0, 0.1, 0.15, 0.2, 0.5, 1] }
@@ -976,7 +1096,7 @@ function Globe({ params, children }) {
       io?.disconnect();
       mo.disconnect();
     };
-  }, [invalidate, runnable, scheduleWake, syncHold]);
+  }, [disengage, invalidate, runnable, scheduleWake, syncHold]);
 
   // ---------- 600 ms: Ukraine's marker and tile rise on the still ----------
   // 600 ms after the words; when the page itself arrived late, a little
@@ -1050,7 +1170,9 @@ function Globe({ params, children }) {
         if (!alive) return;
         const skinTexture = api.textureFrom(skin);
         api.setSkin(skinTexture);
-        e.skins = { [skinKind]: skinTexture, px };
+        // The pictures by kind and size ("soil@2048"); px is the size this
+        // screen was given at first (a sharper one may be fetched on zooming in).
+        e.skins = { [`${skinKind}@${px}`]: skinTexture, px };
         if (water) api.setWater(api.textureFrom(water, { colour: false }));
         api.upload(skinTexture);
         await afterFrame();
@@ -1094,6 +1216,10 @@ function Globe({ params, children }) {
       e.flight = null;
       e.api = null;
       e.skins = null;
+      e.sharpAsked = false;
+      e.zoomGoal = null;
+      e.userZoom = false;
+      e.zoomPaused = false;
       e.started = false;
       for (const el of e.markers.values()) el.remove();
       e.markers.clear();
@@ -1129,6 +1255,9 @@ function Globe({ params, children }) {
       el._event = ev;
       el._kind = kindOf(ev);
       el._ringed = ringed(ev);
+      // Like the canvas under it: a pinch that starts on a marker zooms the
+      // Earth, not the page.
+      el.style.touchAction = "pan-y";
       if (ripple) el.style.transitionDelay = `${Math.round((angularDistance(ukraine, ev) / 180) * 600)}ms`;
       el.addEventListener("pointerdown", (event) => handlersRef.current.markerDown?.(event));
       el.addEventListener("click", () => handlersRef.current.markerClick?.(ev.id));
@@ -1165,13 +1294,26 @@ function Globe({ params, children }) {
     const root = rootRef.current;
     const onStart = () => {
       e.dragging = true;
+      // Only at the gesture's start: the controls send "start" again when
+      // the first of two fingers lifts (the pinch goes on as a turn).
+      if (e.altAtDragStart === null) e.altAtDragStart = api.getAltitude();
       if (root) root.dataset.dragging = "";
+      // Any press on the Earth (a click, a drag, a drag begun on a marker)
+      // engages the wheel for a while.
+      engage();
       kick();
     };
     const onEnd = () => {
       e.dragging = false;
       e.easing = true;
       if (root) delete root.dataset.dragging;
+      // A pinch on a touch screen went through the controls: it counts as
+      // the visitor's own zoom, and the far limit is the layout's height.
+      const alt = api.getAltitude();
+      const { far } = zoomLimits();
+      if (e.altAtDragStart !== null && Math.abs(alt - e.altAtDragStart) > e.altAtDragStart * 0.01) e.userZoom = true;
+      if (alt > far * 1.005) e.zoomGoal = far;
+      e.altAtDragStart = null;
       kick();
     };
     const onChange = () => invalidate();
@@ -1190,6 +1332,27 @@ function Globe({ params, children }) {
         controls.maxPolarAngle = polar;
       }
     };
+    // The wheel over the Earth: a trackpad pinch (ctrlKey) always zooms;
+    // a plain scroll zooms only while engaged, else the page scrolls.
+    const stage = canvas.parentElement?.parentElement || canvas.parentElement;
+    const onWheel = (ev) => {
+      if (!eng.current.api) return;
+      const pinch = ev.ctrlKey;
+      if (!pinch && performance.now() > eng.current.engagedUntil) return;
+      ev.preventDefault();
+      zoomBy(globeZoomFactor(ev.deltaY, { ctrlKey: pinch, deltaMode: ev.deltaMode }));
+      engage();
+    };
+    // A double-click on the bare Earth zooms in one step.
+    const onDoubleClick = (ev) => {
+      if (ev.target !== canvas) return;
+      ev.preventDefault();
+      zoomBy(GLOBE_ZOOM_STEP);
+      engage();
+    };
+    stage?.addEventListener("wheel", onWheel, { passive: false });
+    canvas.addEventListener("dblclick", onDoubleClick);
+    api.setZoomLimits(zoomLimits());
     const onMove = (ev) => {
       if (!down || down.moved) return;
       if (Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 4) {
@@ -1229,6 +1392,8 @@ function Globe({ params, children }) {
       canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerup", onUp);
       canvas.removeEventListener("pointercancel", onUp);
+      stage?.removeEventListener("wheel", onWheel);
+      canvas.removeEventListener("dblclick", onDoubleClick);
       if (root) delete root.dataset.dragging;
     };
     // Runs once, when the 3D goes live.
@@ -1311,37 +1476,43 @@ function Globe({ params, children }) {
 
   // ---------- The black-soil picture ----------
 
+  // A screen that started with the smaller picture (a phone) gets the sharp
+  // one once the visitor has zoomed in to half the layout's height: the
+  // loop asks for it (sharp), and it is fetched and swapped in here. The
+  // plain picture loads the first time the black soil is switched off.
   useEffect(() => {
     const e = eng.current;
     if (!live || !e.api || !e.skins) return undefined;
     const kind = show.soil ? "soil" : "plain";
+    const px = sharp ? SHARP_PX : e.skins.px;
+    const key = `${kind}@${px}`;
     let alive = true;
     const swap = (texture) => {
       if (!alive || !texture || !e.api) return;
       e.api.setSkin(texture);
       invalidate();
     };
-    if (!e.skins[kind]) {
-      // The plain picture loads the first time the black soil is switched off.
+    if (!e.skins[key]) {
       const api = e.api;
-      e.skins[kind] = decodeImage(SKIN(kind, e.skins.px), e.downloads?.signal)
+      note("skin", { key });
+      e.skins[key] = decodeImage(SKIN(kind, px), e.downloads?.signal)
         .then((img) => {
           if (e.api !== api) return null;
           const texture = api.textureFrom(img);
           api.upload(texture);
-          if (e.skins) e.skins[kind] = texture;
+          if (e.skins) e.skins[key] = texture;
           return texture;
         })
         .catch(() => {
-          if (e.skins) e.skins[kind] = null;
+          if (e.skins) e.skins[key] = null;
           return null;
         });
     }
-    Promise.resolve(e.skins[kind]).then(swap);
+    Promise.resolve(e.skins[key]).then(swap);
     return () => {
       alive = false;
     };
-  }, [show.soil, live, invalidate]);
+  }, [show.soil, live, invalidate, sharp, note]);
 
   // ---------- Resizing ----------
 
@@ -1354,9 +1525,13 @@ function Globe({ params, children }) {
     if (!live || !e.api) return;
     e.api.resize(layout.W, layout.H, layout.offset);
     e.api.setLight(layout.mode);
+    e.api.setZoomLimits(globeZoomLimits(layout.altitude));
     if (!e.flight) {
       const view = e.api.getView();
       e.api.setView({ lat: view.lat, lng: view.lng, altitude: layout.altitude * (e.state.selectedId ? SELECT_ZOOM : 1) });
+      // A new layout has its own height: the visitor's zoom starts afresh.
+      e.zoomGoal = null;
+      e.userZoom = false;
     }
     measureTiles();
     invalidate(true);
@@ -1467,6 +1642,7 @@ function Globe({ params, children }) {
     },
     markerClick: (id) => {
       clearTimeout(hoverTimer.current);
+      engage();
       select(id, listRef.current);
     },
     markerEnter: (id, event) => {
@@ -1483,10 +1659,12 @@ function Globe({ params, children }) {
   useEffect(() => () => clearTimeout(hoverTimer.current), []);
 
   // A pointer resting on the Earth holds the tour until 3 s after it leaves.
+  // Leaving the hero altogether gives the wheel back to the page.
   const onRootPointer = useCallback(
     (event) => {
       const e = eng.current;
       if (event.pointerType !== "mouse" || !e.api) return;
+      if (event.type === "pointerleave" && e.engagedUntil) disengage();
       const L = e.state.layout;
       let on = false;
       if (event.type !== "pointerleave") {
@@ -1502,7 +1680,7 @@ function Globe({ params, children }) {
       syncHold(now);
       scheduleWake(now);
     },
-    [scheduleWake, syncHold]
+    [disengage, scheduleWake, syncHold]
   );
 
   const onListKey = useCallback(
@@ -1519,6 +1697,11 @@ function Globe({ params, children }) {
         event.preventDefault();
         select(list[i].id, listRef.current);
         return;
+      } else if (event.key === "+" || event.key === "=" || event.key === "-" || event.key === "_") {
+        // The globe has the focus: + and - zoom it one step.
+        event.preventDefault();
+        zoomBy(event.key === "+" || event.key === "=" ? GLOBE_ZOOM_STEP : 1 / GLOBE_ZOOM_STEP);
+        return;
       } else if (event.key.length === 1 && /\S/.test(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey) {
         // A letter jumps to the next event whose name starts with it.
         const letter = event.key.toLowerCase();
@@ -1534,7 +1717,7 @@ function Globe({ params, children }) {
       event.preventDefault();
       moveTo(next);
     },
-    [activeId, moveTo, select, shownOrder]
+    [activeId, moveTo, select, shownOrder, zoomBy]
   );
 
   // The panel takes the focus when it opens; Esc closes it from anywhere.
@@ -1549,6 +1732,16 @@ function Globe({ params, children }) {
     return () => document.removeEventListener("keydown", onKey);
   }, [panelOpen]);
 
+  // While engaged, Esc gives the wheel back to the page.
+  useEffect(() => {
+    if (!engaged) return undefined;
+    const onKey = (event) => {
+      if (event.key === "Escape") disengage();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [engaged, disengage]);
+
   const togglePlay = useCallback(() => {
     const e = eng.current;
     if (tour === "running") {
@@ -1556,6 +1749,10 @@ function Globe({ params, children }) {
       return;
     }
     const wasRest = tour === "rest";
+    // Play pressed while zoomed in: the tour goes on from here (its next
+    // flight brings the camera back out).
+    e.zoomPaused = false;
+    e.userZoom = false;
     setHoverId(null);
     if (e.state.selectedId) {
       e.state.selectedId = null;
@@ -1576,6 +1773,7 @@ function Globe({ params, children }) {
       else arrive(index, ev);
     }
   }, [arrive, goToStop, nextStop, tour, viewFor]);
+  togglePlayRef.current = togglePlay;
 
   // ---------- Words ----------
 
@@ -1664,11 +1862,18 @@ function Globe({ params, children }) {
         {show.minor ? "Hide minor alerts" : "Show minor alerts"}
       </button>
     ) : null;
-  const dragHint = live ? (
-    <span className={`globe-hint-text${turned ? " is-done" : ""}`} aria-hidden="true">
-      {fine ? "Drag to turn the Earth." : "Swipe to turn the Earth."}
-    </span>
-  ) : null;
+  // While the visitor is engaged with the Earth (a mouse or trackpad), the
+  // line says the wheel zooms it; otherwise how to turn it.
+  const dragHint =
+    live && engaged && fine ? (
+      <span className="globe-hint-text globe-hint-zoom" aria-hidden="true" data-testid="globe-zoom-hint">
+        {ZOOM_HINT}
+      </span>
+    ) : live ? (
+      <span className={`globe-hint-text${turned ? " is-done" : ""}`} aria-hidden="true">
+        {fine ? "Drag to turn the Earth." : "Swipe to turn the Earth."}
+      </span>
+    ) : null;
 
   const pauseButton = tourControls ? (
     <button type="button" className="globe-pause" onClick={togglePlay}>

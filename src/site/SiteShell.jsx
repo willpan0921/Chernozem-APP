@@ -12,16 +12,15 @@
 // never has them):
 //   - the pin cursor's click assist (cursorAssist.js);
 //   - warming: pointing at a link to another page of the website (or
-//     reaching it with the Tab key) starts downloading that page's code, so
-//     by the time of the click it is there and the page shows at once (the
-//     router changes pages as a React "transition", which lets a page whose
-//     code is already here show without the blank moment a page still
-//     downloading gets).
+//     reaching it with the Tab key) starts downloading that page's code
+//     (src/lazyPages.js, the same list src/App.jsx draws from), so by the
+//     time of the click it is there and the page shows at once, without
+//     the blank moment a page still downloading gets.
 //
 // WHO EDITS IT
 // Whoever works on the website's frame. The menu's links come from
-// src/site/content/site.js. A new page of the website goes into PAGES
-// below too (its address and its file, as in src/App.jsx).
+// src/site/content/site.js. A new page of the website goes into
+// src/lazyPages.js (its address and its file) and src/App.jsx.
 
 import { Suspense, useEffect, useRef } from "react";
 import { useLocation, useOutlet } from "react-router-dom";
@@ -30,33 +29,24 @@ import Nav from "./components/Nav.jsx";
 import Footer from "./components/Footer.jsx";
 import { useScrollTop } from "./hooks.js";
 import { startCursorAssist } from "./cursorAssist.js";
+import { preloadFor } from "../lazyPages.js";
 import "./site.css";
 
-// Each address and the code that draws it (the same files src/App.jsx
-// loads, so a page warmed here is simply ready when App.jsx asks for it).
-const PAGES = {
-  "/": () => import("./pages/HomePage.jsx"),
-  "/story": () => import("./pages/StoryPage.jsx"),
-  "/method": () => import("./pages/MethodPage.jsx"),
-  "/contact": () => import("./pages/ContactPage.jsx"),
-  "/demo": () => import("./pages/DemoPage.jsx"),
-  "/register": () => import("./pages/RegisterPage.jsx"),
-  "/signin": () => import("./pages/SignInPage.jsx"),
-  "/field": () => import("../pages/field/OverviewPage.jsx"),
-  "/atlas": () => import("../pages/atlas/OverviewPage.jsx"),
-};
-
-// Starts downloading the page a link leads to, once per address.
-function startWarming(doc = document) {
+// Starts downloading the page a link leads to (a page of the website, or
+// the app's Field or Atlas overview behind the Demo page's buttons), once
+// per address. A download that fails (offline for a moment) is forgotten,
+// so the click, or the next pointing at the link, tries again.
+export function startWarming(doc = document, preload = preloadFor) {
   const started = new Set();
   const warm = (event) => {
     const link = event.target?.closest?.("a[href]");
     if (!link || link.origin !== window.location.origin || link.pathname === window.location.pathname) return;
     const path = link.pathname.replace(/\/+$/, "") || "/";
-    const load = PAGES[path];
-    if (!load || started.has(path)) return;
+    if (started.has(path)) return;
     started.add(path);
-    load().catch(() => started.delete(path)); // offline for a moment: the click will try again
+    preload(path).then((results) => {
+      if (results.some((result) => result.status === "rejected")) started.delete(path);
+    });
   };
   doc.addEventListener("pointerover", warm, { passive: true });
   doc.addEventListener("focusin", warm);

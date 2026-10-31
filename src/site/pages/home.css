@@ -2,12 +2,14 @@
   WHAT THIS FILE DOES
   The layout of the About page (HomePage.jsx) and of the parts only it
   uses: the hero (one dark field the globe fills; the globe's own layout
-  is in components/globe.css), the showcase row and its three state
-  buttons, the stage slider, the proof table's heading, the features (an
-  index beside one window on a wide screen, modules on a narrow one), the
-  demo on its sage stage, the film, the founder's letter with the line on
-  what Chernozem was made for, the action tile with its satellite view and
-  the small print. Every colour and size is a token from src/site/site.css.
+  is in components/globe.css), the two introductions ("What is Chernozem"
+  beside one window onto the Fields page; "Why Chernozem", eight claims in
+  two columns beside the Atlas weights panel), the showcase row and its
+  three state buttons, the stage slider, the proof table's heading, the
+  features (an index beside one window on a wide screen, modules on a
+  narrow one), the demo on its sage stage, the film, the founder's letter,
+  the action tile with its satellite view and the small print. Every
+  colour and size is a token from src/site/site.css.
 
   The page's title is its largest heading at every width: it is sized to
   the width of the words' column (each line of "seen from space" is about
@@ -60,7 +62,168 @@
   margin-top: 32px;
 }
 
-/* ---- 2. The showcase: the heading at the left edge, the three states
+/* ---- 2. What is Chernozem: the words in the left half, one window onto
+   the Fields page in the right half (720 x 520, the picture at its true
+   size; a narrower window shows its middle), the caption under it ---- */
+.site .what-words {
+  grid-column: 1 / 7;
+}
+
+.site .what-lead {
+  margin-top: 1.5rem;
+  max-width: 36ch;
+}
+
+.site .what-link {
+  margin-top: 1.75rem;
+}
+
+.site .what-side {
+  grid-column: 7 / 13;
+  justify-self: end;
+  width: 100%;
+  max-width: 720px;
+}
+
+.site .what-window {
+  height: 520px;
+  margin: 0;
+  overflow: clip;
+  background: var(--surface);
+}
+
+.site .what-window img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  object-fit: none;
+  object-position: 50% 50%;
+}
+
+/* The line under each of the two windows: what the picture is, and the
+   link into the demo. */
+.site .window-caption {
+  margin-top: 1rem;
+  font-size: 15px;
+  line-height: 1.45;
+  max-width: none;
+}
+
+.site .window-caption .link {
+  color: var(--ink);
+}
+
+@media (max-width: 900px) {
+  .site .what-words,
+  .site .what-side {
+    grid-column: 1 / 13;
+  }
+
+  .site .what-side {
+    max-width: none;
+    margin-top: 2.5rem;
+  }
+
+  .site .what-window {
+    height: 400px;
+  }
+}
+
+/* ---- 3. Why Chernozem, on the surface tone: the heading and the eight
+   claims in two columns (columns 1 to 8), and the Atlas weights panel
+   beside them (columns 9 to 12) at its true size. The picture is 726 px
+   wide (the panel, then the map next to it); a wide screen shows its
+   left 374 px, the panel alone, and a narrower screen, where the picture
+   moves under the list, shows as much of it as fits. ---- */
+.site .why.section {
+  background: var(--surface);
+}
+
+.site .why-head {
+  grid-column: 1 / 9;
+  margin-bottom: 56px;
+}
+
+.site .why-list {
+  grid-column: 1 / 9;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2.75rem var(--gutter);
+  align-content: start;
+}
+
+.site .why-claim {
+  font-size: var(--step-lead);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.site .why-text {
+  margin-top: 0.5em;
+  font-size: var(--step-body);
+  line-height: 1.45;
+  max-width: 34ch;
+}
+
+.site .why-side {
+  grid-column: 9 / 13;
+  grid-row: 1 / 3;
+  justify-self: end;
+  width: 100%;
+  max-width: 374px;
+}
+
+.site .why-window {
+  height: 672px;
+  margin: 0;
+  overflow: clip;
+  background: #ffffff;
+}
+
+.site .why-window img {
+  display: block;
+  width: 726px;
+  height: 672px;
+  max-width: none;
+}
+
+@media (max-width: 1199px) {
+  .site .why-head,
+  .site .why-list {
+    grid-column: 1 / 13;
+  }
+
+  .site .why-side {
+    grid-column: 1 / 13;
+    grid-row: auto;
+    justify-self: start;
+    max-width: 726px;
+    margin-top: 3rem;
+  }
+}
+
+@media (max-width: 900px) {
+  .site .why-head {
+    margin-bottom: 40px;
+  }
+}
+
+/* A phone: the claims in one column, and the panel shown down to the
+   cutoff's line, not the Detail switch under it. */
+@media (max-width: 700px) {
+  .site .why-list {
+    grid-template-columns: 1fr;
+    gap: 2rem;
+  }
+
+  .site .why-window {
+    height: 520px;
+  }
+}
+
+/* ---- 4. The showcase: the heading at the left edge, the three states
    under it, and the row enlarged across columns 4 to 12 ---- */
 .site .showcase-head {
   grid-column: 1 / 13;
@@ -283,7 +446,7 @@
   }
 }
 
-/* ---- 3. How it works: two fields and one slider ---- */
+/* ---- 5. How it works: two fields and one slider ---- */
 .site .stages {
   position: relative;
   display: flex;
@@ -558,7 +721,7 @@
   }
 }
 
-/* ---- 4. The proof: a stepped heading, then the table. Its second line
+/* ---- 6. The proof: a stepped heading, then the table. Its second line
    starts three columns in, on the page's grid (the heading spans the
    frame, so 100% is the grid's width). ---- */
 .site .proof-head-step {
@@ -579,7 +742,7 @@
   }
 }
 
-/* ---- 5. The features: a narrow module on the text margin, on a field one
+/* ---- 7. The features: a narrow module on the text margin, on a field one
    tone from the ground; each panel steps back to the ground tone. ---- */
 .site .features.section {
   background: var(--surface);
@@ -797,7 +960,7 @@
   }
 }
 
-/* ---- 6. The demo on its sage stage: the copy beside the fragment ----
+/* ---- 8. The demo on its sage stage: the copy beside the fragment ----
    The fragment takes eight columns rather than seven: its ranked list
    (DemoRanking, which is not edited) needs the room for the oblast names. */
 .site .demo-copy {
@@ -837,12 +1000,12 @@
   }
 }
 
-/* ---- 7. The film on the dark field (the film itself: site.css, .film) ---- */
+/* ---- 9. The film on the dark field (the film itself: site.css, .film) ---- */
 .site .film-head {
   margin-bottom: 2.5rem;
 }
 
-/* ---- 8. The founder's letter, on the grid: the heading across the top
+/* ---- 10. The founder's letter, on the grid: the heading across the top
    at the left edge, the letter three columns in ---- */
 .site .letter {
   row-gap: 3rem;
@@ -903,13 +1066,6 @@
   font-size: 15px;
 }
 
-/* What Chernozem was made for: 40 px under the signature. */
-.site .letter-made {
-  margin-top: 40px;
-  font-size: 15px;
-  line-height: 1.45;
-}
-
 @media (max-width: 860px) {
   .site .letter-text {
     grid-column: 1 / 13;
@@ -927,7 +1083,7 @@
   }
 }
 
-/* ---- 9. The close: the action tile (its words on the page's frame,
+/* ---- 11. The close: the action tile (its words on the page's frame,
    site.css .frame) and the satellite view, from edge to edge ---- */
 .site .close {
   padding-block: 0;

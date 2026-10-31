@@ -6,8 +6,12 @@
 // shade), the arcs from an event to the countries whose food depends on it
 // (a faint route and a bright "shipment" dash travelling along it), the
 // rings that pulse out from armed conflicts and red alerts, and the
-// drag-to-turn controls. It is downloaded only when the globe is about to
-// be drawn (WorldGlobe.jsx imports it once the still picture is on screen).
+// drag-to-turn controls (which also take a two-finger pinch on a touch
+// screen, between the zoom limits WorldGlobe sets with setZoomLimits; the
+// wheel and a trackpad pinch are WorldGlobe's own, through setAltitude, so
+// a plain scroll can still move the page). It is downloaded only when the
+// globe is about to be drawn (WorldGlobe.jsx imports it once the still
+// picture is on screen).
 //
 // It never draws by itself: WorldGlobe owns the one animation loop and
 // calls render() only when something changed or moves, so a still globe
@@ -307,17 +311,23 @@ export function createGlobeScene(host, { width, height, offset = [0, 0], view, l
   applyOffset(offset);
 
   const controls = new OrbitControls(camera, canvas);
-  controls.enableZoom = false;
+  // Zoom: a two-finger pinch on a touch screen goes through the controls
+  // (fast, between the limits below). The wheel does not: its listener is
+  // taken off, so a plain scroll moves the page, and WorldGlobe decides
+  // when a wheel or a trackpad pinch zooms the globe instead (setAltitude).
+  controls.enableZoom = true;
+  controls.zoomSpeed = 1.6;
   controls.enablePan = false;
   controls.enableDamping = true;
   controls.dampingFactor = 0.1;
   controls.minPolarAngle = (25 * Math.PI) / 180; // latitude 65° north
   controls.maxPolarAngle = (155 * Math.PI) / 180; // latitude 65° south
   controls.target.set(0, 0, 0);
-  // The page scrolls under the wheel (zoom is off), and a finger moving up
-  // or down scrolls the page too; sideways it turns the globe.
   canvas.removeEventListener("wheel", controls._onMouseWheel);
-  canvas.style.touchAction = "pan-y pinch-zoom";
+  // A finger moving up or down scrolls the page; sideways it turns the
+  // globe; two fingers pinching reach the controls (so "pinch-zoom" is not
+  // left to the browser, which would zoom the page).
+  canvas.style.touchAction = "pan-y";
 
   const setView = ({ lat, lng, altitude }) => {
     camera.position.copy(polar(lat, lng, altitude));
@@ -325,6 +335,23 @@ export function createGlobeScene(host, { width, height, offset = [0, 0], view, l
     camera.updateMatrixWorld();
   };
   if (view) setView(view);
+
+  // The camera's height above the ground, in Earth radii (0.2 shows about
+  // one country), keeping the place it looks at.
+  const getAltitude = () => camera.position.length() / RADIUS - 1;
+  const setAltitude = (altitude) => {
+    camera.position.setLength(RADIUS * (1 + Math.max(0.01, altitude)));
+    camera.lookAt(0, 0, 0);
+    camera.updateMatrixWorld();
+  };
+  // Where a pinch may take the camera: near and far altitudes. The far
+  // limit keeps a little slack above the layout's own height, because a
+  // flight between two stops rises up to 15% on the way (globeMath.js
+  // viewAlong) and the controls clamp the camera whenever they move it.
+  const setZoomLimits = ({ near, far }) => {
+    controls.minDistance = RADIUS * (1 + near);
+    controls.maxDistance = RADIUS * (1 + far * 1.16);
+  };
   // A drag of the full sphere's width turns it about as far as the finger went.
   const setDragSpeed = () => {
     const alt = camera.position.length() / RADIUS - 1;
@@ -591,6 +618,9 @@ export function createGlobeScene(host, { width, height, offset = [0, 0], view, l
     setLight,
     setView,
     getView: () => viewOf(camera.position),
+    getAltitude,
+    setAltitude,
+    setZoomLimits,
     setDragSpeed,
     textureFrom,
     setSkin,

@@ -632,19 +632,8 @@
   object-position: left top;
 }
 
-/* The row of in-page links under the lead: one wrapped line. (".pg" in
-   front of the lists here: site.css's "ul { margin: 0 }" would win.) */
-.pg .meth-toc {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px 24px;
-  margin: 28px 0 0;
-  padding: 0;
-  list-style: none;
-  font-size: var(--step-body);
-  font-weight: 600;
-}
-
+/* Each part (Field, Atlas, Behind it) opens with its name at the left and
+   its words beside it. */
 .meth-head {
   grid-column: 1 / 5;
 }
@@ -653,13 +642,67 @@
   grid-column: 5 / 13;
 }
 
+/* The two sentences sit level with their heading (the lead's own top
+   margin is for a lead under a title). */
+.pg .meth-what {
+  margin-top: 0;
+  max-width: 50ch;
+}
+
+/* The walkthrough film takes the whole frame. */
+.meth-film {
+  grid-column: 1 / 13;
+  margin-top: 8px;
+}
+
+/* Field: the steps at the left, the phone beside them, and "what it
+   reads" under the steps. (".pg" in front of the list: site.css's
+   "ol { margin: 0 }" would win.) */
+.meth-use {
+  grid-column: 1 / 8;
+  margin-top: 16px;
+}
+
+.pg .meth-use ol {
+  margin: 14px 0 0;
+  padding-left: 1.3em;
+  display: grid;
+  gap: 10px;
+  max-width: 52ch;
+  /* A real list of steps: the numbers show (the site's ol reset hides them elsewhere). */
+  list-style: decimal;
+}
+
+.meth-use ol li {
+  display: list-item;
+}
+
+.meth-use-phone {
+  grid-column: 9 / 13;
+  grid-row: span 2;
+  justify-self: end;
+  width: min(100%, 320px);
+  margin-top: 16px;
+}
+
+.meth-reads {
+  grid-column: 1 / 8;
+}
+
+/* Atlas: the three scores, the gate beside its laboratory, the ranking,
+   then the checks. Each block starts a clear step under the one before. */
+.meth-scores-intro {
+  grid-column: 1 / 9;
+  margin-top: 24px;
+}
+
 .meth-scores {
   grid-column: 1 / 13;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   column-gap: var(--gutter);
   row-gap: 24px;
-  margin: 8px 0 0;
+  margin: 0;
 }
 
 .meth-scores dt {
@@ -675,10 +718,12 @@
 
 .meth-gate-text {
   grid-column: 1 / 6;
+  margin-top: 40px;
 }
 
 .meth-gate-lab {
   grid-column: 6 / 13;
+  margin-top: 40px;
 }
 
 .meth-formula {
@@ -695,175 +740,42 @@
 }
 
 .meth-demo-head {
-  grid-column: 1 / 6;
+  grid-column: 1 / 9;
+  margin-top: 48px;
 }
 
 .meth-demo-stage {
   grid-column: 1 / 13;
-  margin-top: 12px;
 }
 
 .meth-demo-link {
   grid-column: 1 / 13;
 }
 
-.meth-product-head {
-  grid-column: 1 / 13;
-  margin-bottom: 8px;
-}
-
-.meth-product-text {
-  grid-column: 1 / 5;
-}
-
-.meth-product-crop {
-  grid-column: 5 / 13;
-  aspect-ratio: 5 / 3;
-}
-
-.meth-product-crop + .meth-product-text {
-  margin-top: 40px;
-}
-
-.meth-crop-field img {
-  object-position: right top;
-}
-
-.meth-crop-atlas img {
-  object-position: -250px 0;
-}
-
-.meth-use-head {
-  grid-column: 1 / 13;
-  margin-bottom: 8px;
-}
-
-.meth-use-list {
-  grid-column: span 4;
-}
-
-.meth-use-list ol {
-  margin: 0;
-  padding-left: 1.3em;
-  display: grid;
-  gap: 10px;
-  /* A real list of steps: the numbers show (the site's ol reset hides them elsewhere). */
-  list-style: decimal;
-}
-
-.meth-use-list ol li {
-  display: list-item;
-}
-
-.meth-use-phone {
-  grid-column: 9 / 13;
-  justify-self: end;
-  width: min(100%, 320px);
-}
-
-.meth-checks-head {
-  grid-column: 1 / 13;
+.meth-checks-intro {
+  grid-column: 1 / 9;
+  margin-top: 48px;
 }
 
 .meth-checks-table {
   grid-column: 1 / 13;
 }
 
-.meth-limits-head {
-  grid-column: 1 / 5;
-  margin-top: 24px;
-}
-
 .meth-limits-text {
-  grid-column: 5 / 13;
-  margin-top: 24px;
+  grid-column: 1 / 9;
 }
 
-.meth-tech-head {
-  grid-column: 1 / 5;
-}
-
+/* Behind it: three short paragraphs beside the heading. */
 .meth-tech-body {
   grid-column: 5 / 13;
 }
 
-/* The list of datasets sits right under "What it reads" (its heading's own
-   10px below it). */
-.pg .meth-datasets {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px 32px;
-}
-
-.meth-datasets li {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.meth-datasets li span:last-child {
-  color: var(--muted);
-  text-align: right;
-}
-
-/* The Methodology's datasets sit on the dark field. */
-.pg-sec-dark .meth-datasets li span:last-child {
-  color: var(--field-dark-muted);
+.meth-tech-body p {
+  max-width: 68ch;
 }
 
 .meth-accounts {
-  margin-top: 44px;
-}
-
-.pg .meth-links {
-  margin: 20px 0 0;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: 8px;
-}
-
-.meth-design-head {
-  grid-column: 1 / 5;
-}
-
-.meth-design-line {
-  grid-column: 5 / 13;
-  font-size: var(--step-lead);
-  line-height: 1.3;
-  letter-spacing: -0.015em;
-}
-
-.meth-design-pics {
-  grid-column: 1 / 13;
-  display: grid;
-  grid-template-columns: 1fr 1fr 1.6fr;
-  column-gap: var(--gutter);
-  margin-top: 16px;
-}
-
-.meth-design-pics .pg-pic {
-  aspect-ratio: 3 / 4;
-  object-fit: cover;
-  object-position: top;
-}
-
-.meth-logo {
-  grid-column: 5 / 13;
-  display: grid;
-  grid-template-columns: 96px 1fr;
-  gap: 28px;
-  align-items: center;
-  margin-top: 24px;
-}
-
-.meth-logo img {
-  display: block;
-  width: 96px;
-  height: 96px;
+  margin-top: 28px;
 }
 
 .meth-close-head {
@@ -872,6 +784,68 @@
 
 .meth-close-act {
   grid-column: 8 / 13;
+}
+
+/* ---------- The walkthrough films (components/Walkthrough.jsx) ---------- */
+
+.pg .wk {
+  margin: 0;
+}
+
+.wk-frame {
+  background: var(--field-dark);
+}
+
+.wk-video {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 10;
+  background: var(--field-dark);
+}
+
+/* The chapters under the film: each one jumps there and plays. (".pg" in
+   front: site.css's "ol { margin: 0 }" and "button { padding: 0 }".) */
+.pg .wk-chapters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 24px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pg .wk-chapter {
+  min-height: 40px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: var(--step-body);
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 0.22em;
+  text-decoration-thickness: 0.08em;
+  transition: text-decoration-color 160ms ease;
+}
+
+.wk-chapter-time {
+  font-weight: 400;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+
+.pg .wk-chapter.is-on,
+.pg .wk-chapter[data-near] {
+  text-decoration-color: currentColor;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .pg .wk-chapter:hover {
+    text-decoration-color: currentColor;
+  }
 }
 
 /* ---------- Gate laboratory (a data fragment, data-ui) ---------- */
@@ -1404,18 +1378,16 @@ a.dm-door:active .dm-door-label {
   .meth-open-pic,
   .meth-head,
   .meth-body,
+  .meth-film,
+  .meth-use,
+  .meth-reads,
+  .meth-scores-intro,
   .meth-gate-text,
   .meth-gate-lab,
   .meth-demo-head,
-  .meth-product-text,
-  .meth-product-crop,
-  .meth-limits-head,
+  .meth-checks-intro,
   .meth-limits-text,
-  .meth-tech-head,
   .meth-tech-body,
-  .meth-design-head,
-  .meth-design-line,
-  .meth-logo,
   .meth-close-head,
   .meth-close-act,
   .ct-head,
@@ -1450,12 +1422,9 @@ a.dm-door:active .dm-door-label {
     margin-top: 18px;
   }
 
-  .meth-use-list {
-    grid-column: span 6;
-  }
-
   .meth-use-phone {
     grid-column: 1 / 13;
+    grid-row: auto;
     justify-self: start;
     width: min(100%, 300px);
   }
@@ -1464,13 +1433,13 @@ a.dm-door:active .dm-door-label {
     grid-template-columns: 1fr;
   }
 
-  .meth-limits-head,
-  .meth-limits-text,
-  .meth-logo {
-    margin-top: 8px;
+  .meth-gate-text,
+  .meth-gate-lab {
+    margin-top: 16px;
   }
 
-  .meth-product-crop + .meth-product-text {
+  .meth-demo-head,
+  .meth-checks-intro {
     margin-top: 24px;
   }
 
@@ -1511,8 +1480,7 @@ a.dm-door:active .dm-door-label {
   }
 
   .story-ed1-side,
-  .story-ed3-pic,
-  .meth-use-list {
+  .story-ed3-pic {
     grid-column: 1 / 13;
   }
 
@@ -1539,43 +1507,16 @@ a.dm-door:active .dm-door-label {
     text-align: center;
   }
 
-  .pg .meth-toc {
-    gap: 8px 18px;
+  .pg .wk-chapters {
+    gap: 2px 18px;
   }
 
-  .meth-product-crop {
-    aspect-ratio: 1 / 1;
-  }
-
-  .meth-crop-field img {
-    object-position: -1360px 0;
-  }
-
-  .pg .meth-datasets {
-    grid-template-columns: 1fr;
-    gap: 8px 16px;
-  }
-
-  .meth-design-pics {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .meth-design-pics .pg-fig:last-child {
-    grid-column: 1 / 3;
-  }
-
-  .meth-design-pics .pg-fig:last-child .pg-pic {
-    aspect-ratio: 3 / 2;
-  }
-
-  .meth-logo {
-    grid-template-columns: 72px 1fr;
-    gap: 18px;
-  }
-
-  .meth-logo img {
-    width: 72px;
-    height: 72px;
+  .meth-scores-intro,
+  .meth-gate-text,
+  .meth-gate-lab,
+  .meth-demo-head,
+  .meth-checks-intro {
+    margin-top: 8px;
   }
 
   .gl {

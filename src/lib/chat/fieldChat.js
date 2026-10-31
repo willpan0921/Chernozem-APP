@@ -9,6 +9,11 @@
 //   reportRow(report, farm)        -> { label: "Shelling", value: "Field 7 · 2 photos" }
 //   reportFirstQuestion(report, farm) -> "I reported shelling on Field 7. What should I do now?"
 //   reportLine(report, farm)       -> "Shelling · Field 7 · 2 photos" (one line, for narrow screens)
+//   reportMessage(report, farm, photoUrl) -> { kind: "Shelling", where: "Field 7", text, photos: [{ id, url, alt }], when: "Oct 16" }
+//                                     the report as the first message of the chat about it:
+//                                     what the farmer chose, wrote and photographed, so
+//                                     nothing typed in "Tell us what happened" disappears
+//                                     (photoUrl turns a photo id into its address)
 //
 // The rules for what counts as urgent come from the field status
 // (src/lib/field/method.js), not from here. The kinds of report come from
@@ -79,4 +84,21 @@ export function reportFirstQuestion(report, farm) {
     what: reportKind(report?.kind).phrase,
     where: fieldName(report, farm) || "my farm",
   });
+}
+
+// The report as the chat's first message. photoUrl(photoId) gives the
+// address of a photo (src/api/fieldApi.js photoUrl); without it the photos
+// are listed with no address.
+export function reportMessage(report, farm, photoUrl) {
+  if (!report) return null;
+  const ids = Array.isArray(report.photos) ? report.photos.filter((id) => typeof id === "string" && id) : [];
+  const text = typeof report.text === "string" ? report.text.trim() : "";
+  const when = typeof report.createdAt === "string" && report.createdAt ? formatDay(report.createdAt.slice(0, 10)) : null;
+  return {
+    kind: reportKind(report.kind).label,
+    where: fieldName(report, farm) || "Whole farm",
+    text,
+    photos: ids.map((id, i) => ({ id, url: typeof photoUrl === "function" ? photoUrl(id) : null, alt: `Photo ${i + 1} of ${ids.length}` })),
+    when,
+  };
 }

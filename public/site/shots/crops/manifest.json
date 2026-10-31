@@ -103,5 +103,27 @@
       "height": 520
     },
     "use": "About, the closing tile: southern Ukraine and the Black Sea on Esri World Imagery, without the app's buttons"
+  },
+  {
+    "file": "field-fields-map-720.webp",
+    "from": "field-fields.webp",
+    "region": {
+      "left": 515,
+      "top": 236,
+      "width": 720,
+      "height": 520
+    },
+    "use": "About, What is Chernozem (HomePage.jsx): the farm's fields outlined on satellite imagery, at true size"
+  },
+  {
+    "file": "atlas-weights-726.webp",
+    "from": "atlas-map-near-micro.webp",
+    "region": {
+      "left": 258,
+      "top": 160,
+      "width": 726,
+      "height": 672
+    },
+    "use": "About, Why Chernozem (HomePage.jsx): the Atlas weights panel at true size (its left 374 px on a wide screen; the map beside it shows on a narrower one)"
   }
 ]

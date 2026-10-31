@@ -75,8 +75,18 @@
 // With nothing to show yet the map opens on the whole world (Chernozem
 // works anywhere), and flies to the place once there is one.
 //
+// Zooming: the zoom is continuous (any fraction of a level, zoomSnap 0).
+// The wheel and a trackpad scroll go through src/lib/wheelZoom.js, which
+// adds every tick up and follows the goal a little each frame, round the
+// point under the pointer (Leaflet's own wheel handler animated each step
+// and dropped the ticks that arrived meanwhile, so a trackpad crawled). A
+// pinch on a trackpad (ctrlKey wheel) scales the map with the fingers;
+// a pinch on a touch screen is Leaflet's own. The +/- buttons, the
+// keyboard and a double-click step one level, animated.
+//
 // The wrapper carries data-zoom="<zoom level>" so tests can check that
-// zooming worked.
+// zooming worked; with ?map-debug=1 in the address the Leaflet map itself
+// is kept in window.__maps (wheelZoom.js registerMapForChecks).
 //
 // Also exported: PassChip (the "Oct 16 · Sentinel-2" chip) and
 // fieldsBounds(fields).
@@ -91,6 +101,7 @@ import "leaflet/dist/leaflet.css";
 import { Layers, Maximize, Minus, Plus, Satellite } from "lucide-react";
 import { ANALYSING_LABEL, formatDay, mapLook } from "../../lib/field/format.js";
 import { settleView, showsFit, watchMapSize } from "../../lib/mapResize.js";
+import { createWheelZoom, registerMapForChecks } from "../../lib/wheelZoom.js";
 import { SATELLITE } from "../../config/maps.js";
 import "./field.css";
 
@@ -356,6 +367,8 @@ export default function FieldMap({
   // The options of the last fit (its padding), so "is it still showing all
   // the fields?" is asked with the padding it was fitted with.
   const lastFit = useRef(null);
+  // The continuous wheel zoom (src/lib/wheelZoom.js).
+  const wheelRef = useRef(null);
 
   const latest = useRef({});
   latest.current = { onSelect, onToggleCandidate, onDrawPoint, onMapClick, drawMode, fields, candidates, boundary, drawPoints, pin, pinRadiusM, selectedId, satelliteOnly, fitPadding, steady };
@@ -364,16 +377,24 @@ export default function FieldMap({
   useEffect(() => {
     const map = L.map(mapDivRef.current, {
       zoomControl: false,
-      zoomSnap: 0.25,
+      // Any fraction of a level; the buttons, keys and double-click step one.
+      zoomSnap: 0,
       zoomDelta: 1,
-      wheelPxPerZoomLevel: 110,
-      wheelDebounceTime: 30,
+      zoomAnimation: true,
+      touchZoom: true,
+      // The wheel is handled by wheelZoom.js (below); these two only matter
+      // on a Leaflet it cannot handle, where its own handler is turned on.
+      scrollWheelZoom: false,
+      wheelPxPerZoomLevel: 45,
+      wheelDebounceTime: 10,
       minZoom: 3,
       maxZoom: MAX_ZOOM,
       attributionControl: true,
     });
     map.attributionControl.setPrefix(false);
     map.setView(START_VIEW.center, START_VIEW.zoom);
+    wheelRef.current = createWheelZoom(map);
+    const unregister = registerMapForChecks(map);
     map.createPane("fmLabels").style.zIndex = 620;
     // Stress circles sit above the name pills so a pill never hides one;
     // they take no clicks, so the pills under them still work.
@@ -430,6 +451,9 @@ export default function FieldMap({
 
     return () => {
       stopWatching();
+      wheelRef.current?.remove();
+      wheelRef.current = null;
+      unregister();
       for (const name of ["fields", "candidates", "extras", "tiles"]) layers.current[name]?.remove();
       map.stop();
       map._animatingZoom = false;
@@ -444,10 +468,15 @@ export default function FieldMap({
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    for (const handler of ["dragging", "scrollWheelZoom", "doubleClickZoom", "boxZoom", "touchZoom", "keyboard"]) {
+    for (const handler of ["dragging", "doubleClickZoom", "boxZoom", "touchZoom", "keyboard"]) {
       if (interactive) map[handler]?.enable();
       else map[handler]?.disable();
     }
+    // The wheel: ours, or Leaflet's own where ours cannot work.
+    const wheel = wheelRef.current;
+    const own = wheel?.supported ? wheel : map.scrollWheelZoom;
+    if (interactive) own?.enable();
+    else own?.disable();
     // Leaflet's keyboard handler makes the map a Tab stop and leaves it one
     // when disabled; a static map should not be.
     map.getContainer().tabIndex = interactive ? 0 : -1;

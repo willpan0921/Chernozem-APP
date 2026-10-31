@@ -3,7 +3,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { starterFields, latestPass, sourceRow, weatherLine, reportRow, reportLine, reportFirstQuestion } from "./fieldChat.js";
+import { starterFields, latestPass, sourceRow, weatherLine, reportRow, reportLine, reportFirstQuestion, reportMessage } from "./fieldChat.js";
 import { fieldSuggestions, REPORT_KINDS, reportKind } from "../../data/chats.js";
 
 const farm = {
@@ -69,6 +69,29 @@ test("a report becomes one line and a first question", () => {
   assert.equal(reportRow(null, farm), null);
   assert.equal(reportLine(report, farm), "Shelling · Field 4 · 2 photos");
   assert.equal(reportLine(null, farm), null);
+});
+
+test("the report becomes the chat's first message: what was chosen, written and photographed", () => {
+  const report = { id: "rep-1", fieldId: "d", kind: "shelling", text: "  Craters in the north corner after last night.  ", photos: ["p1", "p2"], createdAt: "2026-10-24T00:18:25.818Z" };
+  const url = (id) => `/api/farm/uploads/${id}`;
+  assert.deepEqual(reportMessage(report, farm, url), {
+    kind: "Shelling",
+    where: "Field 4",
+    text: "Craters in the north corner after last night.",
+    photos: [
+      { id: "p1", url: "/api/farm/uploads/p1", alt: "Photo 1 of 2" },
+      { id: "p2", url: "/api/farm/uploads/p2", alt: "Photo 2 of 2" },
+    ],
+    when: "Oct 24",
+  });
+  // Nothing written, no photos, the whole farm, no date: still a message.
+  assert.deepEqual(reportMessage({ id: "rep-2", kind: "other", photos: [] }, farm), { kind: "Other", where: "Whole farm", text: "", photos: [], when: null });
+  // A removed field keeps its name; odd photo ids are left out.
+  const gone = reportMessage({ id: "rep-3", fieldId: "zz", removedFieldName: "Field 9", kind: "fire", photos: ["p", 7, ""] }, farm);
+  assert.equal(gone.where, "Field 9");
+  assert.deepEqual(gone.photos.map((p) => p.id), ["p"]);
+  assert.equal(gone.photos[0].url, null);
+  assert.equal(reportMessage(null, farm, url), null);
 });
 
 test("one list of report kinds, with unknown kinds counted as other", () => {

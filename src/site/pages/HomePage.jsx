@@ -4,25 +4,36 @@
 //      soil glowing, today's armed conflicts and disaster alerts on it,
 //      components/WorldGlobe.jsx), with the title, one sentence and the two
 //      actions over its shaded side
-//   2. "One field, one pass": the app's field row, enlarged to fill its
+//   2. "What is Chernozem": three plain sentences a stranger takes in
+//      within five seconds, beside one window onto the Fields page (the
+//      farm's fields outlined on satellite imagery, at true size)
+//   3. "Why Chernozem": the owner's eight reasons, each a claim and one
+//      plain sentence, in two columns, with the real Atlas weights panel
+//      beside them at its true size
+//   4. "One field, one pass": the app's field row, enlarged to fill its
 //      columns, in the state the visitor picks, with its button really
 //      working
-//   3. how it works: one slider through the four stages (tapping the
+//   5. how it works: one slider through the four stages (tapping the
 //      picture moves on)
-//   4. the proof: the checks against independent records, as a table
-//   5. what a farmer gets, and what governments and NGOs get: on a wide
+//   6. the proof: the checks against independent records, as a table
+//   7. what a farmer gets, and what governments and NGOs get: on a wide
 //      screen an index beside one large window onto the app; each item
 //      opens its place in the demo
-//   6. the Ukraine demo, live, on the sage stage (built, and its data
+//   8. the Ukraine demo, live, on the sage stage (built, and its data
 //      fetched, only when the visitor scrolls near it)
-//   7. the film, with chapters that jump to each part
-//   8. the founder's letter, and the line on what Chernozem was made for
-//   9. the close: the action tile beside a satellite view, then the small
+//   9. the film, "Chernozem in three minutes", with chapters that jump to
+//      each part
+//  10. the founder's letter
+//  11. the close: the action tile beside a satellite view, then the small
 //      print (where the globe's pictures and data come from)
-// The words follow the website brief's copy deck. Numbers come from
-// src/site/content/site.js. Layout: home.css. Every section keeps to the
-// menu's frame: text starts at the page's left edge, or three columns in
-// (the field row, the second line of "the record", the letter's text).
+// The words follow the website brief's copy deck and the owner's list of
+// 31 October 2026 (the two introductions). Numbers come from
+// src/site/content/site.js; the two introductions' pictures are cut from
+// the app's screenshots at true size (public/site/shots/crops/, where
+// manifest.json says from which screenshot). Layout: home.css. Every
+// section keeps to the menu's frame: text starts at the page's left edge,
+// or three columns in (the field row, the second line of "the record", the
+// letter's text).
 //
 // WHO EDITS IT
 // Whoever works on the About page.
@@ -102,6 +113,44 @@ const ORGANISATION = [
     crop: { x: 300, y: 566, w: 360, h: 220 },
     demo: "/atlas/report",
     link: { to: "/register?product=atlas", label: "Register for Atlas" },
+  },
+];
+
+// Why Chernozem: the owner's eight reasons (his list of 31 October 2026),
+// each a claim and one plain sentence. The wording stays honest: "most
+// tools", never "all competitors"; the one number is read from site.js.
+const WHY = [
+  {
+    claim: "No hardware, only software",
+    text: "Nothing to buy or install on the land. It runs in a browser, which matters most in a disaster, where equipment is costly or cannot get in.",
+  },
+  {
+    claim: "Free satellite data on Google Earth Engine",
+    text: "The Sentinel satellites are public and their data is free. Google Earth Engine reads it for the app over a whole region at once.",
+  },
+  {
+    claim: "It plans recovery, not only health",
+    text: "Most tools only watch healthy land. Chernozem watches it too, then scores the damaged land and says where recovery can start.",
+  },
+  {
+    claim: "For one farm or a whole country",
+    text: "Field is for a farmer’s own fields. Atlas scores a region or a country square by square, from the same satellites.",
+  },
+  {
+    claim: "You choose what matters: the weights",
+    text: "In Atlas the weights for value, damage and feasibility are yours to set, so the ranking follows your priorities, not a fixed formula.",
+  },
+  {
+    claim: "Drop a pin, see the field",
+    text: "Point at a place on the map, or search for it, and the app finds the fields there and reads each one.",
+  },
+  {
+    claim: "From satellite images to an answer in a few clicks",
+    text: `Finding the right passes, cleaning them and reading them happens for you. A ten-field farm is read in about ${NUMBERS.tenFieldsSeconds} seconds.`,
+  },
+  {
+    claim: "All it needs is a place",
+    text: "No files, no sensors, no survey. Coordinates, an address or an outline drawn on the map are enough to start.",
   },
 ];
 
@@ -303,6 +352,14 @@ export default function HomePage() {
   const reveal = useReveal();
   const wideFeatures = useMediaQuery("(min-width: 1024px)");
   const [demoRef, demoNear] = useNear();
+  // The page's last three parts (the film, the letter and the close) play
+  // their entrances together, once the film is within 2,400 px of the
+  // screen, rather than each as it scrolls in: on a phone the page is long,
+  // and a fast scroll, or a tool that scans the page, must never find the
+  // letter's words still waiting to appear. (Without the observer, "near"
+  // is true at once: nothing is ever hidden for good.)
+  const [tailRef, tailNear] = useNear("2400px 0px");
+  const tail = tailNear ? " is-in" : "";
 
   return (
     <>
@@ -337,7 +394,65 @@ export default function HomePage() {
         </WorldGlobe>
       </section>
 
-      {/* 2. The showcase */}
+      {/* 2. What is Chernozem: the words beside one window onto the Fields page */}
+      <section className="what section" aria-labelledby="what-title" ref={reveal}>
+        <div className="wrap grid">
+          <div className="what-words">
+            <h2 id="what-title" className="head" data-rise>
+              What is Chernozem
+            </h2>
+            <p className="lead what-lead" data-rise style={{ "--i": 1 }}>
+              Chernozem is satellite farmland monitoring: free satellite data over farmland, read and put into plain words for people who are not scientists. Field watches a farmer’s own fields; Atlas scores a whole region for governments and NGOs. The name is the black soil of Ukraine and northeast China, where its story began.
+            </p>
+            <p className="what-link" data-rise style={{ "--i": 2 }}>
+              <Link to="/story" className="link link-under">
+                How it started
+              </Link>
+            </p>
+          </div>
+          <div className="what-side" data-settle style={{ "--i": 1 }}>
+            <figure className="what-window">
+              <img src="/site/shots/crops/field-fields-map-720.webp" alt="The Fields page: the farm’s fields outlined on satellite imagery, each tinted by its condition, Field 11 growing well and the harvested ones dotted." width="720" height="520" loading="lazy" decoding="async" />
+            </figure>
+            <p className="window-caption muted">
+              Field: the demo farm near Kupiansk, Ukraine, read from one Sentinel-2 pass.{" "}
+              <Link to="/field/fields" className="link link-under" onClick={enterDemo}>
+                Open in the demo
+              </Link>
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* 3. Why Chernozem: the eight reasons in two columns, the real weights panel beside them */}
+      <section className="why section" aria-labelledby="why-title" ref={reveal}>
+        <div className="wrap grid">
+          <h2 id="why-title" className="head why-head" data-rise>
+            Why Chernozem
+          </h2>
+          <ul className="why-list">
+            {WHY.map((item, i) => (
+              <li className="why-item" key={item.claim} data-rise style={{ "--i": i + 1 }}>
+                <h3 className="why-claim">{item.claim}</h3>
+                <p className="why-text">{item.text}</p>
+              </li>
+            ))}
+          </ul>
+          <div className="why-side" data-settle style={{ "--i": 2 }}>
+            <figure className="why-window">
+              <img src="/site/shots/crops/atlas-weights-726.webp" alt="Atlas’s weights panel for Ukraine: Near term chosen, value 76%, damage 24%, and a feasibility cutoff of 36%." width="726" height="672" loading="lazy" decoding="async" />
+            </figure>
+            <p className="window-caption muted">
+              Atlas: the weights, as set for the Ukraine demo.{" "}
+              <Link to="/atlas/map" className="link link-under" onClick={enterDemo}>
+                Move them in the demo
+              </Link>
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* 4. The showcase */}
       <section className="showcase section" aria-labelledby="showcase-title" ref={reveal}>
         <div className="wrap grid">
           <h2 id="showcase-title" className="head showcase-head" data-rise>
@@ -347,14 +462,14 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* 3. How it works, on the page's frame */}
+      {/* 5. How it works, on the page's frame */}
       <section className="how" aria-label="How it works" ref={reveal}>
         <div className="wrap">
           <StageSlider />
         </div>
       </section>
 
-      {/* 4. The proof */}
+      {/* 6. The proof */}
       <section className="proof section" aria-labelledby="proof-title" ref={reveal}>
         <div className="wrap">
           <h2 id="proof-title" className="display proof-head lines">
@@ -375,7 +490,7 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* 5. The features */}
+      {/* 7. The features */}
       <section className="features section" aria-labelledby="features-title">
         {wideFeatures ? (
           <div className="wrap">
@@ -418,7 +533,7 @@ export default function HomePage() {
         )}
       </section>
 
-      {/* 6. The demo: built when the visitor comes near it */}
+      {/* 8. The demo: built when the visitor comes near it */}
       <section className="demo-section on-sage section" aria-labelledby="demo-title" ref={reveal}>
         <div className="wrap grid">
           <div className="demo-copy">
@@ -444,25 +559,25 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* 7. The film */}
-      <section className="film-section on-dark section" aria-labelledby="film-title" ref={reveal}>
+      {/* 9. The film */}
+      <section className={`film-section on-dark section${tail}`} aria-labelledby="film-title" ref={tailRef}>
         <div className="wrap">
           <h2 id="film-title" className="head film-head" data-rise>
-            Three minutes on Chernozem
+            Chernozem in three minutes
           </h2>
           <Film chapters={CHAPTERS} />
         </div>
       </section>
 
-      {/* 8. The letter */}
-      <section className="letter-section section" id="letter" aria-labelledby="letter-title" ref={reveal}>
+      {/* 10. The letter */}
+      <section className={`letter-section section${tail}`} id="letter" aria-labelledby="letter-title">
         <div className="wrap">
           <Letter />
         </div>
       </section>
 
-      {/* 9. The close: the action tile beside a satellite view, then the small print */}
-      <section className="close" aria-labelledby="close-title" ref={reveal}>
+      {/* 11. The close: the action tile beside a satellite view, then the small print */}
+      <section className={`close${tail}`} aria-labelledby="close-title">
         <div className="close-row frame">
           <div className="close-tile close-tile-main on-accent" data-rise style={{ "--i": 0 }}>
             <h2 id="close-title" className="close-head">

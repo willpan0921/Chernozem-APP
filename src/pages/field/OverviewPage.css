@@ -499,6 +499,16 @@
   color: var(--c-red-text);
 }
 
+/* "Sent. The assistant is reading it…": the moment between Send and the chat. */
+.fo-tell-sent {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-green-text);
+}
+
 .fo-send {
   margin-left: auto;
   min-width: 96px;

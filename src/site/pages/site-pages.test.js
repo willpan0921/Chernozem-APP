@@ -26,9 +26,14 @@
 //     a search of the code finds only the About page),
 //     and none prints the demo farm's number of fields;
 //   - every picture the pages name exists in public/;
-//   - the Methodology page carries the eight ids the old addresses jump to,
-//     says contact messages are kept on the server, and prints no stale
-//     test count;
+//   - the Methodology page is two parts, Field and Atlas, each with its
+//     walkthrough film (Walkthrough.jsx) and the owner's descriptions, a
+//     short "Behind it", no row of in-page links and no sub-sub-headings;
+//     it keeps the ids the old addresses jump to, says contact messages
+//     are kept on the server, and prints no stale test count;
+//   - the two walkthrough films exist with their posters and chapter list
+//     (public/site/film/walkthroughs.json), each two to three minutes and
+//     under 25 MB, and Walkthrough.jsx only downloads a film on play;
 //   - pages.css uses only the tokens defined by src/site/site.css and none
 //     of the things the website brief bans (shadows, gradients, monospace),
 //     sets no cursor of its own (the site's pin stays), keeps the menu bar's
@@ -42,7 +47,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
@@ -350,13 +355,80 @@ test("every picture the pages name exists in public/", () => {
   }
 });
 
-test("the Methodology page has the ids the old addresses jump to", () => {
+test("the Methodology page is two parts, Field and Atlas, each with its film, and a short close", () => {
   const source = read("MethodPage.jsx");
+  const list = headings("MethodPage.jsx");
+  assert.deepEqual(
+    list.map((h) => h.text),
+    ["How Chernozem works", "Field", "Atlas", "Behind it", "Run it on your own land"],
+  );
+  assert.equal(list[0].tag, "h1");
+  assert.equal((source.match(/<h3\b/g) || []).length, 0, "no sub-sub-headings");
+  assert.doesNotMatch(source, /meth-toc|\bPARTS\b|On this page/, "no row of in-page links under the title");
+  // The old addresses (src/App.jsx: /product, /guide, /technology, /design)
+  // still land on the matching block.
   for (const id of ["scores", "gate", "demo", "product", "use", "checks", "technology", "design"]) {
-    assert.ok(source.includes(`id="${id}"`), `MethodPage has #${id}`);
-    assert.ok(source.includes(`"#${id}"`) || source.includes("`#${id}`"), `MethodPage links to #${id}`);
+    assert.ok(source.includes(`id="${id}"`), `MethodPage keeps #${id}`);
   }
+  // One walkthrough film per product, right after its two sentences.
+  assert.match(source, /import Walkthrough from "\.\.\/components\/Walkthrough\.jsx"/);
+  const field = between(source, 'id="product"', 'id="atlas"');
+  const atlas = between(source, 'id="atlas"', 'id="technology"');
+  const behind = between(source, 'id="technology"', 'id="meth-close"');
+  assert.match(field, /className="pg-lead meth-what"[\s\S]*<Walkthrough product="field"[\s\S]*FIELD_STEPS\.map[\s\S]*What it reads\./);
+  assert.match(atlas, /className="pg-lead meth-what"[\s\S]*<Walkthrough product="atlas"/);
+  // The owner's favourite parts stay: the scores, the gate with its
+  // sliders and the two time frames, the ranking as the app shows it
+  // (untouched, a piece of the product), the checks and the limits.
+  for (const kept of ["<dt>Value</dt>", "<dt>Damage</dt>", "<dt>Feasibility</dt>", "<GateLab />", "Near term:", "Post-crisis:", "<ProofTable />", "What it cannot do."]) {
+    assert.ok(atlas.includes(kept), `the Atlas part keeps ${kept}`);
+  }
+  assert.match(atlas, /<div data-ui>\s*<DemoRanking \/>/);
+  assert.doesNotMatch(source, /DemoRanking\s+[a-z]+=/, "DemoRanking takes no props");
+  // Behind it: the datasets in one line, the stack in one line, the links.
+  assert.match(behind, /listOf\(DATASETS\.map\(\(item\) => item\.name\)\)/);
+  assert.match(behind, /listOf\(STACK\.map\(\(item\) => item\.name\)\)/);
+  assert.match(behind, /href=\{LINKS\.github\}/);
+  assert.match(behind, /href=\{LINKS\.paper\}/);
   assert.match(words("MethodPage.jsx"), /The demo is open to everyone and read-only\./);
+});
+
+test("the walkthrough films: one per product, with a poster and chapters, two to three minutes, under 25 MB", () => {
+  const source = readFileSync(join(here, "..", "components", "Walkthrough.jsx"), "utf8");
+  assert.ok(source.startsWith("// WHAT THIS FILE DOES"), "Walkthrough.jsx carries the file header");
+  assert.ok(source.includes("// WHO EDITS IT"));
+  // Nothing downloads until play; the poster waits until the film is near.
+  assert.match(source, /preload="none"/);
+  assert.match(source, /playsInline/);
+  assert.match(source, /<video[^>]* controls[^>]*>/);
+  assert.match(source, /poster=\{near \? files\.poster : undefined\}/);
+  assert.match(source, /fetch\(WALKTHROUGHS_URL\)/);
+  assert.match(source, /className="wk-chapter/);
+  assert.doesNotMatch(source, /figcaption/, "nothing is written under a film but its chapters");
+  const film = join(root, "public", "site", "film");
+  const list = JSON.parse(readFileSync(join(film, "walkthroughs.json"), "utf8"));
+  for (const product of ["field", "atlas"]) {
+    const info = list[product];
+    assert.ok(info, `${product} is in walkthroughs.json`);
+    assert.equal(info.src, `/site/film/${product}-walkthrough.mp4`);
+    assert.equal(info.poster, `/site/film/${product}-walkthrough-poster.jpg`);
+    assert.equal(info.width, 1440);
+    assert.equal(info.height, 900);
+    assert.ok(existsSync(join(root, "public", info.poster)), `${product}: the poster exists`);
+    const size = statSync(join(root, "public", info.src)).size;
+    assert.ok(size < 25 * 1024 * 1024, `${product}: ${size} bytes is under 25 MB`);
+    assert.ok(info.seconds >= 120 && info.seconds <= 180, `${product}: ${info.seconds} s is two to three minutes`);
+    assert.ok(info.chapters.length >= 6, `${product}: at least six chapters`);
+    let last = -1;
+    for (const chapter of info.chapters) {
+      assert.ok(chapter.label.length > 0 && chapter.t > last && chapter.t < info.seconds, `${product}: chapter "${chapter.label}" at ${chapter.t} s is in order and inside the film`);
+      assert.doesNotMatch(chapter.label, new RegExp(`·|${CHALLENGE}`), `${product}: "${chapter.label}" has no middle dot and no challenge`);
+      last = chapter.t;
+    }
+  }
+  // The component's own paths match the files on disk.
+  assert.ok(source.includes('src: "/site/film/field-walkthrough.mp4"'));
+  assert.ok(source.includes('src: "/site/film/atlas-walkthrough.mp4"'));
 });
 
 test("the Methodology page says where contact messages are kept, and no stale test count", () => {
@@ -418,13 +490,12 @@ test("pages.css gives back the spacings site.css's element resets would cancel",
   const css = read("pages.css");
   // ".site h3 / ul / p / button" outrank a single class, so these carry ".pg".
   assert.match(css, /\.pg \.pg-h3 \{\s*margin: 0 0 10px;/);
-  assert.match(css, /\.pg \.meth-toc \{[^}]*margin: 28px 0 0;/);
-  assert.match(css, /\.pg \.meth-links \{\s*margin: 20px 0 0;/);
+  assert.match(css, /\.pg \.meth-use ol \{[^}]*margin: 14px 0 0;/);
+  assert.match(css, /\.pg \.wk-chapters \{[^}]*margin: 16px 0 0;/);
+  assert.match(css, /\.pg \.wk-chapter \{[^}]*padding: 0;/);
   assert.match(css, /\.pg \.gl-note \{[^}]*margin-bottom: 18px;/);
   assert.match(css, /\.pg \.demo-tab \{\s*padding: 10px 18px;/);
   assert.match(css, /\.pg \.demo-foot \{\s*margin-top: 12px;/);
-  // The datasets list sits under its heading by the heading's own margin.
-  assert.doesNotMatch(read("MethodPage.jsx"), /className="meth-datasets" style=/);
 });
 
 test("the sitemap lists no unlisted page", () => {

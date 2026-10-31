@@ -23,9 +23,16 @@
 // loading    - true while a saved chat is being opened
 // empty      - what an empty chat shows (welcome line or the setup card)
 // notice     - shown above the messages of a saved chat (the setup card)
-// about      - { icon, text } or null: one line under the title saying what the
-//              chat is about (e.g. "Fire · Field 1 · 1 photo"). Only shown on
-//              narrow screens, where the "Using" column is below the chat.
+// about      - { icon, text, report? } or null: what the chat is about.
+//              With "report" (src/lib/chat/fieldChat.js reportMessage: { kind,
+//              where, text, photos: [{ id, url, alt }], when }) the report is
+//              drawn as the chat's first message, a bubble on the person's
+//              side with what happened, which field, their words and their
+//              photos, so nothing typed in "Tell us what happened" is lost,
+//              whatever the assistant answers (or when it cannot answer).
+//              Without one, "text" is one line under the title (e.g. "Fire ·
+//              Field 1 · 1 photo"), only on narrow screens, where the "Using"
+//              column is below the chat.
 // composer   - the <ChatComposer /> to show at the bottom
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -62,6 +69,40 @@ function UserMessage({ message }) {
   return (
     <div className="chat-message-user" data-role="user">
       <div className="chat-bubble">{message.text}</div>
+    </div>
+  );
+}
+
+// The report a Field chat was started from, as the first message: the kind
+// and the field on one line, the farmer's own words, the photos.
+function ReportMessage({ report }) {
+  const head = [report.kind, report.where, report.when].filter(Boolean).join(" · ");
+  return (
+    <div className="chat-message-user chat-report" data-role="report" data-testid="chat-report">
+      <div className="chat-bubble">
+        <p className="chat-report-head">
+          <ChatIcon name="camera" tone="grey" size={14} />
+          <span>{head}</span>
+        </p>
+        {report.text && <p className="chat-report-text">{report.text}</p>}
+        {report.photos.length > 0 && (
+          <ul className="chat-report-photos" aria-label={`${report.photos.length} ${report.photos.length === 1 ? "photo" : "photos"}`}>
+            {report.photos.map((photo) =>
+              photo.url ? (
+                <li key={photo.id}>
+                  <a href={photo.url} target="_blank" rel="noreferrer">
+                    <img src={photo.url} alt={photo.alt} loading="lazy" />
+                  </a>
+                </li>
+              ) : (
+                <li key={photo.id} className="chat-report-photo-missing">
+                  {photo.alt}
+                </li>
+              )
+            )}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }
@@ -189,6 +230,9 @@ export default function ChatConversation({ title, onDelete, messages, pending, e
   }
 
   const isEmpty = !loading && messages.length === 0 && !pending;
+  // The report is a message in its own right: with one on screen the chat
+  // is never laid out as empty (the welcome or the setup card then follows it).
+  const report = about?.report || null;
 
   return (
     <section className="chat-conversation" aria-label="Conversation">
@@ -198,19 +242,20 @@ export default function ChatConversation({ title, onDelete, messages, pending, e
         </h1>
         {onDelete && <DeleteControl key={title} onDelete={onDelete} />}
       </header>
-      {about && (
+      {about && !report && (
         <p className="chat-about" data-testid="chat-about">
           <ChatIcon name={about.icon} size={14} />
           <span>{about.text}</span>
         </p>
       )}
 
-      <div className={isEmpty ? "chat-messages is-empty" : "chat-messages"} ref={listRef} onScroll={handleScroll} data-testid="chat-messages">
+      <div className={isEmpty && !report ? "chat-messages is-empty" : "chat-messages"} ref={listRef} onScroll={handleScroll} data-testid="chat-messages">
         {loading && (
           <p className="chat-status">
             <Loader2 size={13} className="chat-spin" aria-hidden="true" />
           </p>
         )}
+        {report && !loading && <ReportMessage report={report} />}
         {isEmpty && empty}
         {!isEmpty && notice}
         {!loading &&

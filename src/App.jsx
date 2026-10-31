@@ -23,12 +23,19 @@
 //
 // Any other address shows the website's "page not found" page.
 //
+// Each page's code is loaded only when the page is first opened; the list
+// of the files, and which code each address needs, is src/lazyPages.js
+// (the first page of a visit is fetched before anything is drawn, so it
+// shows at once: src/main.jsx).
+//
 // WHO EDITS IT
-// Whoever adds a page. An app page goes into src/config/navigation.js too,
-// so it shows up in the sidebar; a website page goes into
-// src/site/content/site.js so it shows up in the website's menu.
+// Whoever adds a page: its file goes into src/lazyPages.js and its <Route>
+// here (a test checks the two agree). An app page goes into
+// src/config/navigation.js too, so it shows up in the sidebar; a website
+// page goes into src/site/content/site.js so it shows up in the website's
+// menu.
 
-import { lazy, Suspense } from "react";
+import { Suspense } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import AppShell from "./layout/AppShell.jsx";
 import ErrorBoundary from "./layout/ErrorBoundary.jsx";
@@ -36,34 +43,29 @@ import { AtlasDataProvider } from "./state/AtlasData.jsx";
 import { FieldDataProvider } from "./state/FieldData.jsx";
 import AccessGate from "./components/atlas/AccessGate.jsx";
 import ProductGuard from "./components/ProductGuard.jsx";
-
-// Each page is loaded only when it is first opened ("lazy"), so the app
-// starts faster and the map library (Leaflet) is only downloaded by the
-// pages that show a map. The website's pages, its animation library and
-// the 3D globe are likewise only downloaded by visitors who open them.
-const FieldOverviewPage = lazy(() => import("./pages/field/OverviewPage.jsx"));
-const FieldFieldsPage = lazy(() => import("./pages/field/FieldsPage.jsx"));
-const FieldAiPage = lazy(() => import("./pages/field/AiPage.jsx"));
-const FieldDataPage = lazy(() => import("./pages/field/DataPage.jsx"));
-const FieldSettingsPage = lazy(() => import("./pages/field/SettingsPage.jsx"));
-
-const AtlasOverviewPage = lazy(() => import("./pages/atlas/OverviewPage.jsx"));
-const AtlasMapPage = lazy(() => import("./pages/atlas/MapPage.jsx"));
-const AtlasAiPage = lazy(() => import("./pages/atlas/AiPage.jsx"));
-const AtlasDataPage = lazy(() => import("./pages/atlas/DataPage.jsx"));
-const AtlasSettingsPage = lazy(() => import("./pages/atlas/SettingsPage.jsx"));
-const AtlasReportPage = lazy(() => import("./pages/atlas/ReportPage.jsx"));
-
-const SiteShell = lazy(() => import("./site/SiteShell.jsx"));
-const HomePage = lazy(() => import("./site/pages/HomePage.jsx"));
-const StoryPage = lazy(() => import("./site/pages/StoryPage.jsx"));
-const MethodPage = lazy(() => import("./site/pages/MethodPage.jsx"));
-const ContactPage = lazy(() => import("./site/pages/ContactPage.jsx"));
-const DemoPage = lazy(() => import("./site/pages/DemoPage.jsx"));
-const RegisterPage = lazy(() => import("./site/pages/RegisterPage.jsx"));
-const SignInPage = lazy(() => import("./site/pages/SignInPage.jsx"));
-const OwnerPage = lazy(() => import("./site/pages/OwnerPage.jsx"));
-const NotFoundPage = lazy(() => import("./site/pages/NotFoundPage.jsx"));
+import {
+  SiteShell,
+  HomePage,
+  StoryPage,
+  MethodPage,
+  ContactPage,
+  DemoPage,
+  RegisterPage,
+  SignInPage,
+  OwnerPage,
+  NotFoundPage,
+  FieldOverviewPage,
+  FieldFieldsPage,
+  FieldAiPage,
+  FieldDataPage,
+  FieldSettingsPage,
+  AtlasOverviewPage,
+  AtlasMapPage,
+  AtlasAiPage,
+  AtlasDataPage,
+  AtlasSettingsPage,
+  AtlasReportPage,
+} from "./lazyPages.js";
 
 // The Atlas data and the Field data are each loaded once for the whole app
 // (the first time one of their pages opens), so moving between pages is
@@ -75,11 +77,13 @@ const NotFoundPage = lazy(() => import("./site/pages/NotFoundPage.jsx"));
 // routes keeps a registered account on the product it chose: an Atlas
 // account that opens a Field address lands on /atlas, and the other way
 // round. The demo visitor passes both. <Suspense> shows nothing for the
-// moment a page's code is first downloading; after that, moving between
-// pages keeps the old page on screen until the new one is ready. A page
-// that fails to show (its code gone after an update, or any error) gets a
-// message with a Reload button, never a blank screen: the ErrorBoundary
-// here, and the one around each page in AppShell.jsx.
+// moment a page's code is still downloading (rare: the first page of a
+// visit is fetched before anything is drawn, and a page whose link was
+// pointed at is already here); after that, moving between pages keeps the
+// old page on screen until the new one is ready. A page that fails to show
+// (its code gone after an update, or any error) gets a message with a
+// Reload button, never a blank screen: the ErrorBoundary here, and the one
+// around each page in AppShell.jsx.
 function GatedApp() {
   return (
     <AccessGate>
@@ -107,7 +111,7 @@ export default function App() {
             <Route path="/signin" element={<SignInPage />} />
             {/* The owner's own sign-in (the Chernozem Google account), not linked from anywhere. */}
             <Route path="/owner" element={<OwnerPage />} />
-            {/* The first website's addresses, kept so old links still land somewhere. */}
+            {/* The first website's addresses, kept so old links still land somewhere (the same list as OLD_ADDRESSES in src/lazyPages.js). */}
             <Route path="/about" element={<Navigate to="/" replace />} />
             <Route path="/product" element={<Navigate to="/method#product" replace />} />
             <Route path="/guide" element={<Navigate to="/method#use" replace />} />
