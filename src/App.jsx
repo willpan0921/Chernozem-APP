@@ -6,12 +6,14 @@
 //   /story        The story                  /demo         Try the Ukraine demo (with a code)
 //   /method       Methodology                /register     Make an account (Field or Atlas)
 //                                            /signin       Sign in to an account
+//                                            /owner        The owner's key (not linked anywhere)
 //   Old addresses (/about, /product, /guide, /technology, /design) go to
 //   the page that now holds that content.
 //
 // The app itself, inside the AppShell (the sidebar frame), behind the
-// AccessGate (src/components/atlas/AccessGate.jsx): the demo's access code
-// opens both products; a registered account opens the one it chose.
+// AccessGate (src/components/atlas/AccessGate.jsx): a visitor with no
+// account sees the public demo (both products, read-only); a registered
+// account opens the product it chose; the owner's key opens the demo to edit.
 //   /field            Field: Overview        /atlas            Atlas: Overview
 //   /field/fields     Field: Fields (map)    /atlas/map        Atlas: Atlas (map)
 //   /field/ai         Field: AI chat         /atlas/ai         Atlas: AI chat
@@ -60,6 +62,7 @@ const ContactPage = lazy(() => import("./site/pages/ContactPage.jsx"));
 const DemoPage = lazy(() => import("./site/pages/DemoPage.jsx"));
 const RegisterPage = lazy(() => import("./site/pages/RegisterPage.jsx"));
 const SignInPage = lazy(() => import("./site/pages/SignInPage.jsx"));
+const OwnerPage = lazy(() => import("./site/pages/OwnerPage.jsx"));
 const NotFoundPage = lazy(() => import("./site/pages/NotFoundPage.jsx"));
 
 // The Atlas data and the Field data are each loaded once for the whole app
@@ -102,6 +105,8 @@ export default function App() {
             <Route path="/demo" element={<DemoPage />} />
             <Route path="/register" element={<RegisterPage />} />
             <Route path="/signin" element={<SignInPage />} />
+            {/* The owner's own sign-in (the old access code), not linked from anywhere. */}
+            <Route path="/owner" element={<OwnerPage />} />
             {/* The first website's addresses, kept so old links still land somewhere. */}
             <Route path="/about" element={<Navigate to="/" replace />} />
             <Route path="/product" element={<Navigate to="/method#product" replace />} />
