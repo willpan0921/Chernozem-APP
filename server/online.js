@@ -3,16 +3,14 @@
 // starts on Render, the host of https://chernozem.app (docs/DEPLOY.md).
 // Online, a mistake in the settings must stop the new version from going
 // live, with the reason in Render's log (the deploy then shows as failed
-// and nothing is served), rather than:
-//   - open the app to everyone on the internet: no owner's key
-//     (ATLAS_ACCESS_CODE: without it everyone could change everything, the
-//     public demo included), or one that is short or is the example once
-//     printed in the docs (server/auth.js accessCodeProblem);
-//   - keep the data where the next deploy wipes it: CHERNOZEM_DATA_DIR
-//     missing, not a full path, inside the app's own folder, or a folder
-//     that does not exist or cannot be written to (the disk not attached).
-//     The folder is never made here: on Render only the disk's own folder
-//     survives a deploy.
+// and nothing is served), rather than keep the data where the next deploy
+// wipes it: CHERNOZEM_DATA_DIR missing, not a full path, inside the app's
+// own folder, or a folder that does not exist or cannot be written to (the
+// disk not attached). The folder is never made here: on Render only the
+// disk's own folder survives a deploy.
+// The old access code (ATLAS_ACCESS_CODE) is no longer needed or checked:
+// online every visitor without a cookie is the read-only demo whatever is
+// set, and the owner signs in with Google (server/auth.js).
 // On one's own computer (no RENDER setting) none of this applies.
 //
 //   startProblems()                 [] when the server may start, else one
@@ -26,15 +24,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { ROOT, onRender, refreshEnv } from "./env.js";
-import { ACCESS_CODE_MIN_LENGTH, accessCode, accessCodeProblem } from "./auth.js";
-
-const WHERE = "Set it on the service's Environment page in Render (docs/DEPLOY.md, section 4).";
-
-const CODE_PROBLEMS = {
-  missing: `ATLAS_ACCESS_CODE is not set, so anyone on the internet could change everything, the public demo included (it is the owner's key, typed at /owner). ${WHERE}`,
-  short: `ATLAS_ACCESS_CODE is shorter than ${ACCESS_CODE_MIN_LENGTH} characters, too easy to guess for a site on the internet. Use four or more random words. ${WHERE}`,
-  published: `ATLAS_ACCESS_CODE is the example once printed in the docs, which anyone can still read. Make up your own. ${WHERE}`,
-};
 
 const DISK = "the disk's folder (/var/data in render.yaml)";
 
@@ -90,8 +79,6 @@ export function startProblems() {
   refreshEnv();
   if (!onRender()) return [];
   const problems = [];
-  const code = accessCodeProblem(accessCode());
-  if (code) problems.push(CODE_PROBLEMS[code]);
   const data = dataFolderProblem(process.env.CHERNOZEM_DATA_DIR);
   if (data) problems.push(data);
   return problems;

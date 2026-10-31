@@ -18,36 +18,42 @@
 //     a chat is forgotten QUOTAS.demoChatKeepHours (24) hours after its
 //     last message.
 //
-// THE THREE LIMITS (the numbers are in server/quotas.js)
-// A question is answered only while all three allow it, counted over the
+// THE FOUR LIMITS (the numbers are in server/quotas.js)
+// A question is answered only while all four allow it, counted over the
 // last 24 hours: QUOTAS.demoChatPerVisitor (8) per visitor,
 // QUOTAS.demoChatPerAddress (24) per internet address (server/auth.js
 // clientAddress, which follows ATLAS_TRUST_PROXY, so a visitor who drops
-// the cookie is still counted), and QUOTAS.demoChatPerDay (300) for the
-// whole demo. Over any of them: 429 "quota" with DEMO_QUOTA_MESSAGE and a
-// Retry-After header, before Claude is asked anything. The counts are
-// kept in the same memory-bounded table as the wrong-key limit
-// (server/auth.js createLoginLimiter).
+// the cookie is still counted; an IPv6 visitor by its /48, the block one
+// customer of a provider usually holds), QUOTAS.demoChatPerDay (300) for
+// the whole demo, and QUOTAS.demoChatTokensPerDay (1,500,000) tokens of
+// Claude's for the whole demo (server/ai/chat.js adds each answer's usage
+// with spendDemoTokens). Over any of them: 429 "quota" with
+// DEMO_QUOTA_MESSAGE and a Retry-After header, before Claude is asked
+// anything. The counts are kept by server/counters.js (in memory, and in
+// quota-state.json in the base data folder), so a restart or a new version
+// does not start them again; the chats themselves stay in memory only.
 //
 //   visitorOf(req)                the visitor's number from the cookie, or null
 //   ensureVisitor(req, res)       that number, or a new one; sets the cookie
 //   spendDemoQuestion(req, id)    { ok: true } (one question counted), or
 //                                 { ok: false, retryAfterSec } (nothing counted)
+//   spendDemoTokens(tokens)       counts the tokens one answer used
 //   demoChatStore(store, id)      server/store.js with its four chat functions
 //                                 (getChat, saveChat, listChats, deleteChat)
 //                                 replaced by this visitor's memory; every
 //                                 other read (the farm, the runs...) is the
 //                                 demo's own data, read-only
 //   demoChatStats()               { visitors, threads } (for the tests)
-//   resetDemoChats({ clock })     forgets everything; clock() (ms) instead
-//                                 of the computer's (the tests; call it again
-//                                 after setQuotasForTests)
+//   resetDemoChats({ clock })     forgets every chat and the demo's counts;
+//                                 clock() (ms) instead of the computer's (the
+//                                 tests; call it again after setQuotasForTests)
 //
 // WHO EDITS IT
 // Nobody, normally. The numbers are in server/quotas.js.
 
 import { randomBytes } from "node:crypto";
-import { clientAddress, createLoginLimiter, demoCookie, DEMO_COOKIE_NAME, parseCookies } from "../auth.js";
+import { clientAddress, demoCookie, DEMO_COOKIE_NAME, parseCookies } from "../auth.js";
+import { counter } from "../counters.js";
 import { DAY_MS, HOUR_MS, QUOTAS } from "../quotas.js";
 
 export const DEMO_QUOTA_MESSAGE = "The demo's assistant has answered enough questions for now. Register to ask about your own land.";
@@ -61,16 +67,24 @@ const SWEEP_EVERY_MS = 60 * 1000;
 // edits, keeps the chats and the counts.
 //   visitors  number -> { threads: Map(id -> { chat, keptAt }), seenAt },
 //             the visitor seen longest ago first
-const memory = (globalThis.__chernozemDemoChats ??= { visitors: new Map(), limits: null, clock: null, sweptAt: 0 });
+const memory = (globalThis.__chernozemDemoChats ??= { visitors: new Map(), clock: null, sweptAt: 0 });
 
 const now = () => (memory.clock ? memory.clock() : Date.now());
 const keepMs = () => QUOTAS.demoChatKeepHours * HOUR_MS;
 
+// The four counts (server/counters.js), each over 24 hours.
+const counts = () => ({
+  visitor: counter("demo-chat-visitor", DAY_MS),
+  address: counter("demo-chat-address", DAY_MS),
+  all: counter("demo-chat", DAY_MS),
+  tokens: counter("demo-chat-tokens", DAY_MS),
+});
+
 export function resetDemoChats({ clock = null } = {}) {
   memory.visitors = new Map();
-  memory.limits = null;
   memory.clock = clock;
   memory.sweptAt = 0;
+  for (const count of Object.values(counts())) count.clear();
 }
 
 // ---------- The visitor ----------
@@ -93,29 +107,29 @@ export function ensureVisitor(req, res) {
   return id;
 }
 
-// ---------- The three limits ----------
-
-function limits() {
-  return (memory.limits ??= {
-    visitor: createLoginLimiter({ max: QUOTAS.demoChatPerVisitor, windowMs: DAY_MS }),
-    address: createLoginLimiter({ max: QUOTAS.demoChatPerAddress, windowMs: DAY_MS }),
-    all: createLoginLimiter({ max: QUOTAS.demoChatPerDay, windowMs: DAY_MS }),
-  });
-}
+// ---------- The four limits ----------
 
 export function spendDemoQuestion(req, visitor) {
   const at = now();
-  const address = clientAddress(req);
-  const counts = limits();
-  const asked = [counts.visitor.check(visitor, at), counts.address.check(address, at), counts.all.check("demo", at)];
+  const address = clientAddress(req, { ipv6Bits: 48 });
+  const { visitor: perVisitor, address: perAddress, all, tokens } = counts();
+  const asked = [
+    perVisitor.check(visitor, QUOTAS.demoChatPerVisitor, at),
+    perAddress.check(address, QUOTAS.demoChatPerAddress, at),
+    all.check("demo", QUOTAS.demoChatPerDay, at),
+    tokens.check("demo", QUOTAS.demoChatTokensPerDay, at),
+  ];
   const blocked = asked.filter((answer) => answer.blocked);
   if (blocked.length) return { ok: false, retryAfterSec: Math.max(...blocked.map((answer) => answer.retryAfterSec)) };
-  // (The limiter calls a counted event "fail", after the wrong keys it was
-  // made for.)
-  counts.visitor.fail(visitor, at);
-  counts.address.fail(address, at);
-  counts.all.fail("demo", at);
+  perVisitor.add(visitor, 1, at);
+  perAddress.add(address, 1, at);
+  all.add("demo", 1, at);
   return { ok: true };
+}
+
+// The tokens one of Claude's answers used in the demo (server/ai/chat.js).
+export function spendDemoTokens(tokens) {
+  counts().tokens.add("demo", tokens, now());
 }
 
 // ---------- The chats ----------

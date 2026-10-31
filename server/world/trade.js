@@ -4,7 +4,8 @@
 // products HS 01-05, vegetable products 06-15, prepared food 16-24) into
 // the small table the website's globe reads, public/site/world/trade.json:
 //
-//   { year, note, exporters: { ISO3: { total, to: [ { iso3, share, value } ] } } }
+//   { year, years: [first, last], note,
+//     exporters: { ISO3: { total, to: [ { iso3, share, value, year, by } ] } } }
 //
 // For an exporter A and an importer B:
 //   value   what B says it bought from A (US$ thousands, the three sectors
@@ -12,7 +13,13 @@
 //           its exports to B stands in.
 //   share   value divided by everything B imports in those sectors from
 //           every country: "23% of Egypt's food imports come from Ukraine".
+//   year    the year that figure is from: each country gives its latest
+//           year with data (2023, else 2022, else 2021), so rows differ
+//   by      "buyer" when B reported it, "seller" when A's own figure
+//           stands in (B reported nothing)
 //   total   everything A sells abroad in those sectors, counted the same way.
+// At the top: year, the most common reporting year; years, the first and
+// last year of any row in the file.
 // Each exporter keeps its eight largest shares, and only those of at least
 // 2% and at least US$ 20 million (20,000 thousand). Region groups ("World",
 // "Europe & Central Asia"...), bunkers, free zones, "unspecified" and
@@ -84,48 +91,66 @@ export function buildTradeTable(raw, { maxPartners = MAX_PARTNERS, minShare = MI
     for (const [partner, value] of Object.entries(countryRows(entry.exports))) have.exports[partner] = (have.exports[partner] || 0) + value;
   }
 
+  // The year a country's figures are from (null when the crawl did not say).
+  const yearOf = (iso3) => {
+    const given = reporters[iso3]?.year;
+    const year = given === null || given === undefined || given === "" ? NaN : Number(given);
+    return Number.isInteger(year) && year > 1900 ? year : null;
+  };
+
   // What each importer B bought from each A: B's own report when it made
-  // one, else what every A says it sent to B.
+  // one ("buyer", B's year), else what every A says it sent to B
+  // ("seller", each A's own year).
   const importers = {};
   for (const [iso3, entry] of Object.entries(reporters)) {
-    const from = Object.fromEntries(Object.entries(entry.imports).filter(([partner]) => partner !== iso3));
+    const from = {};
+    for (const [partner, value] of Object.entries(entry.imports)) {
+      if (partner !== iso3) from[partner] = { value, year: yearOf(iso3) };
+    }
     if (Object.keys(from).length) importers[iso3] = { reported: true, from };
   }
   for (const [iso3, entry] of Object.entries(reporters)) {
     for (const [partner, value] of Object.entries(entry.exports)) {
       if (partner === iso3 || importers[partner]?.reported) continue;
       const mirror = importers[partner] || (importers[partner] = { reported: false, from: {} });
-      mirror.from[iso3] = (mirror.from[iso3] || 0) + value;
+      const have = mirror.from[iso3] || (mirror.from[iso3] = { value: 0, year: yearOf(iso3) });
+      have.value += value;
     }
   }
 
   const exporters = {};
   for (const [importer, record] of Object.entries(importers)) {
-    const total = Object.values(record.from).reduce((sum, value) => sum + value, 0);
+    const total = Object.values(record.from).reduce((sum, row) => sum + row.value, 0);
     if (total <= 0) continue;
-    for (const [exporter, value] of Object.entries(record.from)) {
+    for (const [exporter, { value, year }] of Object.entries(record.from)) {
       if (value <= 0) continue;
       const have = exporters[exporter] || (exporters[exporter] = { total: 0, rows: [] });
       have.total += value;
-      have.rows.push({ iso3: importer, value, share: value / total });
+      have.rows.push({ iso3: importer, value, share: value / total, year, by: record.reported ? "buyer" : "seller" });
     }
   }
 
   const table = {};
+  const rowYears = [];
   for (const exporter of Object.keys(exporters).sort()) {
     const { total, rows } = exporters[exporter];
     const to = rows
       .filter((row) => row.share >= minShare && row.value >= minValue)
       .sort((a, b) => b.share - a.share || b.value - a.value || a.iso3.localeCompare(b.iso3))
       .slice(0, maxPartners)
-      .map((row) => ({ iso3: row.iso3, share: round3(row.share), value: Math.round(row.value) }));
-    if (to.length) table[exporter] = { total: Math.round(total), to };
+      .map((row) => ({ iso3: row.iso3, share: round3(row.share), value: Math.round(row.value), year: row.year, by: row.by }));
+    if (!to.length) continue;
+    table[exporter] = { total: Math.round(total), to };
+    for (const row of to) if (row.year !== null) rowYears.push(row.year);
   }
 
   const year = commonYear(reporters);
+  const years = rowYears.length ? [Math.min(...rowYears), Math.max(...rowYears)] : null;
+  const span = years ? (years[0] === years[1] ? `${years[0]}` : `${years[0]} to ${years[1]}`) : "latest year with data";
   return {
     year,
-    note: `World Bank WITS, importer-reported, three agricultural sectors (HS 01-05 animal, 06-15 vegetable, 16-24 food products), ${year ?? "latest year with data"}. value: US$ thousands the importer reports buying from this exporter (the exporter's own figure when the importer reported nothing); share: that value over everything the importer buys in these sectors; total: the exporter's sales to every country, counted the same way. Up to eight partners per exporter, each at least 2% and US$ 20 million.`,
+    years,
+    note: `World Bank WITS, three agricultural sectors (HS 01-05 animal, 06-15 vegetable, 16-24 food products), the latest year each country reported (${span}; most often ${year ?? "unknown"}). value: US$ thousands the importer reports buying from this exporter (by "buyer"), or the exporter's own figure when the importer reported nothing at all (by "seller"); year: the year of that figure; share: that value over everything the importer buys in these sectors; total: the exporter's sales to every country, counted the same way. Up to eight partners per exporter, each at least 2% and US$ 20 million.`,
     exporters: table,
   };
 }

@@ -46,9 +46,6 @@ export const LINKS = {
   paperTitle:
     "Restoring Ukraine's Agricultural Lifeline: A Gated Aggregation Algorithm for Chernozem Rehabilitation under Wartime and Postwar Conditions",
   earthEngine: "https://earthengine.google.com/",
-  // Used once, on the About page only (the owner's rule: the Congressional
-  // App Challenge is named nowhere else on the website).
-  cac: "https://www.congressionalappchallenge.us/",
 };
 
 // Every number the website quotes, with its source.
@@ -78,7 +75,11 @@ export const NUMBERS = {
   falseAlarmPercent: 1.1, // cropland wrongly flagged in the same places in a normal year, worst case
   falseAlarmMeanPercent: 0.33, // the same, on average
   analysesOk: 98, // monthly analyses that completed, of 98 since the fixes
-  automatedTests: 888, // npm test on main, 2026-10-27
+  // npm test on the website branch, 31 October 2026 (commit 2a51d8f): 1,053
+  // passed. The Methodology page prints it rounded down to the hundred
+  // ("More than 1,000"), so it stays true while tests are added; set the
+  // new count here after a merge.
+  automatedTests: 1113, // npm test on the website branch, 2026-10-31
   // The research paper (Harvard Dataverse).
   paperOperators: 10, // aggregation operators compared on identical inputs
   paperOblasts: 24, // first-level units ranked
@@ -94,7 +95,7 @@ export const NUMBERS = {
   blackSoilCroplandPercent: 17,
   blackSoilWheatPercent: 30,
   // The war on the land (FAO, 2025).
-  surveyedHa: 2370000, // farmland the FAO surveyed from satellite; it found more than a million shell craters there
+  surveyedHa: 2370000, // farmland the FAO surveyed from satellite; it found over a million shell craters there
   peopleFedMillions: 400, // people a year fed by Ukraine's food exports before the war
   // The wider need.
   armedConflicts: 130, // armed conflicts in the world, about
@@ -115,11 +116,40 @@ export const DEMO = {
   passesSinceMarch: 50, // field-data
 };
 
+// The two doors into the demo, on the Demo page (/demo) and on the owner's
+// page (/owner): each product's computer screen and its phone screen. The
+// computer screen is the half-size copy (-960) shown at its own size, so
+// the door shows one readable piece of it ("position" picks the piece);
+// the phone screen is shown whole, and on a phone it is the only picture.
+export const DEMO_DOORS = [
+  {
+    key: "field",
+    to: SITE.appPath,
+    label: "Open Field",
+    caption: "Field: the demo farm near Kupiansk",
+    // Field 11's readings, at the right of the screen: the door shows the
+    // screen's right-hand part, and never starts right of the cards (645px
+    // into the half-size screen) when the door is narrow.
+    wide: { src: "/site/shots/field-fields-detail-960.webp", width: 960, height: 684, position: "max(100%, -645px) 0" },
+    phone: { src: "/site/shots/phone-field-overview.webp", width: 780, height: 1688 },
+  },
+  {
+    key: "atlas",
+    to: SITE.atlasPath,
+    label: "Open Atlas",
+    caption: "Atlas: Ukraine, September 2026",
+    // The weights beside the map of Ukraine (from the panel's left edge,
+    // 124px into the half-size screen).
+    wide: { src: "/site/shots/atlas-map-near-micro-960.webp", width: 960, height: 600, position: "-124px 0" },
+    phone: { src: "/site/shots/phone-atlas-overview.webp", width: 780, height: 1688 },
+  },
+];
+
 // Where the globe's live markers come from.
 export const WORLD_SOURCES = [
   { name: "GDACS", url: "https://www.gdacs.org/", what: "Floods, droughts, wildfires, storms, earthquakes and volcanoes, as they happen." },
   { name: "Reviewed list", url: "/method#technology", what: "Armed conflicts, reviewed by hand (there is no free live feed of wars)." },
-  { name: "WITS", url: "https://wits.worldbank.org/", what: "Who buys whose food: agricultural trade by country (World Bank, 2023)." },
+  { name: "WITS", url: "https://wits.worldbank.org/", what: "Who buys whose food: agricultural trade by country (World Bank WITS, the latest year each country reported)." },
 ];
 
 // What the app reads, in the order the website lists them.

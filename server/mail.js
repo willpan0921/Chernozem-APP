@@ -30,7 +30,17 @@
 //             answers the visitor; else none (the address is in the body)
 //   From      the Gmail or SMTP account itself ("Chernozem website
 //             <account>"), or MAIL_FROM
-// One try gives up after SEND_TIMEOUT_MS (8 seconds).
+//   Message-ID  made from the message's own id, "<msg-...@chernozem.app>",
+//             the same at every try, so Gmail keeps one copy if a try that
+//             looked failed had in fact gone through; Resend gets the id as
+//             its Idempotency-Key, which does the same there
+// A try is never cut short by a clock of our own (that sent copies the
+// server then counted as failed, and sent again): it ends when the mail
+// service answers, or by the transport's own time limits
+// (TRANSPORT_TIMEOUT_MS: nodemailer's connection, greeting and silence
+// limits, each 15 seconds; Resend's whole request). server/messages.js
+// answers the visitor before that, and records the real outcome when it
+// comes.
 //
 //   mailSettings(env?)        what config() says: { transport, to, from, ... }
 //                             (with the secrets: kept inside this file)
@@ -41,12 +51,15 @@
 //   sendContactEmail(message) { status: "sent" | "failed" | "off",
 //                             transport, error? }; never throws, and the
 //                             error never carries a password or key
+//   messageIdFor(id)          "<msg-...@chernozem.app>", or null for an id
+//                             that is not plainly one
 //
 // FOR THE TESTS
 //   setDepsForTests({ createTransport, fetch, timeoutMs }): stand-ins for
 //   nodemailer's createTransport (options -> { sendMail(mail) }) and for
-//   fetch (the Resend call), and a shorter time to give up after. Called
-//   with nothing, the real ones again.
+//   fetch (the Resend call), and shorter transport time limits (handed to
+//   the transport; a stand-in may ignore them). Called with nothing, the
+//   real ones again.
 //
 // WHO EDITS IT
 // Nobody, normally. The settings are typed into Render's Environment page
@@ -58,7 +71,10 @@ import { config } from "./env.js";
 export const DEFAULT_MAIL_TO = "chernozem.app@gmail.com";
 export const RESEND_DEFAULT_FROM = "Chernozem website <onboarding@resend.dev>";
 export const RESEND_URL = "https://api.resend.com/emails";
-export const SEND_TIMEOUT_MS = 8000;
+// The transport's own time limits (see the top of this file).
+export const TRANSPORT_TIMEOUT_MS = 15000;
+// The domain in each e-mail's Message-ID.
+export const MESSAGE_ID_DOMAIN = "chernozem.app";
 export const SUBJECT_MAX = 120;
 export const REPLY_TO_MAX = 254;
 
@@ -74,7 +90,7 @@ export function setDepsForTests({ createTransport, fetch, timeoutMs } = {}) {
   memory.timeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : null;
 }
 
-const timeout = () => memory.timeoutMs || SEND_TIMEOUT_MS;
+const timeout = () => memory.timeoutMs || TRANSPORT_TIMEOUT_MS;
 
 // ---------- Settings ----------
 
@@ -136,6 +152,13 @@ function when(iso) {
 
 const given = (value) => oneLine(value) || "not given";
 
+// The Message-ID for one kept message (its id is made by server/store.js
+// newId: "msg-" and hex digits).
+export function messageIdFor(id) {
+  const text = String(id ?? "");
+  return /^[a-z0-9-]{1,64}$/.test(text) ? `<${text}@${MESSAGE_ID_DOMAIN}>` : null;
+}
+
 export function contactEmail(message) {
   const text = [
     "A message from the contact form on chernozem.app.",
@@ -153,28 +176,21 @@ export function contactEmail(message) {
     "",
     "It is also kept on the server: Atlas > Settings, Messages from the website.",
   ].join("\n");
-  return { subject: subjectFor(message.name), text, replyTo: safeReplyTo(message.email) };
+  return { subject: subjectFor(message.name), text, replyTo: safeReplyTo(message.email), messageId: messageIdFor(message.id), idempotencyKey: messageIdFor(message.id) ? String(message.id) : null };
 }
 
 // ---------- Sending ----------
 
-// The error as a short sentence, with any password or key taken out.
-function plainError(error, settings) {
+// The error as a short sentence, with any password or key taken out. A
+// transport's own time limit says which service was silent.
+function plainError(error, settings, what = "The mail service") {
+  const timedOut = error?.code === "ETIMEDOUT" || error?.name === "TimeoutError" || /timeout|timed out/i.test(String(error?.message || ""));
   let text = String(error?.message || error || "unknown error").replace(/\s+/g, " ").trim();
+  if (timedOut) text = `${what} did not answer in time (${text})`;
   for (const secret of [settings.pass, settings.apiKey]) {
     if (secret && secret.length >= 4) text = text.split(secret).join("***");
   }
   return text.slice(0, 300);
-}
-
-// Rejects after ms with a plain sentence, whatever the promise does.
-function inTime(promise, ms, what) {
-  let timer;
-  const late = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${what} did not answer within ${Math.max(1, Math.round(ms / 1000))} seconds`)), ms);
-    timer.unref?.();
-  });
-  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
 }
 
 async function sendWithNodemailer(settings, email) {
@@ -187,7 +203,14 @@ async function sendWithNodemailer(settings, email) {
   const options = { ...base, connectionTimeout: timeout(), greetingTimeout: timeout(), socketTimeout: timeout(), disableFileAccess: true, disableUrlAccess: true };
   const transporter = memory.createTransport ? memory.createTransport(options) : nodemailer.createTransport(options);
   try {
-    await transporter.sendMail({ from: settings.from, to: settings.to, subject: email.subject, text: email.text, ...(email.replyTo ? { replyTo: email.replyTo } : {}) });
+    await transporter.sendMail({
+      from: settings.from,
+      to: settings.to,
+      subject: email.subject,
+      text: email.text,
+      ...(email.replyTo ? { replyTo: email.replyTo } : {}),
+      ...(email.messageId ? { messageId: email.messageId } : {}),
+    });
   } finally {
     transporter.close?.();
   }
@@ -197,7 +220,12 @@ async function sendWithResend(settings, email) {
   const fetchImpl = memory.fetch || globalThis.fetch;
   const res = await fetchImpl(RESEND_URL, {
     method: "POST",
-    headers: { Authorization: `Bearer ${settings.apiKey}`, "Content-Type": "application/json" },
+    headers: {
+      Authorization: `Bearer ${settings.apiKey}`,
+      "Content-Type": "application/json",
+      // The same key at every try of one message: Resend sends it once.
+      ...(email.idempotencyKey ? { "Idempotency-Key": email.idempotencyKey } : {}),
+    },
     body: JSON.stringify({ from: settings.from, to: [settings.to], subject: email.subject, text: email.text, ...(email.replyTo ? { reply_to: email.replyTo } : {}) }),
     signal: AbortSignal.timeout(timeout()),
   });
@@ -211,10 +239,10 @@ export async function sendContactEmail(message, settings = mailSettings()) {
   if (settings.transport === "off") return { status: "off", transport: "off" };
   try {
     const email = contactEmail(message);
-    const work = settings.transport === "resend" ? sendWithResend(settings, email) : sendWithNodemailer(settings, email);
-    await inTime(work, timeout(), TRANSPORT_NAMES[settings.transport]);
+    if (settings.transport === "resend") await sendWithResend(settings, email);
+    else await sendWithNodemailer(settings, email);
     return { status: "sent", transport: settings.transport };
   } catch (error) {
-    return { status: "failed", transport: settings.transport, error: plainError(error, settings) };
+    return { status: "failed", transport: settings.transport, error: plainError(error, settings, TRANSPORT_NAMES[settings.transport]) };
   }
 }

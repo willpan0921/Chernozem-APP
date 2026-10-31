@@ -6,8 +6,15 @@
   buttons, the stage slider, the proof table's heading, the features (an
   index beside one window on a wide screen, modules on a narrow one), the
   demo on its sage stage, the film, the founder's letter with the line on
-  what Chernozem was made for, the action tiles and the small print.
-  Every colour and size is a token from src/site/site.css.
+  what Chernozem was made for, the action tile with its satellite view and
+  the small print. Every colour and size is a token from src/site/site.css.
+
+  The page's title is its largest heading at every width: it is sized to
+  the width of the words' column (each line of "seen from space" is about
+  7.6 times the type size wide), and the two display headings below it
+  ("First, the satellites pass", "Checked against the record") stay a
+  step smaller. Text starts on two lines of the page's grid: the left
+  edge, or three columns in.
 
   WHO EDITS IT
   Whoever works on the About page.
@@ -22,12 +29,19 @@
   background: var(--field-dark);
 }
 
-/* Two set lines, at the section heading's size. */
+/* Two set lines, the largest type on the page, as large as the words'
+   column allows ("seen from space" is about 7.6 times the type size wide;
+   the column is min(600px, 46vw) on a wide screen, the full width less the
+   margins on a tall one). */
 .site .hero-title {
-  font-size: var(--step-head);
+  font-size: clamp(2.5rem, 5.9vw, 4.8rem);
   font-weight: 800;
   letter-spacing: -0.04em;
   line-height: 0.92;
+}
+
+.site .globe.is-portrait .hero-title {
+  font-size: clamp(2.25rem, calc((100vw - 2 * var(--margin)) / 7.8), 4.8rem);
 }
 
 .site .hero-lead {
@@ -46,10 +60,11 @@
   margin-top: 32px;
 }
 
-/* ---- 2. The showcase: one row, and the three states beside it ---- */
+/* ---- 2. The showcase: the heading at the left edge, the three states
+   under it, and the row enlarged across columns 4 to 12 ---- */
 .site .showcase-head {
-  grid-column: 4 / 13;
-  margin-bottom: 72px;
+  grid-column: 1 / 13;
+  margin-bottom: 56px;
 }
 
 .site .showcase-rows {
@@ -64,13 +79,13 @@
   grid-column: 1 / 4;
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
+  align-items: flex-start;
   gap: 4px;
 }
 
 .site .showcase-word {
   min-height: 48px;
-  padding: 0 4px;
+  padding: 0;
   font-size: 2rem;
   font-weight: 600;
   letter-spacing: -0.03em;
@@ -100,9 +115,14 @@
 }
 
 .site .showcase-copy {
-  grid-column: 4 / 11;
-  width: 640px;
-  max-width: 100%;
+  grid-column: 4 / 13;
+  min-width: 0;
+}
+
+/* Enlarged as a whole to the columns' width (FieldRowStates.jsx sets
+   --row-zoom, between 1 and 2). */
+.site .showcase-copy .frow[data-ui] {
+  zoom: var(--row-zoom, 1);
 }
 
 /* The app's field row, at true size, with the app's own look inside. */
@@ -243,6 +263,7 @@
   /* On a phone the row keeps its true size but wraps, so the live button
      and the chip stay reachable instead of being cropped away. */
   .site .showcase-copy .frow[data-ui] {
+    zoom: 1;
     width: 100%;
     flex-wrap: wrap;
     row-gap: 10px;
@@ -276,9 +297,16 @@
   grid-template-columns: 1fr 1fr;
 }
 
+/* Inside the page's frame (.wrap): the clause starts at the left edge. */
 .site .stages-clause {
-  padding: clamp(2.5rem, 6vw, 5rem) var(--margin) 2rem;
+  padding: clamp(2.5rem, 6vw, 5rem) var(--gutter) 2rem 0;
   background: var(--bg);
+}
+
+/* The two display headings of the page stay a step under its title. */
+.site .display.stages-head,
+.site .display.proof-head {
+  font-size: clamp(2rem, 0.5rem + 4.4vw, 4.5rem);
 }
 
 .site .stages-head {
@@ -311,15 +339,19 @@
   overflow: clip;
 }
 
+/* The one picture on the page: the crop at its true size, from the top
+   left (a phone's frame shows its top-left part). */
 .site .stages-shot {
   position: absolute;
   inset: 0;
-  opacity: 0;
-  transition: opacity 200ms ease;
+  margin: 0;
 }
 
-.site .stages-shot.is-on {
-  opacity: 1;
+.site .stages-shot img {
+  display: block;
+  width: 440px;
+  height: 560px;
+  max-width: none;
 }
 
 /* The whole picture is a tap target that moves on to the next stage. */
@@ -334,14 +366,14 @@
 /* The control along the bottom: the track under a transparent range input. */
 .site .stages-control {
   position: relative;
-  padding: 0 var(--margin) 28px;
+  padding: 0 0 28px;
   background: var(--bg);
 }
 
 .site .stages-track {
   position: absolute;
-  left: var(--margin);
-  right: var(--margin);
+  left: 0;
+  right: 0;
   top: 12px;
   height: 8px;
   background: #d9d6cf;
@@ -438,12 +470,22 @@
   .js .site .stages-text {
     animation: site-stage-in 200ms var(--ease-out) both;
   }
+
+  .js .site .stages-shot {
+    animation: site-stage-fade 200ms ease both;
+  }
 }
 
 @keyframes site-stage-in {
   from {
     opacity: 0;
     transform: translateY(8px);
+  }
+}
+
+@keyframes site-stage-fade {
+  from {
+    opacity: 0;
   }
 }
 
@@ -497,7 +539,7 @@
 
   .site .stages-clause {
     order: 3;
-    padding: 1.5rem var(--margin) 3rem;
+    padding: 1.5rem 0 3rem;
   }
 
   .site .stages-head {
@@ -516,13 +558,11 @@
   }
 }
 
-/* ---- 4. The proof: a stepped heading, then the table ---- */
-.site .proof-head {
-  max-width: 14ch;
-}
-
+/* ---- 4. The proof: a stepped heading, then the table. Its second line
+   starts three columns in, on the page's grid (the heading spans the
+   frame, so 100% is the grid's width). ---- */
 .site .proof-head-step {
-  padding-left: calc((100% - 11 * var(--gutter)) / 12 * 2 + 2 * var(--gutter));
+  padding-left: calc((100% - 11 * var(--gutter)) / 12 * 3 + 3 * var(--gutter));
 }
 
 .site .proof-body {
@@ -774,6 +814,14 @@
   grid-column: 5 / 13;
 }
 
+/* Until the demo is built (it is, once the visitor comes within 800 px),
+   its place is kept at its height (measured: 699 px at 1024 wide, 657 at
+   1440, 621 from 1760 on; 991 on a 390 px phone, 1122 at 768), so nothing
+   below moves. */
+.site .demo-stage.is-waiting {
+  min-height: max(621px, calc(802px - 10.1vw));
+}
+
 @media (max-width: 900px) {
   .site .demo-copy,
   .site .demo-stage {
@@ -783,6 +831,10 @@
   .site .demo-stage {
     margin-top: 2.5rem;
   }
+
+  .site .demo-stage.is-waiting {
+    min-height: calc(856px + 34.66vw);
+  }
 }
 
 /* ---- 7. The film on the dark field (the film itself: site.css, .film) ---- */
@@ -790,23 +842,20 @@
   margin-bottom: 2.5rem;
 }
 
-/* ---- 8. The founder's letter: a centred column ---- */
-.site .letter-section {
-  padding-block: 10rem;
-}
-
+/* ---- 8. The founder's letter, on the grid: the heading across the top
+   at the left edge, the letter three columns in ---- */
 .site .letter {
-  position: relative;
-  width: 520px;
-  max-width: 100%;
-  margin-inline: auto;
+  row-gap: 3rem;
+  align-items: start;
 }
 
 .site .letter-head {
-  font-size: var(--step-body);
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  margin-bottom: 1.5rem;
+  grid-column: 1 / 13;
+}
+
+.site .letter-text {
+  grid-column: 4 / 11;
+  max-width: 40rem;
 }
 
 .site .letter-mark {
@@ -854,57 +903,59 @@
   font-size: 15px;
 }
 
-/* What Chernozem was made for: 40 px under the signature, the letter's width. */
+/* What Chernozem was made for: 40 px under the signature. */
 .site .letter-made {
-  width: 520px;
-  max-width: 100%;
-  margin: 40px auto 0;
+  margin-top: 40px;
   font-size: 15px;
   line-height: 1.45;
 }
 
+@media (max-width: 860px) {
+  .site .letter-text {
+    grid-column: 1 / 13;
+  }
+}
+
 @media (max-width: 760px) {
-  .site .letter-section {
-    padding-block: 6rem;
+  .site .letter {
+    row-gap: 2rem;
   }
 
   .site .letter-mark {
     width: 40px;
     height: 40px;
   }
-
 }
 
-/* ---- 9. The close: one row of three tiles ---- */
+/* ---- 9. The close: the action tile (its words on the page's frame,
+   site.css .frame) and the satellite view, from edge to edge ---- */
 .site .close {
   padding-block: 0;
 }
 
 .site .close-row {
   display: grid;
-  grid-template-columns: 2fr 8fr 2fr;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
   gap: 10px;
-  height: 360px;
+  min-height: 360px;
 }
 
 .site .close-tile {
-  height: 100%;
   overflow: clip;
-}
-
-.site .close-tile-photo img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: 58% 50%; /* the map, not the app's side panel */
-  max-width: none;
 }
 
 .site .close-tile-main {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: 40px;
+  padding: 48px var(--gutter) 48px var(--frame-inset);
+}
+
+.site .close-tile-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  max-width: none;
 }
 
 .site .close-head {
@@ -931,32 +982,21 @@
 
 @media (max-width: 860px) {
   .site .close-row {
-    grid-template-columns: 1fr 1fr;
-    height: auto;
-    padding-inline: var(--margin);
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
   }
 
   .site .close-tile-main {
-    grid-column: 1 / 3;
-    order: 1;
     min-height: 300px;
-    padding: 28px 24px;
+    padding: 40px var(--margin);
   }
 
   .site .close-head {
     font-size: 2rem;
   }
 
-  .site .close-tile-photo,
-  .site .close-tile-sage {
-    height: 120px;
-    order: 2;
-  }
-
-  /* A small wide tile would show the whole app screen; zoom into the map. */
-  .site .close-tile-photo img {
-    transform: scale(2.6);
-    transform-origin: 58% 50%;
+  .site .close-tile-photo {
+    height: 180px;
   }
 }
 

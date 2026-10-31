@@ -9,7 +9,7 @@ This page explains how the public copy of Chernozem works: where it runs, what i
 - [5. Bringing your data (once)](#5-bringing-your-data-once)
 - [6. Connecting chernozem.app (GoDaddy)](#6-connecting-chernozemapp-godaddy)
 - [7. How an update goes live](#7-how-an-update-goes-live)
-- [8. Changing the owner's key](#8-changing-the-owners-key)
+- [8. The owner's sign-in](#8-the-owners-sign-in)
 - [9. How the data is kept](#9-how-the-data-is-kept)
 - [10. Going back (rollback)](#10-going-back-rollback)
 - [11. Earth Engine: noncommercial use](#11-earth-engine-noncommercial-use)
@@ -32,7 +32,7 @@ This page explains how the public copy of Chernozem works: where it runs, what i
 | The contact form's e-mail | The owner's own **Gmail**, chernozem.app@gmail.com (or **Resend**) | Each message is e-mailed to chernozem.app@gmail.com and kept on the disk too (section 14). |
 | Map pictures and fonts | Esri, OpenStreetMap, Google Fonts | Loaded by each visitor's browser directly. |
 
-The private settings (the Claude key, the Earth Engine key, the owner's key, the Gmail app password) are typed into Render's dashboard only. They are **never** in GitHub: the repository is public, so anyone can read everything in it.
+The private settings (the Claude key, the Earth Engine key, the Gmail app password) are typed into Render's dashboard only. They are **never** in GitHub: the repository is public, so anyone can read everything in it.
 
 ## 2. What it costs each month
 
@@ -41,12 +41,12 @@ The private settings (the Claude key, the Earth Engine key, the owner's key, the
 | Render web service, "Starter" (0.5 CPU, 512 MB memory) | $7.00 |
 | Render disk, 1 GB | $0.25 |
 | Render workspace, "Hobby" | $0. It includes 2 custom domains (chernozem.app and www.chernozem.app) and 5 GB of traffic a month; more traffic costs $0.15 per GB. A first visit downloads about 0.5 to 0.8 MB from the server (a tour of five pages about 1.6 MB), so 5 GB is a few thousand visits. |
-| Claude (Anthropic) | Pay for what is used. The app uses Claude Opus 5.5: $4 per million tokens read and $20 per million written. One question in an AI chat costs roughly 2 to 20 US cents, depending on how much data it looks at. Set a monthly spending limit at console.anthropic.com. |
+| Claude (Anthropic) | Pay for what is used. The app uses Claude Opus 5.5: $4 per million tokens read and $20 per million written. One question in an AI chat costs roughly 2 to 20 US cents, depending on how much data it looks at. The server stops the assistant at a budget of tokens a day: 1.5 million for the whole public demo (at most about $15 a day) and 6 million for all registered accounts together (at most about $50 a day); usually it is far less. **Set a monthly spending limit at console.anthropic.com** as well: it is the hard stop the server's own limits cannot replace. |
 | Google Earth Engine | $0 for noncommercial use, within the project's monthly allowance (section 11). |
 | The contact e-mail | $0: the owner's own Gmail (or Resend's free plan). |
 | The domain chernozem.app | GoDaddy's yearly renewal (paid separately). |
 
-So about **$7.25 a month**, plus the AI questions people ask (the public demo's assistant answers at most 300 a day: section 3).
+So about **$7.25 a month**, plus the AI questions people ask (the public demo's assistant answers at most 300 a day and 1.5 million tokens: section 3; accounts: section 13).
 
 ## 3. The public demo
 
@@ -56,36 +56,36 @@ Anyone who opens **chernozem.app/field** or **chernozem.app/atlas** without an a
 
 **What a visitor cannot do**: change anything. Every change (an area, a field, a crop, a report, a photo, the team, a setting, an analysis, a search for fields) is refused with the sentence "This is the demo, so it can't be changed. Register to do this on your own land." (the pages show it with a Register button). Nothing a visitor does changes the demo's files or starts paid work.
 
-- **The AI assistant** answers at most **8 questions per visitor**, **24 per internet address** and **300 for the whole demo** in 24 hours (the owner's Claude key pays for each one); then it says "The demo's assistant has answered enough questions for now. Register to ask about your own land." A visitor's chats live in the server's memory only, for 24 hours, and only that visitor's browser sees them (a cookie, `chernozem_demo`). Nothing they ask is written to the disk. The numbers are in `server/quotas.js`.
+- **The AI assistant** answers at most **8 questions per visitor**, **24 per internet address** (an IPv6 visitor counts by its whole /48 block) and **300 for the whole demo** in 24 hours, and stops once the whole demo has used **1.5 million tokens** in 24 hours (the owner's Claude key pays for each one); then it says "The demo's assistant has answered enough questions for now. Register to ask about your own land." Its answers are short and cheap: at most 3,000 tokens each, thinking "low", at most 2 look-ups. These counts are kept on the disk (`quota-state.json`, written every 30 seconds and when the server stops), so a restart or a new version does not start them again. A visitor's chats live in the server's memory only, for 24 hours, and only that visitor's browser sees them (a cookie, `chernozem_demo`). Nothing they ask is written to the disk. Without a Claude key the assistant only says "The assistant is not available right now." and counts nothing. The numbers are in `server/quotas.js`.
 - **Earth Engine is never asked for the demo.** The area search gives countries only (regions need Earth Engine). A square's or a state's soil types, and the states' borders, show only where they were worked out before; elsewhere the demo says so. (Tip: as the owner, open the squares and states you want the demo to show once; they are then saved for everyone.) GeoTIFF downloads are off.
 - **The place search** (OpenStreetMap) looks up at most 20 names an hour per internet address and 200 for the whole demo (typed coordinates are always fine). **The weather** is the one kept for an hour; when it runs out, Open-Meteo is asked at most once every 10 minutes for the whole demo.
 - **Everyone can see the demo's data**: the farm, its reports and photos, the areas, the team's names and roles (never their e-mail addresses). Keep nothing private in it.
 - A registered person who presses "Open Field" or "Open Atlas" on the website's Demo page sees the demo in that browser tab, read-only (the tab sends the header `X-Chernozem-View: demo`); their own workspace is unchanged.
 
-**The owner's key.** `ATLAS_ACCESS_CODE` (once "the access code") is now **only the owner's key**. Nothing on the website mentions it. The owner types it once on the hidden page **https://chernozem.app/owner** (linked from nowhere); that browser is then the owner for 30 days: it edits the demo as before (both products, everything can be changed) and reads the contact messages in **Atlas > Settings**. On a shared computer press **Sign out** at the bottom of the sidebar when done. Ten wrong keys from one visitor lock that visitor out for 10 minutes.
+**The owner.** The owner signs in with the **Chernozem Google account** (chernozem.app@gmail.com) on the hidden page **https://chernozem.app/owner** (linked from nowhere): that browser is then the owner for 30 days. It edits the demo as before (both products, everything can be changed) and reads the contact messages in **Atlas > Settings**. On a shared computer press **Sign out** at the bottom of the sidebar when done. Section 8 has the details.
 
-Online the key must still be set (at least 16 characters, not the example once printed here): without it everyone could change everything, so the server refuses to start (section 12).
+**The old access code is retired.** It was handed out to visitors to open the demo, so it never became an owner's key: the server no longer accepts it anywhere, and the sign-ins it made in browsers are ignored. `ATLAS_ACCESS_CODE` is no longer needed online: you may delete it on Render's Environment page (keeping it is harmless; it changes nothing there). Online every visitor without an account always gets the read-only demo.
 
 ## 4. Setting it up (once)
 
 1. Create an account at **render.com** (the Hobby workspace is free; add a payment card for the $7 service).
 2. Create the service from this repository's `render.yaml` (Render calls it a "Blueprint": **New > Blueprint**, pick the repository). Render then also applies any later change to `render.yaml` pushed to `main`.
-   A service made any other way (by hand in the dashboard, or by the assistant with Render's API key) never reads `render.yaml`. It must be given every setting in that file itself: the 1 GB disk named `data` at `/var/data`, the build and start commands, the health check path, the build filter, and each setting under `envVars`. Without the disk, the data folder or a proper owner's key the server refuses to start (section 12) rather than lose data or let everyone change everything. Later changes to `render.yaml` must then be made on the service's pages as well. (Through the API, change one setting at a time, with the address for a single key, `/v1/services/{id}/env-vars/{key}`: a PUT to `/v1/services/{id}/env-vars` replaces the whole list, so it removes every setting it leaves out, and it deploys nothing by itself.)
-3. Render asks for the four private settings (later: the service's **Environment** page):
+   A service made any other way (by hand in the dashboard, or by the assistant with Render's API key) never reads `render.yaml`. It must be given every setting in that file itself: the 1 GB disk named `data` at `/var/data`, the build and start commands, the health check path, the build filter, and each setting under `envVars`. Without the disk or the data folder the server refuses to start (section 12) rather than lose data. Later changes to `render.yaml` must then be made on the service's pages as well. (Through the API, change one setting at a time, with the address for a single key, `/v1/services/{id}/env-vars/{key}`: a PUT to `/v1/services/{id}/env-vars` replaces the whole list, so it removes every setting it leaves out, and it deploys nothing by itself.)
+3. Render asks for the private settings (later: the service's **Environment** page):
 
    | Setting | What to type |
    | --- | --- |
    | `ANTHROPIC_API_KEY` | Your key from console.anthropic.com |
    | `GEE_SERVICE_ACCOUNT_JSON` | The whole Earth Engine key file, pasted as it is (open the .json file in TextEdit, select all, copy) |
-   | `ATLAS_ACCESS_CODE` | The owner's key (section 3), typed only at chernozem.app/owner: four or more random words you make up, or one a password manager makes. At least 16 characters. Never a key printed in a document, these included: anyone can read them. |
    | `IMPORT_TOKEN` | Only for section 5: a long random text, at least 16 characters (for example from a password manager). Remove it afterwards. |
 
-4. The first build takes a few minutes. The app then answers at the service's own address, shown at the top of the service's page, for example `https://chernozem.onrender.com`. Open its `/owner` page and type the key: the pages are empty until section 5.
-5. For the contact form's e-mail, add `GMAIL_APP_PASSWORD` (section 14). Until then the messages are kept on the disk and sent once it is set.
+4. Switch on Firebase Authentication once (section 13), with the Google sign-in, and add the service's own address (for example `chernozem.onrender.com`) and `chernozem.app` to its **Authorized domains**: the owner signs in with Google.
+5. The first build takes a few minutes. The app then answers at the service's own address, shown at the top of the service's page, for example `https://chernozem.onrender.com`. Open its `/owner` page and sign in with the Chernozem Google account: the pages are empty until section 5.
+6. For the contact form's e-mail, add `GMAIL_APP_PASSWORD` (section 14). Until then the messages are kept on the disk and sent once it is set.
 
-The other settings are already in `render.yaml`: the Node version, the data folder (`CHERNOZEM_DATA_DIR=/var/data`), `ATLAS_TRUST_PROXY=cloudflare` (so the limits per visitor, such as 10 wrong keys or the demo assistant's questions, count each visitor on their own), the Earth Engine project and `GEE_CHERNOZEM_ASSET=none`.
+The other settings are already in `render.yaml`: the Node version, the data folder (`CHERNOZEM_DATA_DIR=/var/data`), `ATLAS_TRUST_PROXY=cloudflare` (so the limits per visitor, such as the contact form's 5 messages an hour or the demo assistant's questions, count each visitor on their own), the Earth Engine project and `GEE_CHERNOZEM_ASSET=none`.
 
-The server checks two things each time it starts online, and **does not start** if either is wrong (the deploy then shows as failed, and the log says why, see section 12): the owner's key must be set, at least 16 characters and not the example once printed in these docs; and the data folder must be the disk. So a mistake there never puts an app live that anyone can change, or that forgets its data at the next update.
+The server checks one thing each time it starts online, and **does not start** if it is wrong (the deploy then shows as failed, and the log says why, see section 12): the data folder must be the disk. So a mistake there never puts an app live that forgets its data at the next update. Online every visitor without an account is always the read-only demo, whatever else is set.
 
 ## 5. Bringing your data (once)
 
@@ -143,15 +143,15 @@ A page left open during an update reloads itself onto the new version the first 
 
 An analysis running during an update stops; the months it finished are kept, and the monthly check starts the rest again (or press **Analyze** in Atlas Settings).
 
-## 8. Changing the owner's key
+## 8. The owner's sign-in
 
-1. Render > the `chernozem` service > **Environment**.
-2. Edit `ATLAS_ACCESS_CODE` (at least 16 characters, made up), then **Save and deploy**. The app restarts in a few seconds.
-3. The owner is signed out everywhere and types the new key at **chernozem.app/owner**. Visitors notice nothing (the demo needs no key), and registered accounts stay signed in. Do this when a computer or phone that was signed in as the owner is lost, or when someone else learned the key: it is the only way to end every owner sign-in at once (Sign out ends only the one browser it is pressed in).
+**Who the owner is**: a Google (Firebase) account whose e-mail address Google has verified and that is listed in `OWNER_EMAILS`. Left blank (as it is), that is **chernozem.app@gmail.com** only. To add a second owner, set `OWNER_EMAILS` on the Environment page to the addresses separated by commas, for example `chernozem.app@gmail.com, partner@example.org` (capitals do not matter), then **Save and deploy**. An e-mail and password account made with the owner's address is never the owner (anyone could make one; Google has not verified it), and an address taken out of `OWNER_EMAILS` stops being the owner at once.
 
-After changing the key, never roll back to a deploy made before the change: the old key would work again (section 10).
+**Signing in**: open **chernozem.app/owner** (linked from nowhere), press **Sign in with the Chernozem Google account**, choose chernozem.app@gmail.com. The page then offers **Open Field** and **Open Atlas**. Any other Google account is told "This Google account is not the owner's." and can sign out again. Firebase Authentication must be switched on with the Google sign-in (section 13), or the button cannot work.
 
-Never delete the owner's key online, or make it short: the server then refuses to start rather than let anyone on the internet change everything (and should that ever happen while it runs, nobody can sign in as the owner: everyone gets the read-only demo). Ten wrong keys from one visitor lock that visitor out for 10 minutes.
+**Signing out**: **Sign out** (the bottom of the sidebar) ends **every** owner sign-in at once, on every computer and phone, and ends the account's Google sessions in the app too. Do this when a computer or phone that was signed in as the owner is lost. The server also asks Firebase once an hour whether the owner's account still exists, is not disabled and still has its verified address, so changes made in Google's or Firebase's console reach the app within the hour.
+
+**The old access code**: retired (section 3). Nothing accepts it, and the sign-ins it made are ignored. You may delete `ATLAS_ACCESS_CODE` on the Environment page; keeping it changes nothing online. (On your own computer it only means "show me the read-only demo as visitors see it".)
 
 ## 9. How the data is kept
 
@@ -163,7 +163,8 @@ Never delete the owner's key online, or make it short: the server then refuses t
 ## 10. Going back (rollback)
 
 - **A bad version of the app**: Render > the service > **Deploys**, find the last good deploy, click **Rollback**, then **Rollback to this deploy**. The site runs that version again within a few minutes. A rollback also switches off the automatic updates: once the change is undone on GitHub, switch them on again in the service's **Settings**.
-- **The settings go back too.** A rollback runs that deploy with the settings it had then (the Environment page keeps showing today's, so you cannot see it there). The disk is not rolled back, so if you changed the owner's key (section 8) or deleted `IMPORT_TOKEN` (section 5) after that deploy, then until the next normal deploy the old key works again, the sign-ins made with it work again (for up to 30 days), and the upload address exists again. So:
+- **Never roll back past the deploy that brought the owner's Google sign-in** (the first version whose /owner page says "Sign in with the Chernozem Google account"; note which deploy that is on the Deploys page the day it goes live). Older versions still take the old access code as the owner's key, and every visitor it was handed to could then edit the demo and read the contact messages. If such a version must run again, first set a new, made-up `ATLAS_ACCESS_CODE` of at least 16 characters on the Environment page.
+- **The settings go back too.** A rollback runs that deploy with the settings it had then (the Environment page keeps showing today's, so you cannot see it there). The disk is not rolled back, so if you changed a setting (for example `OWNER_EMAILS`) or deleted `IMPORT_TOKEN` (section 5) after that deploy, then until the next normal deploy the old setting is back, and the upload address exists again. So:
   - roll back only to a deploy made after your last change on the Environment page (each **Save and deploy** shows on the Deploys page as its own deploy);
   - if the last good version is older than that, do not roll back: ask the assistant to undo the change on GitHub instead. Render deploys the undo like any update, with today's settings, and automatic updates stay on;
   - if you already rolled back past such a change, deploy again with today's settings straight away: **Manual Deploy > Deploy latest commit** once the fix is on GitHub, or **Manual Deploy > Deploy a specific commit** and pick the last good one (like a rollback, this switches automatic updates off).
@@ -180,13 +181,16 @@ Never delete the owner's key online, or make it short: the server then refuses t
 | What you see | What to do |
 | --- | --- |
 | The browser says the site cannot be reached, or warns about the certificate | The DNS (section 6) or the certificate is not ready. Check Render's Custom Domains page says verified, and wait. |
-| The /owner page keeps refusing the key | Check `ATLAS_ACCESS_CODE` in Render: capitals and small letters count. After 10 wrong keys, wait 10 minutes. After a rollback, the app may be using the key of that older deploy (section 10): run a normal deploy. |
-| The deploy failed and the log says `Not starting online` | The lines under it say what to fix. `ATLAS_ACCESS_CODE is not set` or `is shorter than 16 characters` or `is the example`: set an owner's key you make up, at least 16 characters (Environment page, **Save and deploy**). `CHERNOZEM_DATA_DIR is not set` or `The data folder /var/data does not exist`: set `CHERNOZEM_DATA_DIR=/var/data` and make sure the service has its disk (the **Disks** page: name `data`, mount path `/var/data`). Until then the site may be away; nothing was lost, and nothing was put live open or without its disk. |
-| The /owner page says "Signing in as the owner is off: the owner's key set on the server..." | The key on the server was removed or made too short while the app ran (visitors still get the read-only demo). Set a proper one (section 8). |
-| Contact messages do not arrive at chernozem.app@gmail.com | The log's start lines say `Contact e-mail: off` (nothing set: section 14) or `Contact e-mail: to chernozem.app@gmail.com, through Gmail`. In **Atlas > Settings** each message says whether it was sent; a failed one shows the reason (for Gmail "Invalid login": make a new app password, section 14). Look in Gmail's Spam the first time. Nothing is lost: every message is kept on the disk and tried again every 10 minutes (8 tries). |
-| The demo's AI assistant says it "has answered enough questions for now" | Its daily limits (section 3). They reset as the 24 hours pass; the numbers are in `server/quotas.js`. |
+| The /owner page says "This Google account is not the owner's." | Sign out there and sign in with chernozem.app@gmail.com, or add the address to `OWNER_EMAILS` (section 8). An e-mail and password account is never the owner. |
+| The /owner page's Google window closes at once or refuses the site | Firebase Authentication is not switched on, or the address is missing from its **Authorized domains** (section 13). |
+| The /owner page says the code is retired | That is the old page in a browser that has not reloaded: reload it. The owner signs in with Google now (section 8). |
+| The deploy failed and the log says `Not starting online` | The lines under it say what to fix: `CHERNOZEM_DATA_DIR is not set` or `The data folder /var/data does not exist`: set `CHERNOZEM_DATA_DIR=/var/data` and make sure the service has its disk (the **Disks** page: name `data`, mount path `/var/data`). Until then the site may be away; nothing was lost, and nothing was put live without its disk. |
+| Contact messages do not arrive at chernozem.app@gmail.com | The log's start lines say `Contact e-mail: off` (nothing set: section 14) or `Contact e-mail: to chernozem.app@gmail.com, through Gmail`. In **Atlas > Settings** each message says whether it was sent; a failed one shows the reason (for Gmail "Invalid login": make a new app password, section 14). Look in Gmail's Spam the first time. Nothing is lost: every message is kept on the disk and tried again every 10 minutes (8 tries). A message "held" waits because 100 e-mails went out in the last 24 hours (section 14). |
+| The contact form says "The form is busy right now" | All visitors together sent the most it takes (30 an hour, 150 in 24 hours), or 1,000 messages wait for their e-mail (section 14). It opens again as the hour or the day passes, or once the waiting ones are e-mailed or deleted. |
+| The demo's AI assistant says it "has answered enough questions for now" | Its daily limits (section 3). They reset as the 24 hours pass, also across restarts; the numbers are in `server/quotas.js`. |
+| An account's assistant says it "has answered as many questions as it can for today" | All accounts together reached 400 questions or 6 million tokens in 24 hours (section 13). |
 | Settings says "Sample data" or "Not connected" | `GEE_SERVICE_ACCOUNT_JSON` is missing or wrong in Render: paste the whole key file again. If pasting does not work, use a Render **Secret File** instead (Environment page): name it `gee-key.json`, paste the key file into it, set `GOOGLE_APPLICATION_CREDENTIALS=/etc/secrets/gee-key.json` and delete `GEE_SERVICE_ACCOUNT_JSON`. |
-| The AI pages say "Connect Claude" | `ANTHROPIC_API_KEY` is missing in Render. |
+| The AI pages say "Connect Claude" (the owner), or "The assistant is not available right now." (everyone else) | `ANTHROPIC_API_KEY` is missing or wrong in Render. |
 | The upload (section 5) says the server already has data | Nothing was written. To write over it, add `--replace`. |
 | The upload says the address does not exist | `IMPORT_TOKEN` is not set in Render (or the deploy after setting it has not finished). |
 
@@ -197,7 +201,7 @@ The website's **Register** page lets a person make an account (with Google, or a
 **How it works**
 
 - The sign-in itself is **Firebase Authentication** (Google's), in the project `chernozem-danny`, the same Google Cloud project as Earth Engine. Google keeps the passwords; the server never sees them.
-- After the sign-in, the browser hands the server a token from Google. The server checks it with Firebase's own library and gives the browser an **account cookie** (30 days, separate from the owner's). From then on every request from that browser works in that account's own folder.
+- After the sign-in, the browser hands the server a token from Google. The server checks it with Firebase's own library (including that the session was not ended since) and gives the browser an **account cookie** (30 days), or the **owner's cookie** for the owner's verified Google account (section 8). From then on every request from that browser works in that account's own folder (the owner's: the demo's).
 - Each account's data lives on the disk under **`/var/data/users/<id>/`** (the id is a hash of the account's Firebase id): its `profile.json` (name, e-mail, role, product, the place to watch), and the same files as the demo has (`farm.json`, `areas/`, `runs/`, `chats/`...). Nothing is copied into it: a new account starts empty. The daily disk snapshot (section 9) covers these folders; the data upload and export of section 5 leave them alone.
 - An account is for **one product**: the one chosen at registration. Its Field pages cannot open Atlas data and the other way round (the server answers `wrong_product`). The demo has both.
 - The monthly Atlas update and the daily Field refresh run for every account's folder too, one after the other after the demo's, inside the Earth Engine allowance (section 11). Every account's analysis waits in the same line as the demo's: one at a time for the whole server.
@@ -207,10 +211,11 @@ The website's **Register** page lets a person make an account (with Google, or a
 
 - Atlas: at most **5 areas**, each at most **1,000,000 km²** (a country the size of Ukraine, not Russia) and 1,500 map squares, drawn with at most 1,000 points; **one analysis at a time**, of at most **12 months**; the monthly update is **off** until the person switches it on in Settings.
 - Field: **one job at a time** (a search for fields or an analysis), and at most **2 searches and 2 "update now" an hour**; outlines of at most 1,000 points; at most **30 reports** and **40 MB of photos** in all, and every photo must be a real JPEG, PNG or WebP picture of at most 8,000 pixels a side.
-- The AI chat: at most **40 messages a day**.
+- The AI assistant: at most **40 questions a day** for an account whose e-mail Google verified (a Google sign-in, or an e-mail and password account whose address was verified), **10 a day** otherwise; and for **all accounts together** at most **400 questions** and **6 million tokens** in 24 hours (at most about $50 a day). These counts are kept on the disk (`quota-state.json`), so a restart does not start them again.
+- Field: loading an example farm counts as one of the 2 "update now" an hour.
 - A limit reached answers with a plain sentence (the code `quota`; `busy` while the account's other analysis runs).
 
-**Signing out**: "Sign out" ends every copy of that account's cookie at once (the moment is kept in the account's `session.json`) and ends its Firebase sessions. The server also asks Firebase once an hour whether each signed-in account still exists, so an account deleted or disabled in the Firebase console is signed out within the hour. If Firebase cannot be asked (an outage, or a computer without the Google key), the last answer stays good for a day, then the person signs in again.
+**Signing out**: "Sign out" ends every copy of that account's cookie at once (the moment is kept in the account's `session.json`), ends its Firebase sessions, and refuses any Google token from before that moment, so a copied token cannot sign in again. The server also asks Firebase once an hour whether each signed-in account still exists (and whether its e-mail is verified), so an account deleted or disabled in the Firebase console is signed out within the hour. If Firebase cannot be asked (an outage, or a computer without the Google key), the last answer stays good for a day, then the person signs in again.
 
 **What you must do once (the owner, in the Firebase console)**
 
@@ -220,19 +225,21 @@ Registration is **not open** until Firebase Authentication is switched on for th
 2. Left menu: **Build > Authentication**, then **Get started**.
 3. **Sign-in method** tab: enable **Email/Password**, then enable **Google** (it asks for a support e-mail: yours).
 4. **Settings** tab > **Authorized domains**: add **chernozem.app** (and **www.chernozem.app**). Without this Google's pop-up refuses the site.
-5. Nothing to change in Render: the server uses the Earth Engine key it already has (same project) and the project id from `GEE_PROJECT_ID`. To use another Firebase project, set `FIREBASE_PROJECT_ID` on the Environment page; `FIREBASE_PROJECT_ID=off` switches registration off.
+5. Nothing to change in Render: the server uses the Earth Engine key it already has (same project) and the project id from `GEE_PROJECT_ID`. To use another Firebase project, set `FIREBASE_PROJECT_ID` on the Environment page; `FIREBASE_PROJECT_ID=off` switches registration off, and with it the owner's own sign-in (the owner signs in through Firebase too, section 8).
 
 The server also needs the `firebase-admin` package in `package.json` (`npm install firebase-admin`); without it, registration answers "not open yet" and the log says so at the first sign-in.
 
 **Trying it on your own computer without Google**: install the Firebase tools once (`npm install -g firebase-tools`), run `firebase emulators:start --only auth --project chernozem-danny` (port 9099), and put `FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099` in `.env` and `VITE_FIREBASE_AUTH_EMULATOR=http://127.0.0.1:9099` for the pages. Accounts made there exist only on your computer. Never set the emulator address online.
 
-**Signing everyone out at once** (accounts and the owner): delete `auth.json` on the disk (the sign-in secret's salt; the server makes a new one at once). Changing the owner's key (section 8) signs out the owner only.
+**Signing everyone out at once** (accounts and the owner): delete `auth.json` on the disk (the sign-in secret's salt; the server makes a new one at once). The owner's own Sign out ends every owner sign-in (section 8).
 
 **Removing an account**: delete its folder under `/var/data/users/` (the person can register again and starts empty) and, in the Firebase console, the user under Authentication > Users (its cookies stop working within the hour; or the person deletes it themselves in the app, when that exists).
 
 ## 14. Contact e-mail
 
-Every message sent from **chernozem.app/contact** is e-mailed to **chernozem.app@gmail.com**, from the owner's own Gmail account. It is also kept on the disk (`messages/`), so nothing is lost before the e-mail is set up or while Gmail is away: **Atlas > Settings** (as the owner) lists every message with whether it was sent. A message not sent yet is tried again 20 seconds after each start, then every 10 minutes (oldest first, 8 tries each). The e-mail is plain text: the name, e-mail, organisation and role, the message, when it came and its id; pressing **Reply** answers the visitor (when their address is a plain one).
+Every message sent from **chernozem.app/contact** is e-mailed to **chernozem.app@gmail.com**, from the owner's own Gmail account. It is also kept on the disk (`messages/`), so nothing is lost before the e-mail is set up or while Gmail is away: **Atlas > Settings** (as the owner) lists every message with whether it was sent. A message not sent yet is tried again 20 seconds after each start, then every 10 minutes (oldest first, 8 tries each). The e-mail is plain text: the name, e-mail, organisation and role, the message, when it came and its id; pressing **Reply** answers the visitor (when their address is a plain one). Every try of one message carries the same Message-ID, so a try that only looked failed never gives a second copy in Gmail; the visitor waits at most 8 seconds for the e-mail, which goes on in the background if Gmail is slow.
+
+**Limits** (anyone can write, so the disk and the Gmail account can never be flooded; the numbers are in `server/quotas.js` and `server/messages.js`): 5 messages an hour from one visitor (an IPv6 visitor counts by its /48 block); **30 an hour and 150 in 24 hours from all visitors together**, and at most **1,000 messages waiting** for their e-mail; past those the form says "The form is busy right now. Please write to chernozem.app@gmail.com." Gmail limits how much one account sends a day, so at most **100 e-mails** go out in 24 hours: a message past that is "held" on the disk and e-mailed by a later try once the 24 hours allow, without using up its tries. These counts are kept on the disk (`quota-state.json`), so a restart does not start them again.
 
 **What the owner does once (Gmail, about 5 minutes)**
 

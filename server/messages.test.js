@@ -3,15 +3,20 @@
 // a message is kept with only what was typed and listed newest first, the
 // honeypot is ignored, each bad field is refused with a message naming it,
 // a body over 16 KB is refused, one visitor may send 5 an hour (on a clock
-// the test moves), a message can be removed, and POST /api/contact is open
-// to everyone while GET and DELETE /api/messages are the owner's alone.
+// the test moves; an IPv6 visitor counted by its /48), all visitors
+// together at most so many an hour and a day and so many waiting for their
+// e-mail (429 busy), the counts outlive a restart, a message can be
+// removed, and POST /api/contact is open to everyone while GET and DELETE
+// /api/messages are the owner's alone (the owner signed in with Google).
 // And the e-mail (server/mail.js, with a stand-in for the mail service):
 // each message is kept first, then e-mailed, and how it went is recorded
-// (sent, failed, off) while the visitor gets 201 either way; the second
-// tries send what was not sent, oldest first, 20 a run, 8 tries each,
-// never two runs at once, messages from before e-mails included; a
-// message removed while it is being sent stays removed. Run with
-// "npm test".
+// (sent, failed, off) while the visitor gets 201 either way; a slow mail
+// service is waited for in the background, never tried twice for nothing;
+// past the day's e-mails a message is held and sent later without using a
+// try; the second tries send what was not sent, oldest first, 20 a run, 8
+// tries each, never two runs at once, messages from before e-mails
+// included; a message removed while it is being sent stays removed. Run
+// with "npm test".
 //
 // WHO EDITS IT
 // Whoever changes server/messages.js.
@@ -26,7 +31,7 @@ import path from "node:path";
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "chernozem-messages-"));
 process.env.CHERNOZEM_DATA_DIR = path.join(scratch, "data");
 process.env.GEE_DISABLED = "1";
-// Not on Render (where a short code keeps the app locked), no proxy.
+// Not on Render, no proxy.
 process.env.RENDER = "";
 process.env.ATLAS_ACCESS_CODE = "";
 process.env.ATLAS_TRUST_PROXY = "";
@@ -36,9 +41,11 @@ process.env.ATLAS_TRUST_PROXY = "";
 for (const name of ["MAIL_TO", "MAIL_FROM", "GMAIL_USER", "GMAIL_APP_PASSWORD", "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_SECURE", "RESEND_API_KEY"]) process.env[name] = "";
 const { handleApi } = await import("./app.js");
 const messages = await import("./messages.js");
-const auth = await import("./auth.js");
 const mail = await import("./mail.js");
 const store = await import("./store.js");
+const accounts = await import("./accounts.js");
+const { setQuotasForTests } = await import("./quotas.js");
+const { flushCounters, reloadCountersForTests } = await import("./counters.js");
 
 let server;
 let base;
@@ -66,6 +73,7 @@ beforeEach(() => {
   process.env.ATLAS_ACCESS_CODE = "";
   process.env.ATLAS_TRUST_PROXY = "";
   process.env.GMAIL_APP_PASSWORD = "";
+  setQuotasForTests();
   messages.resetContactLimits();
   mail.setDepsForTests({});
 });
@@ -87,7 +95,7 @@ async function call(method, url, { body, raw, cookie, headers = {} } = {}) {
   } catch {
     // not JSON
   }
-  return { status: res.status, json, retryAfter: res.headers.get("retry-after"), allow: res.headers.get("allow"), setCookie: res.headers.get("set-cookie") };
+  return { status: res.status, json, retryAfter: res.headers.get("retry-after"), allow: res.headers.get("allow"), setCookies: res.headers.getSetCookie() };
 }
 
 const good = {
@@ -264,6 +272,73 @@ test("one visitor may send 5 messages an hour; the 6th waits, another visitor do
   assert.equal((await list()).length, 7);
 });
 
+test("an IPv6 visitor counts by its /48: another address in the same block is the same visitor", async () => {
+  process.env.ATLAS_TRUST_PROXY = "1";
+  const from = (ip) => ({ headers: { "X-Forwarded-For": ip } });
+  for (let i = 0; i < 5; i += 1) assert.equal((await send(good, from(`2001:db8:abcd:${i}::1`))).status, 201, `message ${i + 1}, another /64 each time`);
+  const sixth = await send(good, from("2001:db8:abcd:ffff:1:2:3:4"));
+  assert.equal(sixth.status, 429, "the same /48");
+  assert.equal(sixth.json.error.code, "too_many");
+  assert.equal((await send(good, from("2001:db8:abce::1"))).status, 201, "another /48 is another visitor");
+});
+
+test("all visitors together: so many messages an hour and in 24 hours, then 429 busy with the address to write to", async () => {
+  let t = Date.UTC(2026, 9, 31, 8, 0);
+  messages.resetContactLimits({ clock: () => t });
+  setQuotasForTests({ contactPerHourAll: 3, contactPerDayAll: 5 });
+  process.env.ATLAS_TRUST_PROXY = "1";
+  const from = (i) => ({ headers: { "X-Forwarded-For": `198.51.100.${i}` } });
+  for (let i = 1; i <= 3; i += 1) assert.equal((await send(good, from(i))).status, 201, `visitor ${i}`);
+  const busy = await send(good, from(4));
+  assert.equal(busy.status, 429);
+  assert.deepEqual(busy.json, { error: { code: "busy", message: "The form is busy right now. Please write to chernozem.app@gmail.com." } });
+  assert.equal(messages.BUSY_MESSAGE, busy.json.error.message);
+  assert.ok(Number(busy.retryAfter) > 59 * 60 && Number(busy.retryAfter) <= 3600, `retry after ${busy.retryAfter}s: when the hour's first message leaves it`);
+  assert.equal((await list()).length, 3, "the busy one was not kept");
+  // A form with a mistake still gets its own sentence.
+  assert.equal((await send({ ...good, name: "" }, from(5))).status, 400);
+
+  // An hour later: two more, then the 24 hours are full.
+  t += 61 * 60_000;
+  assert.equal((await send(good, from(6))).status, 201);
+  assert.equal((await send(good, from(7))).status, 201);
+  const day = await send(good, from(8));
+  assert.equal(day.status, 429);
+  assert.equal(day.json.error.code, "busy");
+  assert.ok(Number(day.retryAfter) > 22 * 3600, `retry after ${day.retryAfter}s: 24 hours after the day's first`);
+  assert.equal(messages.CONTACT_MAX_PER_HOUR, 5);
+});
+
+test("at most so many messages wait for their e-mail at once; past it the form is busy", async () => {
+  setQuotasForTests({ contactUnsentMax: 3 });
+  messages.resetContactLimits();
+  process.env.ATLAS_TRUST_PROXY = "1";
+  const from = (i) => ({ headers: { "X-Forwarded-For": `198.51.100.${i}` } });
+  // No e-mail set up: every message waits.
+  for (let i = 1; i <= 3; i += 1) assert.equal((await send(good, from(i))).status, 201);
+  const full = await send(good, from(4));
+  assert.equal(full.status, 429);
+  assert.equal(full.json.error.code, "busy");
+  // The owner removes one: there is room again.
+  const [oldest] = (await list()).slice(-1);
+  assert.equal((await call("DELETE", `/api/messages/${oldest.id}`)).status, 200);
+  assert.equal((await send(good, from(5))).status, 201);
+});
+
+test("the counts outlive a restart: they are kept in quota-state.json in the data folder", async () => {
+  process.env.ATLAS_TRUST_PROXY = "1";
+  const olena = { headers: { "X-Forwarded-For": "81.107.0.110" } };
+  for (let i = 0; i < 5; i += 1) assert.equal((await send(good, olena)).status, 201);
+  assert.equal((await send(good, olena)).status, 429);
+  await flushCounters();
+  const saved = JSON.parse(fs.readFileSync(path.join(dataDir(), "quota-state.json"), "utf8"));
+  assert.equal(Object.values(saved.counts["contact-visitor"]).flat().length, 5, "five messages counted for the visitor");
+  assert.doesNotMatch(JSON.stringify(saved), /olena|Kovalenko/i, "no name or e-mail address in it");
+  // As after a restart: memory forgotten, the file read again.
+  reloadCountersForTests();
+  assert.equal((await send(good, olena)).status, 429, "still five this hour");
+});
+
 test("a message can be removed", async () => {
   const made = await send(good);
   const id = made.json.id;
@@ -281,9 +356,17 @@ test("a message can be removed", async () => {
   assert.equal((await call("DELETE", "/api/messages/Not%20An%20Id")).status, 404, "an id that could not be a file name");
 });
 
-test("with the owner's key set, the form is open to everyone but the messages are the owner's alone", async () => {
-  process.env.ATLAS_ACCESS_CODE = "test123";
-  auth.resetLoginLimits();
+test("with visitors seeing the demo, the form is open to everyone but the messages are the owner's alone", async () => {
+  process.env.ATLAS_ACCESS_CODE = "any-value";
+  // The owner's Google account, as Firebase would vouch for it.
+  accounts.setDepsForTests({
+    verifyIdToken: (idToken) => {
+      if (idToken === "owner") return { uid: "MsgOwnerUID1", email: "chernozem.app@gmail.com", email_verified: true };
+      throw Object.assign(new Error("bad"), { code: "auth/argument-error" });
+    },
+    getUser: (uid) => ({ uid, disabled: false, email: "chernozem.app@gmail.com", emailVerified: true }),
+    revokeRefreshTokens: () => {},
+  });
 
   const sent = await send(good);
   assert.equal(sent.status, 201, "the public form works without signing in");
@@ -297,11 +380,15 @@ test("with the owner's key set, the form is open to everyone but the messages ar
       assert.equal(res.json.error.code, "owner_only", url);
     }
   }
-  assert.ok(fs.existsSync(messageFile(sent.json.id)), "not removed without the owner's key");
+  assert.ok(fs.existsSync(messageFile(sent.json.id)), "not removed by the demo");
+  // The retired access code opens nothing.
+  const retired = await call("POST", "/api/auth/login", { body: { code: "any-value" } });
+  assert.equal(retired.status, 410);
+  assert.equal(retired.json.error.code, "owner_key_retired");
 
-  const login = await call("POST", "/api/auth/login", { body: { code: "test123" } });
+  const login = await call("POST", "/api/auth/firebase", { body: { idToken: "owner" } });
   assert.equal(login.status, 200);
-  const cookie = login.setCookie.split(";")[0];
+  const cookie = login.setCookies.find((line) => line.startsWith("chernozem_owner=")).split(";")[0];
   const listed = await call("GET", "/api/messages", { cookie });
   assert.equal(listed.status, 200);
   assert.equal(listed.json.messages.length, 1);
@@ -310,6 +397,7 @@ test("with the owner's key set, the form is open to everyone but the messages ar
   assert.deepEqual((await call("GET", "/api/messages", { cookie })).json.messages, []);
 
   process.env.ATLAS_ACCESS_CODE = "";
+  accounts.setDepsForTests({});
 });
 
 test("the wrong method or path is refused", async () => {
@@ -408,15 +496,26 @@ test("a message is kept first, then e-mailed to chernozem.app@gmail.com, and how
   assert.match(kept.mail.error, /^Invalid login: 535-5.7.8 Username and Password not accepted \(\*\*\*\)$/);
   assert.doesNotMatch(fs.readFileSync(messageFile(failed.json.id), "utf8"), /abcdefghijklmnop/);
 
-  // A mail service that never answers: given up after the time limit.
+  // A mail service that stays silent until its own time limit: the
+  // visitor is answered first; the failure is recorded when it comes.
+  messages.resetContactLimits({ clock: () => t, answerWaitMs: 20 });
   mail.setDepsForTests({
-    createTransport: () => ({ sendMail: () => new Promise(() => {}), close() {} }),
-    timeoutMs: 30,
+    createTransport: (options) => ({
+      sendMail: () => new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error("Greeting never received"), { code: "ETIMEDOUT" })), options.greetingTimeout)),
+      close() {},
+    }),
+    timeoutMs: 80,
   });
-  const slow = await quietly(() => send({ ...good, name: "Slow" }));
+  const slow = await quietly(async () => {
+    const answer = await send({ ...good, name: "Slow" });
+    assert.equal(readKept(answer.json.id).mail.status, "pending", "answered before the e-mail ended");
+    await until(() => readKept(answer.json.id).mail.status !== "pending");
+    return answer;
+  });
   assert.equal(slow.status, 201);
   assert.equal(readKept(slow.json.id).mail.status, "failed");
-  assert.match(readKept(slow.json.id).mail.error, /Gmail did not answer within 1 seconds?/);
+  assert.match(readKept(slow.json.id).mail.error, /^Gmail did not answer in time \(Greeting never received\)$/);
+  messages.resetContactLimits({ clock: () => t });
 
   // A robot is e-mailed to nobody.
   const robot = fakeMailer();
@@ -426,6 +525,64 @@ test("a message is kept first, then e-mailed to chernozem.app@gmail.com, and how
   // The owner's list shows how each one went, newest first.
   const listed = await list();
   assert.deepEqual(listed.map((message) => message.mail.status).sort(), ["failed", "failed", "sent"]);
+});
+
+test("a mail service that takes its time is waited for in the background: one copy, recorded sent, never tried again", async () => {
+  let t = Date.UTC(2026, 9, 31, 10, 0);
+  messages.resetContactLimits({ clock: () => t, answerWaitMs: 30 });
+  useGmail();
+  // Delivers after 300 ms, longer than the visitor waits and longer than
+  // the transport limits handed to it (QA's reproduction of M1).
+  const { sent } = fakeMailer(() => new Promise((resolve) => setTimeout(() => resolve({ messageId: "late" }), 300)));
+  mail.setDepsForTests({
+    createTransport: () => ({
+      async sendMail(email) {
+        sent.push(email);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        return { messageId: "late" };
+      },
+      close() {},
+    }),
+    timeoutMs: 100,
+  });
+  const answered = await send(good);
+  assert.equal(answered.status, 201, "the visitor is not kept waiting");
+  assert.equal(readKept(answered.json.id).mail.status, "pending");
+  assert.equal(await messages.deliverMessage(answered.json.id), null, "the same message is never sent twice at once");
+  await until(() => readKept(answered.json.id).mail.status === "sent");
+  assert.equal(readKept(answered.json.id).mail.attempts, 1);
+  for (let run = 0; run < 3; run += 1) {
+    t += 10 * 60_000;
+    assert.deepEqual(await messages.retryUnsentMessages(), { tried: 0, sent: 0 });
+  }
+  assert.equal(sent.length, 1, "one copy");
+  assert.equal(sent[0].messageId, `<${answered.json.id}@chernozem.app>`);
+});
+
+test("past the day's e-mails a message is held, untried, and e-mailed once the 24 hours allow", async () => {
+  let t = Date.UTC(2026, 9, 31, 9, 0);
+  messages.resetContactLimits({ clock: () => t });
+  setQuotasForTests({ contactMailsPerDay: 2 });
+  useGmail();
+  const { sent } = fakeMailer();
+  process.env.ATLAS_TRUST_PROXY = "1";
+  const ids = [];
+  for (let i = 1; i <= 3; i += 1) {
+    t += 60_000;
+    const answer = await send(good, { headers: { "X-Forwarded-For": `198.51.100.${i}` } });
+    assert.equal(answer.status, 201);
+    ids.push(answer.json.id);
+  }
+  assert.equal(sent.length, 2);
+  assert.deepEqual(readKept(ids[2]).mail, { status: "held", attempts: 0, at: new Date(t).toISOString() }, "held, no try used");
+  t += 10 * 60_000;
+  assert.deepEqual(await messages.retryUnsentMessages(), { tried: 0, sent: 0 }, "still the same 24 hours");
+  assert.equal(readKept(ids[2]).mail.status, "held");
+  // 24 hours after the first e-mail, one more may go.
+  t += 24 * 60 * 60_000;
+  assert.deepEqual(await messages.retryUnsentMessages(), { tried: 1, sent: 1 });
+  assert.deepEqual(readKept(ids[2]).mail, { status: "sent", attempts: 1, at: new Date(t).toISOString(), transport: "gmail" });
+  assert.equal(sent.length, 3);
 });
 
 test("an address that is not plainly one is never a Reply-To (it stays in the e-mail's text)", async () => {
@@ -473,7 +630,7 @@ test("the second tries send what was not sent, oldest first, at most 20 a run an
   assert.deepEqual(sent.slice(20).map((email) => /Message id: (\S+)/.exec(email.text)[1]), ["msg-old00020", "msg-old00021", "msg-off00001", "msg-fail0002"]);
   assert.deepEqual(readKept("msg-fail0002").mail, { status: "sent", attempts: 3, at: "2026-10-31T12:00:00.000Z", transport: "gmail" });
   assert.equal(readKept("msg-fail0008").mail.status, "failed", "8 tries: left as it is, still on the server");
-  assert.equal(readKept("msg-justnow1").mail.status, "pending", "tried less than a minute ago (maybe by another server): later");
+  assert.equal(readKept("msg-justnow1").mail.status, "pending", "came less than 3 minutes ago (maybe another server is sending it): later");
   assert.deepEqual(await messages.retryUnsentMessages(), { tried: 0, sent: 0 }, "all done");
   assert.equal(sent.length, 24, "nothing was e-mailed twice");
 });

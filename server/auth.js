@@ -1,25 +1,38 @@
 // WHAT THIS FILE DOES
 // Who is asking. Every /api/ request belongs to one of four sessions:
 //
-//   owner    the browser signed in with the owner's key (ATLAS_ACCESS_CODE,
-//            typed once on the hidden page /owner, linked from nowhere):
-//            the demo's own data folder, where everything can be changed,
-//            both products, and the website's messages.
-//   open     no ATLAS_ACCESS_CODE at all (one's own computer): the same
-//            powers as the owner, for whoever asks ("npm start" then
-//            answers this computer only: server/index.js).
+//   owner    the owner, signed in with Google on the hidden page /owner
+//            (linked from nowhere): a Firebase account whose e-mail address
+//            Google has verified and that is listed in OWNER_EMAILS (blank:
+//            chernozem.app@gmail.com; capitals do not matter). The demo's
+//            own data folder, where everything can be changed, both
+//            products, and the website's messages.
+//   open     one's own computer, not online, with no ATLAS_ACCESS_CODE set:
+//            the same powers as the owner, for whoever asks ("npm start"
+//            then answers this computer only: server/index.js). Never on
+//            Render.
 //   account  a registered account's cookie (server/accounts.js): its own
 //            folder users/<id>/, the one product it chose, the limits of
 //            server/quotas.js.
-//   demo     everyone else when a key is set: the public demo (the Ukraine
-//            farm and areas, both products), READ-ONLY. Also any request
-//            with the header "X-Chernozem-View: demo" (DEMO_VIEW_HEADER;
-//            the website's Demo page sets it for one browser tab:
-//            src/lib/demoMode.js), unless it also brings the owner's
-//            cookie. The header can only lower a session, never raise
-//            one: an account's cookie is ignored for that request, and the
-//            owner stays the owner. (Without a key, on one's own computer,
-//            the header too gives the read-only demo, as visitors see it.)
+//   demo     everyone else: the public demo (the Ukraine farm and areas,
+//            both products), READ-ONLY. Online (on Render) every visitor
+//            without a cookie is the demo, whatever is set; on one's own
+//            computer too once ATLAS_ACCESS_CODE is set (to anything).
+//            Also any request with the header "X-Chernozem-View: demo"
+//            (DEMO_VIEW_HEADER; the website's Demo page sets it for one
+//            browser tab: src/lib/demoMode.js), unless it also brings the
+//            owner's cookie. The header can only lower a session, never
+//            raise one: an account's cookie is ignored for that request,
+//            and the owner stays the owner.
+//
+// THE OLD ACCESS CODE IS RETIRED (31 October 2026). It was handed out to
+// visitors to open the demo, so it must never become an owner's key:
+// POST /api/auth/login answers 410 owner_key_retired ("The owner signs in
+// with the Chernozem Google account at /owner."), and the atlas_session
+// cookies it made are never read (Sign out and every sign-in still remove
+// them from the browser). ATLAS_ACCESS_CODE is now only a switch for one's
+// own computer: set, visitors get the read-only demo as online; online it
+// changes nothing (the owner may delete it on Render).
 //
 // In the demo every change is refused with 403 demo_read_only ("This is
 // the demo, so it can't be changed. Register to do this on your own
@@ -34,83 +47,71 @@
 //                            signedIn false in the demo only; shared true
 //                            for the owner, open and the demo (the one
 //                            workspace everyone sees), false for an
-//                            account; account null unless mode is
-//                            "account", then { uid, email, name, product,
-//                            profileComplete }; required: a key is set
-//                            (or one that cannot lock the online copy,
-//                            below). The page asks this first.
-//   POST /api/auth/login     body { code }: the owner's key -> the owner's
-//                            cookie (the /owner page)
-//   POST /api/auth/firebase  body { idToken } -> a registered account's
-//                            sign-in (server/accounts.js), sets the
-//                            account cookie
-//   POST /api/auth/logout    removes BOTH cookies (the sidebar's "Sign out");
-//                            for a registered account it also ends every
-//                            cookie made for the account so far (below)
+//                            account; account null for open and the demo,
+//                            { uid, email, name, product, profileComplete }
+//                            for an account, and the same with owner: true
+//                            for the owner (profileComplete is always true
+//                            there: the owner needs no profile); required:
+//                            a visitor without a cookie is the read-only
+//                            demo here (always online). The page asks this
+//                            first.
+//   POST /api/auth/firebase  body { idToken } -> a Google or e-mail sign-in
+//                            through Firebase (server/accounts.js): the
+//                            owner's cookie for the owner's verified
+//                            e-mail, else the account cookie
+//   POST /api/auth/logout    removes every cookie (the sidebar's "Sign
+//                            out"); for an account or the owner it also
+//                            ends every cookie made for it so far (below)
+//   POST /api/auth/login     retired: 410 owner_key_retired
 //
-// THREE COOKIES
-//   atlas_session       the owner's key's (30 days)
-//   chernozem_account   a registered account's (30 days): "<uid>.<made
-//                       at>.<expires at>.<random>.<signature>", signed
-//                       with a secret made from this install's salt and
-//                       the word "accounts", checked in constant time. It
-//                       is set by POST /api/auth/firebase once Firebase
-//                       has said who the person is, and carries only the
-//                       account id and the times: the e-mail, name and
-//                       product are read from the account's profile.json
-//                       on every request.
+// THE COOKIES
+//   chernozem_owner     the owner's (30 days), set only by a sign-in whose
+//                       Firebase token says the e-mail is verified and the
+//                       owner's: "<uid>.<made at>.<expires at>.<random>.
+//                       <signature>", signed with a secret made from this
+//                       install's salt and the word "owner"
+//   chernozem_account   a registered account's (30 days): the same shape,
+//                       signed with the salt and the word "accounts" (so
+//                       neither cookie can pass for the other), checked in
+//                       constant time. Both carry only the account id and
+//                       the times: the e-mail, name and product are read
+//                       from the account's profile.json on every request.
 //   chernozem_demo      a demo visitor's random number (1 day), made at
 //                       the visitor's first question to the demo's AI
 //                       assistant, so their chats (kept in memory, never
 //                       on disk) are theirs only: server/ai/demoChats.js
+//   atlas_session       the retired code's: never read, only removed
 // Without the demo header, a browser with a valid account cookie is that
-// account, key or no key (also online, and also on one's own computer
-// without a key); else the owner's cookie makes it the owner; else it is
-// the demo (open without a key). handleAuth gives server/app.js the
-// session, { kind: "owner" | "open" | "account" | "demo", root, account,
-// readOnly }, and app.js runs the route inside that root and that session
+// account; else the owner's cookie makes it the owner; else it is open or
+// the demo (above). handleAuth gives server/app.js the session, { kind:
+// "owner" | "open" | "account" | "demo", root, account, readOnly }, and
+// app.js runs the route inside that root and that session
 // (server/session.js withSession).
 //
-// WHEN AN ACCOUNT COOKIE STOPS COUNTING (before its 30 days)
+// WHEN A COOKIE STOPS COUNTING (before its 30 days)
 // A cookie is a signed note; the server cannot take it back from a browser
-// that keeps a copy. So, on every request, accountSession also checks:
+// that keeps a copy. So, on every request, the owner's and an account's
+// cookie are also checked against:
 //   - the account's session.json (server/store.js): "Sign out" writes the
 //     moment into it (server/accounts.js signOutAccount), and a cookie
 //     made before that moment is nobody. A sign-in after it makes a newer
-//     cookie, which counts. (Firebase's own sessions in that browser are
-//     ended too, best-effort.)
-//   - that the Firebase user still exists and is not disabled, asked of
-//     Firebase at most once an hour per account (server/accounts.js
-//     firebaseUserOk). Deleted or disabled there: the cookie is treated as
-//     run out within the hour.
-// The owner's cookie has no such check: signing out removes it from that
-// browser, and only a new key ends every owner sign-in at once.
+//     cookie, which counts. (Firebase's own sessions are ended too, and a
+//     Firebase sign-in from before the moment is refused: accounts.js.)
+//   - Firebase itself, at most once an hour per account
+//     (server/accounts.js firebaseUserState): the user still exists and is
+//     not disabled, and, for the owner, its e-mail is still verified and
+//     still in OWNER_EMAILS. Deleted, disabled or no longer the owner's: the
+//     cookie is nobody within the hour.
+// An owner's Google account is never an ordinary account as well: an
+// account cookie whose account now has a verified owner's e-mail is nobody.
 //
 // Also here, for every /api/ route (server/app.js calls assertSameSite
 // first): a request that changes something is refused (403 cross_site)
-// when a browser says another website sent it, key or no key. See
-// "Requests sent by other websites" below.
+// when a browser says another website sent it. See "Requests sent by
+// other websites" below.
 //
-// ONLINE (on Render: https://chernozem.app, docs/DEPLOY.md) the key must
-// be at least 16 characters and must not be the example once printed in
-// the docs (the repository is public). server/index.js refuses to start
-// without such a key (server/online.js): without one, everyone would be
-// "open" and could change everything. If the key still changes to one
-// like that while the server runs, nobody can sign in as the owner any
-// more (503 access_code_off): everyone gets the read-only demo, rather
-// than the app opening to anyone.
-//
-// HOW SIGNING IN AS THE OWNER WORKS
-// After the right key, the browser gets a cookie that lasts 30 days. The
-// cookie says when it runs out and carries a signature (an HMAC) that only
-// this server can make: the signing secret comes from the key plus a
-// random "salt" saved once in server/.data/auth.json. Changing the key
-// therefore signs the owner out everywhere. Keys and signatures are
-// compared in constant time (so timing cannot give them away), and one
-// visitor gets at most 10 wrong keys per 10 minutes.
-//
-// THE VISITOR'S ADDRESS (for that limit, clientAddress below; the contact
-// form's and the demo assistant's limits use it too)
+// THE VISITOR'S ADDRESS (clientAddress below: the contact form's, the demo
+// assistant's, the demo place search's and the data upload's limits use it)
 // Normally the address that connected. Behind a proxy every visitor seems
 // to come from the proxy, so ATLAS_TRUST_PROXY says where to read it:
 //   1           one proxy (nginx, Caddy, a tunnel): the last entry of
@@ -128,26 +129,30 @@
 // or set to 1. Entries left of the visitor's own were typed by the visitor
 // (Render keeps them), so they are never used. An IPv6 visitor counts by
 // its /64 network (one home or phone line can switch between millions of
-// addresses inside it).
+// addresses inside it), or by its /48 where asked (the contact form and
+// the demo's assistant: one provider's customer often holds a whole /48).
 //
 // WHO EDITS IT
-// Nobody, normally. The setting is ATLAS_ACCESS_CODE in .env (see
-// .env.example and docs/DEPLOY.md, "The public demo").
+// Nobody, normally. The settings are OWNER_EMAILS and ATLAS_ACCESS_CODE in
+// .env (see .env.example and docs/DEPLOY.md, "The public demo and the
+// owner").
 
 import fs from "node:fs/promises";
 import path from "node:path";
 import { BlockList, isIP } from "node:net";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { onRender, refreshEnv } from "./env.js";
+import { config, onRender, refreshEnv } from "./env.js";
 import { baseDataDir, getProfile, getSessionFile, userRoot, withDataRoot } from "./store.js";
-import { HttpError, readJson, sendJson } from "./http.js";
+import { HttpError, sendJson } from "./http.js";
 // (accounts.js imports this file too; both only use each other inside
 // functions, so the circle is harmless.)
-import { accountSummary, firebaseUserOk, handleFirebaseSignIn, signOutAccount } from "./accounts.js";
+import { accountSummary, firebaseUserState, handleFirebaseSignIn, ownerSummary, signOutAccount } from "./accounts.js";
 
-export const COOKIE_NAME = "atlas_session";
+export const OWNER_COOKIE_NAME = "chernozem_owner";
 export const ACCOUNT_COOKIE_NAME = "chernozem_account";
 export const DEMO_COOKIE_NAME = "chernozem_demo";
+// The retired access code's cookie: never read, only removed.
+export const RETIRED_COOKIE_NAME = "atlas_session";
 export const DEMO_COOKIE_SECONDS = 24 * 60 * 60;
 // The header a browser tab sends while it looks at the public demo (keep
 // it the same as DEMO_VIEW_HEADER in src/lib/demoMode.js). Node gives
@@ -155,92 +160,59 @@ export const DEMO_COOKIE_SECONDS = 24 * 60 * 60;
 export const DEMO_VIEW_HEADER = "X-Chernozem-View";
 export const SESSION_DAYS = 30;
 export const SESSION_MS = SESSION_DAYS * 24 * 60 * 60 * 1000;
+// The wrong-try limit's defaults (createLoginLimiter; the data upload's
+// wrong tokens use them).
 export const MAX_FAILED_LOGINS = 10;
 export const FAILED_LOGIN_WINDOW_MS = 10 * 60 * 1000;
-// How many visitors the wrong-code limit remembers at most.
+// How many visitors such a limit remembers at most.
 export const MAX_LIMITER_KEYS = 50_000;
-// Online (on Render) the code must be at least this long.
-export const ACCESS_CODE_MIN_LENGTH = 16;
+export const OWNER_KEY_RETIRED_MESSAGE = "The owner signs in with the Chernozem Google account at /owner.";
 
 // Kept on globalThis so the dev server, which reloads this file after
-// edits, keeps the salt it read and the count of wrong codes.
-const memory = (globalThis.__chernozemAuth ??= { salts: new Map(), limiter: null });
+// edits, keeps the salt it read.
+const memory = (globalThis.__chernozemAuth ??= { salts: new Map() });
 
 // ---------- Settings ----------
 
-// The owner's key (ATLAS_ACCESS_CODE in .env, the old "access code"), or
-// null when none is set (open mode).
+// ATLAS_ACCESS_CODE in .env, or null when it is not set. No longer a key
+// (see the top of this file): only "visitors are the demo" on one's own
+// computer.
 export function accessCode() {
   refreshEnv();
   return (process.env.ATLAS_ACCESS_CODE || "").trim() || null;
 }
 
+// True when a visitor without a cookie is the read-only demo rather than
+// open: always online (on Render), and on one's own computer once
+// ATLAS_ACCESS_CODE is set. (The status's "required".)
+export function visitorsSeeDemo() {
+  return onRender() || Boolean(accessCode());
+}
+
+// True when this e-mail address is one of the owner's (OWNER_EMAILS).
+// Whether Google verified it is checked by the callers.
+export function isOwnerEmail(email) {
+  if (typeof email !== "string" || !email.trim()) return false;
+  return config().ownerEmails.includes(email.trim().toLowerCase());
+}
+
 const flag = (value) => ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
-
-// The example code once printed in docs/CONNECT-DATA.md and docs/DEPLOY.md.
-// It stays readable in the public repository's history, so online it never
-// counts as a code (whatever its capitals, spaces or dashes).
-const PUBLISHED_CODES = ["river-tractor-winter-maple"];
-const lettersOnly = (text) => String(text).toLowerCase().replace(/[^a-z0-9]+/g, "");
-
-// Why a code cannot lock the online copy: "missing", "short" (under
-// ACCESS_CODE_MIN_LENGTH characters) or "published" (the docs' example);
-// null when it can. On one's own computer any code, or none, is fine.
-export function accessCodeProblem(code) {
-  if (!code) return "missing";
-  if (code.length < ACCESS_CODE_MIN_LENGTH) return "short";
-  if (PUBLISHED_CODES.some((example) => lettersOnly(example) === lettersOnly(code))) return "published";
-  return null;
-}
-
-// True when the app must stay locked whatever is typed: online, with a code
-// that cannot lock it (see the top of this file).
-export function codeRefusedOnline(code = accessCode()) {
-  return onRender() && accessCodeProblem(code) !== null;
-}
 
 // ---------- Signing (pure: easy to test) ----------
 
 const base64url = (buffer) => buffer.toString("base64url");
 
-// The signing secret: the owner's key mixed with this install's salt.
-export function deriveSecret(code, salt) {
-  return createHmac("sha256", String(salt)).update(`chernozem-atlas-session\0${code}`).digest();
-}
-
 function signature(secret, payload) {
   return base64url(createHmac("sha256", secret).update(payload).digest());
 }
 
-// Makes a sign-in token: "<expires at, ms>.<random>.<signature>".
-export function signSession(secret, { now = Date.now(), maxAgeMs = SESSION_MS } = {}) {
-  const payload = `${now + maxAgeMs}.${base64url(randomBytes(16))}`;
-  return `${payload}.${signature(secret, payload)}`;
-}
-
-const TOKEN = /^(\d{1,16})\.([A-Za-z0-9_-]{16,64})\.([A-Za-z0-9_-]{43})$/;
-
-// True when the token was made by signSession with this secret and has not
-// run out yet.
-export function verifySession(token, secret, { now = Date.now() } = {}) {
-  const match = typeof token === "string" ? TOKEN.exec(token) : null;
-  if (!match) return false;
-  const [, expires, nonce, given] = match;
-  const expected = Buffer.from(signature(secret, `${expires}.${nonce}`));
-  const actual = Buffer.from(given);
-  // Same length always (43 characters); compared in constant time.
-  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return false;
-  return Number(expires) > now;
-}
-
-// Compares a typed code with the real one in constant time, whatever the
-// lengths (both are hashed to 32 bytes first).
+// Compares two texts in constant time, whatever their lengths (both are
+// hashed to 32 bytes first). The data upload's token check uses it
+// (server/import.js).
 export function codesMatch(given, actual) {
   const hash = (text) => createHash("sha256").update(String(text)).digest();
   return timingSafeEqual(hash(given), hash(actual));
 }
-
-// ---------- Signing a registered account's cookie (pure too) ----------
 
 // A Firebase account id: letters, digits, "_" and "-" (Firebase makes 28
 // letters and digits; custom ids may be longer). No dots, so the token's
@@ -249,15 +221,20 @@ const UID = /^[A-Za-z0-9_-]{1,128}$/;
 export const isUid = (value) => typeof value === "string" && UID.test(value);
 
 // The secret for account cookies: this install's salt and the word
-// "accounts". Not the owner's key, so changing the key does not sign the
-// accounts out (and a new salt signs everyone out, accounts included).
+// "accounts" (a new salt signs everyone out, the owner included).
 export function deriveAccountSecret(salt) {
   return createHmac("sha256", String(salt)).update("accounts").digest();
 }
 
-// Makes an account token: "<uid>.<made at, ms>.<expires at, ms>.<random>.
-// <signature>". The time it was made at lets a sign-out end it (see the
-// top of this file).
+// The secret for the owner's cookie: the salt and the word "owner", so an
+// account cookie can never pass for the owner's, nor the other way round.
+export function deriveOwnerSecret(salt) {
+  return createHmac("sha256", String(salt)).update("owner").digest();
+}
+
+// Makes a token (the owner's or an account's, by the secret): "<uid>.<made
+// at, ms>.<expires at, ms>.<random>.<signature>". The time it was made at
+// lets a sign-out end it (see the top of this file).
 export function signAccountSession(secret, uid, { now = Date.now(), maxAgeMs = SESSION_MS } = {}) {
   if (!isUid(uid)) throw new Error("signAccountSession needs a Firebase account id.");
   const payload = `${uid}.${now}.${now + maxAgeMs}.${base64url(randomBytes(16))}`;
@@ -281,24 +258,25 @@ export function verifyAccountSession(token, secret, { now = Date.now() } = {}) {
   return { uid, issuedAt: Number(issued), expiresAt: Number(expires) };
 }
 
-// ---------- Wrong-code limit ----------
+// ---------- A limit on wrong tries ----------
 
-// Counts wrong codes per visitor. After `max` wrong codes inside `windowMs`
-// the visitor must wait until the oldest one is older than windowMs.
-// Memory stays small and every wrong code quick, however many addresses
-// someone makes up: visitors whose wrong codes have all run out are swept
-// away at most once per sweepEveryMs, and above maxKeys visitors the one
-// whose last wrong code is oldest is forgotten first. (No limit for all
-// visitors together: one person could then keep everyone out.)
+// Counts wrong tries per visitor (the data upload's wrong tokens, the demo
+// place search's lookups). After `max` inside `windowMs` the visitor must
+// wait until the oldest one is older than windowMs. Memory stays small and
+// every try quick, however many addresses someone makes up: visitors
+// whose tries have all run out are swept away at most once per
+// sweepEveryMs, and above maxKeys visitors the one whose last try is
+// oldest is forgotten first. (Kept in memory only: the limits that must
+// outlive a restart are in server/counters.js.)
 export function createLoginLimiter({
   max = MAX_FAILED_LOGINS,
   windowMs = FAILED_LOGIN_WINDOW_MS,
   maxKeys = MAX_LIMITER_KEYS,
   sweepEveryMs = 60 * 1000,
 } = {}) {
-  // visitor -> [times of wrong codes]. A Map keeps the order its keys were
-  // added in; each wrong code moves its visitor to the end, so the first
-  // key is always the visitor whose last wrong code is oldest.
+  // visitor -> [times of tries]. A Map keeps the order its keys were added
+  // in; each try moves its visitor to the end, so the first key is always
+  // the visitor whose last try is oldest.
   const failures = new Map();
   let sweptAt = -Infinity;
   const recent = (key, now) => {
@@ -334,15 +312,6 @@ export function createLoginLimiter({
       return failures.size;
     },
   };
-}
-
-function limiter() {
-  return (memory.limiter ??= createLoginLimiter());
-}
-
-// For tests: forget every wrong code.
-export function resetLoginLimits() {
-  memory.limiter = null;
 }
 
 // ---------- The per-install salt (server/.data/auth.json) ----------
@@ -417,9 +386,8 @@ export function isHttps(req) {
 
 // A request that changes something (anything but GET or HEAD) must come
 // from this app's own pages, never from another website a visitor has
-// open: that website could otherwise sign the visitor out, spend their ten
-// wrong-code tries, or change the workspace with their cookie. Browsers
-// say where a request came from:
+// open: that website could otherwise sign the visitor out, or change the
+// workspace with their cookie. Browsers say where a request came from:
 //   Sec-Fetch-Site   "same-origin" (our own pages), "none" (the visitor
 //                    typed the address or used a bookmark): allowed;
 //                    "same-site" or "cross-site": refused
@@ -558,7 +526,7 @@ function warnNoCloudflareHeader(forwarded) {
     .filter(Boolean)
     .map((ip) => (inList(INTERNAL, ip) ? "private" : inList(CLOUDFLARE, ip) ? "Cloudflare" : "public"));
   console.warn(
-    `[chernozem] A request came without CF-Connecting-IP, which Cloudflare (in front of every Render service) always sets, so the wrong-code limit read X-Forwarded-For instead (its addresses: ${kinds.join(", ") || "none"}). Said once.`
+    `[chernozem] A request came without CF-Connecting-IP, which Cloudflare (in front of every Render service) always sets, so the visitor's address was read from X-Forwarded-For instead (its addresses: ${kinds.join(", ") || "none"}). Said once.`
   );
 }
 
@@ -577,16 +545,18 @@ function ipv6Groups(ip) {
   return [...left, ...fill, ...right].map((group) => parseInt(group, 16));
 }
 
-// What the wrong-code limit counts: an IPv4 address, or an IPv6 /64.
-export function limitKey(ip) {
+// What a limit counts: an IPv4 address, or an IPv6 network: its /64
+// (ipv6Bits 64, the default) or its /48 (ipv6Bits 48).
+export function limitKey(ip, { ipv6Bits = 64 } = {}) {
   if (!ip) return "unknown";
   if (isIP(ip) !== 6) return ip;
-  return `${ipv6Groups(ip).slice(0, 4).map((n) => n.toString(16)).join(":")}::/64`;
+  const bits = ipv6Bits === 48 ? 48 : 64;
+  return `${ipv6Groups(ip).slice(0, bits / 16).map((n) => n.toString(16)).join(":")}::/${bits}`;
 }
 
-// The visitor's address for the wrong-code limits (here and in
-// server/import.js).
-export function clientAddress(req) {
+// The visitor's address for the limits per visitor (see the top of this
+// file). ipv6Bits: 48 to count an IPv6 visitor by its /48.
+export function clientAddress(req, { ipv6Bits = 64 } = {}) {
   const headers = req.headers || {};
   const mode = proxyMode();
   let ip = null;
@@ -599,7 +569,7 @@ export function clientAddress(req) {
   } else if (mode === "forwarded") {
     ip = visitorFromForwarded(headers["x-forwarded-for"]);
   }
-  return limitKey(ip || normalizeIp(req.socket?.remoteAddress));
+  return limitKey(ip || normalizeIp(req.socket?.remoteAddress), { ipv6Bits });
 }
 
 function cookieLine(req, name, token, maxAgeSec) {
@@ -609,15 +579,20 @@ function cookieLine(req, name, token, maxAgeSec) {
 }
 
 // The Set-Cookie line for the owner's cookie (token "" with 0 seconds
-// removes it; server/accounts.js does that at an account sign-in).
-export function sessionCookie(req, token, maxAgeSec) {
-  return cookieLine(req, COOKIE_NAME, token, maxAgeSec);
+// removes it; server/accounts.js sets it after the owner's sign-in).
+export function ownerCookie(req, token, maxAgeSec = Math.floor(SESSION_MS / 1000)) {
+  return cookieLine(req, OWNER_COOKIE_NAME, token, maxAgeSec);
 }
 
 // The Set-Cookie line for a registered account's cookie (server/accounts.js
 // sets it after a Firebase sign-in).
 export function accountCookie(req, token, maxAgeSec = Math.floor(SESSION_MS / 1000)) {
   return cookieLine(req, ACCOUNT_COOKIE_NAME, token, maxAgeSec);
+}
+
+// The Set-Cookie line that removes the retired code's cookie.
+export function retiredCookieRemoval(req) {
+  return cookieLine(req, RETIRED_COOKIE_NAME, "", 0);
 }
 
 // The Set-Cookie line for a demo visitor's number (server/ai/demoChats.js
@@ -643,24 +618,6 @@ export function wantsDemoView(req) {
   }
 }
 
-// True when this request carries a valid owner's cookie (made with the key
-// set now). Never online with a key that cannot lock the app.
-export async function hasOwnerCookie(req, code = accessCode()) {
-  if (!code || codeRefusedOnline(code)) return false;
-  const token = parseCookies(req.headers?.cookie)[COOKIE_NAME];
-  if (!token) return false;
-  return verifySession(token, deriveSecret(code, await installSalt()));
-}
-
-// True when this request may change the demo's data: the owner's cookie,
-// or no key at all (one's own computer). Kept for older callers; the
-// session below says the same with more words.
-export async function isSignedIn(req, code = accessCode()) {
-  if (codeRefusedOnline(code)) return false;
-  if (!code) return true;
-  return hasOwnerCookie(req, code);
-}
-
 // What this request's account cookie says, { uid, issuedAt, expiresAt },
 // when the cookie is properly signed and has not run out; else null (no
 // cookie, a changed one, an old one: all the same, not signed in). Only
@@ -672,52 +629,75 @@ export async function accountTokenOf(req) {
   return verifyAccountSession(token, deriveAccountSecret(await installSalt()));
 }
 
-// The registered account this request belongs to, with its profile read
-// from its own folder: { kind: "account", root, account, readOnly: false },
-// or null when the request carries no valid account cookie, the account
-// signed out since the cookie was made, or the Firebase user is gone or
-// disabled (see the top of this file).
-async function accountSession(req) {
-  const token = await accountTokenOf(req);
+// The same for the owner's cookie.
+export async function ownerTokenOf(req) {
+  const token = parseCookies(req.headers?.cookie)[OWNER_COOKIE_NAME];
   if (!token) return null;
-  const { uid, issuedAt } = token;
+  return verifyAccountSession(token, deriveOwnerSecret(await installSalt()));
+}
+
+// The account a signed cookie names, while that cookie still counts (see
+// "WHEN A COOKIE STOPS COUNTING" at the top of this file): { uid, root,
+// profile, user: { ok, email, emailVerified } }, or null.
+async function stillSignedIn({ uid, issuedAt }) {
   const root = userRoot(uid);
   const [profile, signedOut] = await withDataRoot(root, () => Promise.all([getProfile(), getSessionFile()]));
   const validFrom = Date.parse(signedOut?.sessionsValidFrom || "");
   if (Number.isFinite(validFrom) && issuedAt < validFrom) return null;
-  if (!(await firebaseUserOk(uid))) return null;
-  return { kind: "account", root, account: accountSummary(uid, profile), readOnly: false };
+  const user = await firebaseUserState(uid, profile);
+  if (!user.ok) return null;
+  return { uid, root, profile, user };
 }
 
-// The demo's own folder (the base folder), seen three ways.
+const isOwnersUser = (user) => user.emailVerified === true && isOwnerEmail(user.email);
+
+// The registered account this request belongs to, with its profile read
+// from its own folder: { kind: "account", root, account, readOnly: false,
+// emailVerified }, or null (no valid account cookie, signed out since, the
+// Firebase user gone or disabled, or the owner's own Google account).
+async function accountSession(req) {
+  const token = await accountTokenOf(req);
+  if (!token) return null;
+  const found = await stillSignedIn(token);
+  if (!found || isOwnersUser(found.user)) return null;
+  return { kind: "account", root: found.root, account: accountSummary(found.uid, found.profile), readOnly: false, emailVerified: found.user.emailVerified === true };
+}
+
+// The owner, when this request brings the owner's cookie and it still
+// counts: { kind: "owner", root: <the base folder>, account: { ...,
+// owner: true }, readOnly: false }, or null.
+async function ownerSession(req) {
+  const token = await ownerTokenOf(req);
+  if (!token) return null;
+  const found = await stillSignedIn(token);
+  if (!found || !isOwnersUser(found.user)) return null;
+  return { kind: "owner", root: baseDataDir(), account: ownerSummary(found.uid, found.profile, found.user.email), readOnly: false };
+}
+
+// The demo's own folder (the base folder), open or read-only.
 const baseSession = (kind) => ({ kind, root: baseDataDir(), account: null, readOnly: kind === "demo" });
 
 // The session this request runs in (see the top of this file):
 //   the demo header: the owner stays the owner; anyone else is the demo
-//   no header:       a registered account; else the owner; else open (no
-//                    key set) or the demo
-// Online with a key that cannot lock the app nobody is the owner or open.
-export async function sessionOf(req, code = accessCode()) {
-  const refused = codeRefusedOnline(code);
-  const open = !code && !refused;
-  if (wantsDemoView(req)) {
-    return (await hasOwnerCookie(req, code)) ? baseSession("owner") : baseSession("demo");
-  }
+//   no header:       a registered account; else the owner; else open (one's
+//                    own computer without ATLAS_ACCESS_CODE) or the demo
+export async function sessionOf(req) {
+  if (wantsDemoView(req)) return (await ownerSession(req)) || baseSession("demo");
   const account = await accountSession(req);
   if (account) return account;
-  if (open) return baseSession("open");
-  if (await hasOwnerCookie(req, code)) return baseSession("owner");
-  return baseSession("demo");
+  const owner = await ownerSession(req);
+  if (owner) return owner;
+  return baseSession(visitorsSeeDemo() ? "demo" : "open");
 }
 
-// What GET /api/auth/status (and the sign-in and sign-out answers) say
-// about a session: { required, signedIn, shared, account, mode, readOnly }.
+// What GET /api/auth/status (and the sign-out answer) say about a session:
+// { required, signedIn, shared, account, mode, readOnly }.
 export function statusOf(session, required) {
   return {
     required,
     signedIn: session.kind !== "demo",
     shared: session.kind !== "account",
-    account: session.kind === "account" ? session.account : null,
+    account: session.kind === "account" || session.kind === "owner" ? session.account || null : null,
     mode: session.kind,
     readOnly: session.kind === "demo",
   };
@@ -727,87 +707,53 @@ export function statusOf(session, required) {
 // Answers /api/auth/... itself (gives back false: nothing more to do). For
 // everything else it gives back the session the route runs in (sessionOf
 // above):
-//   { kind: "owner" | "open", root: <the base folder>, account: null, readOnly: false }
+//   { kind: "owner", root: <the base folder>, account: { ..., owner: true }, readOnly: false }
+//   { kind: "open", root: <the base folder>, account: null, readOnly: false }
 //   { kind: "account", root: <the account's folder>, account: { uid,
-//     email, name, product, profileComplete }, readOnly: false }
+//     email, name, product, profileComplete }, readOnly: false, emailVerified }
 //   { kind: "demo", root: <the base folder>, account: null, readOnly: true }
-// Nobody is turned away here any more: a visitor without a cookie is the
-// read-only demo (server/app.js refuses the changes).
+// Nobody is turned away here: a visitor without a cookie is the read-only
+// demo (server/app.js refuses the changes), or open on one's own computer.
 export async function handleAuth(req, res, { method, first, second, third }) {
-  const code = accessCode();
-  // Online with a key that cannot lock the app: nobody is the owner.
-  const refused = codeRefusedOnline(code);
-  const required = Boolean(code) || refused;
+  const required = visitorsSeeDemo();
 
-  if (first !== "auth") return sessionOf(req, code);
+  if (first !== "auth") return sessionOf(req);
 
   if (second === "status" && !third && method === "GET") {
-    sendJson(res, 200, statusOf(await sessionOf(req, code), required));
+    sendJson(res, 200, statusOf(await sessionOf(req), required));
     return false;
   }
 
-  if (second === "login" && !third && method === "POST") {
-    const body = await readJson(req);
-    if (refused) {
-      throw new HttpError(
-        503,
-        "access_code_off",
-        `Signing in as the owner is off: the owner's key set on the server (ATLAS_ACCESS_CODE) is missing, shorter than ${ACCESS_CODE_MIN_LENGTH} characters or the example from the docs. Whoever runs the server must set a new one.`
-      );
-    }
-    if (!code) {
-      // Nothing to sign in to: without a key everyone may change the demo
-      // already. A browser that was a registered account asked for the
-      // demo's workspace, so that cookie goes.
-      if (parseCookies(req.headers?.cookie)[ACCOUNT_COOKIE_NAME]) res.setHeader("Set-Cookie", accountCookie(req, "", 0));
-      sendJson(res, 200, { ok: true, ...statusOf(baseSession("open"), false) });
-      return false;
-    }
-    const who = clientAddress(req);
-    const wait = limiter().check(who);
-    if (wait.blocked) {
-      res.setHeader("Retry-After", String(wait.retryAfterSec));
-      const minutes = Math.ceil(wait.retryAfterSec / 60);
-      throw new HttpError(429, "too_many_attempts", `Too many wrong keys. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.`);
-    }
-    const given = typeof body.code === "string" ? body.code.trim().slice(0, 200) : "";
-    if (!given || !codesMatch(given, code)) {
-      limiter().fail(who);
-      throw new HttpError(401, "wrong_code", "That key is not right.");
-    }
-    limiter().reset(who);
-    const token = signSession(deriveSecret(code, await installSalt()));
-    // The owner from now on: an account cookie left in this browser would
-    // otherwise still win (see sessionOf above).
-    res.setHeader("Set-Cookie", [sessionCookie(req, token, Math.floor(SESSION_MS / 1000)), accountCookie(req, "", 0)]);
-    sendJson(res, 200, { ok: true, ...statusOf(baseSession("owner"), true) });
-    return false;
+  // The retired access code (see the top of this file), whatever is sent.
+  if (second === "login" && !third) {
+    throw new HttpError(410, "owner_key_retired", OWNER_KEY_RETIRED_MESSAGE);
   }
 
-  // A registered account's sign-in (server/accounts.js).
+  // A Google or e-mail sign-in through Firebase: the owner or an account
+  // (server/accounts.js).
   if (second === "firebase" && !third && method === "POST") {
     await handleFirebaseSignIn(req, res);
     return false;
   }
 
   if (second === "logout" && !third && method === "POST") {
-    // A registered account: every cookie made for it so far stops
+    // An account or the owner: every cookie made for it so far stops
     // counting (server/accounts.js signOutAccount), not only the one this
     // browser drops. Only a cookie that still counts can do that: a copy
     // kept from before an earlier sign-out cannot sign the person out of
     // Firebase on their other devices again and again. (Also with the demo
-    // header: "Sign out" is never only a look, so it ends the account as
-    // it always did.)
-    const account = await accountSession(req);
-    if (account) await signOutAccount(account.account.uid);
-    res.setHeader("Set-Cookie", [sessionCookie(req, "", 0), accountCookie(req, "", 0)]);
-    // Without its cookies the browser is the demo, or open without a key.
+    // header: "Sign out" is never only a look.)
+    const signedIn = (await accountSession(req)) || (await ownerSession(req));
+    if (signedIn) await signOutAccount(signedIn.account.uid);
+    res.setHeader("Set-Cookie", [ownerCookie(req, "", 0), accountCookie(req, "", 0), retiredCookieRemoval(req)]);
+    // Without its cookies the browser is the demo, or open on one's own
+    // computer without ATLAS_ACCESS_CODE.
     const after = required || wantsDemoView(req) ? "demo" : "open";
     sendJson(res, 200, { ok: true, ...statusOf(baseSession(after), required) });
     return false;
   }
 
-  if (["status", "login", "firebase", "logout"].includes(second) && !third) {
+  if (["status", "firebase", "logout"].includes(second) && !third) {
     throw new HttpError(405, "method_not_allowed", `${method} is not supported on /api/auth/${second}.`);
   }
   throw new HttpError(404, "not_found", "No such sign-in route.");

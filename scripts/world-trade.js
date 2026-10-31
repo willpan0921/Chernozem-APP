@@ -11,7 +11,10 @@
 //      where it was when run again with the same --save-raw file.
 //   2. the build (server/world/trade.js buildTradeTable): the share of each
 //      importer's food that comes from each exporter, the eight largest per
-//      exporter, written as one small file (under 150 KB).
+//      exporter, each with the year of its figure and whether the buyer or
+//      the seller reported it, written as one small file (under 150 KB).
+//      The crawl keeps each reporter's year, so a build from a saved crawl
+//      (--raw) knows every row's year too.
 // It needs nothing installed beyond Node.
 //
 // HOW TO USE IT
@@ -209,11 +212,15 @@ function build(raw, options) {
   fs.writeFileSync(options.out, json);
   const names = countryNames(raw);
   const count = Object.keys(table.exporters).length;
-  console.log(`\nWrote ${options.out}: ${count} exporters, year ${table.year}, ${(json.length / 1024).toFixed(1)} KB${json.length > SIZE_LIMIT ? " (OVER THE 150 KB LIMIT)" : ""}`);
+  const years = table.years ? (table.years[0] === table.years[1] ? `${table.years[0]}` : `${table.years[0]} to ${table.years[1]}`) : "none";
+  console.log(`\nWrote ${options.out}: ${count} exporters, rows from ${years} (most often ${table.year}), ${(json.length / 1024).toFixed(1)} KB${json.length > SIZE_LIMIT ? " (OVER THE 150 KB LIMIT)" : ""}`);
   const ukraine = table.exporters.UKR;
   if (ukraine) {
     console.log(`Ukraine sells US$ ${(ukraine.total / 1000).toLocaleString("en-US", { maximumFractionDigits: 0 })} million of food abroad; who depends on it most:`);
-    for (const row of ukraine.to) console.log(`  ${names[row.iso3] || row.iso3}: ${(row.share * 100).toFixed(1)}% of its food imports (US$ ${(row.value / 1000).toLocaleString("en-US", { maximumFractionDigits: 0 })} million)`);
+    for (const row of ukraine.to) {
+      const side = row.by === "seller" ? "Ukraine's own figure" : "its own report";
+      console.log(`  ${names[row.iso3] || row.iso3}: ${(row.share * 100).toFixed(1)}% of its food imports (US$ ${(row.value / 1000).toLocaleString("en-US", { maximumFractionDigits: 0 })} million, ${row.year ?? "year unknown"}, ${side})`);
+    }
   } else console.log("Ukraine has no rows (check the crawl).");
   return table;
 }

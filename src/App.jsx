@@ -6,14 +6,14 @@
 //   /story        The story                  /demo         Try the Ukraine demo (open to all, read-only)
 //   /method       Methodology                /register     Make an account (Field or Atlas)
 //                                            /signin       Sign in to an account
-//                                            /owner        The owner's key (not linked anywhere)
+//                                            /owner        The owner signs in with the Chernozem Google account (not linked anywhere)
 //   Old addresses (/about, /product, /guide, /technology, /design) go to
 //   the page that now holds that content.
 //
 // The app itself, inside the AppShell (the sidebar frame), behind the
 // AccessGate (src/components/atlas/AccessGate.jsx): a visitor with no
 // account sees the public demo (both products, read-only); a registered
-// account opens the product it chose; the owner's key opens the demo to edit.
+// account opens the product it chose; the owner (the Chernozem Google account) edits the demo.
 //   /field            Field: Overview        /atlas            Atlas: Overview
 //   /field/fields     Field: Fields (map)    /atlas/map        Atlas: Atlas (map)
 //   /field/ai         Field: AI chat         /atlas/ai         Atlas: AI chat
@@ -69,8 +69,8 @@ const NotFoundPage = lazy(() => import("./site/pages/NotFoundPage.jsx"));
 // (the first time one of their pages opens), so moving between pages is
 // instant and the sidebar can show the current area or farm. See
 // src/state/AtlasData.jsx and src/state/FieldData.jsx. The AccessGate around
-// them only lets the app open once the visitor may use it (the demo's
-// access code, or an account signed in on the website); the website
+// them only lets the app open once the visitor may use it (the public
+// demo, an account, or the owner signed in on the website); the website
 // outside it needs no sign-in. Inside, a ProductGuard around each product's
 // routes keeps a registered account on the product it chose: an Atlas
 // account that opens a Field address lands on /atlas, and the other way
@@ -105,7 +105,7 @@ export default function App() {
             <Route path="/demo" element={<DemoPage />} />
             <Route path="/register" element={<RegisterPage />} />
             <Route path="/signin" element={<SignInPage />} />
-            {/* The owner's own sign-in (the old access code), not linked from anywhere. */}
+            {/* The owner's own sign-in (the Chernozem Google account), not linked from anywhere. */}
             <Route path="/owner" element={<OwnerPage />} />
             {/* The first website's addresses, kept so old links still land somewhere. */}
             <Route path="/about" element={<Navigate to="/" replace />} />

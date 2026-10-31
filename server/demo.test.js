@@ -1,9 +1,10 @@
 // WHAT THIS FILE DOES
 // Tests the public demo (server/auth.js, server/app.js, server/session.js,
 // server/ai/demoChats.js) on a real local port with a temporary data
-// folder and sample data. First a small demo workspace is made with no
-// key set (an area with a month, a team member, the Ukraine example farm,
-// a report, a contact message); then the owner's key is set, and:
+// folder and sample data. First a small demo workspace is made in open
+// mode (an area with a month, a team member, the Ukraine example farm, a
+// report, a contact message); then ATLAS_ACCESS_CODE is set (visitors see
+// the demo), the owner signs in with Google, and:
 //   - a visitor without a cookie reads everything (the farm, the
 //     workspace without the team's e-mail addresses, the areas, the
 //     months, the status) and the status says mode "demo", readOnly;
@@ -12,9 +13,13 @@
 //     sentence, no job starts and not one file changes;
 //   - the website's messages are the owner's alone (403 owner_only);
 //   - the demo's AI assistant keeps each visitor's chats in memory only,
-//     never on disk, and stops at its three limits (per visitor, per
-//     address, for the whole demo), and its memory keeps few chats, few
-//     messages, few visitors, for 24 hours;
+//     never on disk, and stops at its four limits (per visitor, per
+//     address with IPv6 by its /48, for the whole demo, and the whole
+//     demo's tokens), whose counts outlive a restart; its answers are
+//     short and cheap (3,000 tokens, effort low, 2 look-ups, no paused
+//     turn continued, the facts block cached); without a Claude key it
+//     says so plainly and counts nothing; and its memory keeps few chats,
+//     few messages, few visitors, for 24 hours;
 //   - the demo header (X-Chernozem-View: demo) turns an account's request
 //     into the demo's, read-only, but never the owner's; an account
 //     without it reads its own folder;
@@ -40,6 +45,7 @@ process.env.GEE_DISABLED = "1";
 process.env.RENDER = "";
 process.env.ATLAS_ACCESS_CODE = "";
 process.env.ATLAS_TRUST_PROXY = "";
+process.env.OWNER_EMAILS = "";
 process.env.FIREBASE_PROJECT_ID = "";
 // Never the real Claude or a real e-mail from a test (a value set here
 // wins over the project's .env).
@@ -75,7 +81,8 @@ globalThis.fetch = async (url, options) => {
 const accounts = await import("./accounts.js");
 const auth = await import("./auth.js");
 const { handleApi } = await import("./app.js");
-const { setQuotasForTests } = await import("./quotas.js");
+const { setQuotasForTests, QUOTAS } = await import("./quotas.js");
+const { flushCounters, reloadCountersForTests } = await import("./counters.js");
 const { resetDemoChats, demoChatStore, demoChatStats, DEMO_QUOTA_MESSAGE } = await import("./ai/demoChats.js");
 const chat = await import("./ai/chat.js");
 const { withSession, outsideSession, isDemoSession, DEMO_READ_ONLY_MESSAGE } = await import("./session.js");
@@ -84,40 +91,49 @@ const { resetDemoPlaceSearches, DEMO_GEOTIFF_MESSAGE, DEMO_PLACES_MESSAGE } = aw
 const { resetWeatherThrottle } = await import("./field/weather.js");
 const { resetProvider } = await import("./providers/index.js");
 
-// Firebase stood in for: a token "fake:<uid>" is that account.
+// Firebase stood in for: a token "fake:<uid>" is that account; a token
+// "owner:<uid>" is the owner's Google account (chernozem.app@gmail.com,
+// verified).
 const revoked = [];
 accounts.setDepsForTests({
   verifyIdToken: (idToken) => {
-    if (idToken.startsWith("fake:")) return { uid: idToken.slice(5), email: `${idToken.slice(5).toLowerCase()}@example.com` };
+    if (idToken.startsWith("fake:")) return { uid: idToken.slice(5), email: `${idToken.slice(5).toLowerCase()}@example.com`, email_verified: true };
+    if (idToken.startsWith("owner:")) return { uid: idToken.slice(6), email: "chernozem.app@gmail.com", email_verified: true };
     throw Object.assign(new Error("bad"), { code: "auth/argument-error" });
   },
   getUser: (uid) => ({ uid, disabled: false }),
   revokeRefreshTokens: (uid) => revoked.push(uid),
 });
 
-// Claude stood in for: every question gets the same short answer.
+// Claude stood in for: every question gets the same short answer, with
+// its token counts (usage), unless a test scripts the replies (script).
 const asked = [];
+const claude = { script: null, usage: { input_tokens: 1000, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 100 } };
 chat.setClientFactory(() => ({
   beta: {
     messages: {
       stream(params) {
         asked.push(params);
-        const text = "The demo farm is near Kupiansk.";
+        const reply = claude.script?.shift() || { stop_reason: "end_turn", content: [{ type: "text", text: "The demo farm is near Kupiansk." }] };
+        const text = reply.content.find((block) => block.type === "text")?.text || "";
         return {
           async *[Symbol.asyncIterator]() {
-            yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
-            yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } };
-            yield { type: "content_block_stop", index: 0 };
+            if (text) {
+              yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
+              yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } };
+              yield { type: "content_block_stop", index: 0 };
+            }
           },
           async finalMessage() {
-            return { stop_reason: "end_turn", content: [{ type: "text", text }] };
+            return { ...reply, usage: claude.usage };
           },
         };
       },
     },
   },
 }));
-chat.setDepsForTests({ config: () => ({ anthropicKey: "test-key", claudeModel: "claude-test" }), getWeather: async () => null });
+const keyed = { config: () => ({ anthropicKey: "test-key", claudeModel: "claude-test" }), getWeather: async () => null };
+chat.setDepsForTests(keyed);
 
 let server;
 let base;
@@ -150,7 +166,8 @@ const cookieOf = (lines, name) => lines.map((line) => line.split(";")[0]).find((
 const DEMO_HEADER = { "X-Chernozem-View": "demo" };
 const KEY = "demo-test-owners-key-2026";
 const DEMO = { required: true, signedIn: false, shared: true, account: null, mode: "demo", readOnly: true };
-const OWNER = { required: true, signedIn: true, shared: true, account: null, mode: "owner", readOnly: false };
+const OWNER_ACCOUNT = { uid: "DemoOwnerUID", email: "chernozem.app@gmail.com", name: "", product: null, profileComplete: true, owner: true };
+const OWNER = { required: true, signedIn: true, shared: true, account: OWNER_ACCOUNT, mode: "owner", readOnly: false };
 
 async function waitForJob(id, cookie) {
   for (let i = 0; i < 400; i += 1) {
@@ -161,14 +178,16 @@ async function waitForJob(id, cookie) {
   throw new Error("job did not finish");
 }
 
-// Every file under the data folder with a hash of its bytes.
+// Every file under the data folder with a hash of its bytes. (Not the
+// limits' counts, quota-state.json: only numbers, saved on a timer of its
+// own, server/counters.js.)
 function snapshot() {
   const files = {};
   const walk = (folder) => {
     for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
       const full = path.join(folder, entry.name);
       if (entry.isDirectory()) walk(full);
-      else files[path.relative(dir, full)] = createHash("sha1").update(fs.readFileSync(full)).digest("hex");
+      else if (entry.name !== "quota-state.json") files[path.relative(dir, full)] = createHash("sha1").update(fs.readFileSync(full)).digest("hex");
     }
   };
   walk(dir);
@@ -208,13 +227,13 @@ before(async () => {
   made.message = (await call("POST", "/api/contact", { body: { name: "Sam", email: "sam@example.org", message: "Can I see the demo?" } })).json.id;
   assert.ok(made.message);
 
-  // Then the owner's key is set: the owner signs in with it, an account
-  // registers (Field).
+  // Then visitors see the demo (ATLAS_ACCESS_CODE set): the owner signs in
+  // with Google, an account registers (Field).
   process.env.ATLAS_ACCESS_CODE = KEY;
-  auth.resetLoginLimits();
-  const login = await call("POST", "/api/auth/login", { body: { code: KEY } });
-  assert.equal(login.status, 200);
-  ownerCookie = cookieOf(login.cookies, "atlas_session");
+  const login = await call("POST", "/api/auth/firebase", { body: { idToken: "owner:DemoOwnerUID" } });
+  assert.equal(login.status, 200, login.text);
+  ownerCookie = cookieOf(login.cookies, "chernozem_owner");
+  assert.ok(ownerCookie);
   const signedIn = await call("POST", "/api/auth/firebase", { body: { idToken: "fake:DemoTestUID1" } });
   assert.equal(signedIn.status, 200, signedIn.text);
   accountCookie = cookieOf(signedIn.cookies, "chernozem_account");
@@ -393,7 +412,7 @@ test("what each kind of visitor is called (statusOf, wantsDemoView)", () => {
   assert.equal(auth.DEMO_VIEW_HEADER, "X-Chernozem-View", "the same as src/lib/demoMode.js");
   const account = { uid: "u", email: null, name: "", product: null, profileComplete: false };
   assert.deepEqual(auth.statusOf({ kind: "account", account }, true), { required: true, signedIn: true, shared: false, account, mode: "account", readOnly: false });
-  assert.deepEqual(auth.statusOf({ kind: "owner", account: null }, true), OWNER);
+  assert.deepEqual(auth.statusOf({ kind: "owner", account: OWNER_ACCOUNT }, true), OWNER);
   assert.deepEqual(auth.statusOf({ kind: "open", account: null }, false), { required: false, signedIn: true, shared: true, account: null, mode: "open", readOnly: false });
   assert.deepEqual(auth.statusOf({ kind: "demo", account: null }, true), DEMO);
 });
@@ -402,7 +421,7 @@ test("what each kind of visitor is called (statusOf, wantsDemoView)", () => {
 
 const threadOf = (text) => JSON.parse(/event: thread\ndata: (.*)\n/.exec(text)[1]).threadId;
 
-test("the demo's assistant: each visitor's chats in memory only, never on disk, and its three limits", async () => {
+test("the demo's assistant: each visitor's chats in memory only, never on disk, and its limits per visitor, per address and for the whole demo", async () => {
   setQuotasForTests({ demoChatPerVisitor: 3, demoChatPerAddress: 5, demoChatPerDay: 7, demoChatMessages: 4 });
   resetDemoChats();
   process.env.ATLAS_TRUST_PROXY = "1";
@@ -505,6 +524,117 @@ test("the demo's memory keeps few chats, few messages and few visitors, and forg
     assert.deepEqual(demoChatStats(), { visitors: 0, threads: 0 }, "swept out of memory");
     assert.deepEqual(await demoChatStore(store, null).listChats("atlas"), [], "no visitor: no chats");
   } finally {
+    setQuotasForTests();
+    resetDemoChats();
+  }
+});
+
+test("the demo's answers are short and cheap: 3,000 tokens, effort low, the facts block cached, at most 2 look-ups, no paused turn continued", async () => {
+  setQuotasForTests();
+  resetDemoChats();
+  asked.length = 0;
+  const lookUp = (i) => ({ stop_reason: "tool_use", content: [{ type: "tool_use", id: `toolu_demo_${i}`, name: "get_ranking", input: {} }] });
+  try {
+    // Claude keeps asking for look-ups: the demo stops after 2.
+    claude.script = [lookUp(1), lookUp(2), lookUp(3), lookUp(4)];
+    const answer = await call("POST", "/api/chat", { body: { product: "atlas", message: "Rank the oblasts." } });
+    assert.equal(answer.status, 200);
+    assert.match(answer.text, /I stopped looking things up here/);
+    assert.equal(asked.length, 3, "one question, then 2 look-ups at most");
+    for (const params of asked) {
+      assert.equal(params.max_tokens, QUOTAS.demoChatMaxTokens);
+      assert.equal(params.max_tokens, 3000);
+      assert.deepEqual(params.output_config, { effort: "low" });
+      const context = params.messages[0].content.find((block) => block.text?.startsWith("<context>"));
+      assert.deepEqual(context.cache_control, { type: "ephemeral" }, "the same facts for every visitor: cached");
+    }
+
+    // A paused turn is never continued in the demo.
+    asked.length = 0;
+    claude.script = [{ stop_reason: "pause_turn", content: [{ type: "text", text: "Part one." }] }, { stop_reason: "end_turn", content: [{ type: "text", text: "Never asked." }] }];
+    const paused = await call("POST", "/api/chat", { body: { product: "atlas", message: "Another question." } });
+    assert.equal(paused.status, 200);
+    assert.equal(asked.length, 1);
+
+    // The owner's answers keep the full settings.
+    asked.length = 0;
+    claude.script = null;
+    await call("POST", "/api/chat", { cookie: ownerCookie, body: { product: "atlas", message: "Owner's question." } });
+    assert.equal(asked[0].max_tokens, 16000);
+    assert.deepEqual(asked[0].output_config, { effort: "medium" });
+    // (The owner's chat is saved in the demo's folder: removed again.)
+    fs.rmSync(path.join(dir, "chats"), { recursive: true, force: true });
+  } finally {
+    claude.script = null;
+    resetDemoChats();
+  }
+});
+
+test("the demo's assistant stops once the whole demo has used its day's tokens; the counts outlive a restart", async () => {
+  setQuotasForTests({ demoChatTokensPerDay: 2500 });
+  resetDemoChats();
+  const ask = (address) => call("POST", "/api/chat", { headers: { "X-Forwarded-For": address }, body: { product: "atlas", message: "How is the soil?" } });
+  process.env.ATLAS_TRUST_PROXY = "1";
+  try {
+    // Each answer uses 1,100 tokens (claude.usage): two fit, the third is refused.
+    assert.equal((await ask("203.0.113.61")).status, 200);
+    assert.equal((await ask("203.0.113.62")).status, 200);
+    assert.equal((await ask("203.0.113.63")).status, 200, "2,200 used, under 2,500: one more");
+    const over = await ask("203.0.113.64");
+    assert.equal(over.status, 429, "3,300 used: the day's tokens are spent");
+    assert.deepEqual(over.json, { error: { code: "quota", message: DEMO_QUOTA_MESSAGE } });
+    assert.ok(Number(over.retryAfter) > 23 * 3600);
+
+    // As after a restart or a new version: the file is read back, the
+    // demo stays stopped.
+    await flushCounters();
+    const saved = JSON.parse(fs.readFileSync(path.join(dir, "quota-state.json"), "utf8"));
+    assert.equal(Object.values(saved.counts["demo-chat-tokens"]).flat(1).reduce((total, [, amount]) => total + amount, 0), 3300);
+    reloadCountersForTests();
+    assert.equal((await ask("203.0.113.65")).status, 429, "still spent after the restart");
+  } finally {
+    process.env.ATLAS_TRUST_PROXY = "";
+    setQuotasForTests();
+    resetDemoChats();
+    fs.rmSync(path.join(dir, "quota-state.json"), { force: true });
+  }
+});
+
+test("an IPv6 demo visitor counts by its /48 for the assistant", async () => {
+  setQuotasForTests({ demoChatPerAddress: 2 });
+  resetDemoChats();
+  process.env.ATLAS_TRUST_PROXY = "1";
+  const ask = (address) => call("POST", "/api/chat", { headers: { "X-Forwarded-For": address }, body: { product: "atlas", message: "Hello?" } });
+  try {
+    assert.equal((await ask("2001:db8:77:1::1")).status, 200);
+    assert.equal((await ask("2001:db8:77:2::1")).status, 200, "another /64, the same /48");
+    assert.equal((await ask("2001:db8:77:ffff::9")).status, 429, "the /48's second question was the last");
+    assert.equal((await ask("2001:db8:78::1")).status, 200, "another /48");
+  } finally {
+    process.env.ATLAS_TRUST_PROXY = "";
+    setQuotasForTests();
+    resetDemoChats();
+  }
+});
+
+test("without a Claude key the demo's assistant says plainly that it is not available, without setup steps, and counts nothing (M14)", async () => {
+  setQuotasForTests({ demoChatPerVisitor: 2, demoChatPerAddress: 2, demoChatPerDay: 2 });
+  resetDemoChats();
+  chat.setDepsForTests({ ...keyed, config: () => ({ anthropicKey: null }) });
+  try {
+    for (let i = 0; i < 5; i += 1) {
+      const answer = await call("POST", "/api/chat", { body: { product: "field", message: "Is the north field all right?" } });
+      assert.equal(answer.status, 200, `question ${i + 1}: never 429, nothing was counted`);
+      assert.match(answer.text, /"code":"ai_not_configured"/);
+      assert.match(answer.text, /The assistant is not available right now\./);
+      assert.doesNotMatch(answer.text, /ANTHROPIC_API_KEY|\.env|console\.anthropic|npm run dev/, "no setup steps for a visitor");
+      assert.deepEqual(answer.cookies, [], "not even a visitor's number is made");
+    }
+    // The owner gets the setup steps.
+    const owner = await call("POST", "/api/chat", { cookie: ownerCookie, body: { product: "atlas", message: "hi" } });
+    assert.match(owner.text, /ANTHROPIC_API_KEY/);
+  } finally {
+    chat.setDepsForTests(keyed);
     setQuotasForTests();
     resetDemoChats();
   }

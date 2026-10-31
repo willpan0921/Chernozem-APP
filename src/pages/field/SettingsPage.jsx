@@ -19,14 +19,21 @@
 //          .env line that connects it.
 // Everything is saved on the server (server/field/routes.js) straight away.
 //
+// HOW THE SERVER IS SET UP (the .env lines, "Get a key", "npm run
+// gee:check") is shown only to the owner and one's own computer
+// (src/lib/access.js seesSetup). A visitor or an account reads the status
+// alone, and for Claude "The assistant is not available right now."
+//
 // THE PUBLIC DEMO (read-only, src/lib/access.js): one line under the title,
 // "This is the demo. Register to set up your own." (src/components/
 // DemoDialog.jsx DemoSettingsNote), and every card shows its values with
 // its controls turned off (dimmed; pressing one opens the "This is the
 // demo" dialog: src/state/useDemoGuard.js lock): "Change farm", "Add a
-// field", "Find fields again", a field's crop and remove, the units,
-// "Update now" and the switch. The names are plain text (no renaming). The
-// map still moves and a field can still be picked out on it.
+// field", "Find fields again", a field's crop and remove, "Update now" and
+// the switch. The units still work, in this browser only (only a way of
+// looking: src/state/FieldData.jsx chooseUnits). The names are plain text
+// (no renaming). The map still moves and a field can still be picked out
+// on it.
 //
 // WHO EDITS IT
 // Whoever changes the Field Settings page. The shared data and actions come
@@ -57,6 +64,7 @@ import { AccountCard } from "../../components/atlas/AccessGate.jsx";
 import { DemoSettingsNote } from "../../components/DemoDialog.jsx";
 import { useAccess } from "../../state/useAccess.js";
 import { useDemoGuard } from "../../state/useDemoGuard.js";
+import { AI_UNAVAILABLE_TEXT, mayUseProduct, seesSetup } from "../../lib/access.js";
 import { demoHeaders } from "../../lib/demoMode.js";
 import { API_ROOT, getStatus } from "../../api/atlasApi.js";
 import { checkPolygon, pointsToGeometry } from "../../lib/atlas/coords.js";
@@ -774,19 +782,18 @@ function FarmCard({ onChangeFarm }) {
 
 // ---------- Units ----------
 
+// The units every page shows. In the demo they change in this browser only
+// (a way of looking: nothing is saved, FieldData.jsx chooseUnits).
 function UnitsCard() {
   const { farm, actions } = useFieldData();
-  const { readOnly, ask } = useDemoGuard();
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const change = async (units) => {
     if (units === farm.units || busy) return;
-    // The demo: the dialog instead (the unit shown stays).
-    if (readOnly) return ask();
     setBusy(true);
     setError(null);
     try {
-      await actions.updateFarm({ units });
+      await actions.chooseUnits(units);
     } catch (err) {
       setError(errorText(err));
     } finally {
@@ -797,7 +804,7 @@ function UnitsCard() {
     <Card
       className="fset-card fset-units"
       title="Units"
-      actions={<Segmented light options={UNIT_OPTIONS} value={farm.units || "ha"} onChange={change} ariaLabel="Area units" locked={readOnly} />}
+      actions={<Segmented light options={UNIT_OPTIONS} value={farm.units || "ha"} onChange={change} ariaLabel="Area units" />}
     >
       {error && (
         <p className="fset-error" role="alert">
@@ -870,6 +877,8 @@ function ago(iso) {
 function DataCard() {
   const { farm, analyses, provider, job, actions } = useFieldData();
   const { readOnly, guard, lock } = useDemoGuard();
+  // The .env lines are the owner's (and one's own computer's) to see.
+  const showSetup = seesSetup(useAccess());
   const [starting, setStarting] = useState(false);
   const [result, setResult] = useState(null); // { ok, text }
   const [toggleError, setToggleError] = useState(null);
@@ -941,7 +950,7 @@ function DataCard() {
           meta={provider?.id === "gee" && provider.ok ? provider.detail : null}
         />
         {problem && <p className="fset-error">{problem}</p>}
-        {setup && <ShowHow text={setup.text} lines={setup.lines} hint={setup.hint} />}
+        {showSetup && setup && <ShowHow text={setup.text} lines={setup.lines} hint={setup.hint} />}
       </div>
 
       <div className="fset-block">
@@ -1007,11 +1016,19 @@ function claudeState(ai) {
 }
 
 function AiCard() {
-  const { readOnly } = useAccess();
+  const access = useAccess();
+  const { readOnly } = access;
+  // The key steps are the owner's (and one's own computer's).
+  const showSetup = seesSetup(access);
+  // A Field account may not read the server's status (server/app.js counts
+  // it as the Atlas's): nothing is asked, so nothing is refused, and the
+  // card makes no claim (the AI page says whether the assistant is there).
+  const statusReadable = mayUseProduct(access, "atlas");
   const [ai, setAi] = useState(undefined); // undefined while loading, null when the server could not say
   const [error, setError] = useState(null);
 
   useEffect(() => {
+    if (!statusReadable) return undefined;
     let stopped = false;
     checkAi({ test: !readOnly })
       .then((status) => !stopped && setAi(status))
@@ -1023,11 +1040,44 @@ function AiCard() {
     return () => {
       stopped = true;
     };
-  }, [readOnly]);
+  }, [readOnly, statusReadable]);
 
   const state = claudeState(ai);
   const rejected = ai?.ok === false;
   const problem = error || ai?.error || null;
+
+  // A visitor or an account: whether the assistant is there, in plain
+  // words, never the key's own state; no claim when that is not known.
+  if (!showSetup) {
+    const checking = statusReadable && ai === undefined;
+    const known = statusReadable && ai != null;
+    const missing = known && !state.usable;
+    return (
+      <Card className="fset-card" title="AI">
+        <div className="fset-block">
+          <StatusRow
+            icon={<Sparkles size={16} />}
+            title="Claude"
+            badge={
+              checking || known ? (
+                <Badge tone={checking ? "outline" : missing ? "amber" : "green"} dot>
+                  {checking ? "Checking…" : missing ? "Not available" : "Available"}
+                </Badge>
+              ) : null
+            }
+            meta={missing ? AI_UNAVAILABLE_TEXT : null}
+            action={
+              checking || missing ? null : (
+                <Button size="sm" to="/field/ai">
+                  Open AI
+                </Button>
+              )
+            }
+          />
+        </div>
+      </Card>
+    );
+  }
 
   return (
     <Card className="fset-card" title="AI">
@@ -1054,12 +1104,12 @@ function AiCard() {
             )
           }
         />
-        {problem && (
+        {showSetup && problem && (
           <p className="fset-error" role="alert">
             {problem}
           </p>
         )}
-        {ai !== undefined && (!ai?.configured || rejected) && !error && (
+        {showSetup && ai !== undefined && (!ai?.configured || rejected) && !error && (
           <EnvLines lines={["ANTHROPIC_API_KEY=sk-ant-your-key"]} hint="Then restart." />
         )}
       </div>

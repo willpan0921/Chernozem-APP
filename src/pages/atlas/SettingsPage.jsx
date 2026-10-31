@@ -23,19 +23,32 @@
 //   Team   who has access: add, change role, remove
 //   Messages from the website   what visitors sent through the public
 //          website's contact page (server/messages.js): read, write back
-//          by e-mail (a mailto link), delete. The owner (and one's own
-//          computer) only
+//          by e-mail (a mailto link), delete, and whether each one was
+//          e-mailed to the owner's inbox ("E-mailed to
+//          chernozem.app@gmail.com", "Not e-mailed yet: contact e-mail is
+//          off", "E-mail failed, trying again (2 tries)": src/lib/access.js
+//          messageMailLine). While contact e-mail is off, one line at the
+//          top says how to turn it on. The owner (and one's own computer)
+//          only
 // Everything is saved on the Atlas server (server/app.js) straight away.
+//
+// HOW THE SERVER IS SET UP (the .env lines, "Get a key", "npm run
+// gee:check") is shown only to the owner and one's own computer
+// (src/lib/access.js seesSetup). A visitor or an account reads the status
+// alone, and for Claude "The assistant is not available right now."
 //
 // THE PUBLIC DEMO (read-only, src/lib/access.js): one line under the title,
 // "This is the demo. Register to set up your own." (src/components/
 // DemoDialog.jsx DemoSettingsNote), and every card shows its values with
 // its controls turned off (dimmed; pressing one opens the "This is the
-// demo" dialog: src/state/useDemoGuard.js lock): "New area", Open and
-// remove, the crisis choice, re-run, the monthly switch, the team's roles
-// and remove, "Check connections". The names are plain text (no renaming),
-// the team's e-mail addresses and the "add" row are left out, and the
-// messages card is not shown at all.
+// demo" dialog: src/state/useDemoGuard.js lock): "New area", remove, the
+// crisis choice, re-run, the monthly switch, the team's roles and remove.
+// What only looks or checks still works: Open on a saved area shows it in
+// this browser only (src/state/AtlasData.jsx; the demo's current area is
+// not changed), and "Check connections" reads every status again (without
+// testing the key: that is the owner's). The names are plain text (no
+// renaming), the team's e-mail addresses and the "add" row are left out,
+// and the messages card is not shown at all.
 //
 // WHO EDITS IT
 // Whoever changes the Atlas Settings page. The shared data and actions
@@ -49,6 +62,9 @@ import {
   Copy,
   ExternalLink,
   Globe2,
+  MailCheck,
+  MailClock,
+  MailWarning,
   MapPin,
   PenLine,
   Plus,
@@ -67,7 +83,7 @@ import { AccountCard } from "../../components/atlas/AccessGate.jsx";
 import { DemoSettingsNote } from "../../components/DemoDialog.jsx";
 import { useAccess } from "../../state/useAccess.js";
 import { useDemoGuard } from "../../state/useDemoGuard.js";
-import { canSeeMessages } from "../../lib/access.js";
+import { AI_UNAVAILABLE_TEXT, canSeeMessages, contactMailNote, messageMailLine, seesSetup } from "../../lib/access.js";
 import { demoHeaders } from "../../lib/demoMode.js";
 import { API_ROOT, ApiError, AUTH_REQUIRED_EVENT, OFFLINE_MESSAGE, deleteMessage, listJobs, listMessages, noticeDemoRefusal } from "../../api/atlasApi.js";
 import { lineMarks } from "../../lib/atlas/analysisNotice.js";
@@ -425,7 +441,7 @@ const LINE_MARKS = {
 
 function SavedArea({ item, busy, onOpen, opening, mark }) {
   const { actions } = useAtlasData();
-  const { readOnly, lock } = useDemoGuard();
+  const { readOnly } = useDemoGuard();
   const [error, setError] = useState(null);
   const kind = areaKind(item);
   const line = LINE_MARKS[mark];
@@ -441,7 +457,16 @@ function SavedArea({ item, busy, onOpen, opening, mark }) {
       <span className="aset-row-meta aset-saved-meta">
         {kind.label} · {formatAreaSize(item.areaHa)}
       </span>
-      <Button size="sm" className="aset-open" aria-label={`Open ${item.name}`} disabled={busy} {...lock(() => onOpen(item.id))}>
+      {/* Open only looks: in the demo it shows the area in this browser,
+          and the demo's own current area stays as it is (AtlasData.jsx). */}
+      <Button
+        size="sm"
+        className="aset-open"
+        aria-label={`Open ${item.name}`}
+        title={readOnly ? "Look at it here. The demo itself stays as it is." : undefined}
+        disabled={busy}
+        onClick={() => onOpen(item.id)}
+      >
         {opening ? "Opening…" : "Open"}
       </Button>
       <RemoveButton
@@ -737,6 +762,8 @@ function RerunResult({ rerun }) {
 function DataCard() {
   const { serverStatus, workspace, area, runs, job, actions } = useAtlasData();
   const { readOnly, guard } = useDemoGuard();
+  // The .env lines are the owner's (and one's own computer's) to see.
+  const setup = seesSetup(useAccess());
   const [toggleError, setToggleError] = useState(null);
   const rerun = useRerun();
 
@@ -784,7 +811,7 @@ function DataCard() {
           meta={provider?.id === "gee" && provider.ok ? provider.detail : null}
         />
         {problem && <p className="aset-error">{problem}</p>}
-        {lines.length > 0 && (
+        {setup && lines.length > 0 && (
           <div className="aset-setup">
             <EnvLines lines={lines} />
             <span className="aset-hint">
@@ -803,19 +830,21 @@ function DataCard() {
         />
         {accessNote && (
           <p className="aset-access-note" role="note">
-            <strong>Feasibility not measured in {latest.label}.</strong> {accessNote}{" "}
+            <strong>Feasibility not measured in {latest.label}.</strong> {accessNote}
             {/* "Connect one" only when no ACLED file is connected: with one
                 that has no battles near the area, or cannot be used, the
-                run's line says what to do with it (overview.js acledFileState). */}
-            {acledFileState(latest) ? (
-              <>
-                The file is the one <code>ACLED_CSV_PATH</code> names in .env (see docs/CONNECT-DATA.md).
-              </>
-            ) : (
-              <>
-                Connect one with <code>ACLED_CSV_PATH</code> in .env (see docs/CONNECT-DATA.md).
-              </>
-            )}
+                run's line says what to do with it (overview.js acledFileState).
+                Only the owner is told about .env. */}
+            {setup &&
+              (acledFileState(latest) ? (
+                <>
+                  {" "}The file is the one <code>ACLED_CSV_PATH</code> names in .env (see docs/CONNECT-DATA.md).
+                </>
+              ) : (
+                <>
+                  {" "}Connect one with <code>ACLED_CSV_PATH</code> in .env (see docs/CONNECT-DATA.md).
+                </>
+              ))}
           </p>
         )}
         {rerun.running && <AnalysisProgress job={job} compact />}
@@ -1122,7 +1151,37 @@ function claudeState(ai, checking) {
 }
 
 function AiCard({ ai, checking }) {
+  const setup = seesSetup(useAccess());
   const state = claudeState(ai, checking);
+  // A visitor or an account: whether the assistant is there, in plain
+  // words, never the key's own state or the steps to add one (they are
+  // the owner's).
+  if (!setup) {
+    const missing = !ai?.configured;
+    return (
+      <Card className="aset-card" title="AI">
+        <div className="aset-block">
+          <StatusRow
+            icon={<Sparkles size={16} />}
+            title="Claude"
+            badge={
+              <Badge tone={missing ? "amber" : "green"} dot>
+                {missing ? "Not available" : "Available"}
+              </Badge>
+            }
+            meta={missing ? AI_UNAVAILABLE_TEXT : null}
+            action={
+              missing ? null : (
+                <Button size="sm" to="/atlas/ai">
+                  Open AI
+                </Button>
+              )
+            }
+          />
+        </div>
+      </Card>
+    );
+  }
   return (
     <Card className="aset-card" title="AI">
       <div className="aset-block">
@@ -1147,12 +1206,12 @@ function AiCard({ ai, checking }) {
             )
           }
         />
-        {ai?.error && (
+        {setup && ai?.error && (
           <p className="aset-error" role="alert">
             {ai.error}
           </p>
         )}
-        {!state.connected && (
+        {setup && !state.connected && (
           <div className="aset-setup">
             <EnvLines lines={["ANTHROPIC_API_KEY=sk-ant-your-key"]} />
           </div>
@@ -1298,9 +1357,32 @@ function TeamCard() {
 
 // ---------- Messages from the website ----------
 
+// How a message's e-mail went: an icon and the words (src/lib/access.js
+// messageMailLine: "E-mailed to chernozem.app@gmail.com", "Not e-mailed
+// yet: contact e-mail is off", "E-mail failed, trying again (2 tries)" and
+// why).
+const MAIL_ICONS = { sent: MailCheck, waiting: MailClock, failed: MailWarning };
+
+function MessageMail({ mail, delivery }) {
+  const line = messageMailLine(mail, delivery);
+  const Icon = MAIL_ICONS[line.tone] || MailClock;
+  return (
+    <p className={`aset-message-mail is-${line.tone}`} data-mail={line.tone}>
+      <Icon size={14} aria-hidden="true" />
+      <span>
+        {line.text}
+        {line.detail && <span className="aset-message-mail-why">: {line.detail}</span>}
+      </span>
+    </p>
+  );
+}
+
 // One message: who sent it (their organization, their address as a
-// mailto link), when, the text, and a Delete button that asks first.
-function MessageRow({ message, onRemoved }) {
+// mailto link), when, the text, whether it was e-mailed, and a Delete
+// button that asks first.
+//   delivery  { to, configured } from the server's mail status (where the
+//             e-mails go, and whether contact e-mail is on now)
+function MessageRow({ message, delivery, onRemoved }) {
   const [error, setError] = useState(null);
   return (
     <li className="aset-message" data-message={message.id}>
@@ -1326,6 +1408,7 @@ function MessageRow({ message, onRemoved }) {
         />
       </div>
       <p className="aset-message-text">{message.message}</p>
+      <MessageMail mail={message.mail} delivery={delivery} />
       {error && (
         <p className="aset-error" role="alert">
           {error}
@@ -1337,7 +1420,14 @@ function MessageRow({ message, onRemoved }) {
 
 // The messages visitors sent through the public website's contact page
 // (server/messages.js), newest first. Asked for once when the page opens.
+// The server's mail status (GET /api/status: mail { configured, transport,
+// to }, the owner's only) says whether they reach the inbox: while contact
+// e-mail is off, one line at the top says so and how to turn it on.
 function MessagesCard() {
+  const { serverStatus } = useAtlasData();
+  const mailStatus = serverStatus?.mail;
+  const mailOff = contactMailNote(mailStatus);
+  const delivery = { to: mailStatus?.to, configured: typeof mailStatus?.configured === "boolean" ? mailStatus.configured : undefined };
   const [messages, setMessages] = useState(null); // null while loading
   const [error, setError] = useState(null);
 
@@ -1360,6 +1450,12 @@ function MessagesCard() {
   const count = messages?.length ?? 0;
   return (
     <Card className="aset-card" title="Messages from the website" actions={messages && <Badge tone="outline">{count}</Badge>}>
+      {mailOff && (
+        <p className="aset-mail-off" role="note">
+          <MailWarning size={15} aria-hidden="true" />
+          <span>{mailOff}</span>
+        </p>
+      )}
       {error && (
         <p className="aset-error" role="alert">
           {error}
@@ -1370,7 +1466,12 @@ function MessagesCard() {
       {count > 0 && (
         <ul className="aset-list aset-messages" aria-label={messageCountText(count)}>
           {messages.map((message) => (
-            <MessageRow key={message.id} message={message} onRemoved={(id) => setMessages((prev) => (prev || []).filter((other) => other.id !== id))} />
+            <MessageRow
+              key={message.id}
+              message={message}
+              delivery={delivery}
+              onRemoved={(id) => setMessages((prev) => (prev || []).filter((other) => other.id !== id))}
+            />
           ))}
         </ul>
       )}
@@ -1383,19 +1484,23 @@ function MessagesCard() {
 export default function SettingsPage() {
   const { status, serverStatus, area, actions } = useAtlasData();
   const access = useAccess();
-  const { readOnly, lock } = useDemoGuard();
+  const { readOnly } = useDemoGuard();
   const [checking, setChecking] = useState(false);
   const [checkError, setCheckError] = useState(null);
   const [testedAi, setTestedAi] = useState(null); // the AI part of the last ?check=1 answer
   const autoChecked = useRef(false);
 
   // Tests the Claude key (and asks for every status again), then reloads.
+  // In the demo it only reads every status again: testing the setup is the
+  // owner's, and reading changes nothing.
   const recheck = async () => {
     setChecking(true);
     setCheckError(null);
     try {
-      const fresh = await checkStatus();
-      setTestedAi(fresh?.ai || null);
+      if (!readOnly) {
+        const fresh = await checkStatus();
+        setTestedAi(fresh?.ai || null);
+      }
       await actions.reload();
     } catch (err) {
       setCheckError(errorText(err));
@@ -1433,7 +1538,7 @@ export default function SettingsPage() {
             size="sm"
             className="aset-check"
             icon={<RefreshCw size={14} className={checking ? "atlas-spin" : undefined} />}
-            {...lock(recheck)}
+            onClick={recheck}
             disabled={checking}
           >
             {checking ? "Checking…" : "Check connections"}

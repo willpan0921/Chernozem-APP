@@ -15,7 +15,10 @@
 //   3. Claude is asked, streaming. While it writes, each piece of text is
 //      sent on to the page ("delta" events). When Claude wants to look
 //      something up it calls a tool; we run it, give back the answer, and
-//      ask again (at most 6 rounds).
+//      ask again (at most 6 rounds; 2 in the public demo). The facts block
+//      is marked for Claude's prompt cache (cache_control), so the rounds
+//      of one answer, the next question of a chat, and every demo visitor
+//      asking about the same demo read it back cheaply.
 //   4. The final answer is saved to the conversation. If the person
 //      presses Stop, what was written so far is saved instead, marked
 //      "stopped", so a reload shows the same thing as the screen did.
@@ -24,11 +27,15 @@
 //
 // The reply is a stream of events: thread, delta, tool, done, error.
 // Without ANTHROPIC_API_KEY in .env the stream sends one "ai_not_configured"
-// error that says exactly how to add it.
+// error before anything is counted: for the owner (and "open") it says
+// exactly how to add the key; for everyone else only "The assistant is not
+// available right now." (AI_UNAVAILABLE_MESSAGE), and nothing is spent.
 //
-// A registered account may send 40 messages a day (server/quotas.js; the
-// owner's Claude key pays for every one): the 41st gets a plain 429
-// "quota" answer before any stream opens. The owner has no such limit.
+// A registered account may ask 40 questions a day, or 10 while its e-mail
+// is not verified, and all accounts together 400 a day and 6 million of
+// Claude's tokens (server/quotas.js spendAccountQuestion; the owner's
+// Claude key pays for every one): past a limit a plain 429 "quota" answer
+// comes before any stream opens. The owner has no such limit.
 //
 // THE PUBLIC DEMO (a visitor without an account, server/auth.js)
 // The demo's assistant answers from the demo's own data like the owner's,
@@ -36,9 +43,12 @@
 // (server/ai/demoChats.js: a cookie with a random number, at most 10 chats
 // of 30 messages, forgotten after 24 hours): nothing the visitor asks is
 // written to disk. It answers 8 questions per visitor, 24 per internet
-// address and 300 for the whole demo in 24 hours; then 429 "quota": "The
-// demo's assistant has answered enough questions for now. Register to ask
-// about your own land."
+// address, 300 and 1.5 million of Claude's tokens for the whole demo in 24
+// hours (the counts outlive a restart: server/counters.js); then 429
+// "quota": "The demo's assistant has answered enough questions for now.
+// Register to ask about your own land." Its answers are short and cheap:
+// at most 3,000 tokens each, effort "low", at most 2 look-ups, and a
+// paused turn is never continued (demoSettings below).
 //
 // WHO EDITS IT
 // Whoever changes how the AI talks. The AI's instructions are the
@@ -48,9 +58,9 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { buildAtlasContext } from "./context.js";
 import { buildFieldContext } from "./field-context.js";
-import { DAY_MS, inWords, QUOTAS, spend } from "../quotas.js";
-import { isDemoSession } from "../session.js";
-import { DEMO_QUOTA_MESSAGE, demoChatStore, ensureVisitor, spendDemoQuestion, visitorOf } from "./demoChats.js";
+import { isAccount, noteAccountTokens, QUOTAS, spendAccountQuestion } from "../quotas.js";
+import { currentSession, isDemoSession } from "../session.js";
+import { DEMO_QUOTA_MESSAGE, demoChatStore, ensureVisitor, spendDemoQuestion, spendDemoTokens, visitorOf } from "./demoChats.js";
 
 // ---------- Settings ----------
 
@@ -64,6 +74,37 @@ export const NOT_CONFIGURED_MESSAGE =
   "The AI is not connected yet. 1. Get an API key at console.anthropic.com (API keys). " +
   "2. Add ANTHROPIC_API_KEY=... to the .env file in the project folder. " +
   "3. Restart npm run dev.";
+// What a visitor or an account sees instead (never the setup steps).
+export const AI_UNAVAILABLE_MESSAGE = "The assistant is not available right now.";
+
+// How long, how deep and how many look-ups one answer may take: the
+// owner's and the accounts' (ANSWER_SETTINGS), and the public demo's,
+// shorter and cheaper (demoSettings, the numbers in server/quotas.js).
+export const ANSWER_SETTINGS = Object.freeze({ maxTokens: 16000, effort: "medium", toolRounds: MAX_TOOL_ROUNDS, pauseTurns: MAX_TOOL_ROUNDS });
+export const demoSettings = () => ({ maxTokens: QUOTAS.demoChatMaxTokens, effort: "low", toolRounds: QUOTAS.demoChatToolRounds, pauseTurns: 0 });
+
+// True for the sessions that may see setup steps and developer words: the
+// owner, open, and no session at all (a script or a test).
+function forOwner() {
+  const kind = currentSession()?.kind;
+  return !kind || kind === "owner" || kind === "open";
+}
+
+// Every token one of Claude's answers used: input, cache writes, cache
+// reads and output (usage from finalMessage()).
+export function tokensOf(usage) {
+  if (!usage || typeof usage !== "object") return 0;
+  return ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"].reduce((total, field) => total + (Number.isFinite(usage[field]) ? usage[field] : 0), 0);
+}
+
+// Counts one answer's tokens against the demo's budget or every account's
+// (the owner's: nothing).
+function countTokens(usage) {
+  const tokens = tokensOf(usage);
+  if (!tokens) return;
+  if (isDemoSession()) spendDemoTokens(tokens);
+  else if (isAccount()) noteAccountTokens(tokens);
+}
 
 // The AI's standing instructions. Kept fixed (no dates or numbers in them)
 // so Claude can cache them; the facts go in the first message instead.
@@ -161,8 +202,16 @@ export async function handleChatRoutes(req, res, url) {
         http.sendError(res, 400, "bad_request", problem);
         return true;
       }
+      // No Claude key: said before anything is counted (see the top of
+      // this file).
+      if (!(await deps()).config().anthropicKey) {
+        const sse = http.openSse(res);
+        sse.send("error", { code: "ai_not_configured", message: forOwner() ? NOT_CONFIGURED_MESSAGE : AI_UNAVAILABLE_MESSAGE });
+        sse.close();
+        return true;
+      }
       if (demo) {
-        // The demo's three limits, before Claude is asked anything.
+        // The demo's four limits, before Claude is asked anything.
         const visitor = ensureVisitor(req, res);
         const allowed = spendDemoQuestion(req, visitor);
         if (!allowed.ok) {
@@ -172,10 +221,12 @@ export async function handleChatRoutes(req, res, url) {
         }
         store = demoChatStore(base, visitor);
       }
-      // A registered account's daily allowance (everyone else: always ok).
-      const turn = spend("chat", QUOTAS.chatMessagesPerDay, DAY_MS);
+      // A registered account's allowance, and every account's together
+      // (everyone else: always ok).
+      const turn = spendAccountQuestion();
       if (!turn.ok) {
-        http.sendError(res, 429, "quota", `An account can send the AI ${QUOTAS.chatMessagesPerDay} messages a day. Try again ${inWords(turn.retryAfterMs)}.`);
+        res.setHeader("Retry-After", String(Math.max(1, Math.ceil(turn.retryAfterMs / 1000))));
+        http.sendError(res, 429, "quota", turn.message);
         return true;
       }
       const sse = http.openSse(res);
@@ -257,9 +308,11 @@ export async function runChat(body, send, { signal, store: given } = {}) {
   const message = body.message.trim();
 
   if (!cfg.anthropicKey) {
-    send("error", { code: "ai_not_configured", message: NOT_CONFIGURED_MESSAGE });
+    send("error", { code: "ai_not_configured", message: forOwner() ? NOT_CONFIGURED_MESSAGE : AI_UNAVAILABLE_MESSAGE });
     return;
   }
+  // The demo's answers are shorter and cheaper (see the top of this file).
+  const settings = isDemoSession() ? demoSettings() : ANSWER_SETTINGS;
 
   // 1. The conversation: continue it, or start a new one.
   let thread = null;
@@ -306,7 +359,7 @@ export async function runChat(body, send, { signal, store: given } = {}) {
     const model = cfg.claudeModel || DEFAULT_MODEL;
     const messages = buildMessages(history, message, contextBlock, images);
     const system = product === "atlas" ? ATLAS_SYSTEM : FIELD_SYSTEM;
-    const result = await toolLoop({ client, model, system, tools, messages, runTool, send: relay, signal });
+    const result = await toolLoop({ client, model, system, tools, messages, runTool, send: relay, signal, settings, onUsage: countTokens });
     if (signal?.aborted) {
       await saveStopped(store, thread, partial);
       return;
@@ -333,7 +386,7 @@ export async function runChat(body, send, { signal, store: given } = {}) {
       await saveStopped(store, thread, partial);
       return;
     }
-    send("error", describeError(error));
+    send("error", describeError(error, { forOwner: forOwner() }));
   }
 }
 
@@ -391,8 +444,12 @@ export function titleFrom(message) {
 
 // Turns saved messages into Claude's format. The facts go at the top of the
 // first user message, after any photos (at most 4 images, each
-// { media_type, data } in base64). Messages of the same role in a row are
-// merged, and the list always starts with the user.
+// { media_type, data } in base64), marked for Claude's prompt cache: the
+// tools, the instructions and the facts are the same for every round of an
+// answer and every question of a chat (and, in the demo, for every
+// visitor), so they are read back from the cache instead of paid in full.
+// Messages of the same role in a row are merged, and the list always
+// starts with the user.
 export function buildMessages(history, message, contextBlock, images = []) {
   const turns = [...history.filter((m) => m && typeof m.text === "string" && m.text.trim()), { role: "user", text: message }];
   while (turns.length && turns[0].role !== "user") turns.shift();
@@ -409,7 +466,7 @@ export function buildMessages(history, message, contextBlock, images = []) {
         role: "user",
         content: [
           ...imageBlocks(images),
-          { type: "text", text: `<context>\n${contextBlock}\n</context>` },
+          { type: "text", text: `<context>\n${contextBlock}\n</context>`, cache_control: { type: "ephemeral" } },
           { type: "text", text: turn.text },
         ],
       };
@@ -429,15 +486,16 @@ export function imageBlocks(images) {
 }
 
 // The request to Claude for one round. Kept in one place so it is easy to
-// check against the Claude API docs.
-export function requestFor({ model, system, tools, messages }) {
+// check against the Claude API docs. maxTokens and effort: the answer's
+// settings (ANSWER_SETTINGS, or the demo's).
+export function requestFor({ model, system, tools, messages, maxTokens = ANSWER_SETTINGS.maxTokens, effort = ANSWER_SETTINGS.effort }) {
   const params = {
     model,
-    max_tokens: 16000,
+    max_tokens: maxTokens,
     betas: ["server-side-fallback-2026-07-01"],
     fallbacks: "default",
     thinking: { type: "adaptive" },
-    output_config: { effort: "medium" },
+    output_config: { effort },
     system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
     messages,
   };
@@ -469,31 +527,50 @@ export function echoableContent(content) {
 }
 
 // The back-and-forth with Claude: stream a reply, run any tools it asks
-// for, send all their answers back in one message, repeat.
+// for, send all their answers back in one message, repeat. settings: how
+// long each reply may be, how hard Claude thinks, how many tool rounds and
+// paused-turn continuations one answer may take (ANSWER_SETTINGS, or the
+// demo's). onUsage(usage) hears each reply's token counts.
 // Gives back { text, refused }.
-async function toolLoop({ client, model, system, tools, messages, runTool, send, signal }) {
+async function toolLoop({ client, model, system, tools, messages, runTool, send, signal, settings = ANSWER_SETTINGS, onUsage = () => {} }) {
   let text = "";
   let toolRounds = 0;
   let continuations = 0;
 
   while (true) {
-    const stream = client.beta.messages.stream(requestFor({ model, system, tools, messages }), { signal });
+    const stream = client.beta.messages.stream(requestFor({ model, system, tools, messages, maxTokens: settings.maxTokens, effort: settings.effort }), { signal });
     let roundText = "";
-    for await (const event of stream) {
-      if (event.type === "content_block_start" && event.content_block?.type === "text") {
-        // A new paragraph after earlier text (e.g. after a tool look-up).
-        if ((text + roundText).trim() && !(text + roundText).endsWith("\n")) {
-          roundText += "\n\n";
-          send("delta", { text: "\n\n" });
+    // The token counts the stream has told so far (message_start, then each
+    // message_delta), so a reply stopped part-way (Stop, a dropped line)
+    // still counts what it used.
+    let seen = null;
+    let response;
+    try {
+      for await (const event of stream) {
+        if (event.type === "message_start" && event.message?.usage) {
+          seen = { ...event.message.usage };
+        } else if (event.type === "message_delta" && event.usage) {
+          seen = { ...(seen || {}), ...event.usage };
+        } else if (event.type === "content_block_start" && event.content_block?.type === "text") {
+          // A new paragraph after earlier text (e.g. after a tool look-up).
+          if ((text + roundText).trim() && !(text + roundText).endsWith("\n")) {
+            roundText += "\n\n";
+            send("delta", { text: "\n\n" });
+          }
+        } else if (event.type === "content_block_start" && event.content_block?.type === "tool_use") {
+          send("tool", { name: event.content_block.name, status: "running" });
+        } else if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
+          roundText += event.delta.text;
+          send("delta", { text: event.delta.text });
         }
-      } else if (event.type === "content_block_start" && event.content_block?.type === "tool_use") {
-        send("tool", { name: event.content_block.name, status: "running" });
-      } else if (event.type === "content_block_delta" && event.delta?.type === "text_delta") {
-        roundText += event.delta.text;
-        send("delta", { text: event.delta.text });
       }
+      response = await stream.finalMessage();
+    } catch (error) {
+      if (seen) onUsage(seen);
+      throw error;
     }
-    const response = await stream.finalMessage();
+    // Every reply's tokens count, a refused one's too.
+    onUsage(response.usage || seen);
 
     // A refusal can arrive part-way through; the partial text is dropped.
     if (response.stop_reason === "refusal") return { text: "", refused: true };
@@ -504,7 +581,7 @@ async function toolLoop({ client, model, system, tools, messages, runTool, send,
     const content = echoableContent(response.content);
     messages.push({ role: "assistant", content });
 
-    if (response.stop_reason === "pause_turn" && continuations < MAX_TOOL_ROUNDS) {
+    if (response.stop_reason === "pause_turn" && continuations < settings.pauseTurns) {
       continuations += 1;
       continue;
     }
@@ -515,7 +592,7 @@ async function toolLoop({ client, model, system, tools, messages, runTool, send,
       if (block.type === "tool_use" && !toolUses.includes(block)) send("tool", { name: block.name, status: "skipped" });
     }
     if (response.stop_reason === "tool_use" && toolUses.length) {
-      if (toolRounds >= MAX_TOOL_ROUNDS) {
+      if (toolRounds >= settings.toolRounds) {
         const note = "\n\n(I stopped looking things up here. Ask a narrower question for more detail.)";
         send("delta", { text: note });
         return { text: text + note, refused: false };
@@ -556,7 +633,17 @@ async function toolLoop({ client, model, system, tools, messages, runTool, send,
 }
 
 // Turns an error into the event the page shows. Uses the SDK's error types.
-export function describeError(error) {
+// forOwner false (a visitor or an account): no setup words about keys or
+// .env, only that the assistant is not available.
+export function describeError(error, { forOwner = true } = {}) {
+  const described = describeFor(error);
+  if (!forOwner && (described.code === "ai_bad_key" || /CLAUDE_MODEL|\.env|console\.anthropic/.test(described.message))) {
+    return { code: described.code, message: AI_UNAVAILABLE_MESSAGE };
+  }
+  return described;
+}
+
+function describeFor(error) {
   if (error instanceof Anthropic.AuthenticationError) {
     return {
       code: "ai_bad_key",

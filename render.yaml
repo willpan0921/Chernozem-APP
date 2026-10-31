@@ -12,18 +12,18 @@
 # never reads it: give that service every setting below yourself (the
 # disk, the commands, the health check, the build filter and each envVar).
 #
-# No secrets here: this repository is public. The four settings marked
+# No secrets here: this repository is public. The settings marked
 # "sync: false" are typed into Render's dashboard (the service's
 # Environment page) and never leave it.
 #
-# The server refuses to start online without a proper owner's key
-# (ATLAS_ACCESS_CODE, once "the access code": at least 16 characters, not
-# the example from the docs) or without the disk (server/online.js): the
-# deploy then fails, with the reason in the log, instead of putting live
-# an app anyone could change, or a forgetful one. Visitors need no key:
-# they get the read-only public demo; the owner types the key at /owner.
-# (HOST is not set: with the owner's key the server answers on every
-# address by itself.)
+# The server refuses to start online without the disk (server/online.js):
+# the deploy then fails, with the reason in the log, instead of putting
+# live a forgetful app. Online every visitor without an account gets the
+# read-only public demo; the owner signs in with the Chernozem Google
+# account at /owner (OWNER_EMAILS, blank: chernozem.app@gmail.com). The
+# old access code (ATLAS_ACCESS_CODE) is retired: nothing reads it online,
+# so it may be deleted in the dashboard. (HOST is not set: online the
+# server answers on every address by itself.)
 #
 # WHO EDITS IT
 # Nobody, normally. The secrets are changed in the dashboard only.
@@ -67,8 +67,8 @@ services:
         value: /var/data
       # Every request comes through Cloudflare, which says who the visitor
       # is in CF-Connecting-IP (server/auth.js reads it for the limits per
-      # visitor: 10 wrong keys, 5 contact messages an hour, the demo
-      # assistant's questions).
+      # visitor: 5 contact messages an hour, the demo assistant's
+      # questions).
       - key: ATLAS_TRUST_PROXY
         value: cloudflare
       - key: GEE_PROJECT_ID
@@ -86,10 +86,10 @@ services:
         sync: false
       - key: GEE_SERVICE_ACCOUNT_JSON
         sync: false
-      # The owner's key, typed only at /owner: at least 16 characters,
-      # made up (never one printed anywhere).
-      - key: ATLAS_ACCESS_CODE
-        sync: false
+      # The owner's Google addresses, only to change the default
+      # (chernozem.app@gmail.com; commas between several). A note only:
+      # - key: OWNER_EMAILS
+      #   value: chernozem.app@gmail.com
       # The contact form's e-mail to chernozem.app@gmail.com
       # (server/mail.js, docs/DEPLOY.md section 14): the owner's Gmail app
       # password, typed in the dashboard only. Until it is set the messages

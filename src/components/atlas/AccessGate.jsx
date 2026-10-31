@@ -9,9 +9,12 @@
 //                 button that would change something opens the "This is the
 //                 demo" dialog instead (src/components/DemoDialog.jsx, drawn
 //                 here; src/state/useDemoGuard.js).
-//   The owner     signed in with the owner's key on the hidden /owner page
-//                 (or "open": one's own computer, no key set on the server):
-//                 the demo's data, and every change is saved.
+//   The owner     signed in on the hidden /owner page with the Chernozem
+//                 Google account (the server checks its e-mail against
+//                 OWNER_EMAILS), or "open": one's own computer, where no
+//                 owner sign-in is needed. The demo's data, and every change
+//                 is saved; both products, no profile to finish. The
+//                 sidebar names the Google account (useAccess().owner).
 //   An account    registered on the website: one product, their own
 //                 workspace. Their profile (GET /api/account: name,
 //                 country, the place to watch) is read here too, so the
@@ -26,14 +29,14 @@
 // If the server cannot be reached, the app opens anyway, read-only, and
 // shows its own messages; the gate asks again when the connection comes
 // back (and every 20 seconds until it answers). When a later answer is a
-// different visitor (signed out, the owner's key or the account's sign-in
-// ran out), the whole app below starts again, so nothing of the one before
+// different visitor (signed out, the owner's or the account's sign-in ran
+// out), the whole app below starts again, so nothing of the one before
 // stays on screen. The gate asks again when any call answers "not signed
 // in" (401), and when the server refuses a change as the demo while the
 // gate thought this was the owner or an account.
 //
 // Everything is given to the app through useAccess() (src/state/useAccess.js):
-// { mode, readOnly, shared, account, profile, ownHome }.
+// { mode, readOnly, shared, account, owner, profile, ownHome }.
 //
 // Also here: <AccountCard />, the "Account" card on both Settings pages
 // (name, e-mail, edition, place, "Sign out"), shown only for an account.
@@ -62,6 +65,7 @@ import {
   isShared,
   modeOf,
   needsProfile,
+  ownerOf,
   registerPathFor,
 } from "../../lib/access.js";
 import { isDemoView } from "../../lib/demoMode.js";
@@ -98,7 +102,12 @@ async function readAccess() {
       ownHome = null;
     }
   }
-  return { mode, readOnly: isReadOnly(status), shared: isShared(status), account, profile, ownHome };
+  // The owner's Google account (for the sidebar's note), only its name and
+  // address: the owner is never treated as an account (no Account card, no
+  // product kept, no profile to finish).
+  const named = ownerOf(status);
+  const owner = named ? { uid: named.uid ?? null, email: named.email ?? null, name: named.name ?? null } : null;
+  return { mode, readOnly: isReadOnly(status), shared: isShared(status), account, owner, profile, ownHome };
 }
 
 export default function AccessGate({ children }) {

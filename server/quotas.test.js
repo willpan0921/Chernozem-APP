@@ -4,11 +4,15 @@
 // local port with a temporary data folder and sample data: at most 5
 // areas, none larger than 1,000,000 km², drawn with at most 1,000 points;
 // one Atlas analysis at a time of at most 12 months; the monthly update
-// off until switched on; the AI chat's daily allowance; one Field job at a
-// time and 2 searches or updates an hour; at most 30 reports and 40 MB of
-// photos, which must be real pictures. And, every time, that the shared
-// demo is not limited. Firebase is stood in for, so it runs offline. Run
-// with "npm test".
+// off until switched on; the AI assistant's daily allowance (10 questions
+// while the e-mail is not verified, 40 once it is, 400 for every account
+// together and a day's tokens for all of them, nothing counted without a
+// Claude key); one Field job at a time and 2 searches or analyses on
+// request an hour (an example farm counts as one); at most 30 reports and
+// 40 MB of photos, which must be real pictures. The counts outlive a
+// restart (server/counters.js). And, every time, that the shared demo is
+// not limited by them. Firebase and Claude are stood in for, so it runs
+// offline. Run with "npm test".
 //
 // WHO EDITS IT
 // Whoever changes quotas.js or a limit's use.
@@ -37,8 +41,10 @@ globalThis.fetch = async (url, options) => {
 };
 
 const accounts = await import("./accounts.js");
+const chat = await import("./ai/chat.js");
 const { handleApi } = await import("./app.js");
 const { QUOTAS, setQuotasForTests, spend, inWords, sizeWords } = await import("./quotas.js");
+const { flushCounters, reloadCountersForTests } = await import("./counters.js");
 const { startJob } = await import("./jobs.js");
 const { userRoot, withDataRoot } = await import("./store.js");
 
@@ -84,6 +90,30 @@ accounts.setDepsForTests({
   revokeRefreshTokens: () => {},
 });
 
+// Claude stood in for: every answer is "ok", and uses 1,100 tokens.
+function useFakeClaude() {
+  chat.setClientFactory(() => ({
+    beta: {
+      messages: {
+        stream: () => ({
+          async *[Symbol.asyncIterator]() {
+            yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
+            yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ok" } };
+          },
+          async finalMessage() {
+            return { stop_reason: "end_turn", content: [{ type: "text", text: "ok" }], usage: { input_tokens: 1000, output_tokens: 100 } };
+          },
+        }),
+      },
+    },
+  }));
+  chat.setDepsForTests({ config: () => ({ anthropicKey: "test-key", claudeModel: "claude-test" }) });
+}
+function stopFakeClaude() {
+  chat.setClientFactory(null);
+  chat.setDepsForTests({});
+}
+
 let server;
 let base;
 before(async () => {
@@ -116,13 +146,15 @@ async function call(method, url, { body, cookie } = {}) {
   } catch {
     // not JSON
   }
-  return { status: res.status, json, text };
+  return { status: res.status, json, text, retryAfter: res.headers.get("retry-after") };
 }
 
 // Signs in as uid, chooses the product, and gives back the account cookie
-// (the "name=value" part of its Set-Cookie line).
-async function cookieFor(uid, product) {
-  const token = `fake:${JSON.stringify({ uid, email: `${uid.toLowerCase()}@example.com` })}`;
+// (the "name=value" part of its Set-Cookie line). verified: Google
+// verified the e-mail (a Google sign-in); else an e-mail and password
+// sign-up that has not.
+async function cookieFor(uid, product, { verified = false } = {}) {
+  const token = `fake:${JSON.stringify({ uid, email: `${uid.toLowerCase()}@example.com`, email_verified: verified })}`;
   const res = await fetch(`${base}/api/auth/firebase`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idToken: token }) });
   assert.equal(res.status, 200);
   const cookie = res.headers
@@ -183,6 +215,35 @@ test("spend counts uses per account inside a window; outside an account's folder
   assert.equal(QUOTAS.areas, 1);
   setQuotasForTests();
   assert.equal(QUOTAS.areas, 5);
+  // The numbers in force (the owner's to change).
+  assert.deepEqual(
+    [QUOTAS.chatMessagesPerDay, QUOTAS.chatMessagesPerDayUnverified, QUOTAS.accountsChatPerDay, QUOTAS.accountsChatTokensPerDay],
+    [40, 10, 400, 6_000_000],
+  );
+  assert.deepEqual(
+    [QUOTAS.demoChatPerVisitor, QUOTAS.demoChatPerAddress, QUOTAS.demoChatPerDay, QUOTAS.demoChatTokensPerDay, QUOTAS.demoChatMaxTokens, QUOTAS.demoChatToolRounds],
+    [8, 24, 300, 1_500_000, 3000, 2],
+  );
+  assert.deepEqual([QUOTAS.contactPerHourAll, QUOTAS.contactPerDayAll, QUOTAS.contactUnsentMax, QUOTAS.contactMailsPerDay], [30, 150, 1000, 100]);
+});
+
+test("an account's counts outlive a restart (quota-state.json in the base folder, by the account's folder name)", async () => {
+  setQuotasForTests();
+  const now = Date.now();
+  await withDataRoot(userRoot("restart-test"), () => {
+    assert.deepEqual(spend("field-analyze", 1, 60 * 60 * 1000, now), { ok: true });
+    assert.equal(spend("field-analyze", 1, 60 * 60 * 1000, now + 1).ok, false);
+  });
+  await flushCounters();
+  const saved = JSON.parse(fs.readFileSync(path.join(dir, "quota-state.json"), "utf8"));
+  assert.equal(Object.keys(saved.counts["account-field-analyze"]).length, 1, "one account counted");
+  assert.doesNotMatch(JSON.stringify(saved), /restart-test/, "never the account id (nor its e-mail)");
+  reloadCountersForTests();
+  await withDataRoot(userRoot("restart-test"), () => {
+    assert.equal(spend("field-analyze", 1, 60 * 60 * 1000, now + 2).ok, false, "still spent after the restart");
+  });
+  setQuotasForTests();
+  fs.rmSync(path.join(dir, "quota-state.json"), { force: true });
 });
 
 // ---------- Atlas ----------
@@ -282,25 +343,79 @@ test("a fresh account's workspace has the monthly update off (the person can swi
 
 // ---------- The AI chat ----------
 
-test("the AI chat: an account sends at most so many messages a day (429 quota); the demo is not limited", async () => {
-  setQuotasForTests({ chatMessagesPerDay: 3 });
+test("the AI assistant: an account asks fewer questions while its e-mail is not verified; every account together has a cap; the demo has its own limits", async () => {
+  setQuotasForTests({ chatMessagesPerDay: 4, chatMessagesPerDayUnverified: 2, accountsChatPerDay: 7 });
+  useFakeClaude();
+  const ask = (cookie, i) => call("POST", "/api/chat", { cookie, body: { product: "atlas", message: `hello ${i}` } });
   try {
-    const cookie = await cookieFor("QuotaChat0001", "atlas");
-    for (let i = 1; i <= 3; i += 1) {
-      const res = await call("POST", "/api/chat", { cookie, body: { product: "atlas", message: `hello ${i}` } });
-      assert.equal(res.status, 200, `message ${i}`);
-      assert.match(res.text, /ai_not_configured/, "no key here: the stream says so");
+    // An e-mail and password sign-up, not verified: 2 a day.
+    const unverified = await cookieFor("QuotaChat0001", "atlas");
+    for (let i = 1; i <= 2; i += 1) {
+      const res = await ask(unverified, i);
+      assert.equal(res.status, 200, `question ${i}`);
+      assert.match(res.text, /event: done/);
     }
-    const fourth = await call("POST", "/api/chat", { cookie, body: { product: "atlas", message: "hello 4" } });
-    assert.equal(fourth.status, 429, fourth.text);
-    assert.equal(fourth.json.error.code, "quota");
-    assert.match(fourth.json.error.message, /An account can send the AI 3 messages a day\. Try again in \d+ hours\./);
-    // Reading conversations is not a message.
-    assert.equal((await call("GET", "/api/chats?product=atlas", { cookie })).status, 200);
-    // Another account has its own count; the demo has none.
-    const otherCookie = await cookieFor("QuotaChat0002", "atlas");
-    assert.equal((await call("POST", "/api/chat", { cookie: otherCookie, body: { product: "atlas", message: "hello" } })).status, 200);
-    for (let i = 1; i <= 5; i += 1) assert.equal((await call("POST", "/api/chat", { body: { product: "atlas", message: `demo ${i}` } })).status, 200, `demo ${i}`);
+    const over = await ask(unverified, 3);
+    assert.equal(over.status, 429, over.text);
+    assert.equal(over.json.error.code, "quota");
+    assert.match(over.json.error.message, /^An account whose e-mail address is not verified can ask the assistant 2 questions a day \(a verified one, as with Google, 4\)\. Try again in \d+ hours\.$/);
+    assert.ok(Number(over.retryAfter) > 23 * 3600, `retry after ${over.retryAfter}s`);
+    // Reading conversations is not a question.
+    assert.equal((await call("GET", "/api/chats?product=atlas", { cookie: unverified })).status, 200);
+
+    // A Google sign-in (verified): 4 a day.
+    const verified = await cookieFor("QuotaChat0002", "atlas", { verified: true });
+    for (let i = 1; i <= 4; i += 1) assert.equal((await ask(verified, i)).status, 200, `verified question ${i}`);
+    const fifth = await ask(verified, 5);
+    assert.equal(fifth.status, 429);
+    assert.match(fifth.json.error.message, /^An account can ask the assistant 4 questions a day\. Try again in \d+ hours\.$/);
+
+    // Every account together: 7 (2 + 4 so far), then everyone waits.
+    const third = await cookieFor("QuotaChat0003", "atlas", { verified: true });
+    assert.equal((await ask(third, 1)).status, 200, "the seventh of all accounts");
+    const full = await ask(third, 2);
+    assert.equal(full.status, 429);
+    assert.equal(full.json.error.code, "quota");
+    assert.match(full.json.error.message, /^The assistant has answered as many questions as it can for today\. Try again in \d+ hours\.$/);
+
+    // The demo has its own limits, not the accounts'.
+    for (let i = 1; i <= 3; i += 1) assert.equal((await call("POST", "/api/chat", { body: { product: "atlas", message: `demo ${i}` } })).status, 200, `demo ${i}`);
+  } finally {
+    stopFakeClaude();
+    setQuotasForTests();
+  }
+});
+
+test("the AI assistant: every account's tokens together, counted from each answer's usage; past the day's budget everyone waits", async () => {
+  setQuotasForTests({ accountsChatTokensPerDay: 2000 });
+  useFakeClaude();
+  const ask = (cookie) => call("POST", "/api/chat", { cookie, body: { product: "atlas", message: "hello" } });
+  try {
+    const one = await cookieFor("QuotaTokens01", "atlas", { verified: true });
+    assert.equal((await ask(one)).status, 200, "1,100 tokens");
+    assert.equal((await ask(one)).status, 200, "2,200 tokens: the budget is spent by this answer");
+    const over = await ask(one);
+    assert.equal(over.status, 429);
+    assert.match(over.json.error.message, /as many questions as it can for today/);
+    const two = await cookieFor("QuotaTokens02", "atlas", { verified: true });
+    assert.equal((await ask(two)).status, 429, "for every account");
+  } finally {
+    stopFakeClaude();
+    setQuotasForTests();
+  }
+});
+
+test("without a Claude key an account's questions are not counted: the plain sentence, no setup steps, never 429", async () => {
+  setQuotasForTests({ chatMessagesPerDayUnverified: 1 });
+  try {
+    const cookie = await cookieFor("QuotaNoKey01", "field");
+    for (let i = 1; i <= 3; i += 1) {
+      const res = await call("POST", "/api/chat", { cookie, body: { product: "field", message: `hello ${i}` } });
+      assert.equal(res.status, 200, `question ${i}`);
+      assert.match(res.text, /"code":"ai_not_configured"/);
+      assert.match(res.text, /The assistant is not available right now\./);
+      assert.doesNotMatch(res.text, /ANTHROPIC_API_KEY|\.env|npm run dev/);
+    }
   } finally {
     setQuotasForTests();
   }
@@ -336,16 +451,20 @@ test("the Field: an account runs one job at a time (429 busy), starts 2 searches
   release();
   assert.equal((await waitForJob(held.id, cookie)).status, "done");
 
-  // Two "update now" an hour, then a plain refusal.
-  for (let i = 1; i <= 2; i += 1) {
-    const res = await call("POST", "/api/farm/analyze", { cookie, body: {} });
-    assert.equal(res.status, 202, `update ${i}: ${JSON.stringify(res.json)}`);
-    await waitForJob(res.json.job.id, cookie);
-  }
+  // Two analyses on request an hour: the example farm above was the first
+  // (it analyses all its fields), one "update now" is the second, then a
+  // plain refusal; another example farm counts the same.
+  const update = await call("POST", "/api/farm/analyze", { cookie, body: {} });
+  assert.equal(update.status, 202, `update: ${JSON.stringify(update.json)}`);
+  await waitForJob(update.json.job.id, cookie);
   const third = await call("POST", "/api/farm/analyze", { cookie, body: {} });
   assert.equal(third.status, 429, JSON.stringify(third.json));
   assert.equal(third.json.error.code, "quota");
   assert.match(third.json.error.message, /An account can start 2 analyses on request an hour\. Try again in (an hour|\d+ minutes)\./);
+  const example = await call("POST", "/api/farm/demo", { cookie, body: { example: "iowa" } });
+  assert.equal(example.status, 429, `an example farm is an analysis too: ${JSON.stringify(example.json)}`);
+  assert.equal(example.json.error.code, "quota");
+  assert.equal((await call("GET", "/api/farm", { cookie })).json.farm.fields.length, demoFarm.json.farm.fields.length, "the farm was not replaced");
 
   // Two searches an hour.
   for (let i = 1; i <= 2; i += 1) {

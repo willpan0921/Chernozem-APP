@@ -248,6 +248,8 @@
   font-size: 11px;
   line-height: 1.35;
   color: var(--c-muted);
+  /* The owner's note names an e-mail address: it may break anywhere. */
+  overflow-wrap: anywhere;
 }
 
 .sidebar-note svg {

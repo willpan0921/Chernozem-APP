@@ -2,12 +2,18 @@
   WHAT THIS FILE DOES
   The About page's first screen around the globe (WorldGlobe.jsx): the
   Earth filling the dark hero (its still picture, the 3D canvas and the
-  markers), the page's words over its shaded side, the row of toggles,
-  the tile that names the event the tour stops at (beside its marker on a
-  wide screen, docked under the toggles on a phone), the keyboard's list
-  (invisible, one tab stop over the whole globe) and the panel that opens
-  for one event (docked right on a wide screen, a sheet from the bottom on
-  a phone).
+  markers), the page's words over its left side on a soft neutral scrim
+  (the one gradient the house rules allow: a scrim for legibility over a
+  picture), the row of toggles and the quiet line under it (how to turn
+  the Earth, "Show minor alerts"), the tile that names the event the tour
+  stops at (beside its marker on a wide screen, docked under the toggles
+  on a phone), the keyboard's list (invisible, one tab stop over the whole
+  globe) and the panel that opens for one event (docked right on a wide
+  screen, a sheet from the bottom on a phone).
+
+  On a wide screen the words and the toggles stand on the same frame as
+  the menu bar (site.css .wrap: at most 1760 px, centred, page margins),
+  so on a very wide screen they line up with the logo.
 
   The layout follows the page's shape, not the window's: WorldGlobe adds
   .is-landscape (the hero at least 1.1 times wider than tall) or
@@ -37,8 +43,9 @@
   overflow: clip;
 }
 
-/* The still picture: a square 1.3 times the sphere, centred on it. It
-   settles from 103% as the page opens and fades once the 3D is drawn. */
+/* The still picture: the part of the Earth this shape of screen can show,
+   placed on the sphere by WorldGlobe. It settles from 103% as the page
+   opens and fades once the 3D is drawn. */
 .site .globe-still {
   position: absolute;
   max-width: none;
@@ -65,6 +72,31 @@
 .site .globe-canvas canvas {
   display: block;
   outline: 0;
+}
+
+/* The scrim under the words' column: a neutral dark veil, placed and sized
+   by WorldGlobe (just around the words and the controls), fading out at
+   its edges, so the white words stay readable over the lit Earth while the
+   Earth still shows through. */
+.site .globe-scrim {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  pointer-events: none;
+}
+
+.site .globe.is-landscape .globe-scrim {
+  background: linear-gradient(90deg, rgba(20, 16, 12, 0) 0, rgba(20, 16, 12, 0.32) 160px, rgba(20, 16, 12, 0.32) calc(100% - 160px), rgba(20, 16, 12, 0) 100%); /* taste-skill-ignore: the neutral scrim under the words, for legibility over the Earth */
+}
+
+.site .globe.is-portrait .globe-scrim {
+  background: linear-gradient(180deg, rgba(20, 16, 12, 0) 0, rgba(20, 16, 12, 0.5) 160px, rgba(20, 16, 12, 0.5) 100%); /* taste-skill-ignore: the neutral scrim under the words, for legibility over the Earth */
+}
+
+.site .globe.no-words .globe-scrim {
+  display: none;
 }
 
 html[data-menu="open"] .site .globe-stage {
@@ -279,7 +311,8 @@ html[data-menu="open"] .site .globe-stage {
 }
 
 .site .globe-words,
-.site .globe-dock {
+.site .globe-dock,
+.site .globe-hint {
   pointer-events: auto;
 }
 
@@ -287,21 +320,40 @@ html[data-menu="open"] .site .globe-stage {
   visibility: hidden;
 }
 
-/* Wide: the words at the top left, the controls 32 px under them. */
+/* While the Earth is being dragged nothing can be selected, and a drag
+   that starts on the tile never selects the words either. */
+.site .globe[data-dragging],
+.site .globe-float {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Wide: the words at the top left, on the menu bar's frame, the controls
+   32 px under them, the quiet line under those. The column is as wide as
+   its title needs (so a larger title stays on two lines), at least
+   600 px or 46% of the screen, at most half of it. */
 .site .globe.is-landscape .globe-ui {
-  padding: clamp(40px, 10svh, 112px) var(--margin) 32px;
+  padding: clamp(40px, 10svh, 112px) max(var(--margin), calc((100% - 1760px) / 2 + var(--margin))) 32px;
 }
 
-.site .globe.is-landscape .globe-words,
-.site .globe.is-landscape .globe-dock {
-  width: min(600px, 46vw);
+.site .globe.is-landscape .globe-words {
+  width: max-content;
+  min-width: min(600px, 46vw);
+  max-width: 50vw;
 }
 
 .site .globe.is-landscape .globe-dock {
+  width: max-content;
+  max-width: 50vw;
   margin-top: 32px;
 }
 
-/* Tall: the controls and the tile at the top, the words at the foot. */
+.site .globe.is-landscape .globe-hint {
+  margin-top: 10px;
+}
+
+/* Tall: the controls and the tile at the top, the words at the foot, and
+   the quiet line under the words' two actions. */
 .site .globe.is-portrait .globe-ui {
   padding: 16px var(--margin) 32px;
 }
@@ -312,8 +364,55 @@ html[data-menu="open"] .site .globe-stage {
 }
 
 .site .globe.is-portrait .globe-words {
+  order: 1;
   width: 100%;
   margin-top: auto;
+}
+
+.site .globe.is-portrait .globe-hint {
+  order: 2;
+  margin-top: 12px;
+}
+
+/* The quiet line: "Show minor alerts" and how to turn the Earth, which
+   fades once the visitor has turned it. */
+.site .globe-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 18px;
+  min-height: 0;
+  font-size: 15px;
+  line-height: 1.35;
+  color: var(--field-dark-muted);
+}
+
+.site .globe-hint-text {
+  transition: opacity 400ms ease;
+}
+
+.site .globe-hint-text.is-done {
+  opacity: 0;
+}
+
+.site .globe-minor {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--field-dark-ink);
+  text-decoration: underline;
+  text-underline-offset: 0.22em;
+  text-decoration-thickness: 0.08em;
+  white-space: nowrap;
+}
+
+@media (pointer: coarse) {
+  .site .globe-minor {
+    min-height: 44px;
+  }
 }
 
 @media (max-width: 480px) {
@@ -400,6 +499,13 @@ html[data-menu="open"] .site .globe-stage {
   }
 }
 
+/* On a tall screen Pause sits in the row over the bare Earth (no scrim
+   there), so it stands on the toggles' dark tile to stay readable. */
+.site .globe.is-portrait .globe-row .globe-pause {
+  padding: 0 12px;
+  background: var(--field-dark-3);
+}
+
 /* ---- The tile: the event, since when, one fact, the link ---- */
 .site .globe-caption {
   max-width: 300px;
@@ -475,8 +581,15 @@ html[data-menu="open"] .site .globe-stage {
   transition-duration: 200ms;
 }
 
-/* Docked under the toggles (phones, and without the 3D), with Pause at
-   its top right. One flow with the toggles, so they never collide. */
+/* Its marker turned behind the Earth or under the words: the tile waits. */
+.site .globe-float.is-shown[data-away] .globe-caption {
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+}
+
+/* Docked under the toggles (phones, and without the 3D; Pause sits in the
+   row of toggles). One flow with the toggles, so they never collide. */
 .site .globe-docked {
   position: relative;
   display: grid;
@@ -485,20 +598,26 @@ html[data-menu="open"] .site .globe-stage {
   margin-top: 8px;
 }
 
-.site .globe-docked > * {
-  grid-area: 1 / 1;
-}
-
-.site .globe-docked .globe-pause {
-  justify-self: end;
-  align-self: start;
-  z-index: 1;
-  margin: 2px 4px 0 0;
-}
-
 .site .globe-docked-card .globe-caption {
   max-width: none;
-  padding-right: 64px;
+}
+
+/* On a phone the docked tile is the name and one line, with the link at
+   its end (the fact is in the panel), so it covers little of the Earth. */
+.site .globe-docked-card .globe-caption.is-compact {
+  padding: 10px 14px;
+}
+
+.site .globe-caption.is-compact .globe-caption-name {
+  font-size: 17px;
+}
+
+.site .globe-caption.is-compact .globe-caption-link {
+  display: inline;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  vertical-align: baseline;
 }
 
 @media (prefers-reduced-motion: no-preference) {

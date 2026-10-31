@@ -15,8 +15,9 @@
 //
 // "BACK TO THE WEBSITE" (everyone): under the logo, back to the public
 // website's front page (/). It also ends this tab's choice to look at the
-// demo (src/lib/demoMode.js leaveDemo). In the rail it is an arrow with a
-// tooltip; on a phone it sits at the right of the logo's row.
+// demo (src/lib/demoMode.js leaveDemo), and so does the Chernozem logo
+// above it (also a link to /). In the rail it is an arrow with a tooltip;
+// on a phone it sits at the right of the logo's row.
 //
 // WHO IS LOOKING (src/state/useAccess.js, rules in src/lib/access.js):
 //   The demo     the Field / Atlas switch, and at the bottom the demo box:
@@ -26,11 +27,13 @@
 //                looking at the demo gets "Open your own workspace" instead
 //                of both: back to their own fields or area. No account row
 //                and no "Sign out": the demo has no account.
-//   The owner    the switch, "You are editing the demo", the demo's
-//                "Account" / "Regional office" row and "Sign out".
-//   Open         (one's own computer, no key set) the switch, "Your fields
-//                are private" on the Field side, the same row; nothing to
-//                sign out of.
+//   The owner    the switch, "You are editing the demo (signed in as
+//                chernozem.app@gmail.com)": the Google account signed in on
+//                the hidden /owner page, the demo's "Account" / "Regional
+//                office" row and "Sign out".
+//   Open         (one's own computer, no owner sign-in needed) the switch,
+//                "Your fields are private" on the Field side, the same row;
+//                nothing to sign out of.
 //   An account   no switch (they chose one product when they registered;
 //                src/components/ProductGuard.jsx keeps them on it), "Your
 //                fields are private to your account", their own name and
@@ -38,9 +41,10 @@
 // While the visitor is not known (the server could not be reached): the
 // switch and the row as before, no note, no "Sign out".
 //
-// "Sign out" ends the sign-in on the server (and Firebase's, for an
-// account) and goes back to the website, the page loading afresh so
-// nothing of the account stays in this tab.
+// "Sign out" ends the sign-in on the server and this browser's Firebase
+// sign-in (the owner's Google one and an account's alike), then goes back
+// to the website, the page loading afresh so nothing of the account stays
+// in this tab.
 //
 // FOLDED TO A RAIL (wider screens): the button next to the logo folds the
 // sidebar to a narrow rail of icons (and unfolds it again), so the pages,
@@ -207,7 +211,11 @@ function DemoBox({ productId, note, ownHome, collapsed, tipFor }) {
 // "Sign out": the server removes this browser's sign-in, then the website's
 // front page opens afresh. If the server cannot be reached the browser stays
 // signed in (the page cannot remove the sign-in by itself), so it says so.
-function SignOutButton({ collapsed, tipFor, hideTip, account = false }) {
+//   firebase  true (the owner and accounts: both sign in with Firebase,
+//             Google or e-mail): this browser's Firebase sign-in ends too,
+//             so the website's sign-in pages do not offer "Continue as ..."
+//             to the next person at this computer
+function SignOutButton({ collapsed, tipFor, hideTip, firebase = false }) {
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const label = failed ? "Could not sign out: try again" : "Sign out";
@@ -217,7 +225,7 @@ function SignOutButton({ collapsed, tipFor, hideTip, account = false }) {
     setBusy(true);
     setFailed(false);
     try {
-      await signOut({ account });
+      await signOut({ account: firebase });
       window.location.assign(backToWebsitePath());
     } catch {
       setFailed(true);
@@ -283,7 +291,9 @@ export default function Sidebar({ collapsed = false, onToggle }) {
   return (
     <aside id="app-sidebar" className={collapsed ? "sidebar is-rail" : "sidebar"} onScroll={hideTip}>
       <div className="sidebar-top">
-        <Link to="/" className="sidebar-brand" aria-label={collapsed ? "Chernozem" : undefined} {...tipFor("Chernozem")}>
+        {/* Like "Back to the website": to the website, leaving this tab's
+            demo view (so /field or /atlas opens one's own workspace again). */}
+        <Link to={backToWebsitePath()} className="sidebar-brand" onClick={leaveDemo} aria-label={collapsed ? "Chernozem" : undefined} {...tipFor("Chernozem")}>
           <span className="sidebar-logo">
             <Logo size={30} />
           </span>
@@ -385,7 +395,8 @@ export default function Sidebar({ collapsed = false, onToggle }) {
             </Link>
           </>
         )}
-        {canSignOut(access) && <SignOutButton collapsed={collapsed} tipFor={tipFor} hideTip={hideTip} account={Boolean(account)} />}
+        {/* The owner (Google, on /owner) and accounts: both a Firebase sign-in. */}
+        {canSignOut(access) && <SignOutButton collapsed={collapsed} tipFor={tipFor} hideTip={hideTip} firebase />}
       </div>
 
       {/* Only for the eye: each item already carries its name (aria-label). */}

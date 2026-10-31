@@ -10,10 +10,11 @@
   table → entrances (motion) → reduced motion.
 
   The cursor is the pin logo (public/site/cursor-pin.png, 22 x 32, and its
-  @2x copy). It clicks at the centre of the pin's round head (11, 10), not
-  at its tip; src/site/cursorAssist.js also lets a click anywhere on the
-  pin reach the nearest link or button under it, and gives that link or
-  button its hover look ([data-near], next to each :hover rule below).
+  @2x copy), on every part of the website, links and buttons included. It
+  clicks at the centre of the pin's round head (11, 10), not at its tip;
+  src/site/cursorAssist.js also lets a click with any part of the pin reach
+  the link or button the pin covers, and gives that link or button its
+  hover look ([data-near], next to each :hover rule below).
 
   Motion: an element with data-rise, data-settle, data-slide or data-open
   starts hidden only when the page has the class "js" (set in index.html)
@@ -113,14 +114,14 @@
   }
 }
 
-.site a,
-.site button,
-.site [role="button"],
-.site label,
-.site summary,
-.site input[type="range"],
-.site input[type="radio"],
-.site input[type="checkbox"] {
+/* Everything that can be clicked keeps the pin, never the system's hand.
+   The :is() list weighs as much as ".site" plus a class plus an element,
+   so it outweighs a page's "cursor: pointer" on a class (".site .pg-btn");
+   the frozen Ukraine demo's map and tabs (components/demo.css) are named
+   here too. A page stylesheet should simply not set a pointer cursor. */
+.site :is(a, button, [role="button"], label, summary, select, input[type="range"], input[type="radio"], input[type="checkbox"], input[type="submit"], input[type="button"]),
+.site .demo-tab,
+.site .demo-unit path {
   cursor: url(/site/cursor-pin.png) 11 10, pointer;
   cursor: -webkit-image-set(url(/site/cursor-pin.png) 1x, url(/site/cursor-pin@2x.png) 2x) 11 10, pointer;
   cursor: image-set(url(/site/cursor-pin.png) 1x, url(/site/cursor-pin@2x.png) 2x) 11 10, pointer;
@@ -325,6 +326,26 @@ body:has(> #root > .site) {
   max-width: 1760px;
   margin-inline: auto;
   padding-inline: var(--margin);
+}
+
+/* A field of colour that runs to the screen's edges while its words keep to
+   the page's frame (the menu's edges): give the field "frame" and pad its
+   content's parts with var(--frame-inset) (not the field itself). Up to
+   1760 px wide the inset is the page margin; wider, it grows with the
+   empty sides of the frame. (cqi: 1% of the field's width, which is the
+   whole page's width.) */
+.site .frame {
+  container-type: inline-size;
+  --frame-inset: max(var(--margin), calc((100cqi - 1760px) / 2 + var(--margin)));
+}
+
+/* The About page's first screen (its layout: components/globe.css). On a
+   screen wider than the frame its words and its row of toggles keep to the
+   menu's left edge too, like every other section of the page. */
+.site .hero .globe.is-landscape .globe-ui,
+.site .hero .globe.is-portrait .globe-ui {
+  padding-left: max(var(--margin), calc((100% - 1760px) / 2 + var(--margin)));
+  padding-right: max(var(--margin), calc((100% - 1760px) / 2 + var(--margin)));
 }
 
 .site .grid {

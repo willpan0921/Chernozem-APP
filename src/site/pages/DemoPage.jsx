@@ -8,34 +8,23 @@
 // one line and the Register button for a workspace of one's own. Nothing
 // else: no code, no list of what is inside.
 //
+// The doors' pictures are listed once in src/site/content/site.js
+// (DEMO_DOORS; the owner's page shows the same two). On a computer each
+// door shows a readable piece of the product's screen, at half its size,
+// and the phone screen beside it. On a phone the two doors stand side by
+// side, the button first and the phone screen under it, so both buttons
+// are on the first screen; the computer screen is not shown there, and
+// because it is marked loading="lazy" a phone never downloads it.
+//
 // WHO EDITS IT
 // Whoever changes how the demo is reached. What the demo may do (look, not
 // change) is decided on the server (server/auth.js).
 
 import { Link } from "react-router-dom";
 import { enterDemo } from "../../lib/demoMode.js";
-import { SITE, SITE_ACTIONS } from "../content/site.js";
+import { DEMO_DOORS, SITE_ACTIONS } from "../content/site.js";
 import { usePageTitle, useReveal } from "../hooks.js";
 import "./pages.css";
-
-// The two doors. Each shows its product twice: the computer screen
-// (cropped to the part that matters) and the phone.
-const DOORS = [
-  {
-    key: "field",
-    to: SITE.appPath,
-    label: "Open Field",
-    wide: { src: "/site/shots/field-fields-detail.webp", width: 1920, height: 1369 },
-    phone: { src: "/site/shots/phone-field-overview.webp", width: 780, height: 1688 },
-  },
-  {
-    key: "atlas",
-    to: SITE.atlasPath,
-    label: "Open Atlas",
-    wide: { src: "/site/shots/atlas-map-near-micro.webp", width: 1920, height: 1200 },
-    phone: { src: "/site/shots/phone-atlas-overview.webp", width: 780, height: 1688 },
-  },
-];
 
 export default function DemoPage() {
   usePageTitle("Demo");
@@ -57,11 +46,11 @@ export default function DemoPage() {
           </div>
 
           <div className="dm-doors" ref={reveal}>
-            {DOORS.map((door, index) => (
+            {DEMO_DOORS.map((door, index) => (
               <Link key={door.key} className={`dm-door dm-door-${door.key}`} to={door.to} onClick={enterDemo} data-rise="" style={{ "--i": index }}>
                 <span className="dm-door-pics" aria-hidden="true">
                   <span className="dm-door-pic dm-door-wide" data-settle="" style={{ "--i": index + 1 }}>
-                    <img src={door.wide.src} width={door.wide.width} height={door.wide.height} alt="" loading="eager" decoding="async" />
+                    <img src={door.wide.src} width={door.wide.width} height={door.wide.height} alt="" loading="lazy" decoding="async" style={{ objectPosition: door.wide.position }} />
                   </span>
                   <span className="dm-door-pic dm-door-phone" data-settle="" style={{ "--i": index + 2 }}>
                     <img src={door.phone.src} width={door.phone.width} height={door.phone.height} alt="" loading="eager" decoding="async" />

@@ -4,20 +4,24 @@
 // the form at the left, real pictures of the product at the right.
 //
 //   Google, or an e-mail and a password, through Firebase Authentication
-//   (src/lib/firebase.js, downloaded only here and on the Register page).
+//   (src/lib/firebase.js, downloaded only here, on the Register page and
+//   on the owner's page).
 //   When Firebase accepts, its signed token goes to our server (POST
 //   /api/auth/firebase, src/api/accountApi.js), which sets the account
 //   cookie. Then the page leaves the public demo (src/lib/demoMode.js
 //   leaveDemo) and goes to /field or /atlas, whichever the account chose,
-//   or to /register when "About you" was never finished
-//   (src/lib/registration.js destinationFor).
+//   or to /register when registering was never finished
+//   (src/lib/registration.js destinationFor). The owner (the Chernozem
+//   Google account, which edits the demo) gets a button into each product.
 //   "Forgot it?" beside the password sends Firebase's reset e-mail to the
 //   address typed above it.
 //
 // Someone already signed in sees who they are, a button into their
-// product and "Sign out". Firebase's error codes become plain words beside
-// the right field (src/lib/registration.js); when Authentication is not
-// switched on, the page says registration is not open yet.
+// product and "Sign out". "Continue with Google" is the one strong button;
+// "Sign in" (the e-mail way) is the light one. Firebase's error codes
+// become plain words beside the right field (src/lib/registration.js); when
+// Authentication is not switched on, the page says registration is not
+// open yet.
 //
 // WHO EDITS IT
 // Whoever changes how people sign in. The fields and the pictures are the
@@ -30,7 +34,7 @@ import { SITE_ACTIONS } from "../content/site.js";
 import { getStatus, logoutEverywhere, postFirebaseToken } from "../../api/accountApi.js";
 import { loadFirebaseAuth } from "../../lib/firebase.js";
 import { leaveDemo } from "../../lib/demoMode.js";
-import { LIMITS, PRODUCTS, destinationFor, emailProblem, firebaseProblem } from "../../lib/registration.js";
+import { LIMITS, PRODUCTS, SIGN_IN_ENDED, destinationFor, emailProblem, firebaseProblem, isOwner, signInEnded } from "../../lib/registration.js";
 import { AuthField, PasswordField, ShotSet } from "./RegisterPage.jsx";
 import "./register.css";
 
@@ -45,7 +49,8 @@ export default function SignInPage() {
   const navigate = useNavigate();
 
   // "wait" (asking the server), "form", "signed" (an account with a
-  // finished profile), "unfinished" (an account without one), "closed".
+  // finished profile), "unfinished" (an account without one), "owner",
+  // "closed".
   const [stage, setStage] = useState("wait");
   const [account, setAccount] = useState(null);
   const [fb, setFb] = useState(null);
@@ -66,6 +71,13 @@ export default function SignInPage() {
     };
   }, []);
 
+  // After "Sign out" the keyboard goes to "Continue with Google", once the
+  // page has drawn the form again.
+  const [focusGoogle, setFocusGoogle] = useState(0);
+  useEffect(() => {
+    if (focusGoogle) document.getElementById("sgn-google")?.focus();
+  }, [focusGoogle]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -76,12 +88,10 @@ export default function SignInPage() {
         // No answer: show the form; errors come when it is sent.
       }
       if (cancelled) return;
-      if (status?.account) {
-        setAccount(status.account);
-        setStage(status.account.profileComplete ? "signed" : "unfinished");
-      } else {
-        setStage("form");
-      }
+      if (status?.account) setAccount(status.account);
+      if (isOwner(status)) setStage("owner");
+      else if (status?.account) setStage(status.account.profileComplete ? "signed" : "unfinished");
+      else setStage("form");
     })();
     return () => {
       cancelled = true;
@@ -117,14 +127,28 @@ export default function SignInPage() {
   }
 
   // Once our server has set the cookie: out of the public demo, into the
-  // account's product (or back to the Register page to finish).
+  // account's product (or back to the Register page to finish). The owner
+  // stays here with a button into each product.
   async function afterFirebase(user) {
     const idToken = await fb.getIdToken(user);
     const answer = await postFirebaseToken(idToken);
+    // The server's own view of this browser now (the owner is told apart
+    // here); the answer above is enough when it cannot be asked.
+    let status = null;
+    try {
+      status = await getStatus();
+    } catch {
+      // Carry on with the sign-in's answer.
+    }
     if (!alive.current) return;
-    setAccount(answer?.account || null);
+    const account = status?.account || answer?.account || null;
+    setAccount(account);
+    if (isOwner(status) || account?.owner) {
+      setStage("owner");
+      return;
+    }
     leaveDemo();
-    navigate(destinationFor(answer?.account));
+    navigate(destinationFor(account));
   }
 
   // where: "google", "known" (Continue as) or "email" (the form).
@@ -184,6 +208,9 @@ export default function SignInPage() {
     }
   }
 
+  // Firebase in this browser still knows the person. When that sign-in has
+  // ended (they signed out, which ends every sign-in of the account), the
+  // browser forgets it too and the form is left.
   async function continueAs() {
     if (busy || !fbUser || !fb) return;
     setBusy(true);
@@ -191,7 +218,17 @@ export default function SignInPage() {
     try {
       await afterFirebase(fbUser);
     } catch (error) {
-      if (alive.current) showProblem(error, "known");
+      if (!alive.current) return;
+      if (signInEnded(error)) {
+        try {
+          await fb.signOut(fb.auth);
+        } catch {
+          // Already out.
+        }
+        if (alive.current) setErrors({ known: SIGN_IN_ENDED });
+      } else {
+        showProblem(error, "known");
+      }
     } finally {
       if (alive.current) setBusy(false);
     }
@@ -247,6 +284,7 @@ export default function SignInPage() {
     setPassword("");
     setBusy(false);
     setStage("form");
+    setFocusGoogle((count) => count + 1);
   }
 
   const product = PRODUCTS[account?.product] ? account.product : "field";
@@ -295,10 +333,29 @@ export default function SignInPage() {
             </div>
           )}
 
+          {stage === "owner" && (
+            <div className="reg-panel" data-arrive style={rise(160)}>
+              <p>
+                Signed in as <strong>{account?.email || "the owner"}</strong>, the owner.
+              </p>
+              <div className="reg-actions">
+                <Link className="reg-btn reg-btn-primary" to={PRODUCTS.field.path} onClick={leaveDemo}>
+                  Open Field
+                </Link>
+                <Link className="reg-btn reg-btn-second" to={PRODUCTS.atlas.path} onClick={leaveDemo}>
+                  Open Atlas
+                </Link>
+                <button type="button" className="reg-textbtn" onClick={signOutAll} disabled={busy}>
+                  Sign out
+                </button>
+              </div>
+            </div>
+          )}
+
           {stage === "unfinished" && (
             <div className="reg-panel" data-arrive style={rise(160)}>
               <p>
-                Signed in as <strong>{account.email}</strong>. About you is not finished yet.
+                Signed in as <strong>{account.email}</strong>. Registering is not finished yet.
               </p>
               <div className="reg-actions">
                 <Link className="reg-btn reg-btn-primary" to={destinationFor(account)}>
@@ -326,14 +383,14 @@ export default function SignInPage() {
                       Not you? Sign out
                     </button>
                   </div>
-                  {errors.known && (
-                    <p className="reg-error" role="alert">
-                      {errors.known}
-                    </p>
-                  )}
                 </div>
               )}
-              <button type="button" className="reg-btn reg-btn-primary reg-btn-wide" onClick={continueWithGoogle} disabled={busy} data-arrive style={rise(200)}>
+              {errors.known && (
+                <p className="reg-error" role="alert">
+                  {errors.known}
+                </p>
+              )}
+              <button id="sgn-google" type="button" className="reg-btn reg-btn-primary reg-btn-wide" onClick={continueWithGoogle} disabled={busy} data-arrive style={rise(200)}>
                 Continue with Google
               </button>
               {errors.google && (

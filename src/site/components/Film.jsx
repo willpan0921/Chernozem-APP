@@ -1,7 +1,10 @@
 // WHAT THIS FILE DOES
 // Chernozem's three-minute film as a plain <video> with its poster frame,
 // used on the About page. It only downloads when the visitor presses play
-// (preload="none"). Under it, a row of chapter buttons: each one jumps to
+// (preload="none"). A phone (a screen up to 700 px wide) gets a smaller
+// copy (568 x 320, 18 MB, about 0.8 megabits a second, so it plays without
+// stopping on a slow mobile connection); a wider screen the full one
+// (1280 x 720, 36 MB). Under it, a row of chapter buttons: each one jumps to
 // its part of the film and plays it; the part playing now is marked
 // (aria-current). The files are in public/site/film/. Styles:
 // src/site/site.css (.film).
@@ -10,13 +13,16 @@
 //   <Film caption="..." />                                   a caption under it
 //
 // WHO EDITS IT
-// Whoever replaces the film. Keep a poster frame next to it, and check
-// each chapter's time against the new film.
+// Whoever replaces the film. Keep a poster frame next to it, check each
+// chapter's time against the new film, and make the small copy again (on a
+// Mac: avconvert --source chernozem-2026.mp4 --preset PresetMediumQuality
+// --output chernozem-2026-small.mp4).
 
 import { useEffect, useRef, useState } from "react";
 import { useReveal } from "../hooks.js";
 
 const FILM_SRC = "/site/film/chernozem-2026.mp4";
+const FILM_SMALL_SRC = "/site/film/chernozem-2026-small.mp4"; // for phones
 const POSTER_SRC = "/site/film/chernozem-2026-poster.jpg";
 
 // 71 -> "1:11"
@@ -35,6 +41,9 @@ export default function Film({ caption = "", chapters = [], className = "" }) {
   const videoRef = useRef(null);
   const [near, setNear] = useState(false);
   const [current, setCurrent] = useState(-1);
+  // The copy for this screen, chosen once (a <source media> would keep a
+  // media-query listener, and with it the whole page, alive after leaving).
+  const [src] = useState(() => (typeof window !== "undefined" && window.matchMedia("(max-width: 700px)").matches ? FILM_SMALL_SRC : FILM_SRC));
   useEffect(() => {
     const frame = frameRef.current;
     if (!frame || typeof IntersectionObserver === "undefined") {
@@ -92,8 +101,7 @@ export default function Film({ caption = "", chapters = [], className = "" }) {
   return (
     <figure className={`film ${className}`.trim()} ref={reveal}>
       <div className="film-frame" data-open ref={frameRef}>
-        <video ref={videoRef} className="film-video" poster={near ? POSTER_SRC : undefined} preload="none" controls playsInline width="1280" height="720" onTimeUpdate={follow} onSeeked={follow} onPlay={follow}>
-          <source src={FILM_SRC} type="video/mp4" />
+        <video ref={videoRef} src={src} className="film-video" poster={near ? POSTER_SRC : undefined} preload="none" controls playsInline width="1280" height="720" onTimeUpdate={follow} onSeeked={follow} onPlay={follow}>
           <a href={FILM_SRC}>Download the film (MP4, 36 MB)</a>
         </video>
       </div>

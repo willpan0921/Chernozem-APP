@@ -1,12 +1,16 @@
 // WHAT THIS FILE DOES
 // Tests the AI chat (chat.js) without calling the real Claude: a fake
 // Claude client plays back scripted replies, and a small in-memory store
-// stands in for server/store.js. Checks: no key -> a clear setup message;
-// a tool look-up goes round and comes back as text; a refusal becomes a
-// polite error; the conversation is saved; Stop saves the part already
-// written; "Try again" does not save the question twice. Field chats: the
-// farm comes from the server, the Field tools run, and a report's photos
-// go to Claude as images.
+// stands in for server/store.js. Checks: no key -> a clear setup message
+// for the owner, one plain sentence for a visitor or an account; a tool
+// look-up goes round and comes back as text; a refusal becomes a polite
+// error; the conversation is saved; Stop saves the part already written;
+// "Try again" does not save the question twice; the facts block is marked
+// for the prompt cache; every answer's tokens count against the demo's or
+// the accounts' budget, a stopped one's too; the demo's answers are
+// shorter (3,000 tokens, effort low, 2 look-ups, no paused turn
+// continued). Field chats: the farm comes from the server, the Field tools
+// run, and a report's photos go to Claude as images.
 //
 // WHO EDITS IT
 // Whoever changes chat.js. Run with: npm test
@@ -26,9 +30,14 @@ import {
   checkBody,
   echoableContent,
   imageBlocks,
+  tokensOf,
+  AI_UNAVAILABLE_MESSAGE,
   ATLAS_SYSTEM,
   FIELD_SYSTEM,
 } from "./chat.js";
+import { withSession } from "../session.js";
+import { counter } from "../counters.js";
+import { DAY_MS, setQuotasForTests } from "../quotas.js";
 
 // ---------- Stand-ins ----------
 
@@ -514,7 +523,9 @@ test("helpers: titles, message building, body checks, request shape", () => {
   );
   assert.deepEqual(msgs.map((m) => m.role), ["user", "assistant", "user"]);
   assert.equal(msgs[0].content[0].text, "<context>\nCTX\n</context>");
+  assert.deepEqual(msgs[0].content[0].cache_control, { type: "ephemeral" }, "the facts are read back from the prompt cache");
   assert.equal(msgs[0].content[1].text, "a\n\nb");
+  assert.equal(msgs[0].content[1].cache_control, undefined, "the question itself is never cached");
 
   assert.equal(checkBody({ product: "atlas", message: "hi" }), null);
   assert.ok(checkBody({ message: "" }));
@@ -522,6 +533,109 @@ test("helpers: titles, message building, body checks, request shape", () => {
 
   const params = requestFor({ model: "m", system: "S", tools: [], messages: [] });
   assert.equal(params.tools, undefined);
+  assert.equal(params.max_tokens, 16000);
+  assert.deepEqual(params.output_config, { effort: "medium" });
+  const demo = requestFor({ model: "m", system: "S", tools: [], messages: [], maxTokens: 3000, effort: "low" });
+  assert.equal(demo.max_tokens, 3000);
+  assert.deepEqual(demo.output_config, { effort: "low" });
+
+  // Every token an answer used: input, cache writes and reads, output.
+  assert.equal(tokensOf({ input_tokens: 100, cache_creation_input_tokens: 2000, cache_read_input_tokens: 3000, output_tokens: 50 }), 5150);
+  assert.equal(tokensOf({ input_tokens: 7, output_tokens: null }), 7);
+  assert.equal(tokensOf(undefined), 0);
+});
+
+test("without a key a visitor or an account gets one plain sentence, never the setup steps; a bad key the same", async () => {
+  const store = memoryStore();
+  setDepsForTests({ store, config: () => ({ anthropicKey: null }) });
+  for (const kind of ["demo", "account"]) {
+    const out = collector();
+    await withSession({ kind, readOnly: kind === "demo" }, () => runChat({ product: "atlas", message: "Hello" }, out.send));
+    assert.deepEqual(out.events, [{ event: "error", data: { code: "ai_not_configured", message: AI_UNAVAILABLE_MESSAGE } }], kind);
+  }
+  assert.equal(AI_UNAVAILABLE_MESSAGE, "The assistant is not available right now.");
+  // The owner and open: the setup steps.
+  for (const kind of ["owner", "open"]) {
+    const out = collector();
+    await withSession({ kind, readOnly: false }, () => runChat({ product: "atlas", message: "Hello" }, out.send));
+    assert.match(out.events[0].data.message, /ANTHROPIC_API_KEY=/, kind);
+  }
+  // A key Claude does not accept: developer words only for the owner.
+  const badKey = new Anthropic.AuthenticationError(401, { type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } }, "invalid x-api-key", new Headers());
+  assert.deepEqual(describeError(badKey, { forOwner: false }), { code: "ai_bad_key", message: AI_UNAVAILABLE_MESSAGE });
+  assert.match(describeError(badKey).message, /ANTHROPIC_API_KEY/);
+  const busy = new Anthropic.RateLimitError(429, { type: "error", error: { type: "rate_limit_error", message: "slow down" } }, "slow down", new Headers());
+  assert.equal(describeError(busy, { forOwner: false }).code, "ai_rate_limited", "a busy Claude is said as before");
+});
+
+test("the demo's answers: 3,000 tokens, effort low, at most 2 look-ups, no paused turn continued; each answer's tokens count, a stopped one's too", async () => {
+  setQuotasForTests();
+  const store = sampleStore();
+  const demo = { kind: "demo", readOnly: true };
+  const tokens = () => counter("demo-chat-tokens", DAY_MS).total("demo");
+  const usage = { input_tokens: 400, cache_creation_input_tokens: 0, cache_read_input_tokens: 600, output_tokens: 50 };
+  const toolTurn = (i) => ({ role: "assistant", stop_reason: "tool_use", usage, content: [{ type: "tool_use", id: `toolu_${i}`, name: "get_history", input: {} }] });
+  try {
+    const client = fakeClient(Array.from({ length: 6 }, (_, i) => toolTurn(i)));
+    setDepsForTests({ store, config: keyConfig });
+    setClientFactory(() => client);
+    const out = collector();
+    await withSession(demo, () => runChat({ product: "atlas", message: "Loop" }, out.send));
+    assert.equal(client.requests.length, 3, "the question and 2 look-ups");
+    for (const params of client.requests) {
+      assert.equal(params.max_tokens, 3000);
+      assert.deepEqual(params.output_config, { effort: "low" });
+    }
+    assert.match(out.of("delta").map((d) => d.text).join(""), /I stopped looking things up here/);
+    assert.equal(tokens(), 3 * 1050, "three answers of 1,050 tokens each");
+
+    // A paused turn is not continued in the demo.
+    const paused = fakeClient([{ role: "assistant", stop_reason: "pause_turn", usage, content: [{ type: "text", text: "Part one." }] }, { role: "assistant", stop_reason: "end_turn", usage, content: [{ type: "text", text: "Never asked." }] }]);
+    setClientFactory(() => paused);
+    await withSession(demo, () => runChat({ product: "atlas", message: "Pause?" }, collector().send));
+    assert.equal(paused.requests.length, 1);
+
+    // Stopped part-way: what the stream had told of the tokens still counts.
+    const before = tokens();
+    const controller = new AbortController();
+    const stopped = {
+      beta: {
+        messages: {
+          stream(_params, { signal }) {
+            return {
+              async *[Symbol.asyncIterator]() {
+                yield { type: "message_start", message: { usage: { input_tokens: 900, cache_read_input_tokens: 100, output_tokens: 1 } } };
+                yield { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } };
+                yield { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Start " } };
+                yield { type: "message_delta", delta: {}, usage: { output_tokens: 20 } };
+                await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+                throw Object.assign(new Error("Request was aborted."), { name: "APIUserAbortError" });
+              },
+              async finalMessage() {
+                throw new Error("not reached");
+              },
+            };
+          },
+        },
+      },
+    };
+    setClientFactory(() => stopped);
+    const running = withSession(demo, () => runChat({ product: "atlas", message: "Stop me" }, collector().send, { signal: controller.signal }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    controller.abort();
+    await running;
+    assert.equal(tokens() - before, 1020, "900 + 100 read from the cache + 20 written");
+
+    // The owner's answers are not counted anywhere and keep the full settings.
+    const owner = fakeClient([{ role: "assistant", stop_reason: "end_turn", usage, content: [{ type: "text", text: "Fine." }] }]);
+    setClientFactory(() => owner);
+    const counted = tokens();
+    await withSession({ kind: "owner", readOnly: false }, () => runChat({ product: "atlas", message: "Owner" }, collector().send));
+    assert.equal(tokens(), counted);
+    assert.equal(owner.requests[0].max_tokens, 16000);
+  } finally {
+    setQuotasForTests();
+  }
 });
 
 // ---------- The real SDK against a local stand-in for the Claude API ----------

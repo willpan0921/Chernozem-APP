@@ -1,13 +1,15 @@
 // WHAT THIS FILE DOES
-// How the website's Register and Sign in pages (src/site/pages/) talk to
-// the server about accounts (server/accounts.js). The browser sends the
-// account cookie by itself, so nothing here handles it.
+// How the website's Register, Sign in and owner pages (src/site/pages/)
+// talk to the server about accounts (server/accounts.js). The browser sends
+// the account cookie by itself, so nothing here handles it.
 //
 //   getStatus()                  GET /api/auth/status -> { required,
 //                                signedIn, shared, account, mode, readOnly }:
 //                                who this browser is. account is null, or
 //                                { uid, email, name, product,
-//                                profileComplete } for a registered account.
+//                                profileComplete } for a registered account
+//                                (with owner: true for the owner, whose
+//                                mode is "owner").
 //   postFirebaseToken(idToken)   POST /api/auth/firebase { idToken }
 //                                -> { ok, account }. The server checks the
 //                                token with Firebase and sets the account
@@ -17,17 +19,14 @@
 //   getAccount()                 GET /api/account -> { account, profile }
 //                                (401 auth_required without an account)
 //   putAccount(profile)          PUT /api/account { name, product, role,
-//                                organization?, country?, place? }
-//                                -> { ok, account, profile }
-//   logoutEverywhere()           POST /api/auth/logout -> { ok }: removes
-//                                the account cookie (and the owner's, if
-//                                any). Firebase's own sign-out is done by
-//                                the page, with firebase/auth.
-//   searchPlace(q)               GET /api/geocode?q= -> { results: [{ label,
-//                                lat, lon }] }: the place a person wants to
-//                                watch. It needs the account cookie, so the
-//                                page asks it in "About you", once the
-//                                account exists.
+//                                organization? } -> { ok, account, profile }
+//                                (the Register page sends these four; the
+//                                place is asked later, by the product's own
+//                                setup)
+//   logoutEverywhere()           POST /api/auth/logout -> { ok }: ends the
+//                                sign-in on the server. Firebase's own
+//                                sign-out is done by the page, with
+//                                firebase/auth.
 //
 // None of these sends the demo's "X-Chernozem-View: demo" header
 // (src/lib/demoMode.js): these pages are about the person's own account,
@@ -90,5 +89,3 @@ export const getAccount = () => request("GET", "/account");
 export const putAccount = (profile) => request("PUT", "/account", profile || {});
 
 export const logoutEverywhere = () => request("POST", "/auth/logout", {});
-
-export const searchPlace = (q) => request("GET", `/geocode?q=${encodeURIComponent(String(q || "").slice(0, 160))}`);

@@ -1,6 +1,8 @@
 // WHAT THIS FILE DOES
 // The website's "page not found" page, for any address that is neither a
-// website page nor an app page: one line and a link back.
+// website page nor an app page: one line and a link back. Its words sit in
+// the page's frame (pages.css ".pg-frame"), so on a wide screen they line
+// up with the logo above them.
 //
 // WHO EDITS IT
 // Nobody, normally.
@@ -14,17 +16,19 @@ export default function NotFoundPage() {
   return (
     <div className="pg">
       <section className="pg-sec nf" aria-labelledby="nf-title">
-        <div className="pg-mask">
-          <h1 className="pg-h1" id="nf-title">
-            There is no page here
-          </h1>
+        <div className="pg-frame nf-text">
+          <div className="pg-mask">
+            <h1 className="pg-h1" id="nf-title">
+              There is no page here
+            </h1>
+          </div>
+          <p className="pg-lead pg-fade">
+            That address does not exist.{" "}
+            <Link className="pg-link" to="/">
+              Back to the About page
+            </Link>
+          </p>
         </div>
-        <p className="pg-lead pg-fade">
-          That address does not exist.{" "}
-          <Link className="pg-link" to="/">
-            Back to the About page
-          </Link>
-        </p>
       </section>
     </div>
   );

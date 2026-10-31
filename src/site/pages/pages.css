@@ -8,9 +8,20 @@
   nothing is invented here.
 
   How to read it: ".pg-" names are shared by all the pages (a section, the
-  twelve-column grid, a heading, a button, a form field). Then one block
-  per page: ".story-", ".meth-", ".ct-" (contact), ".dm-" (demo), ".nf-"
-  (not found), ".ow" (owner) and ".gl-" (the gate laboratory).
+  frame, the twelve-column grid, a heading, a button, a form field). Then
+  one block per page: ".story-", ".meth-", ".ct-" (contact), ".dm-" (demo,
+  whose doors the owner's page shows too), ".nf-" (not found), ".ow"
+  (owner) and ".gl-" (the gate laboratory).
+
+  The frame: a section's colour runs to the screen's edges, but what it
+  holds stays in the menu bar's frame (1760px at most, centred, the page
+  margins at the sides; .wrap in site.css), so on a wide screen the titles
+  line up with the logo above them.
+
+  The cursor is the site's pin (site.css): nothing here sets a cursor of
+  its own, so no button or link shows the system's hand instead. When the
+  pin is near a link or a button rather than on it, src/site/cursorAssist.js
+  marks it [data-near]; each hover look here has that twin.
 
   The look follows the website brief: flat colours, square corners, one
   typeface, no cards, no lines except inside forms, tables and the data
@@ -23,7 +34,7 @@
   the register and sign-in pages have register.css.
 */
 
-/* ---------- Shared: sections, grid, type ---------- */
+/* ---------- Shared: sections, frame, grid, type ---------- */
 
 .pg {
   --pg-gap: clamp(44px, 6.6vw, 104px);
@@ -53,6 +64,19 @@
 
 .pg-sec-surface {
   background: var(--surface);
+}
+
+/* The frame (see the top of this file). The section already keeps the page
+   margins, so the frame only stops growing at 1760px minus those margins:
+   at 1920px everything starts at 112px, like the logo. */
+.pg-sec > .pg-grid,
+.pg-sec > .pg-frame,
+.pg-sec > .ct-body,
+.pg-sec > .dm-close-row,
+.pg .story-mark-list {
+  width: 100%;
+  max-width: calc(1760px - 2 * var(--margin));
+  margin-inline: auto;
 }
 
 /* The twelve-column grid every section is composed on. */
@@ -85,7 +109,8 @@
   line-height: 0.88;
 }
 
-.pg-h3 {
+/* ".pg" in front: site.css's own "h3 { margin: 0 }" would win otherwise. */
+.pg .pg-h3 {
   margin: 0 0 10px;
   font-size: var(--step-lead);
   font-weight: 600;
@@ -145,11 +170,14 @@
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .pg a:hover {
+  .pg a:hover,
+  .pg a[data-near] {
     color: var(--accent);
   }
   .pg-sec-dark a:hover,
-  .pg-sec-sage a:hover {
+  .pg-sec-sage a:hover,
+  .pg-sec-dark a[data-near],
+  .pg-sec-sage a[data-near] {
     color: inherit;
     text-decoration-thickness: 0.14em;
   }
@@ -169,7 +197,6 @@
   font-weight: 600;
   line-height: 1.2;
   text-decoration: none;
-  cursor: pointer;
   transition: transform 140ms var(--ease-out), background-color 180ms ease, color 180ms ease;
 }
 
@@ -179,7 +206,6 @@
 
 .pg-btn:disabled {
   opacity: 0.6;
-  cursor: default;
 }
 
 .site .pg-btn-light,
@@ -190,7 +216,9 @@
 
 @media (hover: hover) and (pointer: fine) {
   .pg-btn:hover,
-  .pg a.pg-btn:hover {
+  .pg-btn[data-near],
+  .pg a.pg-btn:hover,
+  .pg a.pg-btn[data-near] {
     background: var(--ink);
     color: var(--bg);
   }
@@ -204,6 +232,27 @@
 
 .pg a.pg-btn-light {
   color: var(--ink);
+}
+
+/* A button that reads as a link ("Sign out" beside a sentence). */
+.site .pg-textbtn {
+  padding: 0;
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-thickness: 0.07em;
+  text-underline-offset: 0.2em;
+  transition: color 180ms ease;
+}
+
+.pg-textbtn:disabled {
+  opacity: 0.6;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .pg-textbtn:hover,
+  .pg-textbtn[data-near] {
+    color: var(--accent);
+  }
 }
 
 .pg :is(a, button, input, select, textarea, summary):focus-visible {
@@ -299,11 +348,6 @@
   color: var(--ink);
   font: inherit;
   line-height: 1.3;
-  cursor: text;
-}
-
-.pg-field select {
-  cursor: pointer;
 }
 
 .pg-field textarea {
@@ -478,11 +522,13 @@
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .pg .story-mark-link:hover {
+  .pg .story-mark-link:hover,
+  .pg .story-mark-link[data-near] {
     color: var(--ink);
   }
 
-  .story-mark-link:hover .story-mark-label {
+  .story-mark-link:hover .story-mark-label,
+  .story-mark-link[data-near] .story-mark-label {
     text-decoration-color: currentColor;
   }
 }
@@ -524,6 +570,15 @@
   gap: 20px;
   align-content: start;
   margin-top: 24px;
+}
+
+/* The maps' credit, in the small print under them. */
+.pg .story-credit {
+  grid-column: 1 / 13;
+  max-width: none;
+  font-size: var(--step-small);
+  line-height: 1.45;
+  color: var(--muted);
 }
 
 /* Second edition: the words at the left, the screenshot large beside them. */
@@ -577,8 +632,9 @@
   object-position: left top;
 }
 
-/* The row of in-page links under the lead: one wrapped line. */
-.meth-toc {
+/* The row of in-page links under the lead: one wrapped line. (".pg" in
+   front of the lists here: site.css's "ul { margin: 0 }" would win.) */
+.pg .meth-toc {
   display: flex;
   flex-wrap: wrap;
   gap: 10px 24px;
@@ -731,8 +787,10 @@
   grid-column: 5 / 13;
 }
 
-.meth-datasets {
-  margin: 36px 0 0;
+/* The list of datasets sits right under "What it reads" (its heading's own
+   10px below it). */
+.pg .meth-datasets {
+  margin: 0;
   padding: 0;
   list-style: none;
   display: grid;
@@ -760,7 +818,7 @@
   margin-top: 44px;
 }
 
-.meth-links {
+.pg .meth-links {
   margin: 20px 0 0;
   padding: 0;
   list-style: none;
@@ -834,7 +892,7 @@
   margin-bottom: 18px;
 }
 
-.gl-modes button {
+.pg .gl-modes button {
   flex: 1 1 0;
   padding: 11px 12px;
   border: 0;
@@ -843,11 +901,10 @@
   color: var(--ink);
   font: inherit;
   font-weight: 600;
-  cursor: pointer;
   transition: background-color 180ms ease, color 180ms ease, transform 140ms var(--ease-out);
 }
 
-.gl-modes button[aria-pressed="true"] {
+.pg .gl-modes button[aria-pressed="true"] {
   background: var(--ink);
   color: var(--bg);
 }
@@ -856,7 +913,7 @@
   transform: scale(0.97);
 }
 
-.gl-note {
+.pg .gl-note {
   color: var(--muted);
   margin-bottom: 18px;
 }
@@ -883,7 +940,6 @@
   width: 100%;
   margin: 0;
   accent-color: var(--accent);
-  cursor: pointer;
 }
 
 .gl-readout {
@@ -941,6 +997,27 @@
   margin-right: 8px;
 }
 
+/* The Ukraine demo on the Methodology page (DemoRanking.jsx and demo.css
+   are frozen): site.css's "button { padding: 0 }" and "p { margin: 0 }"
+   would squeeze its switch and its last line, and its map's oblasts would
+   show the system's hand; these give back its own spacing and the pin. */
+.pg .demo-tab {
+  padding: 10px 18px;
+}
+
+.pg .demo-foot {
+  margin-top: 12px;
+}
+
+.pg .demo-unit path {
+  cursor: inherit;
+}
+
+/* The demo's chosen tab: the pill behind its text already paints the
+   accent; painting the tab too lets a contrast probe read it correctly. */
+.pg .demo-tab.is-on {
+  background: var(--accent);
+}
 
 /* ---------- Contact ---------- */
 
@@ -963,7 +1040,8 @@
   margin-top: clamp(32px, 4vw, 56px);
 }
 
-/* The form: who you are (the four maps) at the left, the fields at the right. */
+/* The form: who you are (and the phones under it) at the left, the fields
+   at the right, so the message and Send stay on the first screen. */
 .ct-form {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
@@ -974,6 +1052,7 @@
 
 .ct-roles {
   grid-column: 1 / 7;
+  grid-row: 1;
   min-width: 0;
   margin: 0;
   padding: 0;
@@ -992,87 +1071,76 @@
   color: var(--muted);
 }
 
-.ct-role-grid {
+/* The four choices: one row of plain words on the surface tone (two by
+   two on a phone); the chosen one turns ink. The same control as the
+   Register page's kind of organisation. */
+.ct-role-row {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  background: var(--surface);
 }
 
-/* One choice: the map, then its name; the whole of it is the radio button. */
 .ct-role {
   position: relative;
-  display: grid;
-  background: var(--surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 6px 8px;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: center;
+  text-wrap: balance;
+  color: var(--ink);
+  transition: background-color 180ms ease, color 180ms ease, transform 140ms var(--ease-out);
 }
 
 /* The real radio button stays in the page for the keyboard and screen
-   readers. It is invisible and covers the whole choice, so a press
-   anywhere on the map or the name picks it. */
+   readers, out of sight; a press anywhere on the word picks it (it is the
+   word's label). */
 .ct-role-input {
   position: absolute;
-  inset: 0;
-  z-index: 1;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  opacity: 0;
-  cursor: inherit;
-}
-
-.ct-role-frame {
-  display: block;
+  width: 1px;
+  height: 1px; /* taste-skill-ignore: a radio button hidden from sight, not a line */
+  margin: -1px;
+  padding: 0;
   overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+  opacity: 0;
 }
 
-.ct-role-pic {
-  display: block;
-  width: 100%;
-  height: auto;
-  aspect-ratio: 16 / 9;
-  object-fit: cover;
-  transition: transform 400ms var(--ease-out);
-}
-
-.ct-role-name {
-  position: relative;
-  display: block;
-  padding: 12px 14px;
-  font-weight: 600;
-  line-height: 1.2;
-  background: var(--surface);
-  color: var(--ink);
-  transition: background-color 180ms ease, color 180ms ease;
-}
-
-.ct-role-input:checked ~ .ct-role-name {
-  background: var(--accent);
-  color: var(--accent-ink);
-}
-
-/* Inside a form a line may mark the chosen one and the keyboard's place. */
 .ct-role:has(.ct-role-input:checked) {
-  outline: 3px solid var(--accent);
-  outline-offset: 0;
+  background: var(--ink);
+  color: var(--bg);
 }
 
+/* Inside a form a line may mark the keyboard's place. */
 .ct-role:has(.ct-role-input:focus-visible) {
-  outline: 3px solid var(--ink);
-  outline-offset: 3px;
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+  z-index: 1;
+}
+
+.ct-role:active {
+  transform: scale(0.985);
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .ct-role:hover .ct-role-pic {
-    transform: scale(1.04);
-  }
-
-  .ct-role:hover .ct-role-input:not(:checked) ~ .ct-role-name {
-    background: var(--ink);
-    color: var(--bg);
+  .ct-role:hover:not(:has(.ct-role-input:checked)),
+  .ct-role[data-near]:not(:has(.ct-role-input:checked)) {
+    background: var(--bg);
   }
 }
 
 .ct-fields {
   grid-column: 7 / 13;
+  grid-row: 1 / span 2;
   display: grid;
   gap: 20px;
 }
@@ -1080,6 +1148,33 @@
 .ct-send {
   display: flex;
   justify-content: flex-start;
+}
+
+/* The product on a phone, four screens under the choice (wide screens). */
+.ct-phones {
+  grid-column: 1 / 7;
+  grid-row: 2;
+  margin: 0;
+}
+
+.ct-phones-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.ct-phone {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: var(--surface);
+}
+
+.ct-phones figcaption {
+  margin-top: 12px;
+  font-size: var(--step-small);
+  line-height: 1.45;
+  color: var(--muted);
 }
 
 .ct-done {
@@ -1093,7 +1188,13 @@
   max-width: 34em;
 }
 
-/* ---------- Demo ---------- */
+/* "Thank you." takes the keyboard's place after sending; it is a heading,
+   not a control, so it shows no focus ring. */
+.ct-done-title:focus {
+  outline: none;
+}
+
+/* ---------- Demo (and the owner's page, which shows the same doors) ---------- */
 
 .dm-open-text {
   grid-column: 1 / 10;
@@ -1127,26 +1228,27 @@
   background: var(--surface);
 }
 
-/* Each picture in its own frame, cut from the top-left corner of the
-   screen so its edges fall on the app's own panels. */
 .dm-door-pic {
   display: block;
   min-height: 0;
   overflow: hidden;
 }
 
-.dm-door-pics img {
+.pg .dm-door-pics img {
   display: block;
   width: 100%;
   height: 100%;
   max-width: none;
   object-fit: cover;
-  object-position: left top;
+  object-position: center top;
   transition: transform 500ms var(--ease-out);
 }
 
-.dm-door-phone img {
-  object-position: center top;
+/* The computer screen: the half-size copy at its own size, so the door
+   shows one piece of the screen that can be read; which piece is set on
+   the picture itself (DEMO_DOORS in site.js, "position"). */
+.pg .dm-door-wide img {
+  object-fit: none;
 }
 
 /* The action under the pictures: a large flat button. */
@@ -1165,16 +1267,26 @@
   transition: transform 140ms var(--ease-out), background-color 180ms ease, color 180ms ease;
 }
 
-.dm-door:active .dm-door-label {
+/* On the owner's page before signing in, a door is a picture with its
+   name, not yet a link. */
+.dm-door-caption {
+  font-size: var(--step-small);
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+a.dm-door:active .dm-door-label {
   transform: scale(0.97);
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .dm-door:hover .dm-door-pics img {
+  a.dm-door:hover .dm-door-pics img,
+  a.dm-door[data-near] .dm-door-pics img {
     transform: scale(1.03);
   }
 
-  .dm-door:hover .dm-door-label {
+  a.dm-door:hover .dm-door-label,
+  a.dm-door[data-near] .dm-door-label {
     background: var(--ink);
     color: var(--bg);
   }
@@ -1211,19 +1323,38 @@
   min-height: 60svh;
   display: grid;
   align-content: center;
+}
+
+.nf-text {
+  display: grid;
   gap: 20px;
 }
 
-/* ---------- Owner sign-in (unlinked, small and plain) ---------- */
+/* ---------- Owner sign-in (unlinked): the Demo page's composition ---------- */
 
-.ow {
-  min-height: 52svh;
+.ow-open-text {
+  grid-column: 1 / 10;
 }
 
-.ow-form,
-.ow-open {
-  max-width: 26rem;
+/* The sign-in, or who is signed in: one button or a sentence and Sign out.
+   It keeps its height while the server is asked, so nothing jumps. */
+.ow-act {
+  display: grid;
+  justify-items: start;
+  gap: 14px;
+  min-height: 56px;
   margin-top: 28px;
+}
+
+.pg .ow-act p {
+  margin: 0;
+}
+
+.pg .ow-refused {
+  font-size: var(--step-lead);
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.015em;
 }
 
 /* ---------- Wide screens: the Story opens on a tall field of black soil ---------- */
@@ -1231,6 +1362,26 @@
 @media (min-width: 1101px) {
   .story-meal {
     min-height: min(50svh, 500px);
+  }
+}
+
+/* A short laptop screen (1366 x 768, 1280 x 800): the contact form a
+   little closer under its title, so Send is still on the first screen. */
+@media (min-width: 1101px) and (max-height: 820px) {
+  .pg-sec.ct {
+    padding-top: 48px;
+  }
+
+  .ct-body {
+    margin-top: 32px;
+  }
+
+  .ct-fields {
+    gap: 16px;
+  }
+
+  .ct-fields textarea {
+    min-height: 120px;
   }
 }
 
@@ -1269,10 +1420,25 @@
   .meth-close-act,
   .ct-head,
   .ct-intro,
-  .ct-roles,
-  .ct-fields,
-  .dm-open-text {
+  .dm-open-text,
+  .ow-open-text {
     grid-column: 1 / 13;
+  }
+
+  /* The form alone: the choice above the fields, no phones (they are
+     never downloaded here: loading="lazy" skips a hidden picture). */
+  .ct-roles,
+  .ct-fields {
+    grid-column: 1 / 13;
+    grid-row: auto;
+  }
+
+  .ct-phones {
+    display: none;
+  }
+
+  .ct-form {
+    row-gap: 24px;
   }
 
   .story-ed1-side {
@@ -1373,7 +1539,7 @@
     text-align: center;
   }
 
-  .meth-toc {
+  .pg .meth-toc {
     gap: 8px 18px;
   }
 
@@ -1385,7 +1551,7 @@
     object-position: -1360px 0;
   }
 
-  .meth-datasets {
+  .pg .meth-datasets {
     grid-template-columns: 1fr;
     gap: 8px 16px;
   }
@@ -1417,40 +1583,68 @@
     padding: 18px;
   }
 
+  /* The four choices two by two, and the form a little closer, so the
+     message box starts on the first screen. */
+  .ct-role-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ct-body {
+    margin-top: 24px;
+  }
+
   .ct-form {
-    row-gap: 24px;
+    row-gap: 18px;
   }
 
-  .ct-role-grid {
-    gap: 8px;
+  .ct-fields,
+  .ct-fields .pg-row-2 {
+    gap: 14px;
   }
 
-  .ct-role-name {
-    padding: 10px 10px;
+  .ct-fields .pg-field {
+    gap: 6px;
+  }
+
+  .ct-fields textarea {
+    min-height: 128px;
   }
 
   .ct-done {
     padding: 24px;
   }
 
-  /* One door above the other, each with its computer screen only. */
+  /* The two doors side by side, each with its button first and its phone
+     screen under it, so both buttons are on the first screen. The computer
+     screen is not shown (nor downloaded) here. */
   .dm-doors {
-    grid-template-columns: 1fr;
-    gap: 32px;
+    gap: 12px;
+    margin-top: 4px;
   }
 
-  .dm-door-pics {
-    grid-template-columns: 1fr;
-    aspect-ratio: 16 / 10;
+  .pg .dm-door {
+    gap: 10px;
   }
 
-  .dm-door-phone {
-    display: none;
+  .dm-door-label,
+  .dm-door-caption {
+    order: -1;
   }
 
   .dm-door-label {
-    min-height: 56px;
-    padding: 0 24px;
+    justify-self: stretch;
+    justify-content: center;
+    min-height: 52px;
+    padding: 0 10px;
+  }
+
+  .dm-door-pics {
+    grid-template-columns: minmax(0, 1fr);
+    aspect-ratio: 3 / 4;
+  }
+
+  .dm-door-wide {
+    display: none;
   }
 }
 
@@ -1458,17 +1652,11 @@
 
 @media (prefers-reduced-motion: reduce) {
   .pg-btn,
+  .pg-textbtn,
   .gl-modes button,
   .dm-door-label,
   .dm-door-pics img,
-  .ct-role-pic,
-  .ct-role-name {
+  .ct-role {
     transition: none;
   }
-}
-
-/* The demo's chosen tab: the pill behind its text already paints the
-   accent; painting the tab too lets a contrast probe read it correctly. */
-.pg .demo-tab.is-on {
-  background: var(--accent);
 }

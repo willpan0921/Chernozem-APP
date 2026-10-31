@@ -13,8 +13,12 @@
 // - Sending shows the question at once, then "Thinking…", then what the AI
 //   is looking up, then the answer as it is written. The square button
 //   stops it; the part already written stays (and is saved) as "Stopped".
-// - Problems show as a red line with "Try again". Without an AI key the
-//   "Connect Claude" steps show instead. A limit reached (the public demo's
+// - Problems show as a red line with "Try again". Without an AI key (the
+//   status says so, or an answer comes back "ai_not_configured") the owner
+//   and one's own computer see the "Connect Claude" steps instead; everyone
+//   else (the demo's visitors, accounts) one plain line, "The assistant is
+//   not available right now." (src/lib/access.js seesSetup), and the message
+//   box stays off. A limit reached (the public demo's
 //   few questions, or an account's quota: code "quota") shows the server's
 //   own sentence with no "Try again", since trying again would not help;
 //   nor does a change the demo may not make (code "demo_read_only"), which
@@ -55,14 +59,15 @@ import Logo from "../ui/Logo.jsx";
 import { useSearchParams } from "react-router-dom";
 
 import { getAiStatus, listThreads, openThread, removeThread, sendChatMessage } from "../../api/chatApi.js";
-import { isDemoRefusal } from "../../lib/access.js";
+import { isDemoRefusal, mayUseProduct, seesSetup } from "../../lib/access.js";
 import { titleFrom, upsertThread } from "../../lib/chat/threads.js";
+import { useAccess } from "../../state/useAccess.js";
 import ChatLayout from "./ChatLayout.jsx";
 import ChatThreadList from "./ChatThreadList.jsx";
 import ChatConversation from "./ChatConversation.jsx";
 import ChatComposer from "./ChatComposer.jsx";
 import ChatRail from "./ChatRail.jsx";
-import ChatSetupCard from "./ChatSetupCard.jsx";
+import ChatSetupCard, { ChatUnavailable } from "./ChatSetupCard.jsx";
 
 // Text the screen needs on its own.
 const labels = {
@@ -82,6 +87,15 @@ const NO_RETRY = new Set(["ai_not_configured", "quota", "demo_read_only"]);
 export default function ChatScreen({ product, context, text, suggestions = [], using = [], chips = [], initialDraft = "", autoSend = "", onThread, about = null }) {
   const [params, setParams] = useSearchParams();
   const selectedId = params.get("chat") || null;
+  const access = useAccess();
+  // The owner (and one's own computer) see how to connect Claude; anyone
+  // else only that the assistant is not available.
+  const showSetup = seesSetup(access);
+  // Whether the AI has a key comes from the server's status, which a Field
+  // account may not read (server/app.js counts it as the Atlas's): for one
+  // the status stays "not known", and the first answer says whether the
+  // assistant is there.
+  const statusReadable = mayUseProduct(access, "atlas");
 
   // The saved chats, newest first.
   const [threads, setThreads] = useState([]);
@@ -144,11 +158,11 @@ export default function ChatScreen({ product, context, text, suggestions = [], u
       .then((list) => !gone && (setThreads(list), setThreadsError(null)))
       .catch(() => !gone && setThreadsError(labels.listFailed))
       .finally(() => !gone && setThreadsLoading(false));
-    getAiStatus().then((status) => !gone && setAiStatus(status));
+    if (statusReadable) getAiStatus().then((status) => !gone && setAiStatus(status));
     return () => {
       gone = true;
     };
-  }, [product]);
+  }, [product, statusReadable]);
 
   // A new pre-filled question (e.g. "Tell me about ..." from the map). When
   // the page takes it away (the place was cleared), an unedited copy in the
@@ -204,14 +218,18 @@ export default function ChatScreen({ product, context, text, suggestions = [], u
   }, [selectedId, setChat]);
 
   // A question to send by itself: once, in a new chat, when the AI is ready.
+  // A Field account cannot read whether it is (statusReadable): its
+  // question goes at once, and the answer says if the assistant is not
+  // there (the server then counts nothing).
+  const aiReady = statusReadable ? aiStatus?.configured === true : aiStatus?.configured !== false;
   useEffect(() => {
     if (!autoSend || autoSentRef.current === autoSend) return;
-    if (aiStatus?.configured !== true || selectedId || busy) return;
+    if (!aiReady || selectedId || busy) return;
     autoSentRef.current = autoSend;
     send(autoSend);
     // send() reads the latest state itself; only these decide when to run.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoSend, aiStatus, selectedId, busy]);
+  }, [autoSend, aiReady, selectedId, busy]);
 
   // Stop an answer when the page closes.
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -346,7 +364,9 @@ export default function ChatScreen({ product, context, text, suggestions = [], u
   }
 
   const openTitle = selectedId ? threads.find((item) => item.id === selectedId)?.title || "" : labels.newChatTitle;
-  const setupCard = notConfigured ? <ChatSetupCard onCheck={checkAgain} checking={checking} /> : null;
+  // No key: the steps for the owner, the plain line for everyone else.
+  let setupCard = null;
+  if (notConfigured) setupCard = showSetup ? <ChatSetupCard onCheck={checkAgain} checking={checking} /> : <ChatUnavailable />;
   // Nothing saved and nothing typed yet: no "Chats" column.
   const noThreads = !threadsLoading && !threadsError && threads.length === 0 && !selectedId && messages.length === 0 && !pending;
 

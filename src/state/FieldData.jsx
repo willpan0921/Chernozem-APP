@@ -5,7 +5,10 @@
 // (Earth Engine or sample), the running analysis and the weather.
 //
 // It is mounted ONCE around the whole app (src/App.jsx, next to the Atlas
-// data), and loads the first time a Field page opens.
+// data), and loads the first time a Field page opens; never for an Atlas
+// account (src/lib/access.js mayUseProduct), which typing a Field address
+// is sent back to /atlas (src/components/ProductGuard.jsx) without a
+// refused request first.
 //
 // HOW A PAGE USES IT
 //   const { status, error, farm, analyses, provider, job, weather, analysing, conflict, actions } = useFieldData();
@@ -31,6 +34,9 @@
 //     updateField(id, { name?, crop? })   -> field
 //     removeField(id)
 //     updateFarm({ name?, units?, autoUpdate?, location? })  -> farm
+//     chooseUnits(units)             "ha" | "acres" | "mu": saved with the
+//                                    farm, or in the demo shown in this
+//                                    browser only
 //     deleteFarm()                   start over (the setup screen shows)
 //     analyze(fieldIds?)             -> { job, finished }
 //     report({ fieldId?, kind, text, files?: [File], photos?: [prepared] })  -> report
@@ -51,7 +57,9 @@
 // refuseInDemo) and the action throws that refusal. The pages' buttons
 // usually open the dialog themselves first (useDemoGuard), so this is the
 // safety net. Reading (the farm, a field's history, the weather) works as
-// for everyone.
+// for everyone, and so do the units (hectares, acres or 亩: chooseUnits),
+// which in the demo change in this browser only, like the Atlas weights:
+// every page shows the areas in them, and nothing is sent.
 //
 // WHO EDITS IT
 // Whoever changes what data the Field pages share. To change how the
@@ -62,6 +70,8 @@ import { useLocation } from "react-router-dom";
 import { Loader2, RefreshCw, TriangleAlert } from "lucide-react";
 import * as api from "../api/fieldApi.js";
 import { analysingIds, farmConflict } from "../lib/field/format.js";
+import { UNITS } from "../lib/field/method.js";
+import { mayUseProduct } from "../lib/access.js";
 import { Button } from "../components/ui/index.js";
 import { useAccess } from "./useAccess.js";
 import { refuseInDemo, useDemoGuard } from "./useDemoGuard.js";
@@ -77,11 +87,17 @@ const WEATHER_REFRESH_MS = 30 * 60 * 1000;
 
 export function FieldDataProvider({ children }) {
   const { pathname } = useLocation();
-  const inField = pathname === "/" || pathname.startsWith("/field");
+  const access = useAccess();
+  // On a Field page, and allowed to use Field (an Atlas account is not: it
+  // is on its way back to /atlas, so nothing is asked for).
+  const inField = (pathname === "/" || pathname.startsWith("/field")) && mayUseProduct(access, "field");
   // The demo: read-only (a ref, so the saved callbacks below always see it).
-  const { readOnly } = useAccess();
+  const { readOnly } = access;
   const readOnlyRef = useRef(readOnly);
   readOnlyRef.current = readOnly;
+  // The demo: the units chosen in this browser ("ha" | "acres" | "mu"), or
+  // null for the farm's own.
+  const [demoUnits, setDemoUnits] = useState(null);
 
   const [base, setBase] = useState({ status: "idle", error: null, farm: null, analyses: {}, provider: null });
   const [job, setJob] = useState(null);
@@ -265,6 +281,20 @@ export function FieldDataProvider({ children }) {
     return saved;
   }, []);
 
+  // The units: saved with the farm, or in the demo only shown in this
+  // browser (nothing is sent). -> the farm as it is shown now.
+  const chooseUnits = useCallback(
+    async (units) => {
+      if (!UNITS[units]) return null;
+      if (readOnlyRef.current) {
+        setDemoUnits(units);
+        return null;
+      }
+      return updateFarm({ units });
+    },
+    [updateFarm]
+  );
+
   const deleteFarm = useCallback(async () => {
     await api.deleteFarm();
     setJob(null);
@@ -304,23 +334,30 @@ export function FieldDataProvider({ children }) {
       updateField: inDemo(updateField),
       removeField: inDemo(removeField),
       updateFarm: inDemo(updateFarm),
+      chooseUnits,
       deleteFarm: inDemo(deleteFarm),
       analyze: inDemo(analyze),
       report: inDemo(report),
       fieldDetail,
       reloadWeather,
     }),
-    [inDemo, reload, loadDemo, detect, saveFarm, addField, updateField, removeField, updateFarm, deleteFarm, analyze, report, fieldDetail, reloadWeather]
+    [inDemo, reload, loadDemo, detect, saveFarm, addField, updateField, removeField, updateFarm, chooseUnits, deleteFarm, analyze, report, fieldDetail, reloadWeather]
   );
 
   const analysing = useMemo(() => analysingIds(base.farm, base.analyses, job), [base.farm, base.analyses, job]);
   const conflict = useMemo(() => farmConflict(base.farm, base.analyses), [base.farm, base.analyses]);
+  // The farm every page shows: in the demo with the units chosen in this
+  // browser, if any.
+  const shownFarm = useMemo(
+    () => (readOnly && demoUnits && base.farm && base.farm.units !== demoUnits ? { ...base.farm, units: demoUnits } : base.farm),
+    [readOnly, demoUnits, base.farm]
+  );
 
   const value = useMemo(
     () => ({
       status: base.status === "idle" ? "loading" : base.status,
       error: base.error,
-      farm: base.farm,
+      farm: shownFarm,
       analyses: base.analyses,
       provider: base.provider,
       job,
@@ -330,7 +367,7 @@ export function FieldDataProvider({ children }) {
       weatherError: weather.farmKey === farmKey ? weather.error : null,
       actions,
     }),
-    [base, job, analysing, conflict, weather, farmKey, actions]
+    [base, shownFarm, job, analysing, conflict, weather, farmKey, actions]
   );
 
   return <FieldDataContext.Provider value={value}>{children}</FieldDataContext.Provider>;

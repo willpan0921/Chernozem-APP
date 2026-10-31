@@ -1,0 +1,107 @@
+[
+  {
+    "file": "field-data-440.webp",
+    "from": "field-data.webp",
+    "region": {
+      "left": 276,
+      "top": 116,
+      "width": 440,
+      "height": 560
+    },
+    "use": "About, How it works (StageSlider.jsx)"
+  },
+  {
+    "file": "field-data-880.webp",
+    "from": "field-data.webp",
+    "region": {
+      "left": 276,
+      "top": 116,
+      "width": 440,
+      "height": 560
+    },
+    "scale": 2,
+    "use": "the same, for sharp screens"
+  },
+  {
+    "file": "atlas-map-damage-micro-440.webp",
+    "from": "atlas-map-damage-micro.webp",
+    "region": {
+      "left": 940,
+      "top": 330,
+      "width": 440,
+      "height": 560
+    },
+    "use": "About, How it works (StageSlider.jsx)"
+  },
+  {
+    "file": "atlas-map-damage-micro-880.webp",
+    "from": "atlas-map-damage-micro.webp",
+    "region": {
+      "left": 940,
+      "top": 330,
+      "width": 440,
+      "height": 560
+    },
+    "scale": 2,
+    "use": "the same, for sharp screens"
+  },
+  {
+    "file": "atlas-map-picked-440.webp",
+    "from": "atlas-map-picked.webp",
+    "region": {
+      "left": 1495,
+      "top": 66,
+      "width": 425,
+      "height": 560
+    },
+    "paddedRight": 15,
+    "use": "About, How it works (StageSlider.jsx)"
+  },
+  {
+    "file": "atlas-map-picked-880.webp",
+    "from": "atlas-map-picked.webp",
+    "region": {
+      "left": 1495,
+      "top": 66,
+      "width": 425,
+      "height": 560
+    },
+    "scale": 2,
+    "use": "the same, for sharp screens"
+  },
+  {
+    "file": "atlas-map-near-macro-440.webp",
+    "from": "atlas-map-near-macro.webp",
+    "region": {
+      "left": 1495,
+      "top": 24,
+      "width": 425,
+      "height": 560
+    },
+    "paddedRight": 15,
+    "use": "About, How it works (StageSlider.jsx)"
+  },
+  {
+    "file": "atlas-map-near-macro-880.webp",
+    "from": "atlas-map-near-macro.webp",
+    "region": {
+      "left": 1495,
+      "top": 24,
+      "width": 425,
+      "height": 560
+    },
+    "scale": 2,
+    "use": "the same, for sharp screens"
+  },
+  {
+    "file": "atlas-map-satellite-sea.webp",
+    "from": "atlas-map-satellite.webp",
+    "region": {
+      "left": 690,
+      "top": 560,
+      "width": 730,
+      "height": 520
+    },
+    "use": "About, the closing tile: southern Ukraine and the Black Sea on Esri World Imagery, without the app's buttons"
+  }
+]

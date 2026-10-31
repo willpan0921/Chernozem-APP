@@ -16,6 +16,13 @@
 // names who makes the app or asks the visitor to sign up: the page is the
 // story only.
 //
+// The Harvard Dataverse deposit is the Recovery Atlas's package (its
+// server, page and tables), so its link sits under the Second edition; the
+// First edition says only that the notebook became the research paper.
+// The old maps' base-map credits were cropped off with their corners, so
+// the page carries them: OpenStreetMap under the First edition's maps
+// (with ACLED for the attacks), OpenFreeMap in the Second edition's caption.
+//
 // WHO EDITS IT
 // The founder, for the words. The pictures are in public/site/story/ and
 // public/site/shots/; the layout is the "story-" block of pages.css.
@@ -156,12 +163,7 @@ export default function StoryPage() {
             <div className="story-ed-text" data-rise="" style={{ "--i": 1 }}>
               <p>A Google Colab notebook on Google Earth Engine that mapped Ukraine’s black soil, oblast by oblast, and the disturbance on it.</p>
               <p>
-                Checked against {formatInt(NUMBERS.acledEvents)} explosions and remote attacks recorded by ACLED (rank correlation {NUMBERS.acledCorrelation}) and against the change in harvests (r = {signed(NUMBERS.harvestCorrelation)}), it became a research paper ranking {NUMBERS.paperOblasts} oblasts.
-              </p>
-              <p className="story-ed-link">
-                <a className="pg-link" href={LINKS.paper} target="_blank" rel="noreferrer">
-                  The paper’s data and code on Harvard Dataverse
-                </a>
+                Checked against {formatInt(NUMBERS.acledEvents)} recorded explosion and remote-violence events from ACLED (rank correlation {NUMBERS.acledCorrelation}) and against the change in harvests (r = {signed(NUMBERS.harvestCorrelation)}), it became a research paper ranking {NUMBERS.paperOblasts} oblasts.
               </p>
             </div>
             <figure className="pg-fig story-ed1-main" data-settle="" style={{ "--i": 2 }}>
@@ -178,6 +180,18 @@ export default function StoryPage() {
                 <figcaption>The check: ACLED’s recorded attacks, as orange and red dots.</figcaption>
               </figure>
             </div>
+            {/* The credit the maps' own corners do not carry (cropped away). */}
+            <p className="story-credit" data-rise="" style={{ "--i": 5 }}>
+              Base maps ©{" "}
+              <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
+                OpenStreetMap
+              </a>{" "}
+              contributors. Attacks:{" "}
+              <a href="https://acleddata.com/" target="_blank" rel="noreferrer">
+                ACLED
+              </a>
+              .
+            </p>
           </div>
         </section>
 
@@ -190,11 +204,30 @@ export default function StoryPage() {
               <div className="story-ed2-words" data-rise="" style={{ "--i": 1 }}>
                 <p>The Chernozem Recovery Atlas, a web page run on a laptop.</p>
                 <p>Near-term and postwar readings, sliders for soil value, disturbance and recovery context, about a dozen map layers and a ranked list of oblasts, in English or Chinese.</p>
+                <p className="story-ed-link">
+                  <a className="pg-link" href={LINKS.paper} target="_blank" rel="noreferrer">
+                    Its data and code are on Harvard Dataverse
+                  </a>
+                </p>
               </div>
             </div>
             <figure className="pg-fig story-ed2-pic" data-settle="" style={{ "--i": 2 }}>
               <img className="pg-pic" src="/site/story/edition-2-atlas.webp" width="1497" height="1280" alt="The second edition, the Chernozem Recovery Atlas in a browser on localhost: the weights and map layers on the left, Ukraine's oblasts coloured by priority, the top oblasts on the right" loading="lazy" decoding="async" />
-              <figcaption>The Recovery Atlas on localhost: the weights and map layers on the left, the top oblasts on the right.</figcaption>
+              <figcaption>
+                The Recovery Atlas on localhost: the weights and map layers on the left, the top oblasts on the right. Base map:{" "}
+                <a href="https://openfreemap.org/" target="_blank" rel="noreferrer">
+                  OpenFreeMap
+                </a>
+                , ©{" "}
+                <a href="https://www.openmaptiles.org/" target="_blank" rel="noreferrer">
+                  OpenMapTiles
+                </a>
+                , ©{" "}
+                <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
+                  OpenStreetMap
+                </a>{" "}
+                contributors.
+              </figcaption>
             </figure>
           </div>
         </section>

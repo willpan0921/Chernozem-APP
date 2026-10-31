@@ -5,11 +5,14 @@
 // whom (chernozem.app@gmail.com unless MAIL_TO says otherwise); the
 // status for the owner without any secret in it; the subject and the
 // plain-text body; the strict check before a visitor's address becomes
-// the Reply-To; what each service is handed; and that a refusal, an
-// unreachable service or one that never answers becomes "failed" with a
-// plain sentence and never the password or key; and, as the real
-// nodemailer writes the e-mail (its stream transport, no network), that a
-// hostile name adds no header. How messages are kept, sent and tried
+// the Reply-To; what each service is handed (the same Message-ID and
+// Resend Idempotency-Key at every try of one message, the transport's own
+// time limits); that a slow service is waited for, never cut short by a
+// clock of our own; that a refusal, an unreachable service or one that
+// hits its own time limit becomes "failed" with a plain sentence and never
+// the password or key; and, as the real nodemailer writes the e-mail (its
+// stream transport, no network), that a hostile name adds no header and
+// the Message-ID is the message's. How messages are kept, sent and tried
 // again is in messages.test.js. Run with "npm test".
 //
 // WHO EDITS IT
@@ -185,12 +188,15 @@ test("Gmail and SMTP go through nodemailer with the right account, the time limi
   const [options] = calls.options;
   assert.equal(options.service, "gmail");
   assert.deepEqual(options.auth, { user: "chernozem.app@gmail.com", pass: "abcdefghijklmnop" });
-  assert.equal(options.connectionTimeout, 8000);
-  assert.equal(options.socketTimeout, 8000);
+  assert.equal(options.connectionTimeout, 15000);
+  assert.equal(options.greetingTimeout, 15000);
+  assert.equal(options.socketTimeout, 15000);
+  assert.equal(mail.TRANSPORT_TIMEOUT_MS, 15000, "the transport's own time limits");
   assert.equal(options.disableFileAccess, true);
   assert.equal(options.disableUrlAccess, true);
-  assert.deepEqual(Object.keys(calls.emails[0]).sort(), ["from", "replyTo", "subject", "text", "to"]);
+  assert.deepEqual(Object.keys(calls.emails[0]).sort(), ["from", "messageId", "replyTo", "subject", "text", "to"]);
   assert.equal(calls.emails[0].to, "chernozem.app@gmail.com");
+  assert.equal(calls.emails[0].messageId, "<msg-1a2b3c4d@chernozem.app>", "made from the message's own id: the same at every try");
   assert.equal(calls.closed, 1, "the connection is closed after each e-mail");
 
   const smtp = mail.mailSettings({ smtpHost: "smtp.example.org", smtpPort: 465, smtpUser: "me@example.org", smtpPass: "pw" });
@@ -214,6 +220,7 @@ test("Resend gets one plain-text e-mail, with the key in the header and reply_to
   assert.equal(request.url, "https://api.resend.com/emails");
   assert.equal(request.init.method, "POST");
   assert.equal(request.init.headers.Authorization, "Bearer re_test_key");
+  assert.equal(request.init.headers["Idempotency-Key"], "msg-1a2b3c4d", "Resend sends one message once, however often it is tried");
   assert.ok(request.init.signal, "with a time limit");
   const body = JSON.parse(request.init.body);
   assert.deepEqual(Object.keys(body).sort(), ["from", "reply_to", "subject", "text", "to"]);
@@ -239,12 +246,35 @@ test("off, refused, unreachable or silent: a status and a plain sentence, never 
   assert.equal(unreachable.status, "failed");
   assert.equal(unreachable.error, "connect ECONNREFUSED 142.250.0.1:465 (as ***)");
 
-  // A service that never answers is given up after the time limit (here
-  // made short: the real one is 8 seconds).
-  mail.setDepsForTests({ createTransport: () => ({ sendMail: () => new Promise(() => {}), close() {} }), timeoutMs: 20 });
+  // A service that stays silent ends by the transport's own time limit
+  // (here made short, and played by the stand-in as nodemailer does it).
+  mail.setDepsForTests({
+    createTransport: (options) => ({
+      sendMail: () => new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error("Connection timeout"), { code: "ETIMEDOUT" })), options.connectionTimeout)),
+      close() {},
+    }),
+    timeoutMs: 20,
+  });
   const silent = await mail.sendContactEmail(MESSAGE, mail.mailSettings({ smtpHost: "smtp.example.org" }));
-  assert.deepEqual(silent, { status: "failed", transport: "smtp", error: "the mail server did not answer within 1 seconds" });
-  assert.equal(mail.SEND_TIMEOUT_MS, 8000);
+  assert.deepEqual(silent, { status: "failed", transport: "smtp", error: "the mail server did not answer in time (Connection timeout)" });
+});
+
+test("a slow mail service is waited for: a try is never cut short by a clock of our own, so nothing is sent twice for nothing", async () => {
+  // It takes longer than the transport's own (short) limits say, but
+  // answers: the try is "sent", once.
+  let copies = 0;
+  mail.setDepsForTests({
+    createTransport: () => ({
+      sendMail: () => new Promise((resolve) => setTimeout(() => resolve({ messageId: "late" }, copies += 1), 120)),
+      close() {},
+    }),
+    timeoutMs: 30,
+  });
+  const late = await mail.sendContactEmail(MESSAGE, mail.mailSettings({ gmailAppPassword: "abcdefghijklmnop" }));
+  assert.deepEqual(late, { status: "sent", transport: "gmail" });
+  assert.equal(copies, 1);
+  assert.equal(mail.messageIdFor("msg-1a2b3c4d"), "<msg-1a2b3c4d@chernozem.app>");
+  for (const odd of ["", null, undefined, "has space", "<x>@y", "x".repeat(65)]) assert.equal(mail.messageIdFor(odd), null, String(odd));
 });
 
 test("as the real nodemailer writes it (its stream transport, no network): one Subject, one Reply-To, no added header, plain text", async () => {
@@ -277,4 +307,5 @@ test("as the real nodemailer writes it (its stream transport, no network): one S
   assert.equal(named("X-Injected").length, 0);
   assert.match(raw, /Content-Type: text\/plain; charset=utf-8/);
   assert.doesNotMatch(raw, /text\/html/);
+  assert.deepEqual(named("Message-ID"), ["Message-ID: <msg-1a2b3c4d@chernozem.app>"], "the message's own Message-ID");
 });

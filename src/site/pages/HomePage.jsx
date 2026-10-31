@@ -4,41 +4,48 @@
 //      soil glowing, today's armed conflicts and disaster alerts on it,
 //      components/WorldGlobe.jsx), with the title, one sentence and the two
 //      actions over its shaded side
-//   2. "One field, one pass": the app's field row at true size, in the
-//      state the visitor picks, with its button really working
+//   2. "One field, one pass": the app's field row, enlarged to fill its
+//      columns, in the state the visitor picks, with its button really
+//      working
 //   3. how it works: one slider through the four stages (tapping the
 //      picture moves on)
 //   4. the proof: the checks against independent records, as a table
 //   5. what a farmer gets, and what governments and NGOs get: on a wide
 //      screen an index beside one large window onto the app; each item
 //      opens its place in the demo
-//   6. the Ukraine demo, live, on the sage stage
+//   6. the Ukraine demo, live, on the sage stage (built, and its data
+//      fetched, only when the visitor scrolls near it)
 //   7. the film, with chapters that jump to each part
 //   8. the founder's letter, and the line on what Chernozem was made for
-//   9. the close: the action tile, then the globe's small print (where its
-//      pictures and data come from)
+//   9. the close: the action tile beside a satellite view, then the small
+//      print (where the globe's pictures and data come from)
 // The words follow the website brief's copy deck. Numbers come from
-// src/site/content/site.js. Layout: home.css.
+// src/site/content/site.js. Layout: home.css. Every section keeps to the
+// menu's frame: text starts at the page's left edge, or three columns in
+// (the field row, the second line of "the record", the letter's text).
 //
 // WHO EDITS IT
 // Whoever works on the About page.
 
-import { useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import WorldGlobe from "../components/WorldGlobe.jsx";
 import FieldRowStates from "../components/FieldRowStates.jsx";
 import StageSlider from "../components/StageSlider.jsx";
 import ProofTable from "../components/ProofTable.jsx";
-import DemoRanking from "../components/DemoRanking.jsx";
 import Film from "../components/Film.jsx";
 import Letter from "../components/Letter.jsx";
 import Shot from "../components/Shot.jsx";
 import { useWorldData } from "../components/worldData.js";
 import { dayMonthYear } from "../components/globeMath.js";
-import { LINKS, NUMBERS, SITE, formatInt } from "../content/site.js";
+import { NUMBERS, SITE, formatInt } from "../content/site.js";
 import { enterDemo } from "../../lib/demoMode.js";
-import { useMediaQuery, usePageTitle, useReveal } from "../hooks.js";
+import { useMediaQuery, useNear, usePageTitle, useReveal } from "../hooks.js";
 import "./home.css";
+
+// The Ukraine demo (components/DemoRanking.jsx, not edited) is downloaded
+// with its data only when its section comes near (useNear below).
+const DemoRanking = lazy(() => import("../components/DemoRanking.jsx"));
 
 // The feature items: a true-size crop of the app beside a short text, and
 // the page of the demo that shows it.
@@ -239,27 +246,53 @@ function FeatureIndex({ items, headingId, heading }) {
   );
 }
 
-// Where the globe's pictures and data come from, in the page's small print.
+// Where the globe's pictures and data come from, and the closing tile's
+// satellite view, in the page's small print. The Earth's texture is made
+// from OpenLandMap (CC BY-SA 4.0), so it is shared under that licence too.
 function GlobeCredits() {
   const world = useWorldData();
   const reviewed = world.status === "ok" && world.reviewed ? dayMonthYear(world.reviewed) : "";
-  const year = world.trade?.year || 2023;
+  // The trade file says which years its rows come from (each country's
+  // latest report); an older file without them just says "the latest year".
+  const years = Array.isArray(world.trade?.years) && world.trade.years.length === 2 ? world.trade.years : null;
+  const span = years ? (years[0] === years[1] ? ` (${years[0]})` : ` (${years[0]}\u2013${years[1]})`) : "";
+  const out = { className: "link link-under", target: "_blank", rel: "noreferrer" };
   return (
     <div className="wrap small-print-wrap">
       <p className="small-print">
-        The globe: black soil from OpenLandMap (Hengl and Nauman, 2018), cropland from the Copernicus Global Land Service (2019), coastlines from Natural Earth. OpenLandMap is licensed CC BY-SA 4.0, so the globe's picture is shared under{" "}
-        <a href="https://creativecommons.org/licenses/by-sa/4.0/" className="link link-under" target="_blank" rel="noreferrer">
-          CC BY-SA 4.0
+        Black soil:{" "}
+        <a href="https://doi.org/10.5281/zenodo.1476844" {...out}>
+          OpenLandMap USDA great groups
         </a>{" "}
-        too. Disaster alerts:{" "}
-        <a href="https://www.gdacs.org/" className="link link-under" target="_blank" rel="noreferrer">
+        (Hengl and Nauman, 2018),{" "}
+        <a href="https://creativecommons.org/licenses/by-sa/4.0/" {...out}>
+          CC BY-SA 4.0
+        </a>
+        , modified; this Earth texture is shared under{" "}
+        <a href="https://creativecommons.org/licenses/by-sa/4.0/" {...out}>
+          CC BY-SA 4.0
+        </a>
+        . Cropland:{" "}
+        <a href="https://doi.org/10.5281/zenodo.3939050" {...out}>
+          Copernicus Global Land Service, Land Cover 100 m, 2019
+        </a>
+        ,{" "}
+        <a href="https://creativecommons.org/licenses/by/4.0/" {...out}>
+          CC BY 4.0
+        </a>
+        , modified. Coastlines:{" "}
+        <a href="https://www.naturalearthdata.com/" {...out}>
+          Natural Earth
+        </a>
+        . Disaster alerts:{" "}
+        <a href="https://www.gdacs.org/" {...out}>
           GDACS
         </a>
         , live. Armed conflicts: a list reviewed by hand{reviewed ? ` on ${reviewed}` : ""}. Who buys whose food: World Bank{" "}
-        <a href="https://wits.worldbank.org/" className="link link-under" target="_blank" rel="noreferrer">
+        <a href="https://wits.worldbank.org/" {...out}>
           WITS
         </a>
-        , {year}.
+        , the latest year each country reported{span}. The satellite view above: Esri World Imagery (Esri, Maxar, Earthstar Geographics).
       </p>
     </div>
   );
@@ -269,34 +302,37 @@ export default function HomePage() {
   usePageTitle();
   const reveal = useReveal();
   const wideFeatures = useMediaQuery("(min-width: 1024px)");
+  const [demoRef, demoNear] = useNear();
 
   return (
     <>
       {/* 1. The hero: the Earth fills it; the words sit over its shaded side. */}
       <section className="hero on-dark" aria-labelledby="hero-title">
         <WorldGlobe>
-          <h1 id="hero-title" className="hero-title lines">
-            <span className="line">
-              <span data-line style={{ "--i": 0 }}>
-                Your land,
+          <div className="hero-words">
+            <h1 id="hero-title" className="hero-title lines">
+              <span className="line">
+                <span data-line style={{ "--i": 0 }}>
+                  Your land,
+                </span>
               </span>
-            </span>
-            <span className="line">
-              <span data-line style={{ "--i": 1 }}>
-                seen from space
+              <span className="line">
+                <span data-line style={{ "--i": 1 }}>
+                  seen from space
+                </span>
               </span>
-            </span>
-          </h1>
-          <p className="hero-lead" data-load style={{ "--d": "420ms" }}>
-            Field reads every satellite pass over a farm and says what changed, field by field. Atlas does the same for a whole region.
-          </p>
-          <div className="hero-actions" data-load style={{ "--d": "480ms" }}>
-            <Link to="/register?product=field" className="btn btn-light">
-              Register for Field
-            </Link>
-            <Link to={SITE.demoPath} className="link link-under">
-              Try the demo
-            </Link>
+            </h1>
+            <p className="hero-lead" data-load style={{ "--d": "420ms" }}>
+              Field reads every satellite pass over a farm and says what changed, field by field. Atlas does the same for a whole region.
+            </p>
+            <div className="hero-actions" data-load style={{ "--d": "480ms" }}>
+              <Link to="/register?product=field" className="btn btn-light">
+                Register for Field
+              </Link>
+              <Link to={SITE.demoPath} className="link link-under">
+                Try the demo
+              </Link>
+            </div>
           </div>
         </WorldGlobe>
       </section>
@@ -304,16 +340,18 @@ export default function HomePage() {
       {/* 2. The showcase */}
       <section className="showcase section" aria-labelledby="showcase-title" ref={reveal}>
         <div className="wrap grid">
-          <h2 id="showcase-title" className="head-small showcase-head" data-rise>
+          <h2 id="showcase-title" className="head showcase-head" data-rise>
             One field, one pass
           </h2>
           <FieldRowStates />
         </div>
       </section>
 
-      {/* 3. How it works */}
+      {/* 3. How it works, on the page's frame */}
       <section className="how" aria-label="How it works" ref={reveal}>
-        <StageSlider />
+        <div className="wrap">
+          <StageSlider />
+        </div>
       </section>
 
       {/* 4. The proof */}
@@ -380,7 +418,7 @@ export default function HomePage() {
         )}
       </section>
 
-      {/* 6. The demo */}
+      {/* 6. The demo: built when the visitor comes near it */}
       <section className="demo-section on-sage section" aria-labelledby="demo-title" ref={reveal}>
         <div className="wrap grid">
           <div className="demo-copy">
@@ -396,8 +434,12 @@ export default function HomePage() {
               </Link>
             </div>
           </div>
-          <div className="demo-stage" data-ui data-settle style={{ "--i": 2 }}>
-            <DemoRanking />
+          <div className={`demo-stage${demoNear ? "" : " is-waiting"}`} data-ui data-settle style={{ "--i": 2 }} ref={demoRef}>
+            {demoNear && (
+              <Suspense fallback={null}>
+                <DemoRanking />
+              </Suspense>
+            )}
           </div>
         </div>
       </section>
@@ -412,25 +454,17 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* 8. The letter, and what Chernozem was made for (the only place the website names it) */}
-      <section className="letter-section" id="letter" aria-labelledby="letter-title" ref={reveal}>
+      {/* 8. The letter */}
+      <section className="letter-section section" id="letter" aria-labelledby="letter-title" ref={reveal}>
         <div className="wrap">
           <Letter />
-          <p className="letter-made muted" data-rise style={{ "--i": 8 }}>
-            Chernozem was made for the{" "}
-            <a href={LINKS.cac} className="link link-under" target="_blank" rel="noreferrer">
-              Congressional App Challenge
-            </a>{" "}
-            2026.
-          </p>
         </div>
       </section>
 
-      {/* 9. The close, then the globe's small print */}
+      {/* 9. The close: the action tile beside a satellite view, then the small print */}
       <section className="close" aria-labelledby="close-title" ref={reveal}>
-        <div className="close-row">
-          <div className="close-tile close-tile-sage on-sage" data-slide style={{ "--i": 0 }} aria-hidden="true" />
-          <div className="close-tile close-tile-main on-accent" data-rise style={{ "--i": 1 }}>
+        <div className="close-row frame">
+          <div className="close-tile close-tile-main on-accent" data-rise style={{ "--i": 0 }}>
             <h2 id="close-title" className="close-head">
               See your land from space
             </h2>
@@ -444,8 +478,8 @@ export default function HomePage() {
               </Link>
             </div>
           </div>
-          <div className="close-tile close-tile-photo" data-slide="right" style={{ "--i": 2 }}>
-            <img src="/site/shots/atlas-map-satellite.webp" alt="Satellite imagery of Ukraine and the Black Sea in Atlas." width="1920" height="1200" loading="lazy" decoding="async" />
+          <div className="close-tile close-tile-photo" data-slide="right" style={{ "--i": 1 }}>
+            <img src="/site/shots/crops/atlas-map-satellite-sea.webp" alt="Satellite view of southern Ukraine, Crimea and the Black Sea, as Atlas shows it." width="730" height="520" loading="lazy" decoding="async" />
           </div>
         </div>
         <GlobeCredits />

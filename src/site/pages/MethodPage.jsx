@@ -42,6 +42,9 @@ export default function MethodPage() {
   const w = NUMBERS.postWeights;
   // Near term uses value and damage only, their weights re-shared (30/40 -> 0.43/0.57), as the app does.
   const nearShares = { value: (w.value / (w.value + w.damage)).toFixed(2), damage: (w.damage / (w.value + w.damage)).toFixed(2) };
+  // The test count rounded down to the hundred ("More than 1,000"), so the
+  // sentence stays true while tests are added between updates of site.js.
+  const testsFloor = Math.floor(NUMBERS.automatedTests / 100) * 100;
   return (
     <div className="pg">
       <section className="pg-sec" aria-labelledby="meth-title">
@@ -236,7 +239,7 @@ export default function MethodPage() {
           <div className="meth-tech-body">
             <Reveal delay={0.08}>
               <p>
-                React 19 in the browser; a Node.js server for analyses, the monthly schedule and the data; Google Earth Engine for the satellite maths; Leaflet maps over Esri imagery; Claude for the assistant, answering only from the user’s own data; Vite for the build. {NUMBERS.automatedTests} automated tests.
+                React 19 in the browser; a Node.js server for analyses, the monthly schedule and the data; Google Earth Engine for the satellite maths; Leaflet maps over Esri imagery; Claude for the assistant, answering only from the user’s own data; Vite for the build. More than {formatInt(testsFloor)} automated tests.
               </p>
             </Reveal>
             <Reveal delay={0.12}>
@@ -244,7 +247,7 @@ export default function MethodPage() {
                 What it reads
               </h3>
             </Reveal>
-            <Stagger as="ul" className="meth-datasets" style={{ marginTop: 0 }}>
+            <Stagger as="ul" className="meth-datasets">
               {DATASETS.map((item) => (
                 <StaggerItem as="li" key={item.name}>
                   <span>{item.name}</span>
@@ -254,7 +257,7 @@ export default function MethodPage() {
             </Stagger>
             <Reveal className="meth-accounts" delay={0.08}>
               <h3 className="pg-h3">Accounts and privacy</h3>
-              <p>Accounts run on Firebase (Google or e‑mail and password); Google holds your sign-in. Your fields, readings and reports are kept on our own server and never sold; messages from the contact page are e‑mailed to {CONTACT_EMAIL}. When you ask the assistant, your question and your fields’ readings go to Anthropic’s Claude to be answered; the satellite maths runs on Google Earth Engine. The demo is open to everyone and read-only.</p>
+              <p>Accounts run on Firebase (Google or e‑mail and password); Google holds your sign-in. Your fields, readings and reports are kept on our own server and never sold; messages from the contact page are kept on our server and e‑mailed to {CONTACT_EMAIL}. When you ask the assistant, your question and your fields’ readings go to Anthropic’s Claude to be answered; the satellite maths runs on Google Earth Engine. The demo is open to everyone and read-only.</p>
               <ul className="meth-links">
                 <li>
                   <a className="pg-link" href={LINKS.github} target="_blank" rel="noreferrer">
@@ -263,7 +266,7 @@ export default function MethodPage() {
                 </li>
                 <li>
                   <a className="pg-link" href={LINKS.paper} target="_blank" rel="noreferrer">
-                    The paper’s data and code are on Harvard Dataverse
+                    The research data and code are on Harvard Dataverse
                   </a>
                 </li>
               </ul>

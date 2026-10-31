@@ -9,7 +9,7 @@ The data comes from Google Earth Engine (Sentinel-2, Sentinel-1, NASA FIRMS, ESA
 
 **How every number is measured, with its dataset, formula, update frequency and limits: [docs/METHODS.md](docs/METHODS.md).**
 
-**The public copy at https://chernozem.app (Render): what runs where, what it costs, how updates go live, the data, the public demo, the owner's key and the contact e-mail: [docs/DEPLOY.md](docs/DEPLOY.md).**
+**The public copy at https://chernozem.app (Render): what runs where, what it costs, how updates go live, the data, the public demo, the owner's Google sign-in and the contact e-mail: [docs/DEPLOY.md](docs/DEPLOY.md).**
 
 ## The public website
 
@@ -24,21 +24,26 @@ by `node scripts/site-demo-data.js`. Messages from the contact page are
 e-mailed to chernozem.app@gmail.com (`server/mail.js`: the owner's Gmail
 with an app password, `GMAIL_APP_PASSWORD`, or Resend) and kept on the
 server for the owner's Atlas > Settings; one not sent yet is tried again
-every 10 minutes (`server/messages.js`).
+every 10 minutes (`server/messages.js`). The form takes 5 messages an hour
+from one visitor, 30 an hour and 150 a day from everyone together, and
+sends at most 100 e-mails a day (the rest wait, "held").
 
 **The public demo.** Anyone without an account who opens `/field` or
 `/atlas` gets the Ukraine demo, both products, read-only: every change
 answers 403 `demo_read_only` ("This is the demo, so it can't be changed.
 Register to do this on your own land."), no job or Earth Engine work ever
 starts for it (soil types and borders come from what is saved), and its AI
-assistant answers 8 questions per visitor, 24 per address and 300 a day,
-with the chats in memory only (`server/ai/demoChats.js`). A browser tab
-sends `X-Chernozem-View: demo` to see the demo while signed in to an
-account (`src/lib/demoMode.js`). The old access code,
-`ATLAS_ACCESS_CODE`, is now only the owner's key: typed on the hidden
-page `/owner`, it lets the owner change the demo and read the messages.
-How each request is told apart (owner, open without a key, account,
-demo) is at the top of `server/auth.js`.
+assistant answers 8 questions per visitor, 24 per address, 300 and 1.5
+million tokens a day, in short answers, with the chats in memory only
+(`server/ai/demoChats.js`; the counts are kept on disk,
+`server/counters.js`). A browser tab sends `X-Chernozem-View: demo` to see
+the demo while signed in to an account (`src/lib/demoMode.js`). **The
+owner** signs in with the Chernozem Google account on the hidden page
+`/owner` (a verified e-mail listed in `OWNER_EMAILS`, blank:
+chernozem.app@gmail.com) to change the demo and read the messages. The
+old access code is retired: nothing accepts it, and its old cookies are
+ignored. How each request is told apart (owner, open on your own
+computer, account, demo) is at the top of `server/auth.js`.
 
 **Accounts.** The website's Register page makes a personal account
 (Google, or e-mail and password, through Firebase Authentication): the
@@ -50,10 +55,13 @@ account's data in its own folder, `server/.data/users/<id>/` (online:
 public demo is separate: the owner's own workspace, read-only for
 everyone else, with both products. An account has limits the owner does
 not (`server/quotas.js`): 5 areas of at most 1,000,000 km², one analysis at
-a time of at most 12 months, 2 Field searches and 2 updates an hour, 30
-reports and 40 MB of real photos, 40 AI messages a day, and the monthly
-update off until switched on; "Sign out" ends every copy of its cookie,
-and an account deleted in Firebase is signed out within the hour.
+a time of at most 12 months, 2 Field searches and 2 updates an hour (an
+example farm counts as one), 30 reports and 40 MB of real photos (a
+JPEG's GPS and camera details are taken out), 40 AI questions a day (10
+while its e-mail is not verified; 400 and 6 million tokens a day for all
+accounts together), and the monthly update off until switched on; "Sign
+out" ends every copy of its cookie, and an account deleted in Firebase is
+signed out within the hour.
 Settings: `FIREBASE_PROJECT_ID` (optional,
 defaults to the Earth Engine project) and, on your own computer only,
 `FIREBASE_AUTH_EMULATOR_HOST`. The one-time switch-on in the Firebase
@@ -114,7 +122,7 @@ npm run build    # makes the finished app in dist/
 npm start        # serves dist/ and the API at http://localhost:8787
 ```
 
-Set the owner's key (`ATLAS_ACCESS_CODE`) first: without it everyone who reaches the server can change everything, so `npm start` then answers this computer only.
+Without `ATLAS_ACCESS_CODE` everyone who reaches the server on your own computer can change everything ("open"), so `npm start` then answers this computer only. Set it (to anything) before sharing: visitors then get the read-only demo, and you sign in with Google at `/owner`. Online (on Render) visitors always get the read-only demo.
 
 ## Connect Earth Engine and Claude
 
@@ -125,7 +133,7 @@ Everything goes into one private settings file, `.env` (copy it from `.env.examp
 | Real satellite data | `GEE_PROJECT_ID=`, `GOOGLE_APPLICATION_CREDENTIALS=` (full path to the service-account key, kept outside the project folder), `GEE_CHERNOZEM_ASSET=none` | `npm run gee:check` ends with "Earth Engine is ready." |
 | The AI | `ANTHROPIC_API_KEY=` (from console.anthropic.com) | Settings > AI says Connected |
 | Real front lines (optional) | `ACLED_CSV_PATH=` | `npm run gee:check` shows the battles found |
-| The owner's key (before sharing) | `ATLAS_ACCESS_CODE=` | Visitors get the read-only demo; you sign in at `/owner` |
+| The read-only demo for visitors (before sharing) | `ATLAS_ACCESS_CODE=` (anything) | Visitors get the read-only demo; you sign in with Google at `/owner` (`OWNER_EMAILS`, blank: chernozem.app@gmail.com) |
 | The contact e-mail | `GMAIL_APP_PASSWORD=` (or `RESEND_API_KEY=`) | `npm start` says "Contact e-mail: to chernozem.app@gmail.com" |
 
 Weather (Open-Meteo) and place search (OpenStreetMap) need no key. `GEE_DISABLED=1` switches back to sample data. Restart `npm run dev` after changing `.env`.

@@ -10,8 +10,17 @@
 //   - every website file starts with the plain-English header;
 //   - the About page's words avoid the banned phrases;
 //   - the proof table quotes its numbers from site.js, never typed in;
-//   - the pin cursor clicks at the centre of its head, and the website
-//     (never the app) starts the click assist;
+//   - the pin cursor clicks at the centre of its head and shows on every
+//     control (never the system's hand), and the website (never the app)
+//     starts the click assist;
+//   - the menu offers "Sign in" and the signed-in visitor's own button, the
+//     footer has no middle-dot strings and says "Data and code";
+//   - page changes are quick (a short fade, the next page's code fetched
+//     when its link is pointed at);
+//   - the About page: the globe's credits in full, the letter's wording,
+//     the slider's one small picture at a time, the demo built only when
+//     near, the closing tile without an empty block or app buttons, and
+//     every section on the menu's frame;
 //   - the About page names the app challenge once, and only there; no
 //     part of it mentions a demo code;
 //   - the globe draws on three.js with its own pictures (no hexagon land,
@@ -42,11 +51,12 @@ const STYLESHEETS = ["components/nav.css", "components/footer.css", "components/
 
 test("every CSS variable used by the site's stylesheets is defined in site.css", () => {
   const defined = new Set([...SITE_CSS.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
-  // A few variables are set inline by the components (the entrance order
-  // --i, the load delay --d, the slider's --passed, the crop frame's size).
+  // A few variables are set by the components themselves (the entrance
+  // order --i, the load delay --d, the slider's --passed, the crop frame's
+  // size, the field row's --row-zoom).
   for (const dir of ["components", "pages"]) {
     for (const name of readdirSync(join(here, dir)).filter((f) => f.endsWith(".jsx"))) {
-      for (const m of read(dir, name).matchAll(/"(--[a-z0-9-]+)":/g)) defined.add(m[1]);
+      for (const m of read(dir, name).matchAll(/"(--[a-z0-9-]+)":|setProperty\("(--[a-z0-9-]+)"/g)) defined.add(m[1] || m[2]);
     }
   }
   for (const file of STYLESHEETS) {
@@ -134,13 +144,22 @@ test("the website starts the pin's click assist; the app does not", () => {
   const nav = read("components", "nav.css");
   assert.match(nav, /\.sn-link\[data-near\]/);
   for (const selector of ["\\.btn\\[data-near\\]", "\\.btn-light\\[data-near\\]", "\\.link\\[data-near\\]"]) assert.match(SITE_CSS, new RegExp(selector));
-  assert.match(read("components", "globe.css"), /\.globe-marker\[data-near\] i/);
 });
 
-test("the About page names the app challenge once, and no part of the site's frame or About page does elsewhere", () => {
+test("the pin shows on every control: buttons, links, labels, menus, sliders and the demo's map", () => {
+  const rule = SITE_CSS.match(/\.site :is\(([^)]*\([^)]*\)[^)]*)*[^)]*\)[^{]*\{[^}]*\}/);
+  assert.ok(rule, "one rule for every control");
+  for (const part of ["a", "button", '[role="button"]', "label", "summary", "select", 'input[type="range"]', 'input[type="radio"]', 'input[type="checkbox"]', 'input[type="submit"]']) {
+    assert.ok(rule[0].includes(part), `${part} keeps the pin`);
+  }
+  assert.match(rule[0], /\.demo-unit path/);
+  assert.match(rule[0], /cursor-pin\.png\) 11 10, pointer/);
+});
+
+test("no part of the website names the app challenge (the owner's rule since 31 October 2026)", () => {
   const home = read("pages", "HomePage.jsx");
-  assert.equal(home.split(CHALLENGE).length - 1, 1, "once on the About page");
-  assert.match(home, /href=\{LINKS\.cac\}/);
+  assert.equal(home.split(CHALLENGE).length - 1, 0, "not on the About page either");
+  assert.doesNotMatch(home, /LINKS\.cac/);
   const others = [...readdirSync(join(here, "components")).map((f) => join("components", f)), "SiteShell.jsx", "hooks.js", "site.css", "cursorAssist.js", "pages/home.css"].filter((f) => /\.(jsx?|css)$/.test(f));
   for (const file of others) assert.ok(!read(file).includes(CHALLENGE), `${file} does not name it`);
   for (const file of ["pages/HomePage.jsx", "components/Film.jsx", "components/WorldGlobe.jsx"]) {
@@ -168,10 +187,17 @@ test("the globe draws on three.js with its own pictures, which exist and stay sm
   assert.ok(!existsSync(join(world, "globe-still.webp")), "the old still is gone");
 });
 
-test("the film has chapters and no caption; the field row is one live row", () => {
+test("the film has chapters and no caption, and a smaller copy for phones; the field row is one live row", () => {
   const film = read("components", "Film.jsx");
   assert.match(film, /caption = ""/);
   assert.match(film, /aria-current/);
+  // Phones get the small copy, wider screens the full film: chosen once in
+  // JS (a <source media> would keep the whole page alive after leaving it).
+  assert.match(film, /matchMedia\("\(max-width: 700px\)"\)\.matches \? FILM_SMALL_SRC : FILM_SRC/);
+  assert.match(film, /<video ref=\{videoRef\} src=\{src\}/);
+  const filmDir = join(root, "public", "site", "film");
+  const small = statSync(join(filmDir, "chernozem-2026-small.mp4")).size;
+  assert.ok(small > 1e6 && small < statSync(join(filmDir, "chernozem-2026.mp4")).size * 0.6, `the small copy is ${small} bytes, well under the full film`);
   const home = read("pages", "HomePage.jsx");
   for (const [label, t] of [["Northeastern China", 4], ["Ukraine", 17], ["How it reads the land", 34], ["Field", 71], ["Atlas", 108]]) {
     assert.match(home, new RegExp(`label: "${label}", t: ${t} \\}`), `chapter ${label} at ${t} s`);
@@ -182,5 +208,100 @@ test("the film has chapters and no caption; the field row is one live row", () =
   assert.match(row, /Read it again/);
   // The phone menu tells the globe to stop drawing.
   assert.match(read("components", "Nav.jsx"), /setAttribute\("data-menu", "open"\)/);
+});
+
+test("the menu offers Sign in, and a signed-in visitor's own button, asked once without the demo's header", () => {
+  const nav = read("components", "Nav.jsx");
+  assert.match(nav, /SITE_ACTIONS\.signin/);
+  assert.match(nav, /fetch\("\/api\/auth\/status"/);
+  assert.doesNotMatch(nav, /demoHeaders|X-Chernozem-View/, "the status is asked about this browser's own sign-in");
+  for (const label of ["Open Field", "Open Atlas", "Open the demo"]) assert.ok(nav.includes(`"${label}"`), label);
+  assert.match(nav, /leaveDemo/);
+  assert.match(read("components", "nav.css"), /\.sn-signin/);
+});
+
+test("the footer has no middle-dot strings and calls the Dataverse package Data and code", () => {
+  const footer = words(read("components", "Footer.jsx"));
+  assert.ok(!footer.includes("·"), "no middle dot");
+  assert.match(footer, />\s*Data and code\s*</);
+  assert.doesNotMatch(footer, />\s*Paper\s*</);
+});
+
+test("page changes are quick: a short fade out, and a page's code fetched when its link is pointed at", () => {
+  const shell = read("SiteShell.jsx");
+  const exit = shell.match(/exit=\{[^}]*duration: ([\d.]+)/);
+  assert.ok(exit && Number(exit[1]) <= 0.15, "the old page fades out in 150 ms at most");
+  assert.match(shell, /addEventListener\("pointerover"/);
+  assert.match(shell, /addEventListener\("focusin"/);
+  // Every website page App.jsx routes to can be warmed.
+  const app = readFileSync(join(root, "src", "App.jsx"), "utf8");
+  const sitePages = new Set([...app.matchAll(/const (\w+) = lazy\(\(\) => import\("\.\/site\/pages\/\w+\.jsx"\)\)/g)].map((m) => m[1]));
+  assert.ok(sitePages.size >= 8, "App.jsx's website pages were found");
+  let checked = 0;
+  for (const [, path, name] of app.matchAll(/<Route path="(\/[a-z]*)" element=\{<(\w+) \/>\}/g)) {
+    if (!sitePages.has(name) || name === "OwnerPage" || name === "NotFoundPage") continue;
+    assert.ok(shell.includes(`"${path}": () => import("./pages/${name}.jsx")`), `${path} (${name}) is warmed`);
+    checked += 1;
+  }
+  assert.ok(checked >= 6, "the six public pages and sign-in");
+  assert.ok(shell.includes(`"/": () => import("./pages/HomePage.jsx")`));
+});
+
+test("the About page credits the globe's sources in full, with their licences and links", () => {
+  const home = read("pages", "HomePage.jsx");
+  const text = words(home).replace(/\s+/g, " ");
+  for (const part of ["OpenLandMap USDA great groups", "(Hengl and Nauman, 2018)", "CC BY-SA 4.0", ", modified; this Earth texture is shared under", "Copernicus Global Land Service, Land Cover 100 m, 2019", "CC BY 4.0", "Coastlines:", "Natural Earth", "Esri World Imagery"]) {
+    assert.ok(text.includes(part), `the small print says ${part}`);
+  }
+  for (const url of ["https://doi.org/10.5281/zenodo.1476844", "https://doi.org/10.5281/zenodo.3939050", "https://creativecommons.org/licenses/by-sa/4.0/", "https://creativecommons.org/licenses/by/4.0/", "https://www.naturalearthdata.com/"]) {
+    assert.ok(home.includes(url), `links ${url}`);
+  }
+  assert.match(home, /the latest year each country reported/);
+});
+
+test("the letter says the app was made with the partners met at Penn", () => {
+  const letter = read("components", "Letter.jsx");
+  assert.ok(letter.includes("With the partners I met at Penn, I turned it into this app, so that anyone could do it for their own land without writing a paper."));
+  assert.doesNotMatch(letter, /Then, with the partners/);
+  assert.match(letter, /id="letter-title"/, "the section's heading, named by its aria-labelledby");
+});
+
+test("the slider shows one small picture at a time, from crops that exist and stay small", () => {
+  const slider = read("components", "StageSlider.jsx");
+  assert.doesNotMatch(slider, /STAGES\.map\(\(s, i\) => \(\s*<div className=\{`stages-shot/, "never all four pictures at once");
+  assert.doesNotMatch(slider, /import Shot/);
+  const crops = join(root, "public", "site", "shots", "crops");
+  for (const [, shot] of slider.matchAll(/shot: "([a-z-]+)"/g)) {
+    for (const [size, max] of [["440", 60e3], ["880", 90e3]]) {
+      const bytes = statSync(join(crops, `${shot}-${size}.webp`)).size;
+      assert.ok(bytes > 1000 && bytes <= max, `${shot}-${size}.webp is ${bytes} bytes (at most ${max})`);
+    }
+  }
+  const manifest = JSON.parse(readFileSync(join(crops, "manifest.json"), "utf8"));
+  for (const entry of manifest) assert.ok(existsSync(join(crops, entry.file)) && existsSync(join(root, "public", "site", "shots", entry.from)), `${entry.file} and its source exist`);
+});
+
+test("the About page builds the Ukraine demo only near it, and closes without an empty block or the app's buttons", () => {
+  const home = read("pages", "HomePage.jsx");
+  assert.match(home, /lazy\(\(\) => import\("\.\.\/components\/DemoRanking\.jsx"\)\)/);
+  assert.doesNotMatch(home, /^import DemoRanking/m);
+  assert.match(home, /useNear\(\)/);
+  assert.match(home, /\{demoNear && \(/);
+  assert.doesNotMatch(home, /close-tile-sage/, "no empty sage tile");
+  assert.match(home, /\/site\/shots\/crops\/atlas-map-satellite-sea\.webp/, "the map alone, cut below the app's buttons");
+  assert.ok(existsSync(join(root, "public", "site", "shots", "crops", "atlas-map-satellite-sea.webp")));
+  assert.match(home, /<div className="wrap">\s*<StageSlider \/>/, "the slider sits on the page's frame");
+});
+
+test("every About section keeps to the menu's frame, and the title is the page's largest heading", () => {
+  // The hero's words and toggles: the frame's inset on a screen wider than 1760 px.
+  assert.match(SITE_CSS, /\.globe-ui \{\s*padding-left: max\(var\(--margin\), calc\(\(100% - 1760px\) \/ 2 \+ var\(--margin\)\)\);/);
+  assert.match(SITE_CSS, /--frame-inset: max\(var\(--margin\), calc\(\(100cqi - 1760px\) \/ 2 \+ var\(--margin\)\)\)/);
+  const css = read("pages", "home.css");
+  assert.match(css, /\.close-tile-main \{[^}]*padding: 48px var\(--gutter\) 48px var\(--frame-inset\)/);
+  // Title: at most 4.8rem; the page's display headings at most 4.5rem, its section heads 4rem.
+  assert.match(css, /\.site \.hero-title \{\s*font-size: clamp\(2\.5rem, 5\.9vw, 4\.8rem\)/);
+  assert.match(css, /\.site \.display\.stages-head,\s*\.site \.display\.proof-head \{\s*font-size: clamp\(2rem, 0\.5rem \+ 4\.4vw, 4\.5rem\)/);
+  assert.match(SITE_CSS, /--step-head: clamp\(2rem, 1\.3rem \+ 3\.2vw, 4rem\)/);
 });
 

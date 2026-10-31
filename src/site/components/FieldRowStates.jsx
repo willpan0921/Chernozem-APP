@@ -1,7 +1,7 @@
 // WHAT THIS FILE DOES
 // The showcase on the About page, "One field, one pass": the app's field
-// row, once, at true size, in one of its three states, with three buttons
-// beside it that switch between them:
+// row, once, in one of its three states, with three buttons beside it that
+// switch between them:
 //   Arrives    a new satellite pass is in ("New pass")
 //   Read       the row as the pointer finds it, with "Read this pass";
 //              pressing it shows "Reading" for 900 ms, then the answer
@@ -10,8 +10,11 @@
 // The row moves from Arrives to Read by itself once, 1.2 s after it is
 // half in view; visitors who asked for reduced motion find it at Read.
 // The row is built in HTML with the app's own look (white panel, its 1px
-// border, Inter at 13 to 15px), so its root carries data-ui. The numbers
-// are the demo farm's real Field 11 (src/site/content/site.js, DEMO).
+// border, Inter at 13 to 15px), so its root carries data-ui. It is drawn
+// at the app's true size (640 px wide) and, on a wide screen, enlarged as a
+// whole (CSS zoom, --row-zoom) to fill the columns it sits in, at most
+// twice its size, like a close-up. The numbers are the demo farm's real
+// Field 11 (src/site/content/site.js, DEMO).
 // Styles: src/site/pages/home.css (.showcase, .frow).
 //
 // WHO EDITS IT
@@ -30,6 +33,7 @@ const STATES = [
 ];
 const READING_MS = 900;
 const AUTO_MS = 1200;
+const ROW_WIDTH = 640; // the row's true width (home.css, .frow)
 
 function Row({ state, reading, onRead }) {
   if (state === "answered") {
@@ -105,6 +109,19 @@ export default function FieldRowStates() {
   }, [reduced]);
 
   useEffect(() => () => clearTimeout(readTimer.current), []);
+
+  // How much the row is enlarged: the width its columns give it, over its
+  // true width, between 1 and 2 (home.css keeps it at 1 on a phone).
+  useEffect(() => {
+    const el = rowRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return undefined;
+    const ro = new ResizeObserver(([entry]) => {
+      const zoom = Math.min(2, Math.max(1, entry.contentRect.width / ROW_WIDTH));
+      el.style.setProperty("--row-zoom", zoom.toFixed(3));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const choose = (id) => {
     touched.current = true;

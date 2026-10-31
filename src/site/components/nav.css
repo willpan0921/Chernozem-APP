@@ -2,7 +2,8 @@
   WHAT THIS FILE DOES
   The menu bar (Nav.jsx): a plain bar on the page ground, on the same
   margins as the page, with no border, no blur and no animation. On a
-  phone the links fold into a full-screen sheet.
+  phone the links (with "Demo" and "Sign in") fold into a full-screen
+  sheet; the button stays in the bar.
 
   WHO EDITS IT
   Whoever changes the website's menu.
@@ -135,7 +136,8 @@ html.site-menu-open {
   }
 
   .site .sn-links,
-  .site .sn-demo {
+  .site .sn-demo,
+  .site .sn-signin {
     display: none;
   }
 

@@ -1,10 +1,10 @@
 // WHAT THIS FILE DOES
-// What one registered account may do, and what a visitor of the public
-// demo may ask of the AI assistant, in numbers. Anyone can register or
-// open the demo, so nobody must be able to fill the disk, hold the Earth
-// Engine line for hours or spend the owner's Claude key without end. The
-// owner (and the app on one's own computer without a key) has none of
-// these limits.
+// What one registered account may do, what a visitor of the public demo
+// may ask of the AI assistant, and what the website's contact form takes
+// in, in numbers. Anyone can register, open the demo or write, so nobody
+// must be able to fill the disk, hold the Earth Engine line for hours or
+// spend the owner's Claude key without end. The owner (and the app on
+// one's own computer, "open") has none of these limits.
 //
 // THE LIMITS (QUOTAS below; where each one is applied)
 //   areas             saved areas per account             server/app.js POST /api/areas
@@ -21,9 +21,20 @@
 //   monthsPerAnalysis months per POST /api/analyze         server/app.js (the demo: 24)
 //   One Atlas analysis running or waiting at a time       server/app.js POST /api/analyze
 //   One Field job (a search for fields or an analysis)    server/field/routes.js
+//   fieldSetupPerHour PUT /api/farm, POST /api/farm/fields     server/field/routes.js
 //   fieldJobsPerHour  POST /api/farm/detect, and           server/field/routes.js
 //                     POST /api/farm/analyze, each
-//   chatMessagesPerDay  POST /api/chat                     server/ai/chat.js
+//   chatMessagesPerDay  questions to the AI assistant in    server/ai/chat.js
+//                     24 hours, for an account whose        (spendAccountQuestion
+//                     e-mail Google verified (a Google       below)
+//                     sign-in, or a verified e-mail and
+//                     password account)
+//   chatMessagesPerDayUnverified  the same for an account whose e-mail is
+//                     not verified (e-mail and password sign-ups)
+//   accountsChatPerDay  every account's questions together, in 24 hours
+//   accountsChatTokensPerDay  the tokens Claude reads and writes for every
+//                     account together, in 24 hours (each answer's usage:
+//                     input, cache writes and reads, and output)
 //   reports           "Tell us what happened" reports      server/field/routes.js
 //   uploadBytes       all of the account's photos together server/field/routes.js
 //   photoMaxSide      pixels a side of one photo           server/field/routes.js
@@ -38,6 +49,12 @@
 //                        cookie) in 24 hours
 //   demoChatPerAddress   ... per internet address in 24 hours  (server/auth.js clientAddress)
 //   demoChatPerDay       ... for the whole demo in 24 hours
+//   demoChatTokensPerDay the tokens Claude reads and writes for the whole
+//                        demo in 24 hours (each answer's usage)
+//   demoChatMaxTokens    the longest one answer may be (max_tokens), and
+//   demoChatToolRounds   how many look-ups one demo answer may make; the
+//                        demo's answers also think less (effort "low") and
+//                        never continue a paused turn (server/ai/chat.js)
 //   demoChatVisitors     visitors whose chats are kept in memory at once
 //   demoChatThreads      chats kept per visitor (the oldest goes first)
 //   demoChatMessages     messages kept per chat (the oldest go first)
@@ -50,20 +67,36 @@
 // assistant has answered enough questions for now. Register to ask about
 // your own land." Nothing a demo visitor asks is written to disk.
 //
+// THE CONTACT FORM (server/messages.js; besides 5 an hour per visitor)
+//   contactPerHourAll    messages kept from all visitors together, an hour
+//   contactPerDayAll     ... in 24 hours
+//   contactUnsentMax     messages kept but not e-mailed yet, at most
+//   contactMailsPerDay   e-mails sent in 24 hours (a message past it waits,
+//                        "held", and goes out when the 24 hours allow,
+//                        without using up its tries)
+// Past the first three: 429 "busy", "The form is busy right now. Please
+// write to chernozem.app@gmail.com."
+//
 // HOW A ROUTE KNOWS
 // server/app.js runs every route of a registered account inside that
 // account's own folder (server/store.js withDataRoot). isAccount() is true
 // there and false in the demo's folder, so the routes ask it and apply the
 // numbers only to accounts (the demo's are asked for with
-// server/session.js isDemoSession()). The counts over time (spend) are
-// kept in this server's memory, per account; a restart forgets them,
-// which is fine.
+// server/session.js isDemoSession()). The counts over time (spend, the AI
+// assistant's questions and tokens, the contact form's) are kept by
+// server/counters.js, in memory and in quota-state.json in the base data
+// folder, so a restart or a new version does not hand out a fresh
+// allowance. An account is counted by its folder's name, never by its
+// e-mail.
 //
 // WHO EDITS IT
 // The owner, to change a number. Tests use setQuotasForTests.
 
+import path from "node:path";
 import { HttpError } from "./http.js";
 import { baseDataDir, dataDir } from "./store.js";
+import { counter, resetCountersForTests } from "./counters.js";
+import { currentSession } from "./session.js";
 
 const MB = 1024 * 1024;
 export const HOUR_MS = 60 * 60 * 1000;
@@ -76,7 +109,11 @@ const DEFAULTS = Object.freeze({
   points: 1000,
   monthsPerAnalysis: 12,
   fieldJobsPerHour: 2,
+  fieldSetupPerHour: 12, // farm set-ups and added fields (each starts a small analysis)
   chatMessagesPerDay: 40,
+  chatMessagesPerDayUnverified: 10,
+  accountsChatPerDay: 400,
+  accountsChatTokensPerDay: 6_000_000,
   reports: 30,
   uploadBytes: 40 * MB,
   photoMaxSide: 8000,
@@ -84,27 +121,32 @@ const DEFAULTS = Object.freeze({
   demoChatPerVisitor: 8,
   demoChatPerAddress: 24,
   demoChatPerDay: 300,
+  demoChatTokensPerDay: 1_500_000,
+  demoChatMaxTokens: 3000,
+  demoChatToolRounds: 2,
   demoChatVisitors: 2000,
   demoChatThreads: 10,
   demoChatMessages: 30,
   demoChatKeepHours: 24,
   demoPlaceSearchesPerHour: 20,
   demoPlaceSearchesPerHourAll: 200,
+  // The contact form (server/messages.js).
+  contactPerHourAll: 30,
+  contactPerDayAll: 150,
+  contactUnsentMax: 1000,
+  contactMailsPerDay: 100,
 });
 
 // The numbers in force. Read a number from here where it is applied, never
 // copy it, so the tests can lower one.
 export const QUOTAS = { ...DEFAULTS };
 
-// Kept on globalThis so the dev server, which reloads this file after
-// edits, keeps the counts.
-const memory = (globalThis.__chernozemQuotas ??= { uses: new Map() });
-
 // For the tests: lower some numbers ({ reports: 2 }), or none to put the
-// defaults back. Forgets every count.
-export function setQuotasForTests(overrides = {}) {
+// defaults back. Forgets every count (server/counters.js), and reads time
+// from clock() (ms) when one is given.
+export function setQuotasForTests(overrides = {}, { clock = null } = {}) {
   Object.assign(QUOTAS, DEFAULTS, overrides);
-  memory.uses.clear();
+  resetCountersForTests({ clock });
 }
 
 // True inside a registered account's folder (see the top of this file).
@@ -116,21 +158,63 @@ export function isAccount() {
 // sentence (413 for something that would take too much disk).
 export const quotaError = (message, status = 429) => new HttpError(status, "quota", message);
 
-// Spends one use of `what` ("chat", "field-detect"...) for the account
-// asking, when fewer than `limit` uses were spent in the last `windowMs`.
-// Gives back { ok: true }, or { ok: false, retryAfterMs } without spending
-// anything. The demo: always ok.
-export function spend(what, limit, windowMs, now = Date.now()) {
+// The account asking, as the counts know it: its folder's name (a hash,
+// server/store.js userRoot).
+const accountKey = () => path.basename(dataDir());
+
+// Spends one use of `what` ("field-detect", "field-analyze"...) for the
+// account asking, when fewer than `limit` uses were spent in the last
+// `windowMs`. Gives back { ok: true }, or { ok: false, retryAfterMs }
+// without spending anything. The demo, the owner and open: always ok.
+export function spend(what, limit, windowMs, now) {
   if (!isAccount()) return { ok: true };
-  const key = `${dataDir()}\0${what}`;
-  const recent = (memory.uses.get(key) || []).filter((at) => now - at < windowMs);
-  if (recent.length >= limit) {
-    memory.uses.set(key, recent);
-    return { ok: false, retryAfterMs: recent[0] + windowMs - now };
-  }
-  recent.push(now);
-  memory.uses.set(key, recent);
+  const uses = counter(`account-${what}`, windowMs);
+  const asked = uses.check(accountKey(), limit, now);
+  if (asked.blocked) return { ok: false, retryAfterMs: asked.retryAfterMs };
+  uses.add(accountKey(), 1, now);
   return { ok: true };
+}
+
+// ---------- The AI assistant, for accounts ----------
+
+const accountQuestions = () => counter("account-chat", DAY_MS);
+const allAccountsQuestions = () => counter("accounts-chat", DAY_MS);
+const allAccountsTokens = () => counter("accounts-chat-tokens", DAY_MS);
+
+// One question to the AI assistant for the account asking (server/ai/chat.js),
+// when its own allowance (chatMessagesPerDay with a verified e-mail, else
+// chatMessagesPerDayUnverified), every account's together
+// (accountsChatPerDay) and their tokens (accountsChatTokensPerDay) allow
+// it, all over the last 24 hours. Gives back { ok: true } (counted), or
+// { ok: false, retryAfterMs, message } (nothing counted). Not an account:
+// always ok, nothing counted.
+export function spendAccountQuestion(now) {
+  if (!isAccount()) return { ok: true };
+  const verified = currentSession()?.emailVerified === true;
+  const own = verified ? QUOTAS.chatMessagesPerDay : QUOTAS.chatMessagesPerDayUnverified;
+  const mine = accountQuestions().check(accountKey(), own, now);
+  if (mine.blocked) {
+    const { retryAfterMs } = mine;
+    const message = verified
+      ? `An account can ask the assistant ${own} questions a day. Try again ${inWords(retryAfterMs)}.`
+      : `An account whose e-mail address is not verified can ask the assistant ${own} questions a day (a verified one, as with Google, ${QUOTAS.chatMessagesPerDay}). Try again ${inWords(retryAfterMs)}.`;
+    return { ok: false, retryAfterMs, message };
+  }
+  const everyone = [allAccountsQuestions().check("accounts", QUOTAS.accountsChatPerDay, now), allAccountsTokens().check("accounts", QUOTAS.accountsChatTokensPerDay, now)].filter((asked) => asked.blocked);
+  if (everyone.length) {
+    const retryAfterMs = Math.max(...everyone.map((asked) => asked.retryAfterMs));
+    return { ok: false, retryAfterMs, message: `The assistant has answered as many questions as it can for today. Try again ${inWords(retryAfterMs)}.` };
+  }
+  accountQuestions().add(accountKey(), 1, now);
+  allAccountsQuestions().add("accounts", 1, now);
+  return { ok: true };
+}
+
+// The tokens one of Claude's answers used, for every account together
+// (server/ai/chat.js, after each answer). Not an account: nothing.
+export function noteAccountTokens(tokens, now) {
+  if (!isAccount()) return;
+  allAccountsTokens().add("accounts", tokens, now);
 }
 
 // "in a minute", "in 12 minutes", "in 3 hours": for the sentence that says

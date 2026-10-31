@@ -7,7 +7,11 @@
 // job is "running" with job.queued true).
 //
 // It is mounted ONCE around the whole app (src/App.jsx), so moving between
-// pages is instant and the sidebar can show the current area.
+// pages is instant and the sidebar can show the current area. It asks the
+// server for nothing until an Atlas page opens, and never for a Field
+// account (src/lib/access.js mayUseProduct): such an account typing an
+// Atlas address is sent back to /field (src/components/ProductGuard.jsx)
+// without a round of refused requests first.
 //
 // HOW A PAGE USES IT
 //   const { status, workspace, area, runs, run, scored, hotspots, job, actions } = useAtlasData();
@@ -27,12 +31,15 @@
 // THE PUBLIC DEMO (read-only, src/state/useAccess.js): the weights, the
 // cutoff, the month and the views still change on screen, but only in this
 // browser: nothing is saved (no request, so no "not saved" line either).
-// Every other action that would change something (a new or another area,
-// an analysis or a Stop, the crisis setting, the team, the budget, the
-// next steps) is refused here before the server is asked: the "This is the
-// demo" dialog opens (src/state/useDemoGuard.js refuseInDemo) and the
-// action throws that refusal. The pages' buttons usually open the dialog
-// themselves first (useDemoGuard), so this is the safety net.
+// So does the area: actions.setCurrentArea (Atlas Settings' "Open" on a
+// saved area) shows that area in this browser only, and the demo's own
+// current area, saved on the server, stays as it is (a reload of the page
+// starts from it again). Every other action that would change something (a
+// new area, an analysis or a Stop, the crisis setting, the team, the
+// budget, the next steps) is refused here before the server is asked: the
+// "This is the demo" dialog opens (src/state/useDemoGuard.js refuseInDemo)
+// and the action throws that refusal. The pages' buttons usually open the
+// dialog themselves first (useDemoGuard), so this is the safety net.
 //
 // WHO EDITS IT
 // Whoever changes what data the Atlas pages share. To change how the server
@@ -46,6 +53,7 @@ import { DEFAULT_SETTINGS, checkSettings } from "../lib/atlas/method.js";
 import { analysisNotice } from "../lib/atlas/analysisNotice.js";
 import { scorePlaces } from "../lib/atlas/scoring.js";
 import { groupHotspots } from "../lib/atlas/hotspots.js";
+import { mayUseProduct } from "../lib/access.js";
 import { Button } from "../components/ui/index.js";
 import { useAccess } from "./useAccess.js";
 import { refuseInDemo, useDemoGuard } from "./useDemoGuard.js";
@@ -73,11 +81,17 @@ const runKey = (summary) => (summary ? `${summary.id}@${summary.createdAt || ""}
 
 export function AtlasDataProvider({ children }) {
   const { pathname } = useLocation();
-  const inAtlas = pathname.startsWith("/atlas");
+  const access = useAccess();
+  // On an Atlas page, and allowed to use the Atlas (a Field account is not:
+  // it is on its way back to /field, so nothing is asked for).
+  const inAtlas = pathname.startsWith("/atlas") && mayUseProduct(access, "atlas");
   // The demo: read-only (a ref, so the saved callbacks below always see it).
-  const { readOnly } = useAccess();
+  const { readOnly } = access;
   const readOnlyRef = useRef(readOnly);
   readOnlyRef.current = readOnly;
+  // The demo: the saved area opened in this browser only, or null for the
+  // demo's own current area (see the top of this file).
+  const viewedAreaId = useRef(null);
 
   const [base, setBase] = useState({
     status: "idle", // "idle" until an Atlas page opens, then "loading" | "ready" | "error"
@@ -108,11 +122,15 @@ export function AtlasDataProvider({ children }) {
     setBase((prev) => (prev.workspace ? prev : { ...prev, status: "loading", error: null }));
     try {
       const [serverStatus, workspace, areas] = await Promise.all([api.getStatus(), api.getWorkspace(), api.listAreas()]);
+      // The demo shows the area opened in this browser while it is still
+      // saved; everyone else the workspace's current area.
+      const viewed = readOnlyRef.current ? viewedAreaId.current : null;
+      const areaId = viewed && areas.some((item) => item.id === viewed) ? viewed : workspace.currentAreaId;
       let area = null;
       let runs = [];
-      if (workspace.currentAreaId) {
+      if (areaId) {
         try {
-          [area, runs] = await Promise.all([api.getArea(workspace.currentAreaId), api.listRuns(workspace.currentAreaId)]);
+          [area, runs] = await Promise.all([api.getArea(areaId), api.listRuns(areaId)]);
         } catch (error) {
           // The saved area is gone: treat it as "no area yet".
           if (error.status !== 404) throw error;
@@ -296,6 +314,21 @@ export function AtlasDataProvider({ children }) {
     [flushSettings, load]
   );
 
+  // The demo: another saved area, shown in this browser only. Nothing is
+  // sent but the reads every Atlas page makes anyway.
+  const viewArea = useCallback(
+    async (areaId) => {
+      viewedAreaId.current = areaId || null;
+      setChosenRunId(null);
+      await load();
+    },
+    [load]
+  );
+
+  // "Open" on a saved area: saved for the owner and an account, a look in
+  // this browser for the demo.
+  const openArea = useCallback((areaId) => (readOnlyRef.current ? viewArea(areaId) : setCurrentArea(areaId)), [viewArea, setCurrentArea]);
+
   // Starts an analysis and gives back a promise of the finished job.
   //   opts: { months: 12, rerun: false }
   const analyzeArea = useCallback(async (areaId, opts = {}) => {
@@ -423,7 +456,8 @@ export function AtlasDataProvider({ children }) {
   // The demo: a change is refused before the server is asked (the dialog
   // opens and the action throws the refusal; see the top of this file).
   // The weights (updateSettings, resetSettings) are left out: they change
-  // on screen and are simply never saved.
+  // on screen and are simply never saved. So is opening another saved area
+  // (openArea): in the demo only a look, in this browser.
   const inDemo = useCallback((action) => (...args) => (readOnlyRef.current ? Promise.reject(refuseInDemo()) : action(...args)), []);
 
   const actions = useMemo(
@@ -435,7 +469,7 @@ export function AtlasDataProvider({ children }) {
       updateWorkspace: inDemo(updateWorkspace),
       toggleStep: inDemo(toggleStep),
       createArea: inDemo(createArea),
-      setCurrentArea: inDemo(setCurrentArea),
+      setCurrentArea: openArea,
       updateArea: inDemo(updateArea),
       analyzeArea: inDemo(analyzeArea),
       cancelAnalysis: inDemo(cancelAnalysis),
@@ -444,7 +478,7 @@ export function AtlasDataProvider({ children }) {
       updateMember: inDemo(updateMember),
       removeMember: inDemo(removeMember),
     }),
-    [inDemo, load, selectRun, updateSettings, resetSettings, updateWorkspace, toggleStep, createArea, setCurrentArea, updateArea, analyzeArea, cancelAnalysis, chooseArea, addMember, updateMember, removeMember]
+    [inDemo, load, selectRun, updateSettings, resetSettings, updateWorkspace, toggleStep, createArea, openArea, updateArea, analyzeArea, cancelAnalysis, chooseArea, addMember, updateMember, removeMember]
   );
 
   const value = useMemo(

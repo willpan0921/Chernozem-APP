@@ -1,10 +1,11 @@
 // WHAT THIS FILE DOES
 // Tests the checks the server makes before it starts on Render
 // (server/online.js): the data folder must be the disk (set, a full path,
-// outside the app's own folder, already there, writable), and the access
-// code must be a proper one; on one's own computer nothing is checked.
-// server/index.test.js starts the real server with these settings. Run
-// with "npm test".
+// outside the app's own folder, already there, writable). The retired
+// access code (ATLAS_ACCESS_CODE) is never needed: online every visitor
+// is the read-only demo whatever is set. On one's own computer nothing is
+// checked. server/index.test.js starts the real server with these
+// settings. Run with "npm test".
 //
 // WHO EDITS IT
 // Whoever changes server/online.js.
@@ -65,7 +66,7 @@ test("a folder that cannot be written to is refused", { skip: process.getuid?.()
   }
 });
 
-test("only on Render: a missing code or data folder stops the start", () => {
+test("only on Render: a missing data folder stops the start; the retired access code is never asked for", () => {
   const before = { render: process.env.RENDER, code: process.env.ATLAS_ACCESS_CODE, dir: process.env.CHERNOZEM_DATA_DIR };
   try {
     process.env.RENDER = "";
@@ -74,18 +75,16 @@ test("only on Render: a missing code or data folder stops the start", () => {
     assert.deepEqual(startProblems(), [], "on one's own computer nothing is checked");
 
     process.env.RENDER = "true";
-    const both = startProblems();
-    assert.equal(both.length, 2);
-    assert.match(both[0], /ATLAS_ACCESS_CODE is not set/);
-    assert.match(both[1], /CHERNOZEM_DATA_DIR is not set/);
+    const missing = startProblems();
+    assert.equal(missing.length, 1);
+    assert.match(missing[0], /CHERNOZEM_DATA_DIR is not set/);
+    assert.doesNotMatch(missing.join(" "), /ATLAS_ACCESS_CODE/);
 
-    process.env.ATLAS_ACCESS_CODE = "river tractor winter maple";
     process.env.CHERNOZEM_DATA_DIR = disk;
-    assert.deepEqual(startProblems().length, 1);
-    assert.match(startProblems()[0], /the example once printed in the docs/);
-
-    process.env.ATLAS_ACCESS_CODE = "orchard-lantern-pebble-cobalt";
-    assert.deepEqual(startProblems(), []);
+    for (const code of ["", "x", "river tractor winter maple", "orchard-lantern-pebble-cobalt"]) {
+      process.env.ATLAS_ACCESS_CODE = code;
+      assert.deepEqual(startProblems(), [], `the disk is enough, whatever ATLAS_ACCESS_CODE is (${JSON.stringify(code)})`);
+    }
   } finally {
     process.env.RENDER = before.render ?? "";
     process.env.ATLAS_ACCESS_CODE = before.code ?? "";

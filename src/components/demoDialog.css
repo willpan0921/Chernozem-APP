@@ -83,8 +83,22 @@
   color: var(--c-text-2);
 }
 
-.demo-settings-note a {
+.demo-settings-note a,
+.demo-settings-own {
   font-weight: 650;
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+
+/* "Open your own workspace" (an account holder looking at the demo): a
+   button, so it can leave the demo view first, that reads like the link. */
+.demo-settings-own {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 650;
+  color: inherit;
+  cursor: pointer;
 }

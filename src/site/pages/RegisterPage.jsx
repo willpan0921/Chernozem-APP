@@ -1,34 +1,41 @@
 // WHAT THIS FILE DOES
-// The website's Register page (chernozem.app/register): two short steps
-// on one page, named in words under the title ("Account · About you").
+// The website's Register page (chernozem.app/register): one step, then
+// straight into the product.
 //
 //   At the top   Field or Atlas: "Field, for my farm" or "Atlas, for a
 //                region". ?product=field or ?product=atlas in the address
 //                chooses in advance (the website's buttons add it); Field
 //                otherwise. The pictures beside the form show the product
 //                chosen and change with it.
-//   Account      "Continue with Google", or an e-mail and one password
-//                (8 characters or more, with a Show button), through
-//                Firebase Authentication (src/lib/firebase.js, downloaded
-//                only by this page and the Sign in page). Firebase's answers
-//                become plain words beside the right field
-//                (src/lib/registration.js). When Firebase accepts, its
-//                signed token goes to our server (POST /api/auth/firebase,
-//                src/api/accountApi.js), which sets the account cookie.
-//   About you    The name (Google's, when there is one); for Atlas also the
-//                organisation and its kind; one optional place, found with
-//                the place search (GET /api/geocode), which also gives the
-//                country. "Open Field" or "Open Atlas" saves it (PUT
-//                /api/account) and goes straight into the product, with an
-//                empty workspace of its own.
+//   Atlas only   the organisation and its kind (Government, NGO, Research,
+//                Other; none is chosen until the person picks one). Both are
+//                needed whichever way the person signs up.
+//   Then         "Continue with Google", the one strong button (the name
+//                comes from Google), or a name, an e-mail and one password
+//                (8 characters or more, with a Show button) and the lighter
+//                "Create account".
+//
+// Both ways go through Firebase Authentication (src/lib/firebase.js,
+// downloaded only by this page, the Sign in page and the owner's page).
+// Firebase's answers become plain words beside the right field
+// (src/lib/registration.js). When Firebase accepts, its signed token goes
+// to our server (POST /api/auth/firebase, src/api/accountApi.js), which
+// sets the account cookie; the answers are saved (PUT /api/account) and the
+// page goes straight into the product, with an empty workspace of its own.
+// There the product's own setup asks where: Field's "Set up your farm"
+// finds the land, Atlas's "Choose an area" the region. This page never asks
+// for a place.
 //
 // Someone who comes back lands where they left off (registration.js
-// nextStep): "About you" when it is not finished; when it is, "Signed in
-// as ..." with a button into their product and "Not you? Sign out". A
+// nextStep): finished, "Signed in as ..." with a button into their product
+// and "Not you? Sign out"; signed in with something still missing (Google
+// gave no name, or the connection dropped before the answers were saved),
+// only what is missing and "Open Field" or "Open Atlas". The owner (signed
+// in with the Chernozem Google account) gets a way into both products. A
 // browser Firebase already knows offers "Continue as ...". When Firebase
-// Authentication is not switched on, or our server cannot check tokens,
-// the page says "Registration is not open yet" with the demo and the
-// contact page.
+// Authentication is not switched on, or our server cannot check tokens, the
+// page says "Registration is not open yet" with the demo and the contact
+// page.
 //
 // Going into Field or Atlas from here always leaves the public demo first
 // (src/lib/demoMode.js leaveDemo), so the account sees its own workspace.
@@ -44,25 +51,25 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { usePageTitle } from "../hooks.js";
 import { SITE_ACTIONS } from "../content/site.js";
-import { getAccount, getStatus, logoutEverywhere, postFirebaseToken, putAccount, searchPlace } from "../../api/accountApi.js";
+import { getAccount, getStatus, logoutEverywhere, postFirebaseToken, putAccount } from "../../api/accountApi.js";
 import { loadFirebaseAuth } from "../../lib/firebase.js";
 import { leaveDemo } from "../../lib/demoMode.js";
 import {
-  DEFAULT_ORG_KIND,
   LIMITS,
   ORG_KINDS,
   PICTURES,
   PRODUCTS,
-  STEPS,
+  SIGN_IN_ENDED,
   emailProblem,
   firebaseProblem,
+  firstProblem,
+  isOwner,
   nextStep,
-  parsePlace,
   passwordProblem,
-  placeFromResult,
   productForRole,
   productFromParam,
   profileForServer,
+  signInEnded,
   validateProfile,
 } from "../../lib/registration.js";
 import "./register.css";
@@ -74,6 +81,18 @@ const describedBy = (...ids) => ids.filter(Boolean).join(" ") || undefined;
 
 const LOADING = "The sign-in is still loading. Try again in a moment.";
 const NOT_LOADED = "The sign-in could not be downloaded. Check your connection and reload the page.";
+
+// The pictures sit under the form in windows this narrow (register.css),
+// below the first screen: there they load late and never hold up the form.
+const PICTURES_BELOW = "(max-width: 1000px)";
+
+const picturesBelow = () => {
+  try {
+    return typeof window !== "undefined" && Boolean(window.matchMedia?.(PICTURES_BELOW).matches);
+  } catch {
+    return false;
+  }
+};
 
 // One labelled answer: the label, what it accepts beside it (hint), an
 // extra control beside it (after: "Forgot it?"), and its error under it,
@@ -134,42 +153,56 @@ export function PasswordField({ id, hint, error, after, delay, autoComplete, val
 }
 
 // The product's real pictures beside the form: one large, three small
-// (src/lib/registration.js PICTURES). Give it a key of its set, so a new
-// set arrives with its own entrance: each picture, then its caption.
+// (src/lib/registration.js PICTURES, 960-pixel copies). Give it a key of
+// its set, so a new set arrives with its own entrance: each picture, then
+// its caption. Beside the form the large one is the first thing the page
+// paints, so it is asked for at once, and the three small ones only once
+// it has arrived (on a slow phone line they would otherwise share the line
+// with it). Under the form (narrow windows) the large one waits until the
+// visitor scrolls near, and a phone never shows the small ones.
 export function ShotSet({ set, delay = 320 }) {
+  const [below] = useState(picturesBelow);
+  // When the large picture arrived, in milliseconds after this set
+  // appeared (null before): the small ones keep their places in the
+  // entrance, one after another after the large one.
+  const [born] = useState(() => Date.now());
+  const [bigDone, setBigDone] = useState(null);
+  const arrived = () => setBigDone((value) => value ?? Date.now() - born);
+  const smallDelay = (index, extra = 0) => Math.max(0, delay + 90 * (index + 1) + extra - bigDone);
   const [big, ...small] = PICTURES[set] || PICTURES.field;
   return (
     <div className="reg-shots">
       <figure className="reg-shot is-big">
-        <img src={big.src} alt={big.alt} width={big.width} height={big.height} fetchPriority="high" decoding="async" data-arrive style={rise(delay)} />
+        <img
+          src={big.src}
+          alt={big.alt}
+          width={big.width}
+          height={big.height}
+          loading={below ? "lazy" : "eager"}
+          fetchPriority={below ? "low" : "high"}
+          decoding="async"
+          onLoad={arrived}
+          onError={arrived}
+          data-arrive
+          style={rise(delay)}
+        />
         <figcaption data-arrive style={rise(delay + 80)}>
           {big.caption}
         </figcaption>
       </figure>
-      <div className="reg-shot-row">
-        {small.map((shot, index) => (
-          <figure key={shot.src} className={`reg-shot${shot.tall ? " is-tall" : ""}`}>
-            <img src={shot.src} alt={shot.alt} width={shot.width} height={shot.height} loading="lazy" decoding="async" data-arrive style={rise(delay + 90 * (index + 1))} />
-            <figcaption data-arrive style={rise(delay + 90 * (index + 1) + 80)}>
-              {shot.caption}
-            </figcaption>
-          </figure>
-        ))}
-      </div>
+      {bigDone !== null && (
+        <div className="reg-shot-row">
+          {small.map((shot, index) => (
+            <figure key={shot.src} className={`reg-shot${shot.tall ? " is-tall" : ""}`}>
+              <img src={shot.src} alt={shot.alt} width={shot.width} height={shot.height} loading="lazy" decoding="async" data-arrive style={rise(smallDelay(index))} />
+              <figcaption data-arrive style={rise(smallDelay(index, 80))}>
+                {shot.caption}
+              </figcaption>
+            </figure>
+          ))}
+        </div>
+      )}
     </div>
-  );
-}
-
-// "Account · About you": where the person is, in words.
-function Steps({ current }) {
-  return (
-    <ol className="reg-steps" aria-label="Steps">
-      {STEPS.map((step, index) => (
-        <li key={step.key} aria-current={step.key === current ? "step" : undefined} data-arrive style={rise(170 + 40 * index)}>
-          {step.label}
-        </li>
-      ))}
-    </ol>
   );
 }
 
@@ -180,7 +213,7 @@ function ProductChoice({ value, onChange }) {
     <fieldset className="reg-choice">
       <legend className="reg-sr-only">Choose Field or Atlas</legend>
       {Object.entries(PRODUCTS).map(([key, item], index) => (
-        <label key={key} className="reg-choice-item" data-arrive style={rise(230 + 40 * index)}>
+        <label key={key} className="reg-choice-item" data-arrive style={rise(170 + 40 * index)}>
           <input
             id={`reg-product-${key}`}
             className="reg-sr-only"
@@ -199,15 +232,59 @@ function ProductChoice({ value, onChange }) {
   );
 }
 
+// Atlas's two answers: the organisation, and its kind as four flat
+// choices with none chosen at first. Enter in the organisation moves on
+// to the kind rather than sending the form.
+function OrganisationFields({ organization, onOrganization, kind, onKind, errors, delay }) {
+  function next(event) {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    document.getElementById(`reg-kind-${kind || ORG_KINDS[0].role}`)?.focus();
+  }
+  return (
+    <>
+      <AuthField
+        id="reg-organization"
+        label="Organisation"
+        type="text"
+        name="organization"
+        autoComplete="organization"
+        maxLength={LIMITS.organization}
+        value={organization}
+        onChange={onOrganization}
+        onKeyDown={next}
+        error={errors.organization}
+        delay={delay}
+      />
+      <fieldset className={`reg-kinds${errors.kind ? " is-wrong" : ""}`} data-arrive style={rise(delay + 40)} aria-describedby={errors.kind ? "reg-kind-error" : undefined}>
+        <legend>Kind of organisation</legend>
+        <div className="reg-kind-row">
+          {ORG_KINDS.map((item) => (
+            <label key={item.role} className="reg-kind">
+              <input id={`reg-kind-${item.role}`} className="reg-sr-only" type="radio" name="kind" value={item.role} checked={kind === item.role} onChange={() => onKind(item.role)} />
+              <span>{item.label}</span>
+            </label>
+          ))}
+        </div>
+        {errors.kind && (
+          <span id="reg-kind-error" className="reg-error" role="alert">
+            {errors.kind}
+          </span>
+        )}
+      </fieldset>
+    </>
+  );
+}
+
 export default function RegisterPage() {
   usePageTitle("Register");
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const product = productFromParam(params.get("product"));
 
-  // What is on screen: "wait" (asking the server who this is), "account",
-  // "profile" (About you), "signed" (finished before) or "closed"
-  // (registration is not open).
+  // What is on screen: "wait" (asking the server who this is), "form"
+  // (the one step), "finish" (signed in, something still missing), "signed"
+  // (finished before), "owner", or "closed" (registration is not open).
   const [stage, setStage] = useState("wait");
   const [account, setAccount] = useState(null);
 
@@ -216,27 +293,25 @@ export default function RegisterPage() {
   const [fbUser, setFbUser] = useState(null);
   const [fbFailed, setFbFailed] = useState("");
 
-  // Account.
+  // The answers.
+  const [organization, setOrganization] = useState("");
+  const [orgKind, setOrgKind] = useState(""); // none chosen yet
+  const [fieldRole, setFieldRole] = useState("farmer");
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  // Messages beside the fields: google, known, email, password, form, name,
-  // organization, kind, place; takenAt names the one that gets "Sign in".
+  // Messages beside the answers: organization, kind, name, email,
+  // password, google, known, form; takenAt names the one that gets
+  // "Sign in instead".
   const [errors, setErrors] = useState({});
-  const [busy, setBusy] = useState(false);
-
-  // About you.
-  const [name, setName] = useState("");
-  const [organization, setOrganization] = useState("");
-  const [orgKind, setOrgKind] = useState(DEFAULT_ORG_KIND);
-  const [fieldRole, setFieldRole] = useState("farmer");
-  const [placeText, setPlaceText] = useState("");
-  const [place, setPlace] = useState(null); // { lat, lng, label } once chosen
-  const [found, setFound] = useState([]); // the places the search found
-  const [placeNote, setPlaceNote] = useState("");
-  const [placeBusy, setPlaceBusy] = useState(false);
+  // Which way is at work: "google", "email", "known" (Continue as),
+  // "finish", "out" (signing out), or "" for none.
+  const [busy, setBusy] = useState("");
+  // After the first entrance, parts that appear later (Atlas's answers
+  // when the switch moves) arrive at once instead of waiting their turn.
+  const [settled, setSettled] = useState(false);
 
   const alive = useRef(true);
-  const focusNext = useRef("");
   useEffect(() => {
     alive.current = true;
     return () => {
@@ -244,12 +319,28 @@ export default function RegisterPage() {
     };
   }, []);
 
-  // After a step changes, the keyboard goes to its first answer.
+  // "The keyboard goes to ..." once the page has drawn what it changed (a
+  // button disabled while busy can take the keyboard only after that).
+  const focusNext = useRef("");
+  const [focusAsked, setFocusAsked] = useState(0);
+  function focusSoon(id) {
+    focusNext.current = id;
+    setFocusAsked((count) => count + 1);
+  }
   useEffect(() => {
     if (!focusNext.current) return;
     const target = document.getElementById(focusNext.current);
     focusNext.current = "";
     target?.focus();
+  }, [stage, focusAsked]);
+
+  // Once the form has made its entrance, it counts as settled.
+  useEffect(() => {
+    if (stage !== "form" && stage !== "finish") return undefined;
+    const timer = setTimeout(() => {
+      if (alive.current) setSettled(true);
+    }, 900);
+    return () => clearTimeout(timer);
   }, [stage]);
 
   // Typing in a field takes its message away.
@@ -273,24 +364,36 @@ export default function RegisterPage() {
     setErrors((value) => ({ ...value, organization: undefined, kind: undefined }));
   }
 
-  // Fills About you from what the server already has for this account.
-  async function prefill(fromAccount, googleName = "") {
+  function chooseKind(kind) {
+    setOrgKind(kind);
+    setErrors((value) => (value.kind ? { ...value, kind: undefined } : value));
+  }
+
+  // The answers as they stand, for the checks and the server.
+  const answers = () => ({ product, kind: product === "atlas" ? orgKind : fieldRole, name, organization });
+
+  // Where the keyboard goes for an answer with a problem.
+  const fieldId = (key) => (key === "kind" ? `reg-kind-${orgKind || ORG_KINDS[0].role}` : key === "product" ? `reg-product-${product}` : `reg-${key}`);
+
+  // Shows the problems beside their answers; the keyboard goes to the first.
+  function stop(problems) {
+    setErrors(problems);
+    document.getElementById(fieldId(firstProblem(problems)))?.focus();
+  }
+
+  // Fills the answers from what the server already has for this account.
+  async function prefill(fromAccount) {
     let saved = null;
     try {
       saved = (await getAccount())?.profile || null;
     } catch {
-      // A fresh account has nothing saved yet; the form starts empty.
+      // A fresh account has nothing saved yet; the answers start empty.
     }
     if (!alive.current) return;
-    setName(saved?.name || fromAccount?.name || googleName || "");
+    setName(saved?.name || fromAccount?.name || "");
     setOrganization(saved?.organization || "");
     if (productForRole(saved?.role) === "atlas") setOrgKind(saved.role);
     if (saved?.role === "landowner") setFieldRole("landowner");
-    const savedPlace = placeFromResult(saved?.place);
-    if (savedPlace) {
-      setPlace(savedPlace);
-      setPlaceText(savedPlace.label);
-    }
     const savedProduct = PRODUCTS[saved?.product] ? saved.product : productForRole(saved?.role);
     if (savedProduct && !new URLSearchParams(window.location.search).has("product")) chooseProduct(savedProduct);
   }
@@ -306,18 +409,10 @@ export default function RegisterPage() {
         // No server answer: start from the beginning; errors show on submit.
       }
       if (cancelled) return;
-      const step = nextStep(status, null);
+      const step = nextStep(status);
       if (status?.account) setAccount(status.account);
-      if (step === "signed") {
-        setStage("signed");
-        return;
-      }
-      if (step === "profile") {
-        await prefill(status.account);
-        if (!cancelled) setStage("profile");
-        return;
-      }
-      setStage("account");
+      if (step === "finish") await prefill(status.account);
+      if (!cancelled) setStage(step);
     })();
     return () => {
       cancelled = true;
@@ -346,32 +441,76 @@ export default function RegisterPage() {
   }, []);
 
   // Into the product: out of the public demo first, so this tab shows the
-  // account's own workspace.
+  // account's own workspace (and, for a new account, the product's setup).
   function enterProduct(key) {
     leaveDemo();
     navigate((PRODUCTS[key] || PRODUCTS.field).path);
   }
 
-  // Firebase accepted the person: hand the token to our server, then About
-  // you (or straight into the product for someone who finished before).
-  async function afterFirebase(user) {
+  // Saves the answers and goes in. When saving fails the person is signed
+  // in already, so the page shows only what is left to do.
+  async function save(fields) {
+    try {
+      await putAccount(profileForServer(fields));
+      if (!alive.current) return;
+      enterProduct(fields.product);
+    } catch (error) {
+      if (!alive.current) return;
+      if (error?.status === 401) {
+        setAccount(null);
+        setStage("form");
+        setErrors({ form: "Your sign-in ran out. Sign in again to finish." });
+      } else if (error?.code === "accounts_off") {
+        setStage("closed");
+      } else {
+        setStage("finish");
+        setErrors({ form: error?.message || "Could not save. Try again." });
+      }
+    }
+  }
+
+  // Firebase accepted the person: hand the token to our server, then save
+  // the answers and go in (someone who finished before goes straight into
+  // their own product). fields: the answers when the button was pressed.
+  async function afterFirebase(user, fields) {
     const idToken = await fb.getIdToken(user);
     const answer = await postFirebaseToken(idToken);
+    // The server's own view of this browser now (the owner is told apart
+    // here); the answer above is enough when it cannot be asked.
+    let status = null;
+    try {
+      status = await getStatus();
+    } catch {
+      // Carry on with the sign-in's answer.
+    }
     if (!alive.current) return;
-    const made = answer?.account || null;
+    const made = status?.account || answer?.account || null;
     setAccount(made);
+    if (isOwner(status) || made?.owner) {
+      setStage("owner");
+      return;
+    }
     if (made?.profileComplete && PRODUCTS[made.product]) {
       enterProduct(made.product);
       return;
     }
-    await prefill(made, user?.displayName || "");
-    if (!alive.current) return;
-    focusNext.current = "reg-name";
-    setStage("profile");
+    // The name typed, else Google's (the server keeps Google's too).
+    const named = { ...fields, name: fields.name.trim() || (user?.displayName || "").trim() || made?.name || "" };
+    const check = validateProfile(named);
+    if (!check.ok) {
+      // Google gave no name, or a known person's answers are not all in:
+      // only what is missing is asked, then "Open Field" or "Open Atlas".
+      setName(named.name);
+      setErrors(check.problems);
+      focusSoon(fieldId(firstProblem(check.problems)));
+      setStage("finish");
+      return;
+    }
+    await save(named);
   }
 
   // A Firebase or server answer, in plain words beside the right part.
-  // where: "google", "known" (Continue as) or "email" (the e-mail form).
+  // where: "google", "known" (Continue as) or "email" (the e-mail way).
   function showProblem(error, where) {
     const problem = firebaseProblem(error);
     if (problem.field === "closed") {
@@ -393,72 +532,110 @@ export default function RegisterPage() {
     );
   }
 
+  // Google gives the name; Atlas's two answers are checked first. Nothing
+  // waits before the Google window opens: browsers block a window that
+  // does not open straight from the press.
   async function continueWithGoogle() {
     if (busy) return;
+    const fields = answers();
+    const check = validateProfile(fields, { nameFromGoogle: true });
+    if (!check.ok) {
+      stop(check.problems);
+      return;
+    }
     if (!fb) {
       setErrors({ google: fbFailed || LOADING });
       return;
     }
-    setBusy(true);
+    setBusy("google");
     setErrors({});
     try {
       const credential = await fb.signInWithPopup(fb.auth, fb.googleProvider());
-      await afterFirebase(credential.user);
+      await afterFirebase(credential.user, fields);
     } catch (error) {
       if (alive.current) showProblem(error, "google");
     } finally {
-      if (alive.current) setBusy(false);
+      if (alive.current) setBusy("");
     }
   }
 
+  // The e-mail way: every answer is checked before Firebase is asked.
   async function createAccount(event) {
     event.preventDefault();
     if (busy) return;
-    const problems = {};
+    const fields = answers();
+    const problems = { ...validateProfile(fields).problems };
     const emailWrong = emailProblem(email);
     if (emailWrong) problems.email = emailWrong;
     const passwordWrong = passwordProblem(password);
     if (passwordWrong) problems.password = passwordWrong;
     if (Object.keys(problems).length) {
-      setErrors(problems);
-      document.getElementById(problems.email ? "reg-email" : "reg-password")?.focus();
+      stop(problems);
       return;
     }
     if (!fb) {
       setErrors({ form: fbFailed || LOADING });
       return;
     }
-    setBusy(true);
+    setBusy("email");
     setErrors({});
     try {
       const credential = await fb.createUserWithEmailAndPassword(fb.auth, email.trim(), password);
-      await afterFirebase(credential.user);
+      await afterFirebase(credential.user, fields);
     } catch (error) {
       if (alive.current) showProblem(error, "email");
     } finally {
-      if (alive.current) setBusy(false);
+      if (alive.current) setBusy("");
     }
   }
 
   // Firebase already knows this person (they signed in before in this
-  // browser): one press carries on from there.
+  // browser): one press carries on from there. When that sign-in has ended
+  // (they signed out), this browser forgets it too and the form is left.
   async function continueAs() {
     if (busy || !fbUser || !fb) return;
-    setBusy(true);
+    setBusy("known");
     setErrors({});
     try {
-      await afterFirebase(fbUser);
+      await afterFirebase(fbUser, answers());
     } catch (error) {
-      if (alive.current) showProblem(error, "known");
+      if (!alive.current) return;
+      if (signInEnded(error)) {
+        try {
+          await fb.signOut(fb.auth);
+        } catch {
+          // Already out.
+        }
+        if (alive.current) setErrors({ known: SIGN_IN_ENDED });
+      } else {
+        showProblem(error, "known");
+      }
     } finally {
-      if (alive.current) setBusy(false);
+      if (alive.current) setBusy("");
     }
   }
 
-  // Signs out of our server and of Firebase, back to the Account step.
+  // "Open Field" or "Open Atlas" for someone signed in with something
+  // still missing.
+  async function finish(event) {
+    event.preventDefault();
+    if (busy) return;
+    const fields = answers();
+    const check = validateProfile(fields);
+    if (!check.ok) {
+      stop(check.problems);
+      return;
+    }
+    setBusy("finish");
+    setErrors({});
+    await save(fields);
+    if (alive.current) setBusy("");
+  }
+
+  // Signs out of our server and of Firebase, back to the form.
   async function signOutAll() {
     if (busy) return;
-    setBusy(true);
+    setBusy("out");
     try {
       await logoutEverywhere();
     } catch {
@@ -477,155 +654,22 @@ export default function RegisterPage() {
     setPassword("");
     setName("");
     setOrganization("");
-    setOrgKind(DEFAULT_ORG_KIND);
+    setOrgKind("");
     setFieldRole("farmer");
-    setPlaceText("");
-    setPlace(null);
-    setFound([]);
-    setPlaceNote("");
-    setBusy(false);
-    focusNext.current = "reg-google";
-    setStage("account");
-  }
-
-  // ---- The place (About you) ----
-
-  function editPlace(event) {
-    setPlaceText(event.target.value);
-    setPlace(null);
-    setFound([]);
-    setPlaceNote("");
-    setErrors((value) => ({ ...value, place: undefined }));
-  }
-
-  // Typed coordinates are read here; a name goes to the server's place
-  // search (it needs the account cookie, set by now). -> up to five places.
-  async function lookUp(text) {
-    const typed = text.trim();
-    const coords = parsePlace(typed);
-    if (coords) return [coords];
-    const { results } = await searchPlace(typed);
-    return (Array.isArray(results) ? results : []).map(placeFromResult).filter(Boolean).slice(0, 5);
-  }
-
-  const placeTrouble = (error) =>
-    error?.status === 503
-      ? "The place search is not answering. Try again, or type coordinates like 49.71, 37.62."
-      : error?.status === 401
-        ? "Your sign-in ran out. Sign out and in again to search."
-        : error?.message || "The place search did not answer. Try again.";
-
-  function choosePlace(chosen) {
-    setPlace(chosen);
-    setPlaceText(chosen.label);
-    setFound([]);
-    setPlaceNote(`Chosen (${chosen.lat.toFixed(2)}, ${chosen.lng.toFixed(2)}).`);
-    setErrors((value) => ({ ...value, place: undefined }));
-    document.getElementById("reg-place")?.focus();
-  }
-
-  async function findPlace() {
-    const typed = placeText.trim();
-    if (placeBusy) return;
-    if (!typed) {
-      setErrors((value) => ({ ...value, place: "Type a place first." }));
-      document.getElementById("reg-place")?.focus();
-      return;
-    }
-    setPlaceBusy(true);
-    setPlaceNote("");
-    setFound([]);
-    setPlace(null);
-    try {
-      const places = await lookUp(typed);
-      if (!alive.current) return;
-      // One place found: it is the one. More: the person chooses.
-      if (places.length === 1) choosePlace(places[0]);
-      else if (places.length) {
-        setFound(places);
-        setPlaceNote("Choose one.");
-      } else setPlaceNote(`Nothing found for “${typed}”. Try the nearest town, or coordinates.`);
-    } catch (error) {
-      if (alive.current) setPlaceNote(placeTrouble(error));
-    } finally {
-      if (alive.current) setPlaceBusy(false);
-    }
-  }
-
-  // Enter in the place field searches, unless a place is already chosen.
-  function placeKey(event) {
-    if (event.key !== "Enter") return;
-    if (place && placeText === place.label) return;
-    event.preventDefault();
-    findPlace();
-  }
-
-  // ---- Open Field / Open Atlas ----
-
-  async function finish(event) {
-    event.preventDefault();
-    if (busy) return;
-    const fields = { product, kind: product === "atlas" ? orgKind : fieldRole, name, organization, place };
-    const check = validateProfile(fields);
-    if (!check.ok) {
-      setErrors(check.problems);
-      const first = ["name", "organization", "kind", "place"].find((key) => check.problems[key]);
-      document.getElementById(first === "kind" ? `reg-kind-${orgKind}` : `reg-${first}`)?.focus();
-      return;
-    }
-    // Several places were found and none chosen: the person picks one.
-    if (!place && found.length > 1) {
-      setErrors({ place: "Choose one of the places found, or clear the field." });
-      document.querySelector(".reg-found-item")?.focus();
-      return;
-    }
-    setBusy(true);
-    setErrors({});
-    let chosen = place;
-    if (!chosen && placeText.trim()) {
-      // Typed but never searched: the first place found is the one.
-      try {
-        chosen = (await lookUp(placeText))[0] || null;
-      } catch (error) {
-        if (!alive.current) return;
-        setErrors({ place: placeTrouble(error) });
-        setBusy(false);
-        document.getElementById("reg-place")?.focus();
-        return;
-      }
-      if (!alive.current) return;
-      if (!chosen) {
-        setErrors({ place: `Nothing found for “${placeText.trim()}”. Try the nearest town, or clear the field.` });
-        setBusy(false);
-        document.getElementById("reg-place")?.focus();
-        return;
-      }
-      setPlace(chosen);
-      setPlaceText(chosen.label);
-    }
-    try {
-      await putAccount(profileForServer({ ...fields, place: chosen }));
-      if (!alive.current) return;
-      enterProduct(product);
-    } catch (error) {
-      if (!alive.current) return;
-      if (error?.status === 401) {
-        setAccount(null);
-        setStage("account");
-        setErrors({ form: "Your sign-in ran out. Sign in again to finish." });
-      } else if (error?.code === "accounts_off") {
-        setStage("closed");
-      } else {
-        setErrors({ form: error?.message || "Could not save. Try again." });
-      }
-    } finally {
-      if (alive.current) setBusy(false);
-    }
+    setBusy("");
+    // The keyboard goes to "Continue with Google" (also when the form was
+    // on screen already: the box that held "Sign out" is gone).
+    focusSoon("reg-google");
+    setStage("form");
   }
 
   const signedInAs = account?.email || fbUser?.email || "";
   const own = stage === "signed" && PRODUCTS[account?.product] ? account.product : product;
   const item = PRODUCTS[own];
+  const atlas = product === "atlas";
+  // Entrance delays: the e-mail way comes after Atlas's two answers.
+  const after = atlas ? 80 : 0;
+  const late = (ms) => (settled ? 0 : ms);
 
   return (
     <div className="reg">
@@ -637,7 +681,7 @@ export default function RegisterPage() {
             </span>
           </h1>
           <p className="reg-lead" data-arrive style={rise(120)}>
-            An account is free and takes two short steps.
+            An account is free and takes one step.
           </p>
 
           {stage === "wait" && <div className="reg-wait" aria-busy="true" />}
@@ -664,22 +708,48 @@ export default function RegisterPage() {
                 <Link className="reg-btn reg-btn-primary" to={item.path} onClick={leaveDemo}>
                   Open {item.name}
                 </Link>
-                <button type="button" className="reg-textbtn" onClick={signOutAll} disabled={busy}>
+                <button type="button" className="reg-textbtn" onClick={signOutAll} disabled={Boolean(busy)}>
                   Not you? Sign out
                 </button>
               </div>
             </div>
           )}
 
-          {(stage === "account" || stage === "profile") && (
+          {stage === "owner" && (
+            <div className="reg-panel" data-arrive style={rise(160)}>
+              <p>
+                Signed in as <strong>{signedInAs || "the owner"}</strong>, the owner.
+              </p>
+              <div className="reg-actions">
+                <Link className="reg-btn reg-btn-primary" to={PRODUCTS.field.path} onClick={leaveDemo}>
+                  Open Field
+                </Link>
+                <Link className="reg-btn reg-btn-second" to={PRODUCTS.atlas.path} onClick={leaveDemo}>
+                  Open Atlas
+                </Link>
+                <button type="button" className="reg-textbtn" onClick={signOutAll} disabled={Boolean(busy)}>
+                  Sign out
+                </button>
+              </div>
+            </div>
+          )}
+
+          {(stage === "form" || stage === "finish") && (
             <>
-              <Steps current={stage} />
+              {stage === "finish" && (
+                <p className="reg-who" data-arrive style={rise(160)}>
+                  Signed in as <strong>{signedInAs || "you"}</strong>.{" "}
+                  <button type="button" className="reg-textbtn" onClick={signOutAll} disabled={Boolean(busy)}>
+                    Not you? Sign out
+                  </button>
+                </p>
+              )}
               <ProductChoice value={product} onChange={chooseProduct} />
             </>
           )}
 
-          {stage === "account" && (
-            <form className="reg-form" onSubmit={createAccount} noValidate aria-label="Account">
+          {stage === "form" && (
+            <form className="reg-form" onSubmit={createAccount} noValidate aria-label="Register">
               {fbUser && !busy && (
                 <div className="reg-known">
                   <p>
@@ -693,24 +763,46 @@ export default function RegisterPage() {
                       Not you? Sign out
                     </button>
                   </div>
-                  {errors.known && (
-                    <p className="reg-error" role="alert">
-                      {errorText("known")}
-                    </p>
-                  )}
                 </div>
               )}
-              <button id="reg-google" type="button" className="reg-btn reg-btn-primary reg-btn-wide" onClick={continueWithGoogle} disabled={busy} data-arrive style={rise(310)}>
-                Continue with Google
+              {errors.known && (
+                <p className="reg-error" role="alert">
+                  {errorText("known")}
+                </p>
+              )}
+              {atlas && (
+                <OrganisationFields
+                  organization={organization}
+                  onOrganization={edit(setOrganization, "organization")}
+                  kind={orgKind}
+                  onKind={chooseKind}
+                  errors={errors}
+                  delay={late(260)}
+                />
+              )}
+              <button id="reg-google" type="button" className="reg-btn reg-btn-primary reg-btn-wide" onClick={continueWithGoogle} disabled={Boolean(busy)} data-arrive style={rise(late(260 + after))}>
+                {busy === "google" ? `Opening ${PRODUCTS[product].name}…` : "Continue with Google"}
               </button>
               {errors.google && (
                 <p className="reg-error" role="alert">
                   {errorText("google")}
                 </p>
               )}
-              <p className="reg-or" aria-hidden="true" data-arrive style={rise(340)}>
+              <p className="reg-or" aria-hidden="true" data-arrive style={rise(late(290 + after))}>
                 or
               </p>
+              <AuthField
+                id="reg-name"
+                label="Name"
+                type="text"
+                name="name"
+                autoComplete="name"
+                maxLength={LIMITS.name}
+                value={name}
+                onChange={edit(setName, "name")}
+                error={errors.name}
+                delay={late(320 + after)}
+              />
               <AuthField
                 id="reg-email"
                 label="E-mail"
@@ -724,31 +816,43 @@ export default function RegisterPage() {
                 value={email}
                 onChange={edit(setEmail, "email")}
                 error={errorText("email")}
-                delay={370}
+                delay={late(350 + after)}
               />
-              <PasswordField id="reg-password" hint={`${LIMITS.password.min} characters or more`} autoComplete="new-password" value={password} onChange={edit(setPassword, "password")} error={errors.password} delay={400} />
+              <PasswordField
+                id="reg-password"
+                hint={`${LIMITS.password.min} characters or more`}
+                autoComplete="new-password"
+                value={password}
+                onChange={edit(setPassword, "password")}
+                error={errors.password}
+                delay={late(380 + after)}
+              />
               {errors.form && (
                 <p className="reg-error" role="alert">
                   {errors.form}
                 </p>
               )}
-              <button type="submit" className="reg-btn reg-btn-second reg-btn-wide" disabled={busy} data-arrive style={rise(430)}>
-                {busy ? "Making your account…" : "Create account"}
+              <button type="submit" className="reg-btn reg-btn-second reg-btn-wide" disabled={Boolean(busy)} data-arrive style={rise(late(410 + after))}>
+                {busy === "email" ? "Making your account…" : "Create account"}
               </button>
-              <p className="reg-aside" data-arrive style={rise(460)}>
+              <p className="reg-aside" data-arrive style={rise(late(440 + after))}>
                 Already have an account? <Link to={SITE_ACTIONS.signin.path}>Sign in</Link>
               </p>
             </form>
           )}
 
-          {stage === "profile" && (
-            <form className="reg-form" onSubmit={finish} noValidate aria-label="About you">
-              <p className="reg-who" data-arrive style={rise(280)}>
-                Signed in as <strong>{signedInAs || "you"}</strong>.{" "}
-                <button type="button" className="reg-textbtn" onClick={signOutAll} disabled={busy}>
-                  Not you? Sign out
-                </button>
-              </p>
+          {stage === "finish" && (
+            <form className="reg-form" onSubmit={finish} noValidate aria-label="Finish registering">
+              {atlas && (
+                <OrganisationFields
+                  organization={organization}
+                  onOrganization={edit(setOrganization, "organization")}
+                  kind={orgKind}
+                  onKind={chooseKind}
+                  errors={errors}
+                  delay={late(260)}
+                />
+              )}
               <AuthField
                 id="reg-name"
                 label="Name"
@@ -759,92 +863,15 @@ export default function RegisterPage() {
                 value={name}
                 onChange={edit(setName, "name")}
                 error={errors.name}
-                delay={320}
+                delay={late(260 + after)}
               />
-              {product === "atlas" && (
-                <>
-                  <AuthField
-                    id="reg-organization"
-                    label="Organisation"
-                    type="text"
-                    name="organization"
-                    autoComplete="organization"
-                    maxLength={LIMITS.organization}
-                    value={organization}
-                    onChange={edit(setOrganization, "organization")}
-                    error={errors.organization}
-                    delay={360}
-                  />
-                  <fieldset className={`reg-kinds${errors.kind ? " is-wrong" : ""}`} data-arrive style={rise(400)} aria-describedby={errors.kind ? "reg-kind-error" : undefined}>
-                    <legend>Kind of organisation</legend>
-                    <div className="reg-kind-row">
-                      {ORG_KINDS.map((kind) => (
-                        <label key={kind.role} className="reg-kind">
-                          <input
-                            id={`reg-kind-${kind.role}`}
-                            className="reg-sr-only"
-                            type="radio"
-                            name="kind"
-                            value={kind.role}
-                            checked={orgKind === kind.role}
-                            onChange={() => {
-                              setOrgKind(kind.role);
-                              setErrors((value) => ({ ...value, kind: undefined }));
-                            }}
-                          />
-                          <span>{kind.label}</span>
-                        </label>
-                      ))}
-                    </div>
-                    {errors.kind && (
-                      <span id="reg-kind-error" className="reg-error" role="alert">
-                        {errors.kind}
-                      </span>
-                    )}
-                  </fieldset>
-                </>
-              )}
-              <AuthField id="reg-place" label={PRODUCTS[product].placeLabel} optional error={errors.place} delay={product === "atlas" ? 440 : 360}>
-                <div className="reg-place-row">
-                  <input
-                    id="reg-place"
-                    type="text"
-                    name="place"
-                    autoComplete="off"
-                    maxLength={LIMITS.place}
-                    placeholder={PRODUCTS[product].placeHint}
-                    value={placeText}
-                    onChange={editPlace}
-                    onKeyDown={placeKey}
-                    aria-describedby={describedBy("reg-place-note", errors.place && "reg-place-error")}
-                    aria-invalid={errors.place ? true : undefined}
-                  />
-                  <button type="button" className="reg-btn reg-btn-quiet" onClick={findPlace} disabled={placeBusy}>
-                    {placeBusy ? "Searching…" : "Search"}
-                  </button>
-                </div>
-                <span id="reg-place-note" className="reg-note" aria-live="polite">
-                  {placeNote}
-                </span>
-                {found.length > 0 && (
-                  <ul className="reg-found" aria-label="Places found">
-                    {found.map((spot) => (
-                      <li key={`${spot.lat},${spot.lng},${spot.label}`}>
-                        <button type="button" className="reg-found-item" onClick={() => choosePlace(spot)}>
-                          {spot.label}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </AuthField>
               {errors.form && (
                 <p className="reg-error" role="alert">
                   {errors.form}
                 </p>
               )}
-              <button type="submit" className="reg-btn reg-btn-primary reg-btn-wide" disabled={busy} data-arrive style={rise(product === "atlas" ? 480 : 400)}>
-                {busy ? "Opening…" : `Open ${PRODUCTS[product].name}`}
+              <button type="submit" className="reg-btn reg-btn-primary reg-btn-wide" disabled={Boolean(busy)} data-arrive style={rise(late(300 + after))}>
+                {busy === "finish" ? "Opening…" : `Open ${PRODUCTS[product].name}`}
               </button>
             </form>
           )}

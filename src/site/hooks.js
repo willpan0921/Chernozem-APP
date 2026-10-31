@@ -12,11 +12,17 @@
 //                           ever stays hidden.
 //   useMediaQuery(q)        true when the browser matches a media query,
 //                           for example "(prefers-reduced-motion: reduce)"
+//   useNear(margin)         [ref, near]: near turns true (and stays true)
+//                           once the element comes within `margin` of the
+//                           screen, so a heavy part far down the page is
+//                           only built and downloaded when the visitor
+//                           heads towards it. Without the observer it is
+//                           true at once.
 //
 // WHO EDITS IT
 // Nobody, normally.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { pageTitle } from "./content/site.js";
 
@@ -89,6 +95,28 @@ export function useReveal() {
     }
     io.observe(node);
   }, []);
+}
+
+export function useNear(margin = "800px 0px") {
+  const ref = useRef(null);
+  const [near, setNear] = useState(() => typeof IntersectionObserver === "undefined");
+  useEffect(() => {
+    if (near) return undefined;
+    const el = ref.current;
+    if (!el) return undefined;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setNear(true);
+          io.disconnect();
+        }
+      },
+      { rootMargin: margin }
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [near, margin]);
+  return [ref, near];
 }
 
 export function useMediaQuery(query) {

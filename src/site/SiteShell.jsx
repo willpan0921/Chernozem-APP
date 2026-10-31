@@ -1,16 +1,27 @@
 // WHAT THIS FILE DOES
 // The frame of the public website: the menu bar at the top, the page in
 // the middle (src/site/pages/*), the footer line at the bottom. When the
-// address changes the new page rises in softly and the window goes back
-// to the top. Everything inside is scoped by the class "site", so the
-// website's styling (site.css) never touches the app's pages and the
-// app's never touches the website. It also starts the pin cursor's click
-// assist (cursorAssist.js) for as long as the website is open; the app
-// never has it.
+// address changes the new page is put in place at once and rises in
+// softly, while the old one is lifted out of the way and fades over it in
+// 0.12 s (a cross-fade: nothing waits for the old page to leave), and the
+// window goes back to the top. Everything inside is scoped by the class
+// "site", so the website's styling (site.css) never touches the app's
+// pages and the app's never touches the website.
+//
+// It also starts two helpers for as long as the website is open (the app
+// never has them):
+//   - the pin cursor's click assist (cursorAssist.js);
+//   - warming: pointing at a link to another page of the website (or
+//     reaching it with the Tab key) starts downloading that page's code, so
+//     by the time of the click it is there and the page shows at once (the
+//     router changes pages as a React "transition", which lets a page whose
+//     code is already here show without the blank moment a page still
+//     downloading gets).
 //
 // WHO EDITS IT
 // Whoever works on the website's frame. The menu's links come from
-// src/site/content/site.js.
+// src/site/content/site.js. A new page of the website goes into PAGES
+// below too (its address and its file, as in src/App.jsx).
 
 import { Suspense, useEffect, useRef } from "react";
 import { useLocation, useOutlet } from "react-router-dom";
@@ -20,6 +31,40 @@ import Footer from "./components/Footer.jsx";
 import { useScrollTop } from "./hooks.js";
 import { startCursorAssist } from "./cursorAssist.js";
 import "./site.css";
+
+// Each address and the code that draws it (the same files src/App.jsx
+// loads, so a page warmed here is simply ready when App.jsx asks for it).
+const PAGES = {
+  "/": () => import("./pages/HomePage.jsx"),
+  "/story": () => import("./pages/StoryPage.jsx"),
+  "/method": () => import("./pages/MethodPage.jsx"),
+  "/contact": () => import("./pages/ContactPage.jsx"),
+  "/demo": () => import("./pages/DemoPage.jsx"),
+  "/register": () => import("./pages/RegisterPage.jsx"),
+  "/signin": () => import("./pages/SignInPage.jsx"),
+  "/field": () => import("../pages/field/OverviewPage.jsx"),
+  "/atlas": () => import("../pages/atlas/OverviewPage.jsx"),
+};
+
+// Starts downloading the page a link leads to, once per address.
+function startWarming(doc = document) {
+  const started = new Set();
+  const warm = (event) => {
+    const link = event.target?.closest?.("a[href]");
+    if (!link || link.origin !== window.location.origin || link.pathname === window.location.pathname) return;
+    const path = link.pathname.replace(/\/+$/, "") || "/";
+    const load = PAGES[path];
+    if (!load || started.has(path)) return;
+    started.add(path);
+    load().catch(() => started.delete(path)); // offline for a moment: the click will try again
+  };
+  doc.addEventListener("pointerover", warm, { passive: true });
+  doc.addEventListener("focusin", warm);
+  return () => {
+    doc.removeEventListener("pointerover", warm);
+    doc.removeEventListener("focusin", warm);
+  };
+}
 
 export default function SiteShell() {
   const outlet = useOutlet();
@@ -34,20 +79,21 @@ export default function SiteShell() {
   }, []);
   // A click anywhere on the pin cursor reaches the link or button under it.
   useEffect(() => startCursorAssist(), []);
+  // Pointing at a link gets its page ready.
+  useEffect(() => startWarming(), []);
   return (
     <div className="site">
       <a className="skip" href="#main">
         Skip to content
       </a>
       <Nav />
-      <AnimatePresence mode="wait" initial={false}>
+      <AnimatePresence mode="popLayout" initial={false}>
         <motion.main
           id="main"
           key={pathname}
           initial={first.current || reduced ? false : { opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={reduced ? { opacity: 1 } : { opacity: 0 }}
-          transition={{ duration: reduced ? 0 : 0.38, ease: [0.16, 1, 0.3, 1] }}
+          animate={{ opacity: 1, y: 0, transition: { duration: reduced ? 0 : 0.38, ease: [0.16, 1, 0.3, 1] } }}
+          exit={reduced ? { opacity: 1, transition: { duration: 0 } } : { opacity: 0, transition: { duration: 0.12, ease: "linear" } }}
         >
           {/* The footer is inside the waiting boundary, so it never shows up early and then jumps away when the page's code arrives. */}
           <Suspense fallback={<div style={{ minHeight: "100svh" }} aria-busy="true" />}>

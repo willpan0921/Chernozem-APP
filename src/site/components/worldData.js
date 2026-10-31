@@ -15,10 +15,15 @@
 //   world.status     "loading" | "ok" | "failed" (the feed)
 //   world.events     every event with a place: its own, or its country's
 //                    centre; armed conflicts first, then alerts red to green
+//   world.updated    when the server put the feed together (ISO time), or
+//                    null: the "today" an alert's dates are read against
+//                    (one whose last day is well before it is over)
 //   world.reviewed   the day the conflict list was last reviewed, or null
 //   world.gdacs      GDACS's line from the feed ({ url, missing, stale }) or null
 //   world.countries  the country file, or null
-//   world.trade      the trade file, or null
+//   world.trade      the trade file, or null (each buyer row may carry the
+//                    year of its figure and who reported it; older files
+//                    without them still work)
 //
 // WHO EDITS IT
 // Whoever changes where the globe's data comes from.
@@ -51,7 +56,7 @@ export function placeEvents(rawEvents, countries) {
     });
 }
 
-const EMPTY = { status: "loading", events: [], reviewed: null, gdacs: null, countries: null, trade: null };
+const EMPTY = { status: "loading", events: [], updated: null, reviewed: null, gdacs: null, countries: null, trade: null };
 
 let pending = null; // the shared promise
 let settled = null; // its answer, once there is one
@@ -65,6 +70,7 @@ export function loadWorldData() {
     const answer = {
       status: feed.ok ? "ok" : "failed",
       events: feed.ok ? placeEvents(feed.value?.events, countries.value) : [],
+      updated: feed.ok && typeof feed.value?.updated === "string" && Number.isFinite(Date.parse(feed.value.updated)) ? feed.value.updated : null,
       reviewed: reviewedSource?.reviewed || null,
       gdacs: sources.find((s) => s.name === "GDACS") || null,
       countries: countries.ok ? countries.value : null,

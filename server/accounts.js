@@ -4,24 +4,41 @@
 // of their own, fresh and separate from the shared demo and from every
 // other account. The public demo (the owner's own workspace) is untouched.
 //
+// The owner signs in the same way (Google, on the hidden page /owner):
+// a sign-in whose token says the e-mail is verified and is one of
+// OWNER_EMAILS (server/auth.js isOwnerEmail) gets the owner's cookie
+// instead of the account cookie, and is the owner of the public demo from
+// then on (server/auth.js).
+//
 // HOW IT WORKS
 // The browser signs in with Firebase (src/lib/firebase.js) and gets an
 // "ID token" from Google. It sends that token here once:
 //
 //   POST /api/auth/firebase  body { idToken }
 //     The token is checked with Firebase's own library (firebase-admin):
-//     who it is for (the project), that Google signed it, and that it has
-//     not run out. The account's folder is made or opened (server/store.js
-//     userRoot), its profile.json gets the e-mail and name from the token,
-//     and the browser gets the account cookie (server/auth.js
-//     accountCookie, 30 days; the owner's cookie, if any, is
-//     removed: the latest sign-in wins). Answers { ok, account }.
-//       401 bad_token      the token is not valid or has run out
+//     who it is for (the project), that Google signed it, that it has not
+//     run out, and (checkRevoked) that its Firebase session was not ended
+//     since and the user is not disabled. A sign-in made before the
+//     account's last "Sign out" is refused too (its auth_time against
+//     session.json, to the millisecond: Firebase's own check counts whole
+//     seconds), so a copied token cannot open a new session after it. The
+//     account's folder is made or opened (server/store.js userRoot), its
+//     profile.json gets the e-mail, whether Google verified it, and the
+//     name from the token, and the browser gets the account cookie
+//     (server/auth.js accountCookie, 30 days), or the owner's cookie for
+//     the owner; the other one, and the retired code's, are removed: the
+//     latest sign-in wins. Answers { ok, account } (account.owner true for
+//     the owner).
+//       401 bad_token      the token is not valid, has run out, or is from
+//                          before a Sign out
 //       503 accounts_off   accounts cannot work on this server (see below)
 //
 //   GET /api/account        { account, profile }   (server/app.js, signed in
-//   PUT /api/account        the profile's fields    with an account only;
-//                           -> { ok, account, profile }   else 401)
+//   PUT /api/account        the profile's fields    with an account, or as
+//                           -> { ok, account, profile }   the owner: the
+//                                                   owner's own profile, in
+//                                                   its own folder, never
+//                                                   the demo's; else 401)
 //
 // account is always { uid, email, name, product, profileComplete }:
 // product is "field" or "atlas" once chosen (null before), and
@@ -30,7 +47,11 @@
 // register page's last part.
 //
 // THE PROFILE (profile.json in the account's folder)
-//   uid, email, emailVerified, provider   from the Firebase token
+//   uid, email, emailVerified, provider   from the Firebase token (email
+//                   and emailVerified also from the hourly check below:
+//                   an e-mail and password account that verifies its
+//                   address later gets the larger AI allowance,
+//                   server/quotas.js)
 //   name            1 to 80 characters
 //   age             a whole number from 13 to 120, or null
 //   organization    up to 120 characters (the register page asks for it
@@ -57,29 +78,39 @@
 // server, or when the token cannot be checked for a reason other than
 // the token itself (Google unreachable). The register page then says so.
 //
-// WHEN A COOKIE STOPS COUNTING (server/auth.js accountSession asks here)
+// WHEN A COOKIE STOPS COUNTING (server/auth.js asks here, for the owner's
+// cookie and an account's)
 //   signOutAccount(uid)   "Sign out": writes the moment into the account's
 //                         session.json (every cookie made before it is
-//                         nobody from then on) and, best-effort, ends the
-//                         account's Firebase sessions (revokeRefreshTokens)
-//   firebaseUserOk(uid)   whether the Firebase user still exists and is not
-//                         disabled, asked of Firebase at most once an hour
-//                         per account; a sign-in counts as "yes" for that
-//                         hour. If Firebase cannot be asked (unreachable,
-//                         or no Google key on this computer), the last
-//                         answer stays good for a day, then the account
-//                         must sign in again (a sign-in needs Firebase, so
-//                         nothing stays open for ever during an outage).
-//                         Deleted or disabled: "no" within the hour.
+//                         nobody from then on, and so is a Firebase
+//                         sign-in from before it) and, best-effort, ends
+//                         the account's Firebase sessions
+//                         (revokeRefreshTokens)
+//   firebaseUserState(uid, profile)
+//                         { ok, email, emailVerified }: whether the
+//                         Firebase user still exists and is not disabled,
+//                         and its e-mail and whether Google verified it,
+//                         asked of Firebase at most once an hour per
+//                         account; a sign-in counts as that hour's answer.
+//                         A changed e-mail or verification is written into
+//                         profile.json. If Firebase cannot be asked
+//                         (unreachable, or no Google key on this computer),
+//                         the last answer stays good for a day, then the
+//                         account must sign in again (a sign-in needs
+//                         Firebase, so nothing stays open for ever during
+//                         an outage). Deleted or disabled: "no" within the
+//                         hour.
 //
 // FOR THE TESTS
 //   setDepsForTests({ verifyIdToken, getUser, revokeRefreshTokens, now })
-//     stand-ins for Firebase: verifyIdToken (idToken) -> the decoded token
-//     { uid, email, name, ... } or a throw with code "auth/...";
-//     getUser (uid) -> { uid, disabled } or a throw with code
-//     "auth/user-not-found"; revokeRefreshTokens (uid); now () -> the
-//     clock (ms) the once-an-hour check reads, to move time forward.
-//     Forgets every answer kept so far.
+//     stand-ins for Firebase: verifyIdToken (idToken, checkRevoked) -> the
+//     decoded token { uid, email, email_verified, name, auth_time, ... } or
+//     a throw with code "auth/..."; getUser (uid) -> { uid, disabled,
+//     email?, emailVerified? } or a throw with code "auth/user-not-found";
+//     revokeRefreshTokens (uid); now () -> the clock (ms) the once-an-hour
+//     check reads, to move time forward. Forgets every answer kept so far.
+//   verifyChecked(auth, idToken)   the token check itself, with Firebase's
+//     auth object (or a stand-in with verifyIdToken(idToken, checkRevoked))
 //
 // WHO EDITS IT
 // Nobody, normally. The one-time Firebase console steps are in
@@ -87,10 +118,20 @@
 
 import { HttpError, readJson, sendJson } from "./http.js";
 import { config } from "./env.js";
-import { getProfile, saveProfile, saveSessionFile, userRoot, withDataRoot } from "./store.js";
+import { getProfile, getSessionFile, saveProfile, saveSessionFile, userRoot, withDataRoot } from "./store.js";
 // (auth.js imports this file too; both only use each other inside
 // functions, so the circle is harmless.)
-import { accountCookie, deriveAccountSecret, installSalt, isUid, sessionCookie, signAccountSession } from "./auth.js";
+import {
+  accountCookie,
+  deriveAccountSecret,
+  deriveOwnerSecret,
+  installSalt,
+  isOwnerEmail,
+  isUid,
+  ownerCookie,
+  retiredCookieRemoval,
+  signAccountSession,
+} from "./auth.js";
 
 export const DEFAULT_PROJECT_ID = "chernozem-danny";
 export const ROLES = ["farmer", "landowner", "government", "ngo", "research", "other"];
@@ -109,7 +150,8 @@ export const USER_KEEP_MS = 24 * 60 * 60 * 1000;
 
 // Kept on globalThis so the dev server, which reloads this file after
 // edits, keeps the one Firebase connection, the answers about accounts
-// (users: uid -> { ok, answeredAt, askedAt }) and the tests' stand-ins.
+// (users: uid -> { ok, answeredAt, askedAt, email, emailVerified }) and the
+// tests' stand-ins.
 const memory = (globalThis.__chernozemAccounts ??= { auth: null, verifyIdToken: null, getUser: null, revokeRefreshTokens: null, now: null, users: new Map() });
 // (An older copy of this file may have made the memory without it.)
 memory.users ??= new Map();
@@ -172,15 +214,43 @@ async function firebaseAuth() {
   return memory.auth;
 }
 
-// The decoded token ({ uid, email, name, email_verified, firebase: {
-// sign_in_provider } ...) when Firebase vouches for it. 401 bad_token when
-// the token itself is wrong or old; 503 accounts_off when it could not be
-// checked at all.
+// What Firebase says for certain about a user when a token is checked
+// with checkRevoked: its sessions were ended, it is disabled, or it is
+// gone. Any other failure of that part is Firebase not answering.
+const USER_ANSWERS = new Set(["auth/id-token-revoked", "auth/user-disabled", "auth/user-not-found"]);
+
+// Firebase's check of a token, with checkRevoked: a token whose Firebase
+// session was ended since (Sign out ends them: revokeRefreshTokens), or a
+// disabled or deleted user's, is refused. That part asks Firebase's admin
+// service, which needs the Google key (on Render: the Earth Engine key) or
+// the emulator. When only that part fails for another reason (no key on
+// this computer, Firebase not answering), the token is checked without it
+// (said once in the log); our own sign-out check (handleFirebaseSignIn)
+// still refuses a sign-in from before a Sign out.
+export async function verifyChecked(auth, idToken) {
+  try {
+    return await auth.verifyIdToken(idToken, true);
+  } catch (error) {
+    // The token itself is wrong or old: this check throws too.
+    const decoded = await auth.verifyIdToken(idToken);
+    if (USER_ANSWERS.has(String(error?.code || ""))) throw error;
+    if (!memory.warnedRevokeCheck) {
+      memory.warnedRevokeCheck = true;
+      console.warn(`[chernozem] Firebase could not be asked whether a sign-in was ended (${error.message}); it was checked without that. Said once.`);
+    }
+    return decoded;
+  }
+}
+
+// The decoded token ({ uid, email, name, email_verified, auth_time,
+// firebase: { sign_in_provider } ...) when Firebase vouches for it. 401
+// bad_token when the token itself is wrong, old or ended; 503 accounts_off
+// when it could not be checked at all.
 async function checkedToken(idToken) {
   try {
-    if (memory.verifyIdToken) return await memory.verifyIdToken(idToken);
+    if (memory.verifyIdToken) return await memory.verifyIdToken(idToken, true);
     const auth = await firebaseAuth();
-    return await auth.verifyIdToken(idToken);
+    return await verifyChecked(auth, idToken);
   } catch (error) {
     if (error instanceof HttpError) throw error;
     if (String(error?.code || "").startsWith("auth/")) {
@@ -194,45 +264,84 @@ async function checkedToken(idToken) {
 // ---------- Whether an account still exists, and signing out ----------
 // (See "WHEN A COOKIE STOPS COUNTING" at the top of this file.)
 
-// A sign-in is Firebase's own word that the account exists now: it counts
-// as this hour's answer.
-function noteSignedIn(uid) {
+// A sign-in is Firebase's own word that the account exists now, with this
+// e-mail, verified or not: it counts as this hour's answer.
+function noteSignedIn(uid, { email = null, emailVerified = false } = {}) {
   const now = clock();
-  memory.users.set(uid, { ok: true, answeredAt: now, askedAt: now });
+  memory.users.set(uid, { ok: true, answeredAt: now, askedAt: now, email, emailVerified });
 }
 
-// True while the Firebase user exists and is not disabled, as far as the
-// server knows (asked at most once an hour; see the top of this file).
-export async function firebaseUserOk(uid) {
-  const now = clock();
-  const known = memory.users.get(uid);
-  if (known) {
-    // A real answer is good for an hour; after a failed ask, ask again sooner.
-    const wait = known.answeredAt === known.askedAt ? USER_CHECK_MS : USER_RETRY_MS;
-    if (now - known.askedAt < wait) return known.ok;
-  }
-  let next;
+// Writes a changed e-mail or verification into the account's profile.json
+// (best-effort: a failure only means it is asked again later).
+async function refreshProfile(uid, { email, emailVerified }) {
   try {
-    const user = memory.getUser ? await memory.getUser(uid) : await (await firebaseAuth()).getUser(uid);
-    next = { ok: Boolean(user) && !user.disabled, answeredAt: now, askedAt: now };
+    await withDataRoot(userRoot(uid), async () => {
+      const saved = await getProfile();
+      if (!saved) return;
+      const next = { ...saved };
+      if (email) next.email = email;
+      if (typeof emailVerified === "boolean") next.emailVerified = emailVerified;
+      if (next.email !== saved.email || next.emailVerified !== saved.emailVerified) await saveProfile(next);
+    });
   } catch (error) {
-    if (error?.code === "auth/user-not-found") {
-      next = { ok: false, answeredAt: now, askedAt: now };
-    } else {
-      // Firebase could not be asked. The last answer (or, with none since
-      // the server started, the signed cookie itself) stays good for a day
-      // from the last answer, then the account must sign in again.
-      const answeredAt = known?.answeredAt ?? now;
-      const ok = now - answeredAt < USER_KEEP_MS ? known?.ok ?? true : false;
-      next = { ok, answeredAt, askedAt: now };
-      if (!memory.warnedUserCheck) {
-        memory.warnedUserCheck = true;
-        console.warn(`[chernozem] Could not ask Firebase whether an account still exists (${error.message}). The last answer stays good for a day. Said once.`);
+    console.warn(`[chernozem] An account's profile could not be brought up to date (${error.message}).`);
+  }
+}
+
+// What the server knows about a Firebase user (asked at most once an hour;
+// see the top of this file): { ok, email, emailVerified }. ok while the
+// user exists and is not disabled; email and emailVerified as Firebase
+// last said them (at the sign-in or the hourly check), else as the
+// profile says. profile: the account's profile.json, or null.
+export async function firebaseUserState(uid, profile = null) {
+  const now = clock();
+  let known = memory.users.get(uid);
+  // A real answer is good for an hour; after a failed ask, ask again sooner.
+  const wait = known ? (known.answeredAt === known.askedAt ? USER_CHECK_MS : USER_RETRY_MS) : 0;
+  if (!known || now - known.askedAt >= wait) {
+    let next;
+    try {
+      const user = memory.getUser ? await memory.getUser(uid) : await (await firebaseAuth()).getUser(uid);
+      next = {
+        ok: Boolean(user) && !user.disabled,
+        answeredAt: now,
+        askedAt: now,
+        email: cleanEmail(user?.email) || known?.email || null,
+        emailVerified: typeof user?.emailVerified === "boolean" ? user.emailVerified : known?.emailVerified,
+      };
+      if (next.ok && profile && ((next.email && next.email !== profile.email) || (typeof next.emailVerified === "boolean" && next.emailVerified !== Boolean(profile.emailVerified)))) {
+        await refreshProfile(uid, next);
+      }
+    } catch (error) {
+      if (error?.code === "auth/user-not-found") {
+        next = { ok: false, answeredAt: now, askedAt: now, email: null, emailVerified: false };
+      } else {
+        // Firebase could not be asked. The last answer (or, with none since
+        // the server started, the signed cookie itself) stays good for a day
+        // from the last answer, then the account must sign in again.
+        const answeredAt = known?.answeredAt ?? now;
+        const ok = now - answeredAt < USER_KEEP_MS ? known?.ok ?? true : false;
+        next = { ...(known || {}), ok, answeredAt, askedAt: now };
+        if (!memory.warnedUserCheck) {
+          memory.warnedUserCheck = true;
+          console.warn(`[chernozem] Could not ask Firebase whether an account still exists (${error.message}). The last answer stays good for a day. Said once.`);
+        }
       }
     }
+    memory.users.set(uid, next);
+    known = next;
   }
-  memory.users.set(uid, next);
-  return next.ok;
+  return {
+    ok: known.ok,
+    email: known.email || profile?.email || null,
+    emailVerified: typeof known.emailVerified === "boolean" ? known.emailVerified : Boolean(profile?.emailVerified),
+  };
+}
+
+// True while the Firebase user exists and is not disabled (the part of
+// firebaseUserState older callers asked for).
+export async function firebaseUserOk(uid) {
+  return (await firebaseUserState(uid)).ok;
 }
 
 // Ends the account's Firebase sessions (its refresh tokens), best-effort:
@@ -296,6 +405,14 @@ export function accountSummary(uid, profile) {
   const name = typeof profile?.name === "string" ? profile.name : "";
   const product = PRODUCTS.includes(profile?.product) ? profile.product : null;
   return { uid, email: profile?.email || null, name, product, profileComplete: Boolean(name && product) };
+}
+
+// What the pages get about the owner: the same, with owner: true. The
+// owner needs no profile (both products are the owner's), so
+// profileComplete is always true; product is the one the owner's profile
+// chose, if any. email: the one Firebase gave last.
+export function ownerSummary(uid, profile, email = null) {
+  return { ...accountSummary(uid, profile), email: email || profile?.email || null, profileComplete: true, owner: true };
 }
 
 // A text field of the profile: a string up to `max` characters (whitespace
@@ -365,6 +482,17 @@ function publicProfile(uid, profile) {
 
 // ---------- Routes ----------
 
+// True when this Firebase sign-in was made before the account's last
+// "Sign out" (its auth_time, else when the token was made, iat; both in
+// seconds), so a token copied before the Sign out cannot open a new
+// session after it.
+function signedInBefore(decoded, signedOut) {
+  const validFrom = Date.parse(signedOut?.sessionsValidFrom || "");
+  if (!Number.isFinite(validFrom)) return false;
+  const seconds = Number(decoded?.auth_time ?? decoded?.iat);
+  return Number.isFinite(seconds) && seconds * 1000 < validFrom;
+}
+
 // POST /api/auth/firebase (called by server/auth.js handleAuth).
 export async function handleFirebaseSignIn(req, res) {
   const body = await readJson(req);
@@ -373,9 +501,13 @@ export async function handleFirebaseSignIn(req, res) {
   const decoded = await checkedToken(idToken);
   const uid = decoded?.uid || decoded?.sub;
   if (!isUid(uid)) throw new HttpError(401, "bad_token", "That sign-in is not valid. Sign in again.");
+  const root = userRoot(uid);
+  if (signedInBefore(decoded, await withDataRoot(root, () => getSessionFile()))) {
+    throw new HttpError(401, "bad_token", "That sign-in ended when you signed out. Sign in again.");
+  }
 
   const now = new Date().toISOString();
-  const profile = await withDataRoot(userRoot(uid), async () => {
+  const profile = await withDataRoot(root, async () => {
     const saved = (await getProfile()) || {};
     const next = {
       ...emptyProfile(),
@@ -394,31 +526,48 @@ export async function handleFirebaseSignIn(req, res) {
     return saveProfile(next);
   });
 
-  noteSignedIn(uid);
-  const token = signAccountSession(deriveAccountSecret(await installSalt()), uid);
-  // This browser is the account from now on; the owner's cookie, if
-  // it had one, goes (server/auth.js prefers the account cookie).
-  res.setHeader("Set-Cookie", [accountCookie(req, token), sessionCookie(req, "", 0)]);
+  const email = cleanEmail(decoded.email) || profile.email || null;
+  const emailVerified = decoded.email_verified === true;
+  noteSignedIn(uid, { email, emailVerified });
+  const salt = await installSalt();
+  // The owner: Google verified the e-mail, and it is one of OWNER_EMAILS.
+  if (emailVerified && isOwnerEmail(email)) {
+    const token = signAccountSession(deriveOwnerSecret(salt), uid);
+    res.setHeader("Set-Cookie", [ownerCookie(req, token), accountCookie(req, "", 0), retiredCookieRemoval(req)]);
+    return sendJson(res, 200, { ok: true, account: ownerSummary(uid, profile, email) });
+  }
+  // Anyone else is this account from now on; the owner's cookie, if the
+  // browser had one, goes.
+  const token = signAccountSession(deriveAccountSecret(salt), uid);
+  res.setHeader("Set-Cookie", [accountCookie(req, token), ownerCookie(req, "", 0), retiredCookieRemoval(req)]);
   sendJson(res, 200, { ok: true, account: accountSummary(uid, profile) });
 }
 
-// GET and PUT /api/account (called by server/app.js inside the account's
-// folder). session: what server/auth.js handleAuth gave back.
+// GET and PUT /api/account (called by server/app.js inside the session's
+// folder). session: what server/auth.js handleAuth gave back. The owner's
+// session runs in the demo's folder, so the owner's own profile is read
+// and written in the owner's own folder (users/<id>/) instead: a Register
+// or Sign in page the owner happens to use never writes into the demo.
 export async function handleAccountRoutes(req, res, { method, parts, pathname, session }) {
   if (parts.length > 1) throw new HttpError(404, "not_found", `No such API route: ${pathname}`);
-  if (!session || session.kind !== "account") throw new HttpError(401, "auth_required", "Sign in to your account first.");
+  const owner = session?.kind === "owner";
+  if (!session || (session.kind !== "account" && !owner) || !session.account) throw new HttpError(401, "auth_required", "Sign in to your account first.");
   const { uid } = session.account;
+  const summary = (profile) => (owner ? ownerSummary(uid, profile, session.account.email) : accountSummary(uid, profile));
+  const inOwnFolder = (work) => (owner ? withDataRoot(userRoot(uid), work) : work());
 
   if (method === "GET") {
-    const profile = await getProfile();
-    return sendJson(res, 200, { account: accountSummary(uid, profile), profile: publicProfile(uid, profile) });
+    const profile = await inOwnFolder(() => getProfile());
+    return sendJson(res, 200, { account: summary(profile), profile: publicProfile(uid, profile) });
   }
   if (method === "PUT") {
     const changes = checkProfileChanges(await readJson(req));
-    const saved = (await getProfile()) || {};
-    const now = new Date().toISOString();
-    const profile = await saveProfile({ ...emptyProfile(), ...saved, ...changes, uid, createdAt: saved.createdAt || now, updatedAt: now });
-    return sendJson(res, 200, { ok: true, account: accountSummary(uid, profile), profile: publicProfile(uid, profile) });
+    const profile = await inOwnFolder(async () => {
+      const saved = (await getProfile()) || {};
+      const now = new Date().toISOString();
+      return saveProfile({ ...emptyProfile(), ...saved, ...changes, uid, createdAt: saved.createdAt || now, updatedAt: now });
+    });
+    return sendJson(res, 200, { ok: true, account: summary(profile), profile: publicProfile(uid, profile) });
   }
   res.setHeader("Allow", "GET, PUT");
   throw new HttpError(405, "method_not_allowed", `${method} is not supported on ${pathname}.`);

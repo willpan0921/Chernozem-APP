@@ -24,14 +24,18 @@
 //                                    contact form (Atlas Settings shows them
 //                                    to the owner)
 //   getAuthStatus() / signOut()      who this browser is, and ending its sign-in
-//   signIn(key)                      the owner's key (the hidden /owner page)
+//                                    (signing in is the website's: the owner
+//                                    on /owner, accounts on /signin and
+//                                    /register, through Firebase)
 //   getAccount()                     a registered person's account and profile
 //
 // WHO IS ASKING (server/auth.js)
-// The browser sends its cookies by itself: the owner's (signed in with the
-// owner's key on the hidden /owner page) or a registered account's (set by
-// the website's sign-in page). Without either, the server answers as the
-// public demo: the Ukraine data, read-only. A tab that chose the demo on
+// The browser sends its cookie by itself: the one the server sets after a
+// Firebase sign-in, either the owner's (the Chernozem Google account,
+// signed in on the hidden /owner page; the server checks its e-mail
+// against OWNER_EMAILS) or a registered account's (the website's sign-in
+// and register pages). Without one, the server answers as the public demo:
+// the Ukraine data, read-only. A tab that chose the demo on
 // the website's Demo page also sends the header X-Chernozem-View: demo with
 // every call here (src/lib/demoMode.js demoHeaders), so an account holder
 // sees the demo there instead of their own workspace.
@@ -86,7 +90,7 @@ export const ACCOUNT_SIGNED_OUT_EVENT = "chernozem:account-signed-out";
 export const DEMO_READ_ONLY_EVENT = "chernozem:demo-read-only";
 
 // Tells the access gate to ask who this is again (only for "not signed
-// in", not for a wrong key typed on the owner's page).
+// in", code "auth_required"; no other 401, such as a refused sign-in).
 function noticeSignedOut(error) {
   if (error?.status === 401 && error.code === "auth_required" && typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT));
@@ -173,24 +177,26 @@ export const getStatus = (options) => request("GET", "/status", undefined, optio
 // ---------- Who is asking ----------
 
 // -> { required, signedIn, shared, account, mode, readOnly }: mode "demo"
-// (read-only), "owner", "open" (no key set on the server) or "account";
-// account is null unless mode is "account", then { uid, email, name,
-// product: "field" | "atlas" | null, profileComplete } (src/lib/access.js
-// reads it). While this tab looks at the demo the answer is the demo's;
+// (read-only), "owner" (the Chernozem Google account), "open" (one's own
+// computer: no owner sign-in needed) or "account". account is { uid,
+// email, name, product: "field" | "atlas" | null, profileComplete } for an
+// account, the same with owner: true for the owner's Google account, else
+// null (src/lib/access.js reads it: accountOf, ownerOf). While this tab
+// looks at the demo the answer is the demo's (the owner stays the owner);
 // options.view "own" asks without that (who the browser itself is).
 export const getAuthStatus = (options) => request("GET", "/auth/status", undefined, options);
 
-// Signs this browser in with the owner's key for 30 days (the hidden
-// /owner page; the server's ATLAS_ACCESS_CODE). Throws an ApiError with
-// code "wrong_code" or "too_many_attempts" (wait 10 minutes).
-export const signIn = (code) => request("POST", "/auth/login", { code });
+// (The old owner's key, POST /api/auth/login, is retired: the server
+// answers 410 "owner_key_retired", since that key was handed out to
+// visitors. The owner signs in with Google on /owner instead:
+// src/lib/firebase.js, then src/api/accountApi.js postFirebaseToken.)
 
-// Signs this browser out (the owner's cookie and the account's cookie both
-// end on the server). For a registered account the browser's own Firebase
-// sign-in is ended too (the website's sign-in page would otherwise offer
-// "Continue as ..." to the next person at this computer); Firebase is
-// downloaded only for that, and only then. The app's buttons then go back
-// to the website.
+// Signs this browser out (the owner's sign-in and an account's both end on
+// the server). With account: true the browser's own Firebase sign-in is
+// ended too (the owner's Google sign-in and a registered account's alike:
+// the website's sign-in pages would otherwise offer "Continue as ..." to the
+// next person at this computer); Firebase is downloaded only for that, and
+// only then. The app's buttons then go back to the website.
 export async function signOut({ account = false } = {}) {
   await request("POST", "/auth/logout", {});
   if (account) {

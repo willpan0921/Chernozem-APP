@@ -9,10 +9,12 @@
 //     server/mail.js); one that could not be sent yet is tried again
 //     later, so none is lost. Throws an Error
 //     whose message is the server's own words ("Enter your name.", "Too
-//     many messages in a row. Try again in 42 minutes."), with error.code
-//     ("bad_request", "too_many", "too_large", "offline"...) and
-//     error.status (the HTTP status; 0 when the server could not be
-//     reached).
+//     many messages in a row. Try again in 42 minutes.", or, when the form
+//     as a whole has taken all it may for now, 429 "busy": "The form is
+//     busy right now. Please write to chernozem.app@gmail.com."), with
+//     error.code ("bad_request", "too_many", "busy", "too_large",
+//     "offline"...) and error.status (the HTTP status; 0 when the server
+//     could not be reached).
 //     "role" is who the visitor says they are ("Farmer"...; 60 characters
 //     at most). "website" is the form's hidden honeypot field: send it
 //     along as it is (empty for people; a robot that fills it is told ok

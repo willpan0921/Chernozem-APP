@@ -53,8 +53,11 @@
 //                                       (server/soil.js)
 //   /api/chat, /api/chats...            the AI (server/ai/chat.js)
 //   /api/farm..., /api/geocode          the Field product (server/field/routes.js)
-//   /api/auth/status, login, logout     who is asking, the owner's key (server/auth.js)
-//   POST   /api/auth/firebase           a registered account's sign-in
+//   /api/auth/status, logout            who is asking (server/auth.js);
+//                                       /api/auth/login, the retired access
+//                                       code's, answers 410
+//   POST   /api/auth/firebase           a Google or e-mail sign-in: a
+//                                       registered account, or the owner
 //                                       (server/accounts.js)
 //   GET    /api/account                 the signed-in account and its profile
 //   PUT    /api/account                 change the profile (server/accounts.js)
@@ -64,7 +67,8 @@
 //                                       IMPORT_TOKEN is set (server/import.js)
 //   POST   /api/contact                 a message from the public website's
 //                                       contact form (open to everyone; 5
-//                                       an hour per visitor; kept, then
+//                                       an hour per visitor, and caps for
+//                                       all visitors together; kept, then
 //                                       e-mailed to chernozem.app@gmail.com:
 //                                       server/messages.js, server/mail.js)
 //   GET    /api/messages                those messages, newest first, with
@@ -72,14 +76,14 @@
 //                                       Settings shows them to the owner)
 //   DELETE /api/messages/:id            remove one
 //
-// WHO IS ASKING (server/auth.js): the owner (the owner's key, typed on the
-// hidden page /owner), "open" (no key set: one's own computer), a
-// registered account, or the public demo (everyone else when a key is
-// set, and any request with the header "X-Chernozem-View: demo" that does
-// not bring the owner's cookie). Nobody is turned away at the door: a
-// visitor without a cookie is the demo. Open to everyone before that:
-// /api/health, /api/contact, /api/world/... and /api/admin/import (which
-// has its own token).
+// WHO IS ASKING (server/auth.js): the owner (signed in with the Chernozem
+// Google account on the hidden page /owner), "open" (one's own computer
+// without ATLAS_ACCESS_CODE; never online), a registered account, or the
+// public demo (everyone else, and any request with the header
+// "X-Chernozem-View: demo" that does not bring the owner's cookie). Nobody
+// is turned away at the door: a visitor without a cookie is the demo.
+// Open to everyone before that: /api/health, /api/contact, /api/world/...
+// and /api/admin/import (which has its own token).
 //
 // THE PUBLIC DEMO IS READ-ONLY (assertDemoMayDo below)
 // In a demo session every request that would change something (anything

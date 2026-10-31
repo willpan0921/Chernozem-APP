@@ -1,16 +1,20 @@
 // WHAT THIS FILE DOES
 // The 3D Earth on the About page (drawn for WorldGlobe.jsx), built directly
 // on three.js: the sphere wearing the black-soil picture, a thin
-// atmosphere rim, one warm light that keeps the side under the page's
-// words in shade, the arcs from an event to the countries that buy its
-// food (a faint route and a bright "shipment" dash travelling along it),
-// the rings that pulse out from armed conflicts and red alerts, and the
+// atmosphere rim, one warm light from just above the visitor's shoulder (so
+// the side the visitor sees is lit, and only the far edge falls into a soft
+// shade), the arcs from an event to the countries whose food depends on it
+// (a faint route and a bright "shipment" dash travelling along it), the
+// rings that pulse out from armed conflicts and red alerts, and the
 // drag-to-turn controls. It is downloaded only when the globe is about to
-// be drawn (WorldGlobe.jsx imports it after the page's first paint).
+// be drawn (WorldGlobe.jsx imports it once the still picture is on screen).
 //
 // It never draws by itself: WorldGlobe owns the one animation loop and
 // calls render() only when something changed or moves, so a still globe
-// costs nothing.
+// costs nothing. The arcs' few drawing materials are kept and used again
+// from one stop to the next, so the graphics card builds their program once
+// per visit; dispose() gives everything back, including the key listener
+// the drag controls put on the page itself.
 //
 // The scene's axes and units are three-globe's (the library the first
 // globe used), so the earlier tuning carries over: radius 100, y towards
@@ -53,7 +57,15 @@ import { FOV, toVector } from "./globeMath.js";
 
 export const RADIUS = 100;
 
-const KEY_LIGHT = { landscape: [2.6, 0.6, 0.2], portrait: [0.9, 2.6, 0.5] }; // camera space, in radii
+// The light. The key light's place is in the camera's own space, in Earth
+// radii (x to the right, y up, z towards the visitor): a little above and
+// to the right of the camera, so the side facing the visitor is lit and the
+// Earth still looks round. The ambient light keeps the far edge from going
+// black. (three.js divides both by pi for these materials, so PI * 0.5 is
+// half of full light.)
+const KEY_LIGHT = { landscape: [0.5, 0.9, 1.2], portrait: [0.4, 1.0, 1.2] };
+const AMBIENT = Math.PI * 0.5;
+const KEY = Math.PI * 1.1;
 const ARC_COLOUR = [0xf1 / 255, 0xe3 / 255, 0xbf / 255]; // #f1e3bf, written as the screen shows it
 const ATMOSPHERE = { color: "#a9c1d6", altitude: 0.13 };
 const RING = { maxDeg: 3.4, degPerSec: 1.3, altitude: 0.0025, segments: 64 };
@@ -179,7 +191,31 @@ function arcCurve(start, end, autoScale) {
   return new CubicBezierCurve3(at(a, 0), at(along(0.25), lift), at(along(0.75), lift), at(b, 0));
 }
 
-function arcMesh(arc, autoScale) {
+// One arc's drawing material. All arcs share the same shader code, so while
+// any of these materials is kept the graphics card keeps the program built
+// for it; the scene keeps a few in a pool and hands them out again.
+function arcMaterial() {
+  return new ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    vertexShader: arcVertex,
+    fragmentShader: arcFragment,
+    uniforms: {
+      color: { value: new Vector3(...ARC_COLOUR) },
+      opacity: { value: 1 },
+      dashOffset: { value: 0 },
+      dashSize: { value: 1 },
+      gapSize: { value: 0 },
+      dashTranslate: { value: 0 },
+    },
+  });
+}
+
+// The points the arc's line passes through, to see where it would cross the
+// screen (the same curve as its tube).
+const ARC_SAMPLES = 16;
+
+function arcMesh(arc, autoScale, material) {
   const curve = arcCurve({ lat: arc.startLat, lng: arc.startLng }, { lat: arc.endLat, lng: arc.endLng }, autoScale);
   const geometry = new TubeGeometry(curve, TUBE_SEGMENTS, arc.stroke / 2, TUBE_SIDES, false);
   const count = geometry.attributes.position.count;
@@ -187,22 +223,14 @@ function arcMesh(arc, autoScale) {
   // From the far end back to the start, so the dashes travel outwards.
   for (let i = 0; i < count; i++) rel[i] = 1 - Math.floor(i / (TUBE_SIDES + 1)) / TUBE_SEGMENTS;
   geometry.setAttribute("relDistance", new BufferAttribute(rel, 1));
-  const material = new ShaderMaterial({
-    transparent: true,
-    depthWrite: false,
-    vertexShader: arcVertex,
-    fragmentShader: arcFragment,
-    uniforms: {
-      color: { value: new Vector3(...ARC_COLOUR) },
-      opacity: { value: arc.opacity },
-      dashOffset: { value: arc.dashOffset || 0 },
-      dashSize: { value: arc.dashSize ?? 1 },
-      gapSize: { value: arc.gapSize ?? 0 },
-      dashTranslate: { value: 0 },
-    },
-  });
+  const u = material.uniforms;
+  u.opacity.value = arc.opacity;
+  u.dashOffset.value = arc.dashOffset || 0;
+  u.dashSize.value = arc.dashSize ?? 1;
+  u.gapSize.value = arc.gapSize ?? 0;
+  u.dashTranslate.value = 0;
   const mesh = new Mesh(geometry, material);
-  mesh.userData = { arc };
+  mesh.userData = { arc, points: curve.getPoints(ARC_SAMPLES), blocked: false };
   mesh.renderOrder = arc.kind === "ship" ? 3 : 2;
   return mesh;
 }
@@ -226,6 +254,9 @@ export function createGlobeScene(host, { width, height, offset = [0, 0], view, l
   canvas.style.display = "block";
   canvas.setAttribute("aria-hidden", "true");
   host.appendChild(canvas);
+  // The page the canvas lives on: the drag controls listen for keys there,
+  // and dispose() must reach it even after the page has taken the canvas out.
+  const doc = canvas.ownerDocument;
 
   let disposed = false;
   const onLost = (event) => {
@@ -239,9 +270,9 @@ export function createGlobeScene(host, { width, height, offset = [0, 0], view, l
   scene.add(camera);
 
   // The light: soft all round, and one warm key light carried by the camera
-  // (so the shade stays on the words' side whichever way the globe turns).
-  scene.add(new AmbientLight(0xffffff, Math.PI * 0.34));
-  const key = new DirectionalLight(0xfff1dc, Math.PI * 1.25);
+  // (so the side the visitor sees stays lit whichever way the globe turns).
+  scene.add(new AmbientLight(0xffffff, AMBIENT));
+  const key = new DirectionalLight(0xfff1dc, KEY);
   camera.add(key);
   const aim = new Object3D();
   scene.add(aim);
@@ -341,34 +372,52 @@ export function createGlobeScene(host, { width, height, offset = [0, 0], view, l
   // ---------- Arcs ----------
 
   let arcs = [];
+  const spareArcMaterials = []; // kept for the next stop's arcs (see arcMaterial)
+  let shippingNow = true;
   function setArcs(list) {
     for (const mesh of arcs) {
       arcGroup.remove(mesh);
       mesh.geometry.dispose();
-      mesh.material.dispose();
+      spareArcMaterials.push(mesh.material);
     }
-    arcs = (list || []).map((arc) => arcMesh(arc, arc.autoScale ?? 0.32));
-    for (const mesh of arcs) arcGroup.add(mesh);
+    arcs = (list || []).map((arc) => arcMesh(arc, arc.autoScale ?? 0.32, spareArcMaterials.pop() || arcMaterial()));
+    for (const mesh of arcs) {
+      showArc(mesh);
+      arcGroup.add(mesh);
+    }
+  }
+
+  // A shipment dash shows only while the tour runs; any arc that would cross
+  // the page's words is hidden (fitArcs).
+  function showArc(mesh) {
+    mesh.visible = !mesh.userData.blocked && (mesh.userData.arc.kind !== "ship" || shippingNow);
   }
 
   // shipping: dashes run; routeOpacity: the faint line under them; bright:
   // the buyer whose row the pointer is on.
   function styleArcs({ routeOpacity, shipping, bright = null }) {
+    shippingNow = shipping;
     for (const mesh of arcs) {
       const { arc } = mesh.userData;
       const lit = bright && arc.iso3 === bright;
-      if (arc.kind === "ship") {
-        mesh.visible = shipping;
-        mesh.material.uniforms.opacity.value = lit ? 1 : arc.opacity;
-      } else {
-        mesh.material.uniforms.opacity.value = lit ? 1 : routeOpacity;
-      }
+      mesh.material.uniforms.opacity.value = lit ? 1 : arc.kind === "ship" ? arc.opacity : routeOpacity;
+      showArc(mesh);
     }
   }
 
-  // Points along an arc's curve (to see where it would pass on the screen).
-  function arcPoints(arc, count = 12) {
-    return arcCurve({ lat: arc.startLat, lng: arc.startLng }, { lat: arc.endLat, lng: arc.endLng }, arc.autoScale ?? 0.32).getPoints(count);
+  // Hides every arc that crosses(points) says crosses something (the words,
+  // the controls): it gets the arc's line as points on the canvas (x, y in
+  // CSS pixels, and whether each is on the side facing the camera), and is
+  // asked again whenever the camera moves, so a turned Earth never draws an
+  // arc over the words. A route and its shipment share one answer.
+  function fitArcs(crosses) {
+    const answers = new Map();
+    for (const mesh of arcs) {
+      const buyer = mesh.userData.arc.iso3 || mesh.id;
+      if (!answers.has(buyer)) answers.set(buyer, !!crosses(mesh.userData.points.map(projectPoint)));
+      mesh.userData.blocked = answers.get(buyer);
+      showArc(mesh);
+    }
   }
 
   function moveDashes(ms) {
@@ -495,12 +544,22 @@ export function createGlobeScene(host, { width, height, offset = [0, 0], view, l
   }
 
   // Everything this scene made, given back, then the drawing context itself.
+  // The drag controls put a key listener on the page (to notice the Control
+  // key); they take it off the canvas's own page, which is no longer this
+  // document once the page has removed the canvas, so it is taken off here
+  // too (otherwise the page would keep the whole scene alive).
   function dispose() {
     if (disposed) return;
     disposed = true;
     canvas.removeEventListener("webglcontextlost", onLost);
     controls.dispose();
+    if (doc) {
+      if (typeof controls._interceptControlDown === "function") doc.removeEventListener("keydown", controls._interceptControlDown, { capture: true });
+      if (typeof controls._interceptControlUp === "function") doc.removeEventListener("keyup", controls._interceptControlUp, { capture: true });
+    }
     setArcs([]);
+    for (const m of spareArcMaterials) m.dispose();
+    spareArcMaterials.length = 0;
     setRings([]);
     scene.traverse((obj) => {
       if (obj.geometry) obj.geometry.dispose();
@@ -538,7 +597,7 @@ export function createGlobeScene(host, { width, height, offset = [0, 0], view, l
     setWater,
     upload,
     setArcs,
-    arcPoints,
+    fitArcs,
     styleArcs,
     moveDashes,
     setRings,

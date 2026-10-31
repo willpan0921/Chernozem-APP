@@ -1,14 +1,16 @@
 // WHAT THIS FILE DOES
 // Tests server/field/images.js: a real PNG, JPEG or WebP header gives its
 // kind and size; the right first bytes followed by junk give nothing; so
-// does anything else. Run with "npm test".
+// does anything else. And a JPEG's hidden details (EXIF with its GPS
+// position, XMP, IPTC, comments) are taken out, the Orientation kept and
+// the picture's bytes left as they were. Run with "npm test".
 //
 // WHO EDITS IT
 // Whoever changes images.js.
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { imageInfo } from "./images.js";
+import { imageInfo, stripJpegMetadata } from "./images.js";
 
 // A real 1 x 1 PNG (67 bytes).
 const PNG_1x1 = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
@@ -95,4 +97,89 @@ test("the right first bytes followed by junk, and anything else, give nothing", 
   assert.equal(imageInfo(PNG_1x1.subarray(0, 20)), null, "cut before the size");
   assert.equal(imageInfo("not a buffer"), null);
   assert.equal(imageInfo(null), null);
+});
+
+// ---------- A JPEG's hidden details ----------
+
+// One JPEG segment: its marker and its bytes.
+function segment(marker, payload) {
+  const head = Buffer.from([0xff, marker, 0, 0]);
+  head.writeUInt16BE(payload.length + 2, 2);
+  return Buffer.concat([head, payload]);
+}
+
+// An EXIF block as a phone writes it (little-endian): the Orientation in
+// the first directory and a pointer to a GPS directory with a latitude.
+function phoneExif(orientation) {
+  const tiff = Buffer.alloc(64);
+  tiff.write("II", 0, "latin1");
+  tiff.writeUInt16LE(42, 2);
+  tiff.writeUInt32LE(8, 4);
+  tiff.writeUInt16LE(2, 8); // two entries
+  tiff.writeUInt16LE(0x0112, 10); // Orientation, SHORT, 1
+  tiff.writeUInt16LE(3, 12);
+  tiff.writeUInt32LE(1, 14);
+  tiff.writeUInt16LE(orientation, 18);
+  tiff.writeUInt16LE(0x8825, 22); // GPS directory, LONG, 1, at 38
+  tiff.writeUInt16LE(4, 24);
+  tiff.writeUInt32LE(1, 26);
+  tiff.writeUInt32LE(38, 30);
+  tiff.writeUInt32LE(0, 34); // no next directory
+  tiff.writeUInt16LE(1, 38); // GPS: one entry, latitude reference "N"
+  tiff.writeUInt16LE(0x0001, 40);
+  tiff.writeUInt16LE(2, 42);
+  tiff.writeUInt32LE(2, 44);
+  tiff.write("N", 48, "latin1");
+  tiff.write("GPS-MARK", 54, "latin1");
+  return segment(0xe1, Buffer.concat([Buffer.from("Exif\0\0", "latin1"), tiff]));
+}
+
+function phonePhoto({ orientation = 6, extras = true } = {}) {
+  const plain = jpegOf(640, 480);
+  const start = plain.subarray(0, 2);
+  const app0 = plain.subarray(2, 20);
+  const rest = plain.subarray(20);
+  const parts = [start, app0, phoneExif(orientation)];
+  if (extras) {
+    parts.push(segment(0xe1, Buffer.from("http://ns.adobe.com/xap/1.0/\0<x:xmpmeta>Kupiansk field 4</x:xmpmeta>", "latin1")));
+    parts.push(segment(0xed, Buffer.from("Photoshop 3.0\0IPTC by Olena", "latin1")));
+    parts.push(segment(0xfe, Buffer.from("taken on the north field", "latin1")));
+    parts.push(segment(0xe2, Buffer.from("ICC_PROFILE\0colours", "latin1")));
+  }
+  return Buffer.concat([...parts, rest]);
+}
+
+test("a JPEG's hidden details are taken out: EXIF and its GPS position, XMP, IPTC, comments; the Orientation, the colour profile and the picture stay", () => {
+  const photo = phonePhoto();
+  const clean = stripJpegMetadata(photo);
+  const text = clean.toString("latin1");
+  for (const hidden of ["GPS-MARK", "xmpmeta", "Kupiansk", "IPTC", "Olena", "north field"]) assert.ok(!text.includes(hidden), hidden);
+  assert.ok(text.includes("ICC_PROFILE"), "the colour profile is kept");
+  assert.deepEqual(imageInfo(clean), { kind: "jpg", width: 640, height: 480 }, "still the same picture");
+  // The scan and everything after it are the same bytes.
+  const scan = (buffer) => buffer.subarray(buffer.indexOf(Buffer.from([0xff, 0xda])));
+  assert.deepEqual(scan(clean), scan(photo));
+  // JFIF's APP0 first, then a tiny EXIF block with only the Orientation (6: turned).
+  assert.deepEqual([...clean.subarray(0, 4)], [0xff, 0xd8, 0xff, 0xe0]);
+  const exifAt = clean.indexOf(Buffer.from("Exif\0\0", "latin1"));
+  assert.equal(clean[exifAt - 4], 0xff);
+  assert.equal(clean[exifAt - 3], 0xe1);
+  assert.equal(clean.readUInt16BE(exifAt - 2), 2 + 6 + 26, "34 bytes: nothing but the Orientation");
+  assert.equal(clean.toString("latin1", exifAt + 6, exifAt + 8), "MM");
+  assert.equal(clean.readUInt16BE(exifAt + 6 + 18), 6);
+  assert.ok(clean.length < photo.length);
+
+  // Upright already (Orientation 1): no EXIF block at all.
+  const upright = stripJpegMetadata(phonePhoto({ orientation: 1, extras: false }));
+  assert.equal(upright.indexOf(Buffer.from("Exif", "latin1")), -1);
+  assert.deepEqual(imageInfo(upright), { kind: "jpg", width: 640, height: 480 });
+});
+
+test("a JPEG with nothing hidden, a broken one, or another kind of file comes back as it was", () => {
+  const plain = jpegOf(10, 20);
+  assert.equal(stripJpegMetadata(plain), plain, "nothing to take out: the same bytes");
+  const broken = Buffer.concat([plain.subarray(0, 2), Buffer.from([0xff, 0xe1, 0x40, 0x00, 0x01])]);
+  assert.equal(stripJpegMetadata(broken), broken, "a segment longer than the file");
+  for (const other of [PNG_1x1, Buffer.from("not a photo"), Buffer.alloc(0)]) assert.equal(stripJpegMetadata(other), other);
+  assert.equal(stripJpegMetadata(null), null);
 });

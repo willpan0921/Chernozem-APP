@@ -7,10 +7,16 @@
 //                           gives that size
 //   aimFor(event, buyers)   where the camera looks when the tour stops at an
 //                           event: between the event and the countries that
-//                           buy its food
+//                           buy its food (aimInside: the same, kept clear of
+//                           the page's words on a wide screen)
+//   buyersOf(event, trade)  whose food depends on the event's country, each
+//                           figure with its year (none from before a war)
 //   tourStops(events)       the order the tour visits the events in
 //   flightMs(degrees)       how long the camera takes to fly that far
 //   captionFor(event, ...)  the words on the small tile beside the marker
+//   alertWhen(event, now)   when a disaster alert ran: "since 26 October
+//                           2026", or once it is over "from 14 to 25
+//                           October 2026"
 // and the small helpers they share: distances and directions on the sphere,
 // where a place appears on the screen, dates read in UTC (so a visitor in
 // California still reads "since February 2022"), and country names said the
@@ -43,23 +49,31 @@ export function altitudeFor(D, H) {
   return 1 / Math.sin(half) - 1;
 }
 
-// Landscape (wider than 1.1 : 1): the Earth sits right of the words and runs
-// off the top, the right and the bottom. Portrait: centred, a little wider
-// than the screen, in the upper part, with the words at the foot.
+// Landscape (wider than 1.1 : 1): the Earth fills the hero. It is a little
+// wider than the screen (1.05 times, at least 1.5 times the height, at most
+// 2.7 times it, so a very wide screen still gets a whole Earth's curve), its
+// left edge runs behind the words 4% of the width in from the left (24 to
+// 120 px), and it runs off the top, the right and the bottom. Only a
+// screen far wider than 21:9 is left with a band of space on the left.
+// Portrait: centred, 1.5 times the width on a phone (1.1 times on a
+// tablet). On a phone its centre is at half the hero's height, so the
+// controls at the top lie over its edge rather than its middle and the
+// Earth fills the space down to the words at the foot (on a tablet, 40%).
 export function globeLayout(W, H) {
   const landscape = W / H >= 1.1;
   let D;
   let cx;
   let cy;
   if (landscape) {
-    D = Math.min(Math.max(1.25 * H, 0.78 * W), 1.6 * H);
-    cx = W - 0.42 * D;
+    D = Math.min(Math.max(1.05 * W, 1.5 * H), 2.7 * H);
+    const edge = clamp(0.04 * W, 24, 120);
+    cx = Math.max(edge + D / 2, W - 0.45 * D);
     cy = 0.56 * H;
   } else {
     const t = clamp((W - 480) / (768 - 480), 0, 1);
-    D = W * (1.25 + (1.1 - 1.25) * t);
+    D = W * (1.5 + (1.1 - 1.5) * t);
     cx = W / 2;
-    cy = 0.4 * H;
+    cy = H * (0.5 + (0.4 - 0.5) * t);
   }
   return {
     mode: landscape ? "landscape" : "portrait",
@@ -174,17 +188,75 @@ export function projectOnView(place, view) {
 
 // ---------- Where the camera looks ----------
 
-// The countries that buy most of this event's country's farm and food
-// exports, largest share first, at most eight, each with a name, a share
-// (0..1) and the centre of the country.
+// The countries whose farm and food imports depend most on this event's
+// country, largest share first, at most eight, each with a name, a share
+// (0..1), the centre of the country, the year of the figure and who reported
+// it ("buyer" or "seller"; null in a trade file older than these fields).
+// Each country reports its own latest year (2021 to 2023), so for a war a
+// figure from before the war began says nothing about it and is left out
+// (Belarus's 2021 imports from Ukraine, for a war since 2022). A row with no
+// year (an older trade file) is kept.
 export function buyersOf(event, trade, countries) {
   const row = event && trade?.exporters?.[event.iso3];
   if (!row || !Array.isArray(row.to) || !countries) return [];
+  const warFrom = event.kind === "war" ? parts(event.since)?.year : null;
   return row.to
     .filter((t) => countries[t.iso3] && finite(countries[t.iso3].lat) && finite(countries[t.iso3].lng) && t.share > 0)
+    .filter((t) => !(warFrom && finite(t.year) && t.year < warFrom))
     .sort((a, b) => b.share - a.share)
     .slice(0, 8)
-    .map((t) => ({ iso3: t.iso3, share: t.share, name: plainName(t.iso3, countries[t.iso3].name), lat: countries[t.iso3].lat, lng: countries[t.iso3].lng }));
+    .map((t) => ({
+      iso3: t.iso3,
+      share: t.share,
+      name: plainName(t.iso3, countries[t.iso3].name),
+      lat: countries[t.iso3].lat,
+      lng: countries[t.iso3].lng,
+      year: finite(t.year) ? t.year : null,
+      by: t.by === "buyer" || t.by === "seller" ? t.by : null,
+    }));
+}
+
+// The trade table's own year: the one most countries reported ("year" in
+// the file; else the most common year of its rows; null when it has none).
+export function tradeYear(trade) {
+  if (finite(trade?.year)) return trade.year;
+  const seen = new Map();
+  for (const row of Object.values(trade?.exporters || {})) {
+    for (const t of row?.to || []) if (finite(t.year)) seen.set(t.year, (seen.get(t.year) || 0) + 1);
+  }
+  let best = null;
+  for (const [year, n] of seen) if (best === null || n > seen.get(best) || (n === seen.get(best) && year > best)) best = year;
+  return best;
+}
+
+// The years the table's figures come from, as "2021–2023" ("years" in the
+// file, else the rows' own years; the crawl's span when neither says).
+export function tradeYears(trade) {
+  let first = null;
+  let last = null;
+  if (Array.isArray(trade?.years) && finite(trade.years[0]) && finite(trade.years[1])) [first, last] = trade.years;
+  else {
+    for (const row of Object.values(trade?.exporters || {})) {
+      for (const t of row?.to || []) {
+        if (!finite(t.year)) continue;
+        first = first === null ? t.year : Math.min(first, t.year);
+        last = last === null ? t.year : Math.max(last, t.year);
+      }
+    }
+  }
+  if (first === null) return "2021–2023";
+  return first === last ? String(first) : `${first}–${last}`;
+}
+
+// The line under the panel's list of buyers: what the share is and where
+// the figures come from.
+export function tradeSource(trade) {
+  return `World Bank WITS, the latest year each country reported (${tradeYears(trade)}); the seller's figures where a buyer reported nothing.`;
+}
+
+// " (2021)" after a buyer whose figure is from another year than the table's own.
+export function buyerYearNote(buyer, commonYear) {
+  return buyer && finite(buyer.year) && finite(commonYear) && buyer.year !== commonYear ? ` (${buyer.year})` : "";
 }
 
 // The camera that puts `event` at (dx, dy) sphere radii from the sphere's
@@ -253,6 +325,29 @@ export function shiftToward(layout, free, altitude = layout?.altitude) {
   return { dx, dy };
 }
 
+// Where the camera looks on a wide screen: between the event and its buyers
+// (aimFor) as long as the event then lands inside `free` (the screen right
+// of the words, in pixels) by at least `margin`; otherwise turned just
+// enough to bring it there. So an event never sits under the page's words,
+// and the buyers' arcs stay in view whenever they can.
+export function aimInside(event, buyers, layout, free, altitude = layout?.altitude, margin = 64) {
+  const base = aimFor(event, buyers, { altitude });
+  if (!free || !layout) return base;
+  const r = sphereRadiusPx(layout.H, altitude);
+  const p = projectOnView(event, { ...base, altitude });
+  const x = layout.cx + p.x * r;
+  const y = layout.cy + p.y * r;
+  const left = free.left + margin;
+  const right = Math.max(left, free.right - margin);
+  const top = free.top + margin;
+  const bottom = Math.max(top, free.bottom - margin);
+  const tx = clamp(x, left, right);
+  const ty = clamp(y, top, bottom);
+  if (p.visible && Math.abs(tx - x) < 1 && Math.abs(ty - y) < 1) return base;
+  const shift = { dx: clamp((tx - layout.cx) / r, -0.8, 0.8), dy: clamp((ty - layout.cy) / r, -0.8, 0.8) };
+  return aimFor(event, buyers, { shift, altitude });
+}
+
 // ---------- The tour ----------
 
 function nearestTo(from, list) {
@@ -269,12 +364,21 @@ function nearestTo(from, list) {
 }
 
 // Ukraine first, then every other armed conflict, each time the nearest one
-// not yet visited, then up to three red disaster alerts the same way.
-export function tourStops(events, { maxRed = 3, first = "war-ukraine" } = {}) {
+// not yet visited, then up to three disaster alerts the same way: red alerts
+// still going on first, then orange ones still going on, and only then red
+// alerts that have ended (minor, green alerts never). `now` is the feed's
+// own time (see alertEnded).
+export function tourStops(events, { maxRed = 3, first = "war-ukraine", now = Date.now() } = {}) {
   const placed = (events || []).filter((e) => e && finite(e.lat) && finite(e.lng));
   const conflicts = placed.filter((e) => e.kind === "war");
-  let reds = placed.filter((e) => e.kind !== "war" && e.level === "red");
-  const start = conflicts.find((e) => e.id === first) || conflicts[0] || reds[0];
+  const rank = (e) => {
+    if (e.kind === "war" || (e.level !== "red" && e.level !== "orange")) return -1;
+    const ended = alertEnded(e, now);
+    if (e.level === "red") return ended ? 2 : 0;
+    return ended ? -1 : 1;
+  };
+  const ranked = placed.map((e) => ({ e, r: rank(e) })).filter((x) => x.r >= 0);
+  const start = conflicts.find((e) => e.id === first) || conflicts[0] || [...ranked].sort((a, b) => a.r - b.r)[0]?.e;
   if (!start) return [];
   const order = [start];
   let cur = start;
@@ -284,11 +388,13 @@ export function tourStops(events, { maxRed = 3, first = "war-ukraine" } = {}) {
     order.push(cur);
     rest = rest.filter((e) => e !== cur);
   }
-  reds = reds.filter((e) => e !== start);
-  for (let i = 0; i < maxRed && reds.length; i++) {
-    cur = nearestTo(cur, reds);
+  // Each time the nearest of the best kind still left.
+  let left = ranked.filter((x) => x.e !== start);
+  for (let i = 0; i < maxRed && left.length; i++) {
+    const best = Math.min(...left.map((x) => x.r));
+    cur = nearestTo(cur, left.filter((x) => x.r === best).map((x) => x.e));
     order.push(cur);
-    reds = reds.filter((e) => e !== cur);
+    left = left.filter((x) => x.e !== cur);
   }
   return order;
 }
@@ -357,6 +463,68 @@ export function dayMonthYear(iso) {
   return p ? `${p.day} ${MONTHS[p.month - 1]} ${p.year}` : "";
 }
 
+// Two days as one span: "14 to 25 October 2026", "31 July to 27 September
+// 2026", "21 December 2025 to 29 October 2026"; one day alone when both are
+// the same.
+export function spanText(fromIso, toIso) {
+  const a = parts(fromIso);
+  const b = parts(toIso);
+  if (!a || !b) return dayMonthYear(a ? fromIso : toIso);
+  if (a.year === b.year && a.month === b.month && a.day === b.day) return dayMonthYear(toIso);
+  if (a.year === b.year && a.month === b.month) return `${a.day} to ${b.day} ${MONTHS[b.month - 1]} ${b.year}`;
+  if (a.year === b.year) return `${a.day} ${MONTHS[a.month - 1]} to ${b.day} ${MONTHS[b.month - 1]} ${b.year}`;
+  return `${dayMonthYear(fromIso)} to ${dayMonthYear(toIso)}`;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// How many days an alert's last reported day may lag behind today while it
+// still counts as going on. GDACS moves an event's last day ("until") on
+// only when it next updates the event, so one still going on often shows a
+// last day two or three days old (checked against GDACS's own "is current"
+// flag on 31 October 2026: every event it called current had a last day
+// within three days).
+export const ALERT_GRACE_DAYS = 3;
+
+// The day number (days since 1970, UTC) of "2026-10-25", or null.
+function dayNumber(iso) {
+  const p = parts(iso);
+  return p ? Date.UTC(p.year, p.month - 1, p.day) / DAY_MS : null;
+}
+
+// Whether a disaster alert is over. GDACS's own flag when the feed carries
+// one ("current"); otherwise its last day is more than three days before
+// `now` (the feed's own time, as milliseconds or an ISO date; the visitor's
+// clock when there is none). Armed conflicts are never "over" here: the
+// reviewed list keeps only those still going on.
+export function alertEnded(e, now = Date.now()) {
+  if (!e || e.kind === "war") return false;
+  if (e.current === true) return false;
+  if (e.current === false) return true;
+  const until = dayNumber(e.until);
+  if (until === null) return false;
+  let ms = typeof now === "string" ? Date.parse(now) : now;
+  if (!finite(ms)) ms = Date.now();
+  return until < Math.floor(ms / DAY_MS) - ALERT_GRACE_DAYS;
+}
+
+// When an alert happened, in the words of its tile and panel: "since 26
+// October 2026" while it goes on; "from 14 to 25 October 2026", or "on 22
+// October 2026" for a one-day event, once it is over.
+export function alertWhen(e, now = Date.now()) {
+  const since = dayMonthYear(e?.since);
+  if (!alertEnded(e, now)) return since ? `since ${since}` : "";
+  if (!parts(e.until)) return since ? `from ${since}, now over` : "now over";
+  if (!parts(e.since) || dayNumber(e.since) >= dayNumber(e.until)) return `on ${dayMonthYear(e.until)}`;
+  return `from ${spanText(e.since, e.until)}`;
+}
+
+// Green GDACS alerts: the lowest level, hidden until the visitor asks for
+// them. Orange and red alerts are the ones counted and toured.
+export function isMinorAlert(e) {
+  return !!e && e.kind !== "war" && e.level !== "red" && e.level !== "orange";
+}
+
 const KIND_WORD = { flood: "Flood", drought: "Drought", wildfire: "Wildfires", storm: "Storm", earthquake: "Earthquake", volcano: "Volcano" };
 
 // The reviewed list holds wars, insurgencies and gang violence alike: it
@@ -400,9 +568,27 @@ export function percent(share) {
   return Math.round(share * 100);
 }
 
-// The tile beside the marker: the event's name, one line on when it began,
-// one fact, and the link that opens the panel.
-export function captionFor(e, { buyers = [] } = {}) {
+// The share of a buyer's farm and food imports that come from the event's
+// country, as one sentence: "24% of Moldova's farm and food imports come
+// from Ukraine." A figure from another year than the table's own says so:
+// "In 2021, 35% of Comoros' farm and food imports came from Pakistan."
+export function shareSentence(buyer, from, commonYear) {
+  const share = `${percent(buyer.share)}% of ${possessive(buyer.name)} farm and food imports`;
+  if (buyerYearNote(buyer, commonYear)) return `In ${buyer.year}, ${share} came from ${from}.`;
+  return `${share[0].toUpperCase()}${share.slice(1)} come from ${from}.`;
+}
+
+// Ukraine's own measurement, as one sentence.
+export function measuredSentence(m) {
+  if (!m || !finite(m.heavyDamageHa)) return "";
+  const people = finite(m.peopleOnDamagedSoil) ? `, with ${millions(m.peopleOnDamagedSoil)} people on it` : "";
+  return `Chernozem measured ${millions(m.heavyDamageHa)} ha of black soil heavily damaged${people}${m.month ? ` (${m.month})` : ""}.`;
+}
+
+// The tile beside the marker: the event's name, one line on when it began
+// (or, for an alert that is over, when it ran), one fact, and the link that
+// opens the panel. now: the feed's own time; commonYear: the trade table's.
+export function captionFor(e, { buyers = [], now = Date.now(), commonYear = null } = {}) {
   let meta;
   let fact = null;
   if (e.kind === "war") {
@@ -411,36 +597,38 @@ export function captionFor(e, { buyers = [] } = {}) {
     if (e.measured && finite(e.measured.heavyDamageHa)) {
       fact = `Chernozem measured ${millions(e.measured.heavyDamageHa)} ha of black soil heavily damaged here${e.measured.month ? `, ${e.measured.month}` : ""}.`;
     } else if (buyers.length) {
-      fact = `${percent(buyers[0].share)}% of ${possessive(buyers[0].name)} farm and food imports come from ${e.country || plainName(e.iso3)}.`;
+      fact = shareSentence(buyers[0], e.country || plainName(e.iso3), commonYear);
     } else if (e.note) {
       fact = e.note;
     }
   } else {
-    const day = dayMonthYear(e.since);
-    meta = `${levelWord(e.level)}${day ? ` since ${day}` : ""}, GDACS.`;
+    const when = alertWhen(e, now);
+    meta = `${levelWord(e.level)}${when ? ` ${when}` : ""}, GDACS.`;
   }
   return { name: e.name, meta, fact, link: buyers.length ? "Whose food depends on it" : "Details" };
 }
 
 // What a screen reader reads for each event in the globe's list.
-export function optionText(e) {
+export function optionText(e, now = Date.now()) {
   if (e.kind === "war") {
     const since = sinceText(e.since);
     return since ? `${e.name}, since ${since}` : e.name;
   }
-  const day = dayMonthYear(e.since);
-  return `${e.name}, ${e.level ? `${e.level} alert` : "alert"}${day ? ` since ${day}` : ""}`;
+  const when = alertWhen(e, now);
+  return `${e.name}, ${e.level ? `${e.level} alert` : "alert"}${when ? ` ${when}` : ""}`;
 }
 
-// The line under the panel's heading.
-export function panelMeta(e, { reviewed } = {}) {
+// The line under the panel's heading, in plain sentences: "War since
+// February 2022. From the list reviewed on 28 October 2026."; "Flood,
+// orange alert from 31 July to 27 September 2026, GDACS."
+export function panelMeta(e, { reviewed, now = Date.now() } = {}) {
   if (e.kind === "war") {
     const since = sinceText(e.since);
     const review = dayMonthYear(reviewed);
-    return [kindWord(e), since ? `since ${since}` : null, `Reviewed list${review ? `, ${review}` : ""}`].filter(Boolean).join(" · ");
+    return `${kindWord(e)}${since ? ` since ${since}` : ""}. ${review ? `From the list reviewed on ${review}.` : "From a list reviewed by hand."}`;
   }
-  const day = dayMonthYear(e.since);
-  return [kindWord(e), e.level ? `${e.level} alert` : null, day ? `since ${day}` : null, "GDACS"].filter(Boolean).join(" · ");
+  const when = alertWhen(e, now);
+  return `${kindWord(e)}${e.level ? `, ${e.level} alert` : ""}${when ? ` ${when}` : ""}, GDACS.`;
 }
 
 // "17 armed conflicts", "1 disaster alert"

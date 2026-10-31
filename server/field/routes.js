@@ -39,7 +39,9 @@
 // WHAT A REGISTERED ACCOUNT MAY DO (server/quotas.js has the numbers)
 // An account draws outlines of at most 1,000 points; runs one Field job
 // at a time (a search for fields or an analysis: 429 busy while one runs)
-// and asks for at most 2 searches and 2 "update now" an hour (429 quota);
+// and asks for at most 2 searches and 2 "update now" an hour (429 quota;
+// loading an example farm, POST /api/farm/demo, starts an analysis, so it
+// counts as one "update now");
 // keeps at most 30 reports and 40 MB of photos in all (413 quota); and its
 // photos must be real JPEG, PNG or WebP pictures of at most 8,000 pixels a
 // side whose declared type matches the bytes (server/field/images.js).
@@ -88,7 +90,7 @@ import {
 import { createHash } from "node:crypto";
 import { listJobs } from "../jobs.js";
 import { HOUR_MS, inWords, isAccount, QUOTAS, quotaError, sizeWords, spend } from "../quotas.js";
-import { imageInfo } from "./images.js";
+import { imageInfo, stripJpegMetadata } from "./images.js";
 import { areaHa as sphericalAreaHa, bboxAreaKm2, bboxOf, FIELD_SEARCH_MAX_KM2, formatCoord } from "../geo.js";
 import { fieldProviderStatus, getFieldProvider } from "../providers/index.js";
 import { UNITS } from "../../src/lib/field/method.js";
@@ -348,10 +350,11 @@ function assertNoFieldJobRunning() {
 // One of an account's searches or "update now" an hour (the demo: as many
 // as it likes).
 function spendFieldJob(what) {
-  const turn = spend(what, QUOTAS.fieldJobsPerHour, HOUR_MS);
+  const limit = what === "field-setup" ? QUOTAS.fieldSetupPerHour : QUOTAS.fieldJobsPerHour;
+  const turn = spend(what, limit, HOUR_MS);
   if (turn.ok) return;
-  const name = what === "field-detect" ? "searches for fields" : "analyses on request";
-  throw quotaError(`An account can start ${QUOTAS.fieldJobsPerHour} ${name} an hour. Try again ${inWords(turn.retryAfterMs)}.`);
+  const name = what === "field-detect" ? "searches for fields" : what === "field-setup" ? "farm changes (a set-up or a new field)" : "analyses on request";
+  throw quotaError(`An account can start ${limit} ${name} an hour. Try again ${inWords(turn.retryAfterMs)}.`);
 }
 
 // ---------- The public demo's place search (see the top of this file) ----------
@@ -649,7 +652,9 @@ function decodePhoto(photo, i) {
   // read as a picture (server/field/images.js).
   const ext = isAccount() ? checkRealImage(photo, buffer, label) : photoKind(buffer);
   if (!ext) throw bad(`${label} must be a JPEG, PNG or WebP image.`, "bad_photo");
-  return { buffer, ext };
+  // A JPEG is kept without its hidden details (the GPS position, the
+  // camera, the time: server/field/images.js); the picture is the same.
+  return { buffer: ext === "jpg" ? stripJpegMetadata(buffer) : buffer, ext };
 }
 
 // A registered account keeps at most so many reports, and so many bytes of
@@ -743,6 +748,10 @@ export async function handleFieldRoutes(req, res, url) {
       return sendJson(res, 200, { farm: presentFarm(farm), analyses, provider, job: runningFieldAnalysis() }), true;
     }
     if (method === "PUT") {
+      // Setting up or replacing the farm starts an analysis: an account may
+      // do that a dozen times an hour (the demo and the owner: as before).
+      assertNoFieldJobRunning();
+      spendFieldJob("field-setup");
       const { farm, job } = await replaceFarm(await readJson(req));
       return sendJson(res, 200, { farm: presentFarm(farm), job }), true;
     }
@@ -758,6 +767,12 @@ export async function handleFieldRoutes(req, res, url) {
     const parts2 = await exampleFarmParts(body.example).catch((error) => {
       throw error.code === "unknown_example" ? bad(error.message, "unknown_example") : error;
     });
+    // An example farm starts an analysis of all its fields: for an account
+    // it counts as one of the hour's analyses on request, like "update now".
+    if (isAccount()) {
+      assertNoFieldJobRunning();
+      spendFieldJob("field-analyze");
+    }
     const { farm, job } = await replaceFarm(parts2, { demo: true });
     return sendJson(res, 201, { farm: presentFarm(farm), job }), true;
   }
@@ -782,6 +797,9 @@ export async function handleFieldRoutes(req, res, url) {
 
   if (second === "fields") {
     if (!third && method === "POST") {
+      // A new field is analysed at once: for an account that counts as a farm change.
+      assertNoFieldJobRunning();
+      spendFieldJob("field-setup");
       const { field, job } = await addField(await readJson(req));
       return sendJson(res, 201, { field: withCropSource(field), job }), true;
     }

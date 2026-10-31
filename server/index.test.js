@@ -5,10 +5,11 @@
 // safety headers answer; idle connections are kept 125 seconds, longer
 // than Render's proxy keeps them), and that stopping it (SIGTERM, as the
 // host does before a new version starts) lets go of the monthly check's
-// lock and ends cleanly. Then, as on Render (RENDER=true): it refuses to
-// start without a proper owner's key (ATLAS_ACCESS_CODE) or without the
-// disk, saying why, and starts with both: a visitor then gets the
-// read-only demo. Run with "npm test".
+// lock and ends cleanly (and writes the limits' counts, when any changed).
+// Then, as on Render (RENDER=true): it refuses to start without the disk,
+// saying why, and starts with it, with or without the retired access code
+// (ATLAS_ACCESS_CODE): a visitor then always gets the read-only demo,
+// never "open". Run with "npm test".
 //
 // WHO EDITS IT
 // Whoever changes server/index.js or server/online.js.
@@ -104,7 +105,7 @@ test("npm start: a fresh data folder starts cleanly, and SIGTERM lets go of the 
   }
 });
 
-test("on Render: no start without a proper access code or without the disk, and the reason in the log", { timeout: 30000 }, async () => {
+test("on Render: no start without the disk, and the reason in the log; with it, a start whatever ATLAS_ACCESS_CODE is, every visitor the read-only demo", { timeout: 30000 }, async () => {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "chernozem-online-"));
   const disk = path.join(scratch, "disk");
   fs.mkdirSync(disk);
@@ -112,12 +113,10 @@ test("on Render: no start without a proper access code or without the disk, and 
   // tests run in the real project).
   const appDataBefore = fs.existsSync(APP_DATA);
   const cases = [
-    [{ ATLAS_ACCESS_CODE: "", CHERNOZEM_DATA_DIR: "" }, [/ATLAS_ACCESS_CODE is not set/, /CHERNOZEM_DATA_DIR is not set/]],
-    [{ ATLAS_ACCESS_CODE: "x", CHERNOZEM_DATA_DIR: disk }, [/shorter than 16 characters/]],
-    [{ ATLAS_ACCESS_CODE: "river-tractor-winter-maple", CHERNOZEM_DATA_DIR: disk }, [/the example once printed in the docs/]],
-    [{ ATLAS_ACCESS_CODE: "orchard-lantern-pebble-cobalt", CHERNOZEM_DATA_DIR: path.join(scratch, "no-disk") }, [/does not exist .*the disk is not attached/]],
-    [{ ATLAS_ACCESS_CODE: "orchard-lantern-pebble-cobalt", CHERNOZEM_DATA_DIR: "server/.data" }, [/must be a full path/]],
-    [{ ATLAS_ACCESS_CODE: "orchard-lantern-pebble-cobalt", CHERNOZEM_DATA_DIR: APP_DATA }, [/inside the app's own folder/]],
+    [{ ATLAS_ACCESS_CODE: "", CHERNOZEM_DATA_DIR: "" }, [/CHERNOZEM_DATA_DIR is not set/]],
+    [{ CHERNOZEM_DATA_DIR: path.join(scratch, "no-disk") }, [/does not exist .*the disk is not attached/]],
+    [{ CHERNOZEM_DATA_DIR: "server/.data" }, [/must be a full path/]],
+    [{ CHERNOZEM_DATA_DIR: APP_DATA }, [/inside the app's own folder/]],
   ];
   try {
     for (const [env, reasons] of cases) {
@@ -128,6 +127,7 @@ test("on Render: no start without a proper access code or without the disk, and 
         assert.equal(code, 1, `${label}\n${server.log}`);
         assert.match(server.log, /Not starting online/, label);
         for (const reason of reasons) assert.match(server.log, reason, label);
+        assert.doesNotMatch(server.log, /ATLAS_ACCESS_CODE/, `${label}: the retired code is never asked for`);
         assert.doesNotMatch(server.log, /is running at/, label);
       } finally {
         stopForGood(server.child);
@@ -137,19 +137,25 @@ test("on Render: no start without a proper access code or without the disk, and 
     assert.equal(fs.existsSync(APP_DATA), appDataBefore, "nothing made in the app's own folder");
     assert.deepEqual(fs.readdirSync(disk), [], "the write check leaves nothing behind");
 
-    // A proper code and the disk: it starts.
-    const port = await freePort();
-    const server = startServer({ RENDER: "true", PORT: String(port), ATLAS_ACCESS_CODE: "orchard-lantern-pebble-cobalt", CHERNOZEM_DATA_DIR: disk });
-    try {
-      for (let i = 0; i < 200 && !/Data folder: /.test(server.log); i += 1) await new Promise((resolve) => setTimeout(resolve, 25));
-      assert.match(server.log, /Owner's key \(ATLAS_ACCESS_CODE\): on/, server.log);
-      assert.equal((await fetch(`http://127.0.0.1:${port}/api/health`)).status, 200);
-      const status = await (await fetch(`http://127.0.0.1:${port}/api/auth/status`)).json();
-      assert.deepEqual(status, { required: true, signedIn: false, shared: true, account: null, mode: "demo", readOnly: true });
-      server.child.kill("SIGTERM");
-      assert.equal((await server.exited).code, 0, server.log);
-    } finally {
-      stopForGood(server.child);
+    // The disk, with or without the retired code: it starts, and every
+    // visitor is the read-only demo (never open), the owner signing in
+    // with Google.
+    for (const code of ["", "orchard-lantern-pebble-cobalt"]) {
+      const port = await freePort();
+      const server = startServer({ RENDER: "true", PORT: String(port), ATLAS_ACCESS_CODE: code, CHERNOZEM_DATA_DIR: disk });
+      try {
+        for (let i = 0; i < 200 && !/Data folder: /.test(server.log); i += 1) await new Promise((resolve) => setTimeout(resolve, 25));
+        assert.match(server.log, /Visitors see the read-only demo; the owner signs in with Google at \/owner/, server.log);
+        assert.equal((await fetch(`http://127.0.0.1:${port}/api/health`)).status, 200);
+        const status = await (await fetch(`http://127.0.0.1:${port}/api/auth/status`)).json();
+        assert.deepEqual(status, { required: true, signedIn: false, shared: true, account: null, mode: "demo", readOnly: true }, JSON.stringify(code));
+        const login = await fetch(`http://127.0.0.1:${port}/api/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: code || "anything" }) });
+        assert.equal(login.status, 410, "the retired code opens nothing");
+        server.child.kill("SIGTERM");
+        assert.equal((await server.exited).code, 0, server.log);
+      } finally {
+        stopForGood(server.child);
+      }
     }
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });

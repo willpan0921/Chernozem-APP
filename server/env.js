@@ -107,6 +107,25 @@ export function refreshEnv() {
   loadEnvFile();
 }
 
+// The owner's Google account when OWNER_EMAILS is blank (server/auth.js).
+export const DEFAULT_OWNER_EMAIL = "chernozem.app@gmail.com";
+
+// OWNER_EMAILS -> the owner's e-mail addresses, in small letters: a list
+// separated by commas (spaces and capitals do not matter). Blank: the
+// default above. "none" or "off": nobody is the owner. Anything that is
+// not an e-mail address is left out (so a typing mistake makes nobody the
+// owner, never somebody else).
+export function ownerEmailList(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return [DEFAULT_OWNER_EMAIL];
+  if (["none", "off"].includes(text.toLowerCase())) return [];
+  const list = text
+    .split(/[,;\s]+/)
+    .map((part) => part.trim().toLowerCase())
+    .filter((part) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(part));
+  return [...new Set(list)];
+}
+
 // True when the server runs on Render, the host of https://chernozem.app
 // (docs/DEPLOY.md), which always sets RENDER=true. A few safety rules
 // apply only there (server/online.js, server/auth.js).
@@ -144,6 +163,10 @@ export function config() {
     // Only on one's own computer: the local Firebase Auth emulator, for
     // example 127.0.0.1:9099. The Firebase library reads it itself.
     firebaseEmulatorHost: (env.FIREBASE_AUTH_EMULATOR_HOST || "").trim() || null,
+    // The owner: who may change the public demo and read the website's
+    // messages, after signing in with Google at /owner (server/auth.js).
+    // Blank: chernozem.app@gmail.com.
+    ownerEmails: ownerEmailList(env.OWNER_EMAILS),
     // The contact form's e-mail (server/mail.js): where messages go
     // (MAIL_TO; blank: chernozem.app@gmail.com) and how they are sent, the
     // first one set winning: Gmail with an app password, any SMTP server,

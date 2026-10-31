@@ -207,6 +207,7 @@ export function shapeFeature(feature, type) {
     lat: round2(coordinates[1]),
     lng: round2(coordinates[0]),
     level: levelOf(properties.alertlevel),
+    current: isCurrent(properties),
     since: isoDay(parseGdacsDate(properties.fromdate)),
     until: isoDay(parseGdacsDate(properties.todate)),
     note: eventNote(properties, severity, rule.kind, areaHa),
@@ -243,6 +244,7 @@ export function clusterByCountry(events) {
       lat: round2(list.reduce((sum, event) => sum + event.lat, 0) / list.length),
       lng: round2(list.reduce((sum, event) => sum + event.lng, 0) / list.length),
       level: strongest.level,
+      current: true, // a cluster is made of fires burning now
       since: days("since", 0) ?? null,
       until: days("until", list.filter((event) => event.until).length - 1) ?? null,
       note: `${list.length} fires${areaHa > 0 ? `, about ${fmt(areaHa)} ha burned together` : ""}; the strongest alert is ${strongest.level || "not rated"}.`,

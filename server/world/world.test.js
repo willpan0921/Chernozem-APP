@@ -217,6 +217,7 @@ test("the time windows: each kind keeps what is active in its own window", () =>
 test("a GDACS feature becomes one plain event", () => {
   const [flood] = gdacs.readGdacs(goodAnswers().FL, "FL", NOW);
   assert.deepEqual(flood, {
+    current: false,
     id: "fl-11",
     kind: "flood",
     iso3: "ITA",
@@ -274,6 +275,7 @@ test("wildfires: one marker per country with the count, the strongest alert and 
   assert.equal(markers.length, 2);
   const australia = markers.find((marker) => marker.iso3 === "AUS");
   assert.deepEqual(australia, {
+    current: true,
     id: "wf-AUS",
     kind: "wildfire",
     iso3: "AUS",

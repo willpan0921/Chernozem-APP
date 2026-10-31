@@ -10,6 +10,10 @@
   second value in each var() is the same token's value, so the pages still
   look right if site.css is loaded late or changed.
 
+  One strong button per screen: the accent green ("Continue with Google",
+  "Open Field"). The other ways ("Create account", "Sign in", "Continue
+  as ...") are the light second button, one step darker than the fields.
+
   The pages follow the site's house rules: no hairlines, boxes, shadows or
   gradients; surfaces are told apart by a step in tone. The form keeps its
   own conventions: filled fields on --surface, the focus ring in the
@@ -34,6 +38,8 @@
   --r-bg: var(--bg, #f3f3f0);
   --r-surface: var(--surface, #e8e7e2);
   --r-surface-2: var(--s-cream-3, #d9d6cf);
+  /* One step darker again: the light button under the pointer. */
+  --r-surface-3: color-mix(in srgb, var(--r-surface-2) 86%, var(--r-ink));
   --r-ink: var(--ink, #1b1713);
   --r-ink-2: var(--s-ink-2, #3a342d);
   --r-muted: var(--muted, #5b554c);
@@ -121,42 +127,14 @@
   display: block;
 }
 
-/* A clear step under the title, as on the other pages (pages.css .pg-lead). */
+/* A clear step under the title, as on the other pages (pages.css .pg-lead).
+   As wide as the form, so the short lead takes one line on a laptop and the
+   whole form of Field fits the first screen. */
 .site .reg-lead {
   margin-top: 32px;
   font-size: var(--r-lead);
   line-height: 1.3;
-  max-width: 26ch;
-}
-
-/* ---- "Account · About you": the steps, in words ---- */
-.site .reg-steps {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0 0.55em;
-  margin: clamp(1.75rem, 3vw, 2.5rem) 0 0;
-  padding: 0;
-  list-style: none;
-  font-size: var(--r-body);
-  line-height: 1.3;
-  color: var(--r-muted);
-}
-
-.site .reg-steps li {
-  list-style: none;
-}
-
-.site .reg-steps li + li::before {
-  content: "·";
-  content: "·" / "";
-  margin-right: 0.55em;
-  color: var(--r-muted);
-  font-weight: 400;
-}
-
-.site .reg-steps [aria-current="step"] {
-  color: var(--r-ink);
-  font-weight: 700;
+  max-width: 32rem;
 }
 
 /* ---- The two flat switches: Field or Atlas, and an organisation's kind ---- */
@@ -168,11 +146,17 @@
   background: var(--r-surface);
 }
 
+/* The switch is the form's first answer, a clear step under the lead
+   (closer under "Signed in as ..." when that line comes first). */
 .site .reg-choice {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin: 0.75rem 0 0;
+  margin: clamp(1.75rem, 3vw, 2.5rem) 0 0;
   border: 0;
   min-inline-size: 0;
+}
+
+.site .reg-who + .reg-choice {
+  margin-top: 1rem;
 }
 
 .site .reg-choice-item,
@@ -281,7 +265,7 @@
   display: grid;
   gap: 1rem;
   align-content: start;
-  margin-top: 1.5rem;
+  margin-top: 1rem;
 }
 
 .site .reg-field {
@@ -432,13 +416,10 @@
   color: var(--r-accent-ink);
 }
 
+/* The light second button: one tone step darker than the fields, ink
+   words, so only the accent green reads as the strong one. */
 .site .reg-btn-second,
 .site .reg a.reg-btn-second {
-  background: var(--r-ink);
-  color: var(--r-bg);
-}
-
-.site .reg-btn-quiet {
   background: var(--r-surface-2);
   color: var(--r-ink);
 }
@@ -469,7 +450,6 @@
 
 .site .reg-btn:focus-visible,
 .site .reg-textbtn:focus-visible,
-.site .reg-found-item:focus-visible,
 .site .reg a:focus-visible {
   outline: 3px solid var(--r-accent);
   outline-offset: 3px;
@@ -481,12 +461,7 @@
   }
 
   .site .reg-btn-second:hover:not([disabled]) {
-    background: var(--r-ink-2);
-  }
-
-  .site .reg-btn-quiet:hover:not([disabled]),
-  .site .reg-found-item:hover {
-    background: var(--r-surface-2);
+    background: var(--r-surface-3);
   }
 
   .site .reg-choice-item:not(:has(input:checked)):hover,
@@ -508,40 +483,6 @@
   gap: 1rem 1.5rem;
 }
 
-/* ---- The place: a field with its search button, then what was found ---- */
-.site .reg-place-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 4px;
-}
-
-.site .reg-found {
-  display: grid;
-  gap: 4px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.site .reg-found li {
-  list-style: none;
-}
-
-.site .reg-found-item {
-  display: block;
-  width: 100%;
-  min-height: 48px;
-  padding: 0.7rem 0.95rem;
-  border: 0;
-  background: var(--r-surface);
-  font: inherit;
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--r-ink);
-  text-align: left;
-  transition: background-color 160ms ease;
-}
-
 /* ---- Someone Firebase already knows ---- */
 .site .reg-known {
   display: grid;
@@ -561,6 +502,7 @@
 }
 
 .site .reg-who {
+  margin-top: clamp(1.75rem, 3vw, 2.5rem);
   overflow-wrap: anywhere;
 }
 
@@ -656,7 +598,8 @@
     margin-top: 20px;
   }
 
-  .site .reg-steps {
+  .site .reg-choice,
+  .site .reg-who {
     margin-top: 1.5rem;
   }
 
@@ -670,10 +613,6 @@
 
   .site .reg-btn {
     justify-self: stretch;
-  }
-
-  .site .reg-place-row .reg-btn {
-    padding-inline: 1rem;
   }
 
   /* One picture is enough on a phone: the large one, under the form. */

@@ -1,29 +1,37 @@
 // WHAT THIS FILE DOES
-// The first screen of the About page: one dark field filled by a large
-// Earth whose black-soil belts glow ochre (OpenLandMap) and whose other
+// The first screen of the About page: a large lit Earth filling the whole
+// hero, whose black-soil belts glow ochre (OpenLandMap) and whose other
 // cropland is sage (Copernicus), with today's armed conflicts and disaster
 // alerts on it. The page's own words (the title, the sentence and the two
 // actions, passed in as children by HomePage.jsx) sit over the Earth's
-// shaded side.
+// left side, on a soft dark scrim that keeps them readable.
 //
 // What the visitor sees and can do:
 //   - a tour: the camera visits Ukraine, then every other armed conflict
-//     (each time the nearest), then up to three red alerts, and comes back
-//     to rest over Ukraine. At each stop a small tile names the event, says
-//     since when, and gives one fact; arcs run to the countries that buy
-//     its food. "Pause tour" stops all of it.
-//   - a row of toggles: the black-soil picture, the conflicts, the alerts.
+//     (each time the nearest), then up to three disaster alerts (red ones
+//     still going on first), and comes back to rest over Ukraine. At each
+//     stop a small tile names the event, says since when (or, for an alert
+//     that is over, when it ran), and gives one fact; arcs run to the
+//     countries whose food depends on it. "Pause tour" stops all of it.
+//   - a row of toggles: the black-soil picture, the conflicts, the recent
+//     orange and red alerts; under it one quiet line: how to turn the
+//     Earth, and "Show minor alerts" (GDACS's green ones, hidden at first).
 //   - pointing at a marker shows its tile and arcs; clicking one (or the
-//     tile's link) flies there and opens a panel: what it is, who buys its
-//     food, Ukraine's own measurement, previous and next.
-//   - dragging turns the Earth; the keyboard reaches every event through
-//     one list (Tab to the globe, then the arrow keys and Enter).
+//     tile's link) flies there and opens a panel: what it is, whose food
+//     depends on it (each figure with its year when it is not the table's
+//     own), Ukraine's own measurement, previous and next.
+//   - dragging turns the Earth (no text is selected while it turns, and no
+//     arc is ever drawn over the words); the keyboard reaches every event
+//     through one list (Tab to the globe, then the arrow keys and Enter).
 //
 // Order of arrival: the words, the controls and a still picture of the
-// Earth come first; at 600 ms Ukraine's marker and tile rise on the still;
-// the 3D (globeScene.js, three.js) loads at the first quiet moment and
-// fades in over the still, then the markers ripple out from Ukraine and
-// the tour starts. Without WebGL, on a device with under 2 GB of memory,
+// Earth come first (index.html already asks for the still at high priority
+// on the About page); at 600 ms Ukraine's marker and tile rise on the
+// still; once the still is decoded and on screen, the 3D (globeScene.js,
+// three.js, and the Earth's pictures) loads and fades in over it, then the
+// markers ripple out from Ukraine and the tour starts. A visitor who leaves
+// first starts none of that download (and the pictures already asked for
+// are cancelled). Without WebGL, on a device with under 2 GB of memory,
 // or with Save-Data or a 2G connection, the still stays and everything
 // except the flights still works (Save-Data visitors can ask for the live
 // globe).
@@ -41,8 +49,12 @@
 // words of the tile) is in globeMath.js and is tested there. Styles:
 // components/globe.css. Checks: ?globe-debug=1 exposes
 // window.__globe = { frames, log, layout }; &words=0 hides the words.
-// ?globe-still=wide|tall draws the still picture alone, for making
-// public/site/world/globe-still-*.webp.
+// ?globe-still=wide|tall draws the still picture alone and leaves it in
+// window.__globeStill (a PNG, with its size and crop), for making
+// public/site/world/globe-still-*.webp: cut to the crop (STILLS below) and
+// saved as WebP at quality 66. After a new trade table, check that
+// STILLS.wide.view is still Ukraine's tour stop (aimFor with its buyers);
+// within 1.5 degrees the 3D simply starts there.
 //
 // WHO EDITS IT
 // Whoever works on the globe.
@@ -53,14 +65,17 @@ import { useMediaQuery } from "../hooks.js";
 import { useWorldData } from "./worldData.js";
 import {
   aimFor,
+  aimInside,
   angularDistance,
+  buyerYearNote,
   buyersOf,
   captionFor,
   clamp,
   countText,
   flightMs,
   globeLayout,
-  millions,
+  isMinorAlert,
+  measuredSentence,
   optionText,
   panelMeta,
   percent,
@@ -71,18 +86,26 @@ import {
   sphereRadiusPx,
   textureSize,
   tourStops,
+  tradeSource,
+  tradeYear,
   viewAlong,
 } from "./globeMath.js";
 import "./globe.css";
 
 // The pictures of the Earth shown until the 3D is drawn, made from the real
 // scene (?globe-still=wide|tall) at these views: Ukraine's tour stop on a
-// 1440x900 screen and on a 390x844 phone. Each is a square 1.3 times the
-// sphere's width, centred on it.
+// 1440x900 screen and on a 390x844 phone. Each is drawn as a square 1.3
+// times the sphere's width ("size" pixels a side, so the sphere is
+// size / 1.3 across), then cut down to the part a first screen of that
+// shape can ever show ("crop": left, top, right and bottom, in sphere
+// widths from the sphere's centre), so no byte is spent on Earth that is
+// off the screen.
 const STILLS = {
-  wide: { src: "/site/world/globe-still-wide.webp", size: 1600, view: { lat: 44.7756, lng: 31.9923 }, altitude: 0.8706, light: "landscape" },
-  tall: { src: "/site/world/globe-still-tall.webp", size: 1000, view: { lat: 48.3699, lng: 36.6 }, altitude: 2.5909, light: "portrait" },
+  wide: { src: "/site/world/globe-still-wide.webp", size: 2000, crop: { left: -0.56, top: -0.4, right: 0.44, bottom: 0.32 }, view: { lat: 43.874, lng: 31.9503 }, altitude: 0.5424, light: "landscape", fine: true },
+  tall: { src: "/site/world/globe-still-tall.webp", size: 1300, crop: { left: -0.47, top: -0.58, right: 0.47, bottom: 0.58 }, view: { lat: 35.8798, lng: 36.6 }, altitude: 2.043, light: "portrait", fine: false },
 };
+// A still's cut picture in pixels, across or down (for a crop span in sphere widths).
+const stillPixels = (still, span) => Math.round((span / 1.3) * still.size);
 const SKIN = (kind, px) => `/site/world/earth-${kind}-${px}.webp`;
 const WATER = "/site/world/earth-water-1024.webp";
 const UKRAINE = "war-ukraine";
@@ -98,6 +121,8 @@ const LOW_FPS_GAP = 1000 / 30 - 4;
 const MARKER_ALTITUDE = 0.006;
 const LAT_LIMIT = { min: (25 * Math.PI) / 180, max: (155 * Math.PI) / 180 }; // 65° north to 65° south
 const COLOURS = { war: "#e2603f", alert: "#f3f3f0", soil: "#b8733a" };
+const SCRIM_FADE = 160; // px over which the scrim under the words fades out
+const ARC_CLEARANCE = 16; // px an arc keeps from the words and the controls
 
 // ---------- Small helpers ----------
 
@@ -139,9 +164,10 @@ function threeDPolicy() {
   return "yes";
 }
 
-// The picture fetched and decoded away from the page's main work.
-async function decodeImage(url) {
-  const res = await fetch(url);
+// The picture fetched and decoded away from the page's main work. signal:
+// an AbortController's, so a visitor who leaves the page stops the download.
+async function decodeImage(url, signal) {
+  const res = await fetch(url, { signal });
   if (!res.ok) throw new Error(`${url}: ${res.status}`);
   const blob = await res.blob();
   if (typeof createImageBitmap === "function") return createImageBitmap(blob);
@@ -151,6 +177,18 @@ async function decodeImage(url) {
   await img.decode();
   URL.revokeObjectURL(src);
   return img;
+}
+
+// Waits until the still picture is decoded and can be drawn (or has failed:
+// the 3D then simply starts).
+function stillReady(img) {
+  if (!img) return Promise.resolve();
+  if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+  if (typeof img.decode === "function") return img.decode().catch(() => {});
+  return new Promise((resolve) => {
+    img.addEventListener("load", resolve, { once: true });
+    img.addEventListener("error", resolve, { once: true });
+  });
 }
 
 function relRect(el, root) {
@@ -167,6 +205,14 @@ function inside(p, rect, pad = 12) {
 
 function kindOf(e) {
   return e.kind === "war" ? "war" : "alert";
+}
+
+// Whether an event's layer is switched on: the conflicts; the orange and
+// red alerts; the minor (green) alerts only when asked for as well.
+function isShown(e, show) {
+  if (!e) return false;
+  if (e.kind === "war") return !!show.war;
+  return !!show.alert && (!isMinorAlert(e) || !!show.minor);
 }
 
 function markerClass(e) {
@@ -205,16 +251,20 @@ function StillMaker({ kind }) {
       const half = Math.asin(1 / (1 + still.altitude));
       const focal = D / 2 / Math.tan(half);
       const fov = (2 * Math.atan(S / 2 / focal) * 180) / Math.PI;
-      api = mod.createGlobeScene(hostRef.current, { width: S, height: S, view: { ...still.view, altitude: still.altitude }, light: still.light, fine: true, dpr: 1, still: true, fov });
+      // Shaded the way the screen it stands in for draws the Earth (a phone:
+      // plain shading, no glint on the water).
+      api = mod.createGlobeScene(hostRef.current, { width: S, height: S, view: { ...still.view, altitude: still.altitude }, light: still.light, fine: still.fine, dpr: 1, still: true, fov });
       const [skin, water] = await Promise.all([decodeImage(SKIN("soil", 3600)), decodeImage(WATER)]);
       if (!alive) return;
       api.setSkin(api.textureFrom(skin));
-      api.setWater(api.textureFrom(water, { colour: false }));
+      if (still.fine) api.setWater(api.textureFrom(water, { colour: false }));
       await api.compile();
       api.render();
       const ukraine = world.events.find((e) => e.id === UKRAINE);
       window.__globeStill = {
         dataURL: api.canvas.toDataURL("image/png"),
+        size: S,
+        crop: still.crop,
         view: still.view,
         ukraine: ukraine ? projectOnView(ukraine, { ...still.view, altitude: still.altitude }) : null,
       };
@@ -247,6 +297,9 @@ function Globe({ params, children }) {
   const markersRef = useRef(null);
   const wordsRef = useRef(null);
   const dockRef = useRef(null);
+  const hintRef = useRef(null);
+  const scrimRef = useRef(null);
+  const stillRef = useRef(null);
   const floatRef = useRef(null);
   const panelRef = useRef(null);
   const panelHeadRef = useRef(null);
@@ -260,7 +313,8 @@ function Globe({ params, children }) {
 
   const [policy, setPolicy] = useState("wait"); // wait | yes | ask | off
   const [scene, setScene] = useState("still"); // still | live | failed
-  const [show, setShow] = useState({ soil: true, war: true, alert: true });
+  const [show, setShow] = useState({ soil: true, war: true, alert: true, minor: false });
+  const [turned, setTurned] = useState(false); // the visitor has dragged the Earth once
   const [tour, setTour] = useState(() => (typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "rest" : "running"));
   const [activeId, setActiveId] = useState(UKRAINE);
   const [hoverId, setHoverId] = useState(null);
@@ -277,15 +331,25 @@ function Globe({ params, children }) {
   // ---------- The data ----------
 
   const events = world.events;
+  // "Today" for the alerts' dates is the feed's own time (when GDACS was read).
+  const now = world.updated || undefined;
+  const commonYear = tradeYear(world.trade);
   const byId = useMemo(() => new Map(events.map((e) => [e.id, e])), [events]);
-  const counts = useMemo(() => ({ war: events.filter((e) => e.kind === "war").length, alert: events.filter((e) => e.kind !== "war").length }), [events]);
-  const stops = useMemo(() => tourStops(events), [events]);
+  const counts = useMemo(
+    () => ({
+      war: events.filter((e) => e.kind === "war").length,
+      alert: events.filter((e) => e.kind !== "war" && !isMinorAlert(e)).length,
+      minor: events.filter((e) => isMinorAlert(e)).length,
+    }),
+    [events]
+  );
+  const stops = useMemo(() => tourStops(events, { now }), [events, now]);
   // The keyboard's order: the tour, then the other alerts.
   const order = useMemo(() => {
     const seen = new Set(stops.map((e) => e.id));
     return [...stops, ...events.filter((e) => !seen.has(e.id))];
   }, [stops, events]);
-  const shownOrder = useMemo(() => order.filter((e) => show[kindOf(e)]), [order, show]);
+  const shownOrder = useMemo(() => order.filter((e) => isShown(e, show)), [order, show]);
   const buyersCache = useMemo(() => new Map(), [world.trade, world.countries]);
   const buyersFor = useCallback(
     (e) => {
@@ -336,6 +400,7 @@ function Globe({ params, children }) {
       captionSize: { w: 300, h: 120 },
       captionAt: null,
       skins: null,
+      downloads: null, // the AbortController of the 3D's pictures
       state: {},
     };
   }
@@ -386,7 +451,11 @@ function Globe({ params, children }) {
     if (!api) return;
     const s = e.state;
     const t = e.tiles;
-    const tiles = [t.words, t.dock, s.selectedId ? t.panel : null, e.captionAt].filter(Boolean);
+    // Under the words or the controls every marker fades, the focused one
+    // too (only a drag can put it there); under the tile or the panel all
+    // but the focused one.
+    const fixed = [t.words, t.dock, t.hint].filter(Boolean);
+    const floating = [s.selectedId ? t.panel : null, e.captionAt].filter(Boolean);
     const rings = motionOn();
     const current = s.selectedId || s.hoverId || s.activeId;
     for (const [id, el] of e.markers) {
@@ -397,13 +466,20 @@ function Globe({ params, children }) {
         el._back = back;
         el.classList.toggle("is-back", back);
       }
-      const under = !back && id !== current && tiles.some((r) => inside(p, r));
+      const under = !back && (fixed.some((r) => inside(p, r)) || (id !== current && floating.some((r) => inside(p, r))));
       if (el._under !== under) {
         el._under = under;
         el.classList.toggle("is-under", under);
       }
-      if (el._ringed) api.showRing(id, rings && !back && !under && s.show[el._kind]);
+      if (el._ringed) api.showRing(id, rings && !back && !under && isShown(el._event, s.show));
     }
+    // No arc is drawn over the words or the controls, whichever way the
+    // Earth has been turned: a point of an arc shows unless the Earth hides
+    // it (behind it, inside its disc).
+    const L = s.layout;
+    const sphere = sphereRadiusPx(L.H, api.getView().altitude);
+    const clear = [t.words, t.dock, t.hint].filter(Boolean);
+    api.fitArcs((points) => points.some((p) => (p.visible || Math.hypot(p.x - L.cx, p.y - L.cy) > sphere) && clear.some((r) => inside(p, r, ARC_CLEARANCE))));
   }, [motionOn]);
 
   // The tile beside the focused marker (on a wide screen).
@@ -417,8 +493,18 @@ function Globe({ params, children }) {
       return;
     }
     const p = e.api.project(ev.lat, ev.lng, MARKER_ALTITUDE);
+    const t = e.tiles;
+    // A tile whose marker the visitor has turned behind the Earth or under
+    // the words waits, hidden, until the marker is back in sight.
+    const away = !p.visible || [t.words, t.dock, t.hint].some((r) => inside(p, r));
+    if (away) el.dataset.away = "";
+    else delete el.dataset.away;
+    if (away) {
+      e.captionAt = null;
+      return;
+    }
     const { w, h } = e.captionSize;
-    const spot = placeCaption(p, { w, h }, { W: s.layout.W, H: s.layout.H, inset: 16 }, [e.tiles.words, e.tiles.dock].filter(Boolean));
+    const spot = placeCaption(p, { w, h }, { W: s.layout.W, H: s.layout.H, inset: 16 }, [t.words, t.dock, t.hint].filter(Boolean));
     el.style.transform = `translate3d(${spot.x}px, ${spot.y}px, 0)`;
     e.captionAt = { left: spot.x, top: spot.y, right: spot.x + w, bottom: spot.y + h };
   }, []);
@@ -531,28 +617,20 @@ function Globe({ params, children }) {
       const api = e.api;
       if (!api) return;
       const ev = id ? e.state.byId.get(id) : null;
-      if (!ev || !e.state.show[kindOf(ev)]) {
+      if (!ev || !isShown(ev, e.state.show)) {
         api.setArcs([]);
         return;
       }
-      api.syncCamera();
-      const L = e.state.layout;
-      const view = api.getView();
-      const sphere = sphereRadiusPx(L.H, view.altitude);
-      // A point of an arc shows unless the Earth hides it (behind it, inside its disc).
-      const shows = (p) => p.visible || Math.hypot(p.x - L.cx, p.y - L.cy) > sphere;
       const list = [];
       buyersFor(ev).forEach((b, i) => {
         const base = { iso3: b.iso3, startLat: ev.lat, startLng: ev.lng, endLat: b.lat, endLng: b.lng, stroke: 0.22 + b.share * 1.4, autoScale: 0.32 };
-        // An arc that would end under the words, or pass behind them, is left out.
-        const end = api.project(b.lat, b.lng, 0);
-        if (end.visible && inside(end, e.tiles.words, 12)) return;
-        if (api.arcPoints(base).some((pt) => { const p = api.projectPoint(pt); return shows(p) && inside(p, e.tiles.words, 12); })) return;
         list.push({ ...base, kind: "route", opacity: 0.35 });
         list.push({ ...base, kind: "ship", opacity: 0.95, dashSize: 0.22, gapSize: 1.2, dashOffset: i * 0.15 });
       });
       api.setArcs(list);
       e.dashClock = 0;
+      // Which of them would cross the words is worked out with the markers.
+      e.needsPlace = true;
     },
     [buyersFor]
   );
@@ -577,7 +655,7 @@ function Globe({ params, children }) {
     const s = e.state;
     const list = [];
     for (const ev of s.byId.values()) {
-      if (!ringed(ev) || !s.show[kindOf(ev)]) continue;
+      if (!ringed(ev) || !isShown(ev, s.show)) continue;
       list.push({ id: ev.id, lat: ev.lat, lng: ev.lng, colour: ev.kind === "war" ? COLOURS.war : COLOURS.alert, alpha: ev.kind === "war" ? 0.9 : 0.7, period: ringPeriod(ev.id), phase: ringPeriod(`${ev.id}:phase`) });
     }
     api.setRings(list);
@@ -586,29 +664,34 @@ function Globe({ params, children }) {
 
   // ---------- Where each stop is seen from ----------
 
-  // The part of the screen the event should sit in the middle of: on a
-  // phone between the controls and the words (or the panel); on a wide
-  // screen with the panel open, between the words and the panel.
+  // The part of the screen the event should sit in: on a phone between the
+  // controls and the words (or the panel); on a wide screen right of the
+  // words and the controls (and left of the panel when it is open).
   const freeRect = useCallback((withPanel) => {
     const e = eng.current;
     const s = e.state;
     const L = s.layout;
     const t = e.tiles;
     if (s.landscape) {
-      if (!withPanel || !t.panel) return null;
-      return { left: (t.words?.right ?? 0) + 24, right: t.panel.left - 24, top: 0, bottom: L.H };
+      const left = Math.max(t.words?.right ?? 0, t.dock?.right ?? 0, t.hint?.right ?? 0) + 24;
+      const right = withPanel && t.panel ? t.panel.left - 24 : L.W;
+      if (right - left < 120) return null;
+      return { left, right, top: 0, bottom: L.H };
     }
     const top = (t.dock?.bottom ?? 0) + 8;
-    const bottom = (withPanel && t.panel ? t.panel.top : t.words?.top ?? L.H) - 8;
+    const bottom = (withPanel && t.panel ? t.panel.top : Math.min(t.hint?.top ?? L.H, t.words?.top ?? L.H)) - 8;
     if (bottom - top < 80) return null;
     return { left: 0, right: L.W, top, bottom };
   }, []);
 
+  // Wide screen, panel closed: between the event and its buyers, but never
+  // under the words. Otherwise: the event in the middle of the free part.
   const viewFor = useCallback(
     (ev, { zoom = false } = {}) => {
       const s = eng.current.state;
       const altitude = s.layout.altitude * (zoom ? SELECT_ZOOM : 1);
       const free = freeRect(zoom);
+      if (s.landscape && !zoom) return { ...aimInside(ev, buyersFor(ev), s.layout, free, altitude), altitude };
       const shift = free ? shiftToward(s.layout, free, altitude) : null;
       return { ...aimFor(ev, buyersFor(ev), { shift, altitude }), altitude };
     },
@@ -619,7 +702,7 @@ function Globe({ params, children }) {
 
   const nextStop = useCallback((from) => {
     const s = eng.current.state;
-    for (let i = from + 1; i < s.stops.length; i++) if (s.show[kindOf(s.stops[i])]) return i;
+    for (let i = from + 1; i < s.stops.length; i++) if (isShown(s.stops[i], s.show)) return i;
     return -1;
   }, []);
 
@@ -627,7 +710,7 @@ function Globe({ params, children }) {
     (index, ev) => {
       const e = eng.current;
       e.stopIndex = index;
-      if (!e.state.show[kindOf(ev)] && e.state.tour === "running") {
+      if (!isShown(ev, e.state.show) && e.state.tour === "running") {
         // Its kind was switched off while the camera flew there: on at once.
         e.hold = { left: 0, since: null };
         setActiveId(ev.id);
@@ -696,14 +779,16 @@ function Globe({ params, children }) {
       return;
     }
     // The loop is done: back to Ukraine (the first stop shown) to rest.
-    const home = e.state.stops.findIndex((ev) => e.state.show[kindOf(ev)]);
+    const home = e.state.stops.findIndex((ev) => isShown(ev, e.state.show));
     if (home >= 0) goToStop(home, { home: true });
     else setTour("rest");
   }, [goToStop, nextStop]);
 
-  // The tour's first stop, once both the 3D and the events are here. On a
-  // phone the first stop's view may differ a little from the still's: the
-  // camera settles there before the clock starts.
+  // The tour's first stop, once both the 3D and the events are here. The
+  // 3D starts exactly where the still picture was drawn from; when the first
+  // stop's own view is more than 1.5 degrees away (a screen of another shape,
+  // or a newer trade table moving the aim a little), the camera settles
+  // there before the clock starts. Closer than that it simply stays.
   const startTour = useCallback(() => {
     const e = eng.current;
     const s = e.state;
@@ -713,7 +798,7 @@ function Globe({ params, children }) {
     e.started = true;
     const index = Math.max(0, s.stops.findIndex((ev) => ev.id === s.activeId));
     const target = viewFor(first);
-    if (angularDistance(e.api.getView(), target) > 0.5) flyTo(target, SETTLE_FLIGHT_MS, "settle", { onDone: () => arrive(index, first) });
+    if (angularDistance(e.api.getView(), target) > 1.5) flyTo(target, SETTLE_FLIGHT_MS, "settle", { onDone: () => arrive(index, first) });
     else arrive(index, first);
   }, [arrive, flyTo, viewFor]);
 
@@ -794,8 +879,28 @@ function Globe({ params, children }) {
   const measureTiles = useCallback(() => {
     const e = eng.current;
     const root = rootRef.current;
-    e.tiles = { words: relRect(wordsRef.current, root), dock: relRect(dockRef.current, root), panel: relRect(panelRef.current, root) };
+    e.tiles = { words: relRect(wordsRef.current, root), dock: relRect(dockRef.current, root), hint: relRect(hintRef.current, root), panel: relRect(panelRef.current, root) };
     e.needsPlace = true;
+    // The scrim under the words' column: on a wide screen a band from just
+    // left of the words to just right of the controls, the full height; on
+    // a phone the foot of the hero, from just above the words.
+    const scrim = scrimRef.current;
+    const t = e.tiles;
+    const column = (e.state.landscape ? [t.words, t.dock, t.hint] : [t.words, t.hint]).filter(Boolean);
+    if (scrim && column.length) {
+      const left = Math.min(...column.map((r) => r.left));
+      const right = Math.max(...column.map((r) => r.right));
+      const top = Math.min(...column.map((r) => r.top));
+      if (e.state.landscape) {
+        scrim.style.left = `${Math.round(left - SCRIM_FADE)}px`;
+        scrim.style.width = `${Math.round(right - left + 2 * SCRIM_FADE)}px`;
+        scrim.style.top = "0px";
+      } else {
+        scrim.style.left = "0px";
+        scrim.style.width = "100%";
+        scrim.style.top = `${Math.round(top - SCRIM_FADE)}px`;
+      }
+    }
   }, []);
 
   useLayoutEffect(() => {
@@ -822,7 +927,7 @@ function Globe({ params, children }) {
       measureTiles();
       invalidate(true);
     });
-    for (const el of [wordsRef.current, dockRef.current]) if (el) ro.observe(el);
+    for (const el of [wordsRef.current, dockRef.current, hintRef.current]) if (el) ro.observe(el);
     document.fonts?.ready?.then(() => {
       measureTiles();
       invalidate(true);
@@ -889,7 +994,7 @@ function Globe({ params, children }) {
     return () => clearTimeout(timer);
   }, [reduced]);
 
-  // ---------- Loading the 3D at the first quiet moment ----------
+  // ---------- Loading the 3D once the still picture is on screen ----------
 
   useEffect(() => {
     setPolicy(threeDPolicy());
@@ -901,7 +1006,11 @@ function Globe({ params, children }) {
     let api = null;
     let idle = 0;
     let timer = 0;
+    let raf = 0;
     const e = eng.current;
+    // Every picture the 3D fetches stops downloading when the visitor leaves.
+    const downloads = new AbortController();
+    e.downloads = downloads;
     const lost = () => {
       if (!alive) return;
       cancelAnimationFrame(e.raf);
@@ -917,8 +1026,8 @@ function Globe({ params, children }) {
         const px = textureSize(s.layout.D, window.devicePixelRatio || 1);
         const skinKind = s.show.soil ? "soil" : "plain";
         // The pictures are fetched and decoded while the code arrives.
-        const skinP = decodeImage(SKIN(skinKind, px));
-        const waterP = s.fine ? decodeImage(WATER).catch(() => null) : Promise.resolve(null);
+        const skinP = decodeImage(SKIN(skinKind, px), downloads.signal);
+        const waterP = s.fine ? decodeImage(WATER, downloads.signal).catch(() => null) : Promise.resolve(null);
         skinP.catch(() => {});
         const mod = await import("./globeScene.js");
         await afterFrame();
@@ -961,13 +1070,20 @@ function Globe({ params, children }) {
       }
     };
     const begin = () => {
+      if (!alive) return;
       if (typeof window.requestIdleCallback === "function") idle = window.requestIdleCallback(start, { timeout: e.state.fine ? 800 : 1500 });
       else timer = setTimeout(start, e.state.fine ? 300 : 800);
     };
-    // After the first paint (two frames), at the first quiet moment.
-    const raf = requestAnimationFrame(() => requestAnimationFrame(begin));
+    // Once the still picture is decoded and painted (two frames later), at
+    // the first quiet moment: the still is the first screen's picture, so
+    // nothing of the 3D competes with it for the connection.
+    stillReady(stillRef.current).then(() => {
+      if (alive) raf = requestAnimationFrame(() => (raf = requestAnimationFrame(begin)));
+    });
     return () => {
       alive = false;
+      downloads.abort();
+      if (e.downloads === downloads) e.downloads = null;
       cancelAnimationFrame(raf);
       if (idle && typeof window.cancelIdleCallback === "function") window.cancelIdleCallback(idle);
       clearTimeout(timer);
@@ -1006,10 +1122,11 @@ function Globe({ params, children }) {
       el.tabIndex = -1;
       el.setAttribute("aria-hidden", "true");
       el.className = markerClass(ev);
-      if (!s.show[kindOf(ev)]) el.classList.add("is-off");
+      if (!isShown(ev, s.show)) el.classList.add("is-off");
       if (ev.id === current) el.classList.add("is-active");
       el.appendChild(document.createElement("i"));
       el._point = api.point(ev.lat, ev.lng, MARKER_ALTITUDE);
+      el._event = ev;
       el._kind = kindOf(ev);
       el._ringed = ringed(ev);
       if (ripple) el.style.transitionDelay = `${Math.round((angularDistance(ukraine, ev) / 180) * 600)}ms`;
@@ -1043,13 +1160,18 @@ function Globe({ params, children }) {
     const api = e.api;
     if (!api) return undefined;
     const controls = api.controls;
+    // While the Earth is held, nothing on the page can be selected
+    // (data-dragging, globe.css), so a drag never paints the words.
+    const root = rootRef.current;
     const onStart = () => {
       e.dragging = true;
+      if (root) root.dataset.dragging = "";
       kick();
     };
     const onEnd = () => {
       e.dragging = false;
       e.easing = true;
+      if (root) delete root.dataset.dragging;
       kick();
     };
     const onChange = () => invalidate();
@@ -1074,6 +1196,7 @@ function Globe({ params, children }) {
         down.moved = true;
         e.flight = null;
         endTour();
+        setTurned(true);
       }
     };
     const onUp = () => {
@@ -1106,6 +1229,7 @@ function Globe({ params, children }) {
       canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerup", onUp);
       canvas.removeEventListener("pointercancel", onUp);
+      if (root) delete root.dataset.dragging;
     };
     // Runs once, when the 3D goes live.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1136,7 +1260,7 @@ function Globe({ params, children }) {
     const e = eng.current;
     const current = selectedId || hoverId || activeId;
     for (const [id, el] of e.markers) {
-      el.classList.toggle("is-off", !show[el._kind]);
+      el.classList.toggle("is-off", !isShown(el._event, show));
       el.classList.toggle("is-active", id === current);
     }
     invalidate(true);
@@ -1161,16 +1285,16 @@ function Globe({ params, children }) {
     if (!live || !e.api) return;
     updateRings();
     const current = byId.get(activeId);
-    if (tour === "running" && current && !show[kindOf(current)] && !e.flight) {
+    if (tour === "running" && current && !isShown(current, show) && !e.flight) {
       e.hold.since = null;
       advance();
     }
-    if (hoverId && byId.get(hoverId) && !show[kindOf(byId.get(hoverId))]) setHoverId(null);
+    if (hoverId && byId.get(hoverId) && !isShown(byId.get(hoverId), show)) setHoverId(null);
     if (!e.flight) setArcsFor(selectedId || hoverId || activeId);
     styleArcs();
     invalidate(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [show.war, show.alert]);
+  }, [show.war, show.alert, show.minor]);
 
   // The arcs follow what the tile or the panel shows.
   useEffect(() => {
@@ -1200,7 +1324,7 @@ function Globe({ params, children }) {
     if (!e.skins[kind]) {
       // The plain picture loads the first time the black soil is switched off.
       const api = e.api;
-      e.skins[kind] = decodeImage(SKIN(kind, e.skins.px))
+      e.skins[kind] = decodeImage(SKIN(kind, e.skins.px), e.downloads?.signal)
         .then((img) => {
           if (e.api !== api) return null;
           const texture = api.textureFrom(img);
@@ -1311,6 +1435,7 @@ function Globe({ params, children }) {
         clearTimeout(hoverTimer.current);
         e.flight = null;
         endTour();
+        setTurned(true);
         const controls = api.controls;
         if (down.pointerType === "touch") {
           const polar = controls.getPolarAngle();
@@ -1439,7 +1564,7 @@ function Globe({ params, children }) {
     const s = e.state;
     // On from where the tour was, or from the start after a full loop.
     let index = e.endedAtEnd ? 0 : Math.max(0, s.stops.findIndex((ev) => ev.id === s.activeId));
-    if (s.stops[index] && !s.show[kindOf(s.stops[index])]) index = Math.max(0, nextStop(index));
+    if (s.stops[index] && !isShown(s.stops[index], s.show)) index = Math.max(0, nextStop(index));
     e.endedAtEnd = false;
     e.state.tour = "running";
     setTour("running");
@@ -1454,17 +1579,25 @@ function Globe({ params, children }) {
 
   // ---------- Words ----------
 
-  const caption = focusEvent ? captionFor(focusEvent, { buyers: buyersFor(focusEvent) }) : null;
+  const caption = focusEvent ? captionFor(focusEvent, { buyers: buyersFor(focusEvent), now, commonYear }) : null;
+  // On a phone the docked tile keeps to the name and one line (its fact is
+  // in the panel), so the controls cover little of the Earth.
+  const compact = !landscape && size.W < 600;
   const wide = landscape ? size.W >= 1280 : size.W >= 600;
   const loaded = world.status === "ok";
+  // The alerts are GDACS's orange and red ones of the last weeks: some still
+  // going on, some over (each tile says which), hence "recent".
   const label = {
     war: loaded ? countText(counts.war, wide ? "armed conflict" : "conflict", wide ? "armed conflicts" : "conflicts") : "Armed conflicts",
-    alert: loaded ? countText(counts.alert, wide ? "disaster alert" : "alert", wide ? "disaster alerts" : "alerts") : "Disaster alerts",
+    alert: loaded ? countText(counts.alert, wide ? "recent disaster alert" : "recent alert", wide ? "recent disaster alerts" : "recent alerts") : "Disaster alerts",
     pause: tour === "running" ? (wide ? "Pause tour" : "Pause") : wide ? "Play tour" : "Play",
   };
-  const listName = [show.war && counts.war ? countText(counts.war, "armed conflict", "armed conflicts") : null, show.alert && counts.alert ? countText(counts.alert, "disaster alert", "disaster alerts") : null]
-    .filter(Boolean)
-    .join(" and ");
+  const listParts = [
+    show.war && counts.war ? countText(counts.war, "armed conflict", "armed conflicts") : null,
+    show.alert && counts.alert ? countText(counts.alert, "recent disaster alert", "recent disaster alerts") : null,
+    show.alert && show.minor && counts.minor ? countText(counts.minor, "minor alert", "minor alerts") : null,
+  ].filter(Boolean);
+  const listName = listParts.length > 1 ? `${listParts.slice(0, -1).join(", ")} and ${listParts[listParts.length - 1]}` : listParts.join("");
 
   let status = null;
   if (feedFailed) status = "The live list could not be loaded.";
@@ -1500,15 +1633,41 @@ function Globe({ params, children }) {
     }
   }, [focusId, live, risen, caption?.fact, layout, stillMark, placeFloat, invalidate]);
 
-  const captionBody = caption ? (
-    <div className="globe-caption" aria-hidden="true">
-      <p className="globe-caption-name">{caption.name}</p>
-      <p className="globe-caption-meta">{caption.meta}</p>
-      {caption.fact && <p className="globe-caption-fact">{caption.fact}</p>}
-      <button type="button" className="globe-caption-link" tabIndex={-1} onClick={() => focusEvent && select(focusEvent.id, listRef.current)}>
-        {caption.link}
+  const captionLink = caption ? (
+    <button type="button" className="globe-caption-link" tabIndex={-1} onClick={() => focusEvent && select(focusEvent.id, listRef.current)}>
+      {caption.link}
+    </button>
+  ) : null;
+  const captionTile = (docked) =>
+    caption ? (
+      <div className={`globe-caption${docked && compact ? " is-compact" : ""}`} aria-hidden="true">
+        <p className="globe-caption-name">{caption.name}</p>
+        {docked && compact ? (
+          <p className="globe-caption-meta">
+            {caption.meta} {captionLink}
+          </p>
+        ) : (
+          <>
+            <p className="globe-caption-meta">{caption.meta}</p>
+            {caption.fact && <p className="globe-caption-fact">{caption.fact}</p>}
+            {captionLink}
+          </>
+        )}
+      </div>
+    ) : null;
+
+  // One quiet line under the controls: how to turn the Earth (until the
+  // visitor has), and the minor alerts on request.
+  const minorButton =
+    live && kindsShown && show.alert && counts.minor > 0 ? (
+      <button type="button" className="globe-minor" aria-pressed={show.minor} onClick={() => setShow((old) => ({ ...old, minor: !old.minor }))}>
+        {show.minor ? "Hide minor alerts" : "Show minor alerts"}
       </button>
-    </div>
+    ) : null;
+  const dragHint = live ? (
+    <span className={`globe-hint-text${turned ? " is-done" : ""}`} aria-hidden="true">
+      {fine ? "Drag to turn the Earth." : "Swipe to turn the Earth."}
+    </span>
   ) : null;
 
   const pauseButton = tourControls ? (
@@ -1550,23 +1709,29 @@ function Globe({ params, children }) {
   const step = (by) => shownOrder[(panelIndex + by + shownOrder.length) % shownOrder.length];
 
   const rootClass = ["globe", `is-${layout.mode}`, live ? "is-live" : "", no3D ? "is-no3d" : "", risen ? "is-risen" : "", selected ? "has-panel" : "", params.noWords ? "no-words" : ""].filter(Boolean).join(" ");
-  const stillSize = layout.D * 1.3;
 
   return (
     <div ref={rootRef} className={rootClass} data-dim={dimKind || undefined} onPointerMove={onRootPointer} onPointerLeave={onRootPointer}>
-      {/* The Earth: the still picture, the 3D canvas over it, the markers. */}
+      {/* The Earth: the still picture, the 3D canvas over it, the scrim under the words, the markers. */}
       <div className="globe-stage" data-ui aria-hidden="true">
         <img
+          ref={stillRef}
           className="globe-still"
           src={still.src}
           alt=""
-          width={still.size}
-          height={still.size}
+          width={stillPixels(still, still.crop.right - still.crop.left)}
+          height={stillPixels(still, still.crop.bottom - still.crop.top)}
           fetchPriority="high"
           decoding="async"
-          style={{ left: layout.cx - stillSize / 2, top: layout.cy - stillSize / 2, width: stillSize, height: stillSize }}
+          style={{
+            left: layout.cx + still.crop.left * layout.D,
+            top: layout.cy + still.crop.top * layout.D,
+            width: (still.crop.right - still.crop.left) * layout.D,
+            height: (still.crop.bottom - still.crop.top) * layout.D,
+          }}
         />
         <div className="globe-canvas" ref={canvasHostRef} />
+        <div className="globe-scrim" ref={scrimRef} />
         {stillMark && !live && show.war && focusId === UKRAINE && (
           <span className="globe-marker is-war is-active globe-still-mark" style={{ transform: `translate3d(${stillMark.x}px, ${stillMark.y}px, 0)` }}>
             <i />
@@ -1585,12 +1750,11 @@ function Globe({ params, children }) {
             {toggle("soil", "Black soil", COLOURS.soil, null)}
             {kindsShown && toggle("war", label.war, COLOURS.war, "alert")}
             {kindsShown && toggle("alert", label.alert, COLOURS.alert, "war")}
-            {landscape && pauseButton}
+            {pauseButton}
             {askButton}
           </div>
           {(status || docked) && (
             <div className="globe-docked">
-              {!landscape && !status && pauseButton}
               {status ? (
                 <p className="globe-status" role="status">
                   {status}
@@ -1608,19 +1772,24 @@ function Globe({ params, children }) {
                 risen &&
                 !selected && (
                   <div className="globe-docked-card" key={focusId}>
-                    {captionBody}
+                    {captionTile(true)}
                   </div>
                 )
               )}
             </div>
           )}
         </div>
+        {/* The quiet line: under the controls on a wide screen, under the words on a phone. */}
+        <div className="globe-hint" ref={hintRef}>
+          {minorButton}
+          {dragHint}
+        </div>
       </div>
 
       {/* The tile beside the marker, on a wide screen. */}
       {!docked && !status && caption && (
         <div className={`globe-float${risen && !captionGone && !selected ? " is-shown" : ""}`} ref={floatRef}>
-          {captionBody}
+          {captionTile(false)}
         </div>
       )}
 
@@ -1640,7 +1809,7 @@ function Globe({ params, children }) {
         >
           {shownOrder.map((ev) => (
             <div key={ev.id} id={`globe-opt-${ev.id}`} role="option" aria-selected={ev.id === activeId} className="globe-option" onClick={() => select(ev.id, listRef.current)}>
-              {optionText(ev)}
+              {optionText(ev, now)}
             </div>
           ))}
         </div>
@@ -1655,15 +1824,18 @@ function Globe({ params, children }) {
           <h2 id="globe-panel-title" className="globe-panel-name" tabIndex={-1} ref={panelHeadRef}>
             {selected.name}
           </h2>
-          <p className="globe-panel-meta">{panelMeta(selected, { reviewed: world.reviewed })}</p>
+          <p className="globe-panel-meta">{panelMeta(selected, { reviewed: world.reviewed, now })}</p>
           {selected.note && <p className="globe-panel-note">{selected.note}</p>}
           {panelBuyers.length > 0 && (
             <div className="globe-panel-block">
-              <h3 className="globe-panel-sub">Who buys its food</h3>
+              <h3 className="globe-panel-sub">Whose food depends on it</h3>
               <ul className="globe-buyers">
                 {panelBuyers.map((b) => (
                   <li key={b.iso3} onPointerEnter={() => setBrightBuyer(b.iso3)} onPointerLeave={() => setBrightBuyer(null)}>
-                    <span className="globe-buyer-name">{b.name}</span>
+                    <span className="globe-buyer-name">
+                      {b.name}
+                      {buyerYearNote(b, commonYear)}
+                    </span>
                     <span className="globe-buyer-bar" aria-hidden="true">
                       <i style={{ width: `${Math.max(2, b.share * 100)}%` }} />
                     </span>
@@ -1672,16 +1844,15 @@ function Globe({ params, children }) {
                 ))}
               </ul>
               <p className="globe-panel-source">
-                Share of each buyer's farm and food imports that come from this country. World Bank WITS{world.trade?.year ? `, ${world.trade.year}` : ""}, as reported by the buyer.
+                The share of each country's farm and food imports that come from {selected.country || "here"}
+                {commonYear ? `, in ${commonYear} unless a year is given` : ""}. {tradeSource(world.trade)}
               </p>
             </div>
           )}
           {selected.measured && (
             <div className="globe-panel-block">
               <h3 className="globe-panel-sub">Measured by Chernozem</h3>
-              <p>
-                {millions(selected.measured.heavyDamageHa)}&nbsp;ha of black soil heavily damaged · {millions(selected.measured.peopleOnDamagedSoil)} people on it · {selected.measured.month}
-              </p>
+              <p>{measuredSentence(selected.measured)}</p>
               <Link to="/demo" className="link link-under globe-panel-link">
                 Try the demo
               </Link>

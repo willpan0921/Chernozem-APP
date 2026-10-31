@@ -3,6 +3,8 @@
 // (src/site/pages/RegisterPage.jsx, SignInPage.jsx) make and check
 // accounts with Google or an e-mail and a password through Firebase, and
 // then hand the signed token to our own server (src/api/accountApi.js).
+// The owner's page (src/site/pages/OwnerPage.jsx) signs the owner in the
+// same way, with the Chernozem Google account.
 //
 //   loadFirebaseAuth()  downloads the Firebase code (only when called, so
 //                       the rest of the website never fetches it), sets it

@@ -108,6 +108,9 @@ export function productForPath(pathname) {
 //   close
 //   settings       the one line on both Settings pages in the demo
 //                  ("Register" in it is the link)
+//   settingsOwn    the same line for an account holder looking at the
+//                  demo ("Open your own workspace" in it is the button:
+//                  they already have an account)
 export const demoWords = {
   back: "Back to the website",
   note: "Demo · Ukraine, read-only",
@@ -122,6 +125,7 @@ export const demoWords = {
   offlineText: "Nothing can be changed until it answers. Try again in a moment.",
   close: "Close",
   settings: { before: "This is the demo. ", link: "Register", after: " to set up your own." },
+  settingsOwn: { before: "This is the demo. ", link: "Open your own workspace", after: "." },
 };
 
 // The refusal's full sentence, as the server words it too.

@@ -21,8 +21,12 @@
 //
 //   <DemoSettingsNote /> the one line at the top of both Settings pages in
 //                        the demo: "This is the demo. Register to set up
-//                        your own." ("Register" is the link). Nothing for
-//                        anyone else.
+//                        your own." ("Register" is the link). An account
+//                        holder looking at the demo reads "This is the
+//                        demo. Open your own workspace." instead, the
+//                        button taking them back to their own fields or
+//                        area (as the sidebar's box and the dialog do).
+//                        Nothing for anyone else.
 //
 // WHAT THEY RECEIVE
 //   DemoDialog        open (true: shown), mode (src/lib/access.js modeOf:
@@ -111,9 +115,25 @@ export default function DemoDialog({ open, mode, onClose }) {
 }
 
 export function DemoSettingsNote() {
-  const { mode } = useAccess();
+  const { mode, ownHome } = useAccess();
   const registerTo = useRegisterPath();
   if (mode !== "demo") return null;
+  // An account holder: back to their own workspace, not "Register".
+  if (ownHome) {
+    const { before, link, after } = demoWords.settingsOwn;
+    return (
+      <p className="demo-settings-note" role="note">
+        <Eye size={15} aria-hidden="true" />
+        <span>
+          {before}
+          <button type="button" className="demo-settings-own" onClick={() => openOwnWorkspace(ownHome)}>
+            {link}
+          </button>
+          {after}
+        </span>
+      </p>
+    );
+  }
   const { before, link, after } = demoWords.settings;
   return (
     <p className="demo-settings-note" role="note">

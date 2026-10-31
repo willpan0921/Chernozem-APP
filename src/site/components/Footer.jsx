@@ -1,8 +1,9 @@
 // WHAT THIS FILE DOES
 // The website's footer: a single quiet line after a stretch of empty
 // ground. Left, what this is; centre, the page links plus GitHub and the
-// paper; right, the year and the place. On a phone it is three short
-// lines. No logo, no columns, no background.
+// research package on Harvard Dataverse ("Data and code"); right, the
+// place and the year. On a phone it is three short lines. No logo, no
+// columns, no background.
 //
 // WHO EDITS IT
 // Whoever changes the website's footer. Links come from
@@ -29,11 +30,11 @@ export default function Footer() {
             GitHub
           </a>
           <a href={LINKS.paper} className="link" target="_blank" rel="noreferrer">
-            Paper
+            Data and code
           </a>
         </nav>
         <p className="sf-where">
-          {SITE.year} · {SITE.madeIn}
+          {SITE.madeIn}, {SITE.year}
         </p>
       </div>
     </footer>
