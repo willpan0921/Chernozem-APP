@@ -2,8 +2,9 @@
 // Tests the map's states and regions (units.js) and its route
 // GET /api/areas/:id/units: the level rule, the borders and names from FAO
 // GAUL (a stand-in for Earth Engine, fake-ee.js), the saved file, the
-// fallback from the squares' own place names, and which square is in
-// which unit. Run with "npm test".
+// fallback from the squares' own place names, which square is in which
+// unit, and that the public demo only ever reads the saved borders and
+// soil types (Earth Engine is never asked for it). Run with "npm test".
 //
 // The route is reached through the real app (app.js) on a local port.
 // Which data source it gets is set the way providers/index.js keeps its
@@ -322,11 +323,40 @@ test("GET /api/areas/:id/units: the units and which square is in which; errors f
   assert.equal((await get(`/api/areas/${area.id}/units`, "POST")).status, 405);
 });
 
-test("the units route needs the access code like every route", async () => {
+test("the public demo gets the borders and soil types from saved files only: Earth Engine is never asked and nothing is written", async () => {
+  const { ee, provider } = fakeGee();
+  useSource(provider);
+  // A region whose borders were never worked out.
+  const area = await addArea({ id: "admin1-gaul1-12", kind: "admin1", geometry: box([31, 49, 32, 50]), bbox: [31, 49, 32, 50] }, cellsOf().filter((c) => c.admin1 === "Poltavs'ka"));
+  // With the owner's key set, a visitor without its cookie is the demo.
   process.env.ATLAS_ACCESS_CODE = "let-me-in";
   try {
-    assert.equal((await get("/api/areas/admin1-gaul1-11/units")).status, 401);
-    assert.equal((await get("/api/soil?areaId=admin1-gaul1-11&cellId=r0c0")).status, 401);
+    const asked = ee.requests.length;
+    const units = await get(`/api/areas/${area.id}/units`);
+    assert.equal(units.status, 200);
+    assert.equal(units.json.source, "squares", "the squares' own place names");
+    assert.equal(units.json.reason, "demo");
+    assert.equal(units.json.approximate, true);
+    assert.match(units.json.message, /^The demo shows only the borders worked out before, so the/);
+    assert.equal(await getUnitsCache(area.id), null, "nothing saved");
+    for (const url of [`/api/soil?areaId=${area.id}&cellId=r0c2`, `/api/soil?areaId=${area.id}&unitId=${units.json.units[0].id}`, "/api/soil?lat=49.5&lon=31.5&sizeDeg=0.5"]) {
+      const soil = await get(url);
+      assert.equal(soil.status, 200, url);
+      assert.equal(soil.json.soil.available, false, url);
+      assert.equal(soil.json.soil.reason, "demo", url);
+      assert.equal(soil.json.soil.message, "The demo shows soil types only for places read before. Register to read them for your own land.");
+    }
+    assert.equal(ee.requests.length, asked, "Earth Engine was never asked");
+    assert.equal(fs.existsSync(path.join(DATA, "soil", `${area.id}.json`)), false);
+
+    // The owner (no key: open) works them out once; the demo then gets the saved borders.
+    process.env.ATLAS_ACCESS_CODE = "";
+    assert.equal((await get(`/api/areas/${area.id}/units`)).json.source, "gaul");
+    process.env.ATLAS_ACCESS_CODE = "let-me-in";
+    const after = ee.requests.length;
+    const saved = await get(`/api/areas/${area.id}/units`);
+    assert.equal(saved.json.source, "gaul");
+    assert.equal(ee.requests.length, after, "read from the file");
   } finally {
     process.env.ATLAS_ACCESS_CODE = "";
   }

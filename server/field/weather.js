@@ -5,7 +5,8 @@
 // and temperature over the 7 days before today and the 7 from today).
 // Answers are kept for an hour in weather-cache.json.
 //
-//   getWeather({ lat, lon })  -> { current: { tempC, code, label },
+//   getWeather({ lat, lon }, { minFetchGapMs })
+//                             -> { current: { tempC, code, label },
 //                                  rain: { likely, from, to, mm } | null,
 //                                  daily: [{ date, tempMax, tempMin, rainMm, rainChance }] (from today),
 //                                  hourly: { wetHours14, gdd14 } | null
@@ -26,6 +27,12 @@
 //
 // Throws an error with status 503 and code "weather_unavailable" when
 // Open-Meteo cannot be reached.
+//
+// minFetchGapMs (the public demo's weather, server/field/routes.js): when
+// the hour-old answer has run out, Open-Meteo is asked at most once in
+// that time by every caller that passes it together; in between they get
+// the last answer (stale: true), so a crowd of demo visitors during an
+// outage cannot send Open-Meteo a request each.
 //
 // WHO EDITS IT
 // Nobody, normally.
@@ -132,13 +139,29 @@ function unavailable(message) {
 
 const sameSpot = (entry, lat, lon) => entry && Math.abs(entry.lat - lat) < 0.01 && Math.abs(entry.lon - lon) < 0.01;
 
-export async function getWeather({ lat, lon }, { fetchImpl = globalThis.fetch, now = () => Date.now() } = {}) {
+// When a caller with minFetchGapMs last asked Open-Meteo (kept on
+// globalThis, like the other caches, through dev-server reloads).
+const throttle = (globalThis.__chernozemWeatherThrottle ??= { at: -Infinity });
+
+// For tests: forget when Open-Meteo was last asked.
+export function resetWeatherThrottle() {
+  throttle.at = -Infinity;
+}
+
+export async function getWeather({ lat, lon }, { fetchImpl = globalThis.fetch, now = () => Date.now(), minFetchGapMs = 0 } = {}) {
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) throw unavailable("The farm has no location yet.");
   const cached = await getWeatherCache().catch(() => null);
   // An answer saved before the risk inputs were asked for (no "hourly")
   // is asked again.
   const fresh = sameSpot(cached, lat, lon) && now() - Date.parse(cached.at) < TTL_MS && cached.data && cached.data.hourly !== undefined;
   if (fresh) return { ...cached.data, at: cached.at, lat, lon };
+  if (minFetchGapMs > 0) {
+    if (now() - throttle.at < minFetchGapMs) {
+      if (sameSpot(cached, lat, lon) && cached.data) return { ...cached.data, at: cached.at, lat, lon, stale: true };
+      throw unavailable("The weather could not be read just now. Try again in a few minutes.");
+    }
+    throttle.at = now();
+  }
 
   const params = new URLSearchParams({
     latitude: lat.toFixed(4),

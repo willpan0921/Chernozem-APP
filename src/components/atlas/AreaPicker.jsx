@@ -11,7 +11,9 @@
 // country search begins with the country they gave when registering (its
 // results already listed), and the grey example coordinates are drawn
 // around their place instead of Kupiansk (src/lib/profile.js). The demo
-// visitor sees everything exactly as before.
+// visitor sees everything exactly as before, but "Analyze" opens the "This
+// is the demo" dialog instead (src/state/useDemoGuard.js): the demo cannot
+// add areas.
 //
 // WHAT IT RECEIVES
 //   onDone(area)  called once the analysis has started (optional), e.g. to
@@ -29,6 +31,7 @@ import { Button, Segmented, Tabs } from "../ui/index.js";
 import AtlasMap from "./AtlasMap.jsx";
 import { useAtlasData } from "../../state/AtlasData.jsx";
 import { useAccess } from "../../state/useAccess.js";
+import { useDemoGuard } from "../../state/useDemoGuard.js";
 import { searchAreas } from "../../api/atlasApi.js";
 import { boxToPoints, checkBox, checkPolygon, parseCoordinates, pointsToGeometry } from "../../lib/atlas/coords.js";
 import { formatAreaSize } from "../../lib/format.js";
@@ -158,6 +161,7 @@ function CountryTab({ selected, onSelect, onSubmit, initialQuery = "" }) {
 export default function AreaPicker({ onDone, months = 12, defaultTab = "country" }) {
   const { area: currentArea, actions } = useAtlasData();
   const { account, profile } = useAccess();
+  const { readOnly, ask } = useDemoGuard();
   // An account's home: its country for the search, its place for the examples.
   const homeCountry = account ? profileCountry(profile) : "";
   const examples = useMemo(() => {
@@ -207,6 +211,7 @@ export default function AreaPicker({ onDone, months = 12, defaultTab = "country"
   const submit = async (override) => {
     const request = override ? { source: override.kind === "admin1" ? "admin1" : "country", id: override.id, name: override.name, country: override.country } : body;
     if (!request || busy) return;
+    if (readOnly) return ask();
     setBusy(true);
     setError(null);
     try {

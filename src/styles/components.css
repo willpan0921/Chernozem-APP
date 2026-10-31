@@ -373,6 +373,46 @@
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 
+/* The whole switch locked (the public demo's Settings pages): the chosen
+   option stays fully readable, the others fade; a click opens the "This is
+   the demo" dialog (src/state/useDemoGuard.js). */
+.segmented.is-locked .segmented-option {
+  cursor: not-allowed;
+}
+
+.segmented.is-locked .segmented-option:not(.is-active) {
+  color: var(--c-muted);
+  opacity: 0.6;
+}
+
+/* ---------- Locked in the public demo ----------
+   A control the demo shows but cannot use (the Settings pages): it looks
+   turned off, and pressing it opens the "This is the demo" dialog instead
+   (src/state/useDemoGuard.js lock / lockList). It does not light up under
+   the pointer either. */
+
+[data-demo-locked] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-primary[data-demo-locked]:hover {
+  background: var(--c-green);
+}
+
+.btn-ink[data-demo-locked]:hover {
+  background: var(--c-ink);
+}
+
+.btn-secondary[data-demo-locked]:hover {
+  background: var(--c-surface);
+}
+
+.btn-ghost[data-demo-locked]:hover,
+.btn-danger[data-demo-locked]:hover {
+  background: transparent;
+}
+
 /* ---------- Tabs (pill tabs with optional counts) ---------- */
 
 .tabs {

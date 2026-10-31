@@ -54,6 +54,10 @@
 // rules (what is normal, stressed, ready) from src/lib/field/method.js, as
 // the server applied them; the wording helpers from src/lib/field/format.js.
 //
+// In the public demo (read-only) everything works for looking; only
+// "Analyse now" opens the "This is the demo" dialog instead
+// (src/state/useDemoGuard.js).
+//
 // WHO EDITS IT
 // Whoever changes how the Fields page looks. The map itself is
 // src/components/field/FieldMap.jsx; the rules are in src/lib/field/method.js.
@@ -75,6 +79,7 @@ import { usePref } from "../../state/usePref.js";
 import { ANALYSING_LABEL, cropInfo, fieldTiles, formatArea, formatDay, formatIndex, mapMarks, statusOf } from "../../lib/field/format.js";
 import { BASELINE } from "../../lib/field/method.js";
 import { fieldMethods } from "../../config/research.js";
+import { useDemoGuard } from "../../state/useDemoGuard.js";
 import "./FieldsPage.css";
 
 // The width at which the page stacks (keep in step with FieldsPage.css).
@@ -96,6 +101,7 @@ const FIT_PADDING = [18, 60];
 
 function FieldsView() {
   const { farm, analyses, provider, job, weather, analysing, conflict, actions } = useFieldData();
+  const { guard } = useDemoGuard();
   const [params, setParams] = useSearchParams();
   const navigationType = useNavigationType();
   const narrow = useMedia(NARROW);
@@ -284,7 +290,7 @@ function FieldsView() {
             analysing={analysing.has(selected.id)}
             count={fields.length}
             onStep={step}
-            onAnalyze={() => actions.analyze([selected.id])}
+            onAnalyze={guard(() => actions.analyze([selected.id]))}
           />
         )}
       </aside>

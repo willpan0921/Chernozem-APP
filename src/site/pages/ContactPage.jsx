@@ -1,43 +1,57 @@
 // WHAT THIS FILE DOES
-// The website's Contact page (chernozem.app/contact): a form that sends a
-// message to the owner. The message lands on Chernozem's own server (Atlas
-// > Settings, "Messages from the website"; the route is POST /api/contact,
-// server/messages.js); no e-mail is sent and nothing is shared. Beside the
-// form: what to write about, with pictures of the parts of the app people
-// ask about, and where else the project lives (the code, the paper).
+// The website's Contact page (chernozem.app/contact): a short form whose
+// messages go to chernozem.app@gmail.com, and that address as a plain
+// e-mail link for anyone who prefers their own mail program.
+//
+// The form: who you are (four choices, each with a map of the part of
+// Chernozem that person would use; the message's prompt follows the
+// choice), name, e-mail, organisation (optional) and the message. It is
+// sent to the server (POST /api/contact, src/api/siteApi.js sendContact),
+// which keeps it and e-mails it to the address above (one that could not be
+// sent yet is tried again later).
+// The chosen role travels as its own field ("role"; the e-mail prints it).
+// A hidden "website" field catches robots; the server takes at most five
+// messages an hour from one visitor and says so.
 //
 // WHO EDITS IT
-// Whoever changes the contact page. The server side is server/messages.js;
-// the request is src/api/siteApi.js sendContact.
+// Whoever changes the contact page. The address is CONTACT_EMAIL in
+// src/site/content/site.js; the server side is server/messages.js and
+// server/mail.js.
 
 import { useState } from "react";
-import { Reveal, Stagger, StaggerItem } from "../components/motion.jsx";
 import { sendContact } from "../../api/siteApi.js";
-import { LINKS } from "../content/site.js";
+import { CONTACT_EMAIL } from "../content/site.js";
 import { usePageTitle, useReveal } from "../hooks.js";
 import "./pages.css";
 
-const ROLES = ["Farmer", "Government", "NGO", "Demining", "Researcher", "Investor", "Press", "Other"];
-const MAX = 2000;
-const EMPTY = { name: "", email: "", organization: "", message: "", website: "" };
-
-// What people write about, each with the part of the app it concerns.
-const TOPICS = [
-  { src: "/site/shots/atlas-overview.webp", alt: "The Atlas overview of Ukraine, September 2026", caption: "A demo code: the Ukraine reading in Field and Atlas." },
-  { src: "/site/shots/field-overview.webp", alt: "The Field overview of a twelve-field farm", caption: "A pilot on your own farm or region." },
-  { src: "/site/shots/field-fields-detail.webp", alt: "Field 11 up close with its four readings", caption: "Ground truth: what the satellites got right or wrong on your land." },
-  { src: "/site/shots/atlas-report.webp", alt: "The donor report for Ukraine with the top ten areas", caption: "A report, a question, or something that is wrong." },
+// The four choices: what each is called, the picture (a map of the part of
+// Chernozem that person would use; "zoom" enlarges it a little where the
+// screenshot has its own white margin), and the prompt the message box
+// shows.
+const ROLES = [
+  { value: "Farmer", src: "/site/shots/phone-field-fields.webp", width: 780, height: 1688, position: "50% 26%", zoom: "1.1", prompt: "Where is your farm, and what do you grow?" },
+  { value: "Government or NGO", src: "/site/shots/phone-atlas-map.webp", width: 780, height: 1688, position: "50% 40.5%", zoom: "1.05", prompt: "Which country or region, and what do you need to decide?" },
+  { value: "Researcher", src: "/site/story/disturbance-map.webp", width: 1600, height: 964, position: "70% 50%", prompt: "What are you working on, and what would help?" },
+  { value: "Something else", src: "/site/story/edition-1-colab.webp", width: 1340, height: 892, position: "62% 50%", prompt: "What would you like to say?" },
 ];
+const DEFAULT_PROMPT = "Where is your land, and what would you like to do with Chernozem?";
+
+const MAX = 2000; // the server's limits for the message (server/messages.js)
+const MIN = 10;
+const EMPTY = { name: "", email: "", organization: "", message: "", website: "" };
 
 export default function ContactPage() {
   usePageTitle("Contact");
-  // The form's entrance: the hook runs on every render, whichever branch shows.
-  const formReveal = useReveal();
+  // The form's entrance. Called on every render, whichever state shows
+  // (a hook inside a branch once crashed this page).
+  const reveal = useReveal();
   const [role, setRole] = useState("");
   const [form, setForm] = useState(EMPTY);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [done, setDone] = useState(false);
+  const [sentTo, setSentTo] = useState("");
+
+  const prompt = ROLES.find((item) => item.value === role)?.prompt || DEFAULT_PROMPT;
 
   function set(key) {
     return (event) => setForm((value) => ({ ...value, [key]: event.target.value }));
@@ -49,9 +63,8 @@ export default function ContactPage() {
     setBusy(true);
     setError("");
     try {
-      const message = role ? `[${role}] ${form.message}` : form.message;
-      await sendContact({ ...form, message });
-      setDone(true);
+      await sendContact({ ...form, role, message: form.message.trim() });
+      setSentTo(form.email.trim());
     } catch (err) {
       setError(err?.message || "The message could not be sent. Try again in a moment.");
     } finally {
@@ -60,52 +73,64 @@ export default function ContactPage() {
   }
 
   function again() {
-    setDone(false);
+    setSentTo("");
     setForm(EMPTY);
     setRole("");
   }
 
   return (
     <div className="pg">
-      <section className="pg-sec" aria-labelledby="ct-title">
+      <section className="pg-sec ct" aria-labelledby="ct-title">
         <div className="pg-grid">
-          <div className="ct-open-text">
+          <div className="ct-head">
             <div className="pg-mask">
               <h1 className="pg-h1 pg-display" id="ct-title">
                 Write to Chernozem
               </h1>
             </div>
-            <p className="pg-lead pg-fade">Ask for a demo code, propose a pilot, share what you know about your land, or tell us what is wrong.</p>
-            <div className="ct-aside pg-fade-2">
-              <p>Your message is saved on Chernozem’s own server, where the person who builds it reads it. No mailing list, no third parties. You will hear back by e‑mail.</p>
-            </div>
           </div>
+          <div className="ct-intro">
+            <p className="pg-lead pg-fade">Ask a question, propose a pilot on your land, or tell us what is wrong.</p>
+            <p className="ct-address pg-fade-2">
+              Messages go to <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
+            </p>
+          </div>
+        </div>
 
-          <div className="ct-open-form pg-fade-2">
-            {done ? (
-              <div className="ct-done" role="status">
-                <h2 className="pg-h2">Thank you.</h2>
-                <p style={{ marginTop: 18 }}>Your message has arrived. We will write back to {form.email}.</p>
-                <div className="pg-actions">
-                  <button type="button" className="pg-btn" onClick={again}>
-                    Send another
-                  </button>
-                </div>
+        <div className="ct-body" ref={reveal}>
+          {sentTo ? (
+            <div className="ct-done" role="status">
+              <h2 className="pg-h2">Thank you.</h2>
+              <p className="pg-lead">
+                Your message is on its way to {CONTACT_EMAIL}. The reply will come to {sentTo}.
+              </p>
+              <div className="pg-actions">
+                <button type="button" className="pg-btn" onClick={again}>
+                  Send another
+                </button>
               </div>
-            ) : (
-              <form className="pg-form" onSubmit={submit} noValidate={false} ref={formReveal}>
-                <label className="pg-field" data-rise style={{ "--i": 0 }}>
-                  <span>Who you are</span>
-                  <select name="role" value={role} onChange={(event) => setRole(event.target.value)}>
-                    <option value="">Choose one</option>
-                    {ROLES.map((item) => (
-                      <option key={item} value={item}>
-                        {item}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <div className="pg-row-2" data-rise style={{ "--i": 1 }}>
+            </div>
+          ) : (
+            <form className="ct-form" onSubmit={submit} aria-labelledby="ct-title">
+              <fieldset className="ct-roles" data-rise="">
+                <legend className="ct-legend">
+                  Who you are <small>(optional)</small>
+                </legend>
+                <div className="ct-role-grid">
+                  {ROLES.map((item) => (
+                    <label key={item.value} className="ct-role">
+                      <input className="ct-role-input" type="radio" name="role" value={item.value} checked={role === item.value} onChange={() => setRole(item.value)} />
+                      <span className="ct-role-frame" data-settle="">
+                        <img className="ct-role-pic" src={item.src} width={item.width} height={item.height} alt="" loading="eager" decoding="async" style={{ objectPosition: item.position, scale: item.zoom }} />
+                      </span>
+                      <span className="ct-role-name">{item.value}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+
+              <div className="ct-fields">
+                <div className="pg-row-2" data-rise="" style={{ "--i": 1 }}>
                   <label className="pg-field">
                     <span>Name</span>
                     <input type="text" name="name" autoComplete="name" required maxLength={80} value={form.name} onChange={set("name")} />
@@ -115,17 +140,17 @@ export default function ContactPage() {
                     <input type="email" name="email" autoComplete="email" required maxLength={120} value={form.email} onChange={set("email")} />
                   </label>
                 </div>
-                <label className="pg-field" data-rise style={{ "--i": 2 }}>
+                <label className="pg-field" data-rise="" style={{ "--i": 2 }}>
                   <span>
                     Organisation <small>(optional)</small>
                   </span>
                   <input type="text" name="organization" autoComplete="organization" maxLength={120} value={form.organization} onChange={set("organization")} />
                 </label>
-                <label className="pg-field" data-rise style={{ "--i": 3 }}>
+                <label className="pg-field" data-rise="" style={{ "--i": 3 }}>
                   <span>
-                    Message <small id="ct-message-limit">(10 to {MAX} characters)</small>
+                    Message <small id="ct-message-limit">({MIN} to {MAX} characters)</small>
                   </span>
-                  <textarea name="message" required minLength={10} maxLength={MAX} value={form.message} onChange={set("message")} aria-describedby="ct-message-limit ct-message-count" placeholder="Where is your land, and what would you like to do with Chernozem?" />
+                  <textarea name="message" required minLength={MIN} maxLength={MAX} value={form.message} onChange={set("message")} aria-describedby="ct-message-limit ct-message-count" placeholder={prompt} />
                 </label>
                 <span className="pg-form-note" id="ct-message-count" aria-live="polite">
                   {form.message.length} of {MAX} characters
@@ -142,60 +167,14 @@ export default function ContactPage() {
                     {error}
                   </p>
                 )}
-                <div className="ct-foot" data-rise style={{ "--i": 4 }}>
-                  <span className="pg-form-note">Saved privately; never shared.</span>
+                <div className="ct-send" data-rise="" style={{ "--i": 4 }}>
                   <button type="submit" className="pg-btn" disabled={busy}>
                     {busy ? "Sending…" : "Send the message"}
                   </button>
                 </div>
-              </form>
-            )}
-          </div>
-        </div>
-      </section>
-
-      <section className="pg-sec pg-sec-surface" aria-labelledby="ct-topics">
-        <div className="pg-grid">
-          <Reveal className="ct-pics-head">
-            <h2 className="pg-h2" id="ct-topics">
-              What to write about
-            </h2>
-          </Reveal>
-        </div>
-        <Stagger className="pg-grid" style={{ marginTop: 28 }}>
-          {TOPICS.map((item) => (
-            <StaggerItem key={item.src} as="figure" className="pg-fig ct-pic">
-              <img className="pg-pic" src={item.src} width="1920" height="1200" alt={item.alt} loading="lazy" decoding="async" />
-              <figcaption>{item.caption}</figcaption>
-            </StaggerItem>
-          ))}
-        </Stagger>
-      </section>
-
-      <section className="pg-sec" aria-labelledby="ct-else">
-        <div className="pg-grid">
-          <Reveal className="ct-else-head">
-            <h2 className="pg-h2" id="ct-else">
-              Elsewhere
-            </h2>
-          </Reveal>
-          <Stagger as="ul" className="ct-else-list">
-            <StaggerItem as="li">
-              <a className="pg-link" href={LINKS.github} target="_blank" rel="noreferrer">
-                The code is public on GitHub.
-              </a>
-            </StaggerItem>
-            <StaggerItem as="li">
-              <a className="pg-link" href={LINKS.paper} target="_blank" rel="noreferrer">
-                The paper’s data and code are on Harvard Dataverse.
-              </a>
-            </StaggerItem>
-            <StaggerItem as="li">
-              <a className="pg-link" href={LINKS.cac} target="_blank" rel="noreferrer">
-                Chernozem is an entry to the Congressional App Challenge 2026.
-              </a>
-            </StaggerItem>
-          </Stagger>
+              </div>
+            </form>
+          )}
         </div>
       </section>
     </div>

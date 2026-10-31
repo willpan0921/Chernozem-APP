@@ -36,12 +36,18 @@ export const SITE = {
   year: 2026,
 };
 
+// Where the contact page's messages go (the server e-mails each one there,
+// server/mail.js), and the address the page shows.
+export const CONTACT_EMAIL = "chernozem.app@gmail.com";
+
 export const LINKS = {
   github: "https://github.com/willpan0921/Chernozem-APP",
   paper: "https://doi.org/10.7910/DVN/IYXPVS",
   paperTitle:
     "Restoring Ukraine's Agricultural Lifeline: A Gated Aggregation Algorithm for Chernozem Rehabilitation under Wartime and Postwar Conditions",
   earthEngine: "https://earthengine.google.com/",
+  // Used once, on the About page only (the owner's rule: the Congressional
+  // App Challenge is named nowhere else on the website).
   cac: "https://www.congressionalappchallenge.us/",
 };
 
@@ -95,11 +101,13 @@ export const NUMBERS = {
   farmsMillions: 570, // farms in the world
 };
 
-// The demo (the owner's own Ukraine workspace, behind the access code).
+// The demo: the owner's own Ukraine workspace, open to everyone and
+// read-only (anyone can look; only the owner can change it). The farm's
+// number of fields is not kept here on purpose: the live farm changes
+// (13 fields on 31 October 2026, 12 in the screenshots), so the pages say
+// "a farm near Kupiansk" and never print a count.
 export const DEMO = {
   place: "Kupiansk, Kharkiv region, Ukraine",
-  fields: 12, // the demo farm (public/site/shots/manifest.json, field-settings)
-  farmHa: 553,
   // Field 11's latest reading (the demo farm's saved analysis, pass of 26 October 2026):
   // plant health 0.79 (above normal), stress 0.1 ha (under 1%), water 0.24 (near normal),
   // harvest: past peak, greenest 0.90 on 29 June; the crop is unknown to the app, so no date.

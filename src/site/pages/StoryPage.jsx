@@ -1,183 +1,225 @@
 // WHAT THIS FILE DOES
 // The website's Story page (chernozem.app/story): where Chernozem comes
-// from. The family meal, the black soil, the war in Ukraine, the three
-// editions of the tool in pictures, who makes it (with the film), what it
-// stands for, and a way in. Every fact here is the founder's; the numbers
-// come from src/site/content/site.js so they are quoted once.
+// from, in five parts and nothing else, in this order:
+//   1. the meal: the story told at William's family table (the first
+//      screen, under the page's title);
+//   2. the meeting: Penn, where William met some of his current partners;
+//   3-5. the first, second and third editions of the tool, each with a few
+//      plain sentences and its pictures, large.
+// While the editions pass, a bar of the three sticks to the top of the
+// screen: each part fills with sage as the visitor reads through that
+// edition, and a click takes them to any edition (plain links, so it also
+// works without JavaScript).
+//
+// Every fact here is the founder's (the website brief); the numbers come
+// from src/site/content/site.js so they are quoted once. Nothing here
+// names who makes the app or asks the visitor to sign up: the page is the
+// story only.
 //
 // WHO EDITS IT
 // The founder, for the words. The pictures are in public/site/story/ and
-// public/site/shots/.
+// public/site/shots/; the layout is the "story-" block of pages.css.
 
-import { Link } from "react-router-dom";
-import Film from "../components/Film.jsx";
-import { Reveal, Stagger, StaggerItem } from "../components/motion.jsx";
-import { LINKS, NUMBERS, SITE_ACTIONS, compactHa, formatInt } from "../content/site.js";
-import { usePageTitle } from "../hooks.js";
+import { useEffect, useRef, useState } from "react";
+import { LINKS, NUMBERS, formatInt } from "../content/site.js";
+import { useMediaQuery, usePageTitle, useReveal } from "../hooks.js";
 import "./pages.css";
 
-// The three editions, in order, with what each picture shows.
+// The three editions, in order: the address of each part of the page and
+// the word the bar shows ("First" + " edition").
 const EDITIONS = [
-  { src: "/site/story/edition-1-colab.webp", w: 1340, h: 892, alt: "The first edition: a green map of Ukraine's black soil by oblast on a plain base map", caption: "First edition: a Google Colab notebook over Earth Engine. The black-soil map of Ukraine, oblast by oblast, on a plain base map." },
-  { src: "/site/story/disturbance-map.webp", w: 1600, h: 964, alt: "A disturbance layer: unusual change on the land in orange and red over Ukraine, oblast by oblast", caption: "A disturbance layer: unusual change on the land in orange and red, oblast by oblast." },
-  { src: "/site/story/acled-events.webp", w: 1324, h: 942, alt: "ACLED's recorded attacks as orange and red dots across Ukraine", caption: "The check: ACLED’s recorded attacks as orange and red dots, used to test the damage map." },
-  { src: "/site/story/edition-2-atlas.webp", w: 1497, h: 1280, alt: "The second edition, the Chernozem Recovery Atlas web page with sliders, map layers and a ranked list", caption: "Second edition: the Chernozem Recovery Atlas, a web page with sliders for the weights, map layers and a ranked list." },
-  { src: "/site/shots/atlas-overview.webp", w: 1920, h: 1200, alt: "The third edition: the Atlas overview of Ukraine in this app, with the headline figures and the priority map", caption: "Third edition: this app. Field and Atlas, accounts, any crisis, any country." },
+  { id: "first-edition", word: "First" },
+  { id: "second-edition", word: "Second" },
+  { id: "third-edition", word: "Third" },
 ];
+
+// -0.8 printed with a true minus sign, as in the paper.
+function signed(n) {
+  return String(n).replace("-", "−");
+}
+
+// Follows the reading: which edition is in the middle of the screen, and
+// how far through each one the visitor is (0 to 1). The fills are moved
+// directly (no re-render on every scroll); only the current edition is
+// React state. With reduced motion a part fills whole once it is reached,
+// instead of growing with the scroll.
+function useEditionProgress() {
+  const [active, setActive] = useState(null);
+  const fills = useRef({});
+  const reduced = useMediaQuery("(prefers-reduced-motion: reduce)");
+
+  useEffect(() => {
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const line = window.innerHeight * 0.5;
+      let current = null;
+      for (const { id } of EDITIONS) {
+        const part = document.getElementById(id);
+        if (!part) continue;
+        const box = part.getBoundingClientRect();
+        const through = Math.max(0, Math.min(1, (line - box.top) / Math.max(1, box.height)));
+        if (box.top <= line && box.bottom > line) current = id;
+        const fill = fills.current[id];
+        if (fill) fill.style.transform = `scaleX(${reduced ? (through > 0 ? 1 : 0) : through.toFixed(3)})`;
+      }
+      setActive((before) => (before === current ? before : current));
+    };
+    const onScroll = () => {
+      if (!frame) frame = window.requestAnimationFrame(measure);
+    };
+    measure();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, [reduced]);
+
+  return { active, fills };
+}
 
 export default function StoryPage() {
   usePageTitle("Story");
+  // The entrances of each part (site.css, "Entrances"): one observer
+  // callback, attached to every part's grid.
+  const reveal = useReveal();
+  const { active, fills } = useEditionProgress();
+
   return (
-    <div className="pg">
-      {/* The first screen: the title, the lead, and the first edition's map, large. */}
-      <section className="pg-sec" aria-labelledby="story-title">
-        <div className="pg-grid">
-          <div className="story-open-text">
+    <div className="pg story">
+      {/* 1. The meal: the page's title and the family story, on the black-soil field. */}
+      <section className="pg-sec pg-sec-dark story-meal" aria-labelledby="story-title">
+        <div className="pg-grid story-meal-grid">
+          <div className="story-meal-title">
             <div className="pg-mask">
-              <h1 className="pg-h1" id="story-title">
+              <h1 className="pg-h1 pg-display" id="story-title">
                 Where Chernozem comes from
               </h1>
             </div>
-            <p className="pg-lead pg-fade">A family meal, a summer on the fields, a war on the same soil, and three editions of a tool.</p>
           </div>
-          <figure className="pg-fig story-open-pic pg-fade-2">
-            <img className="pg-pic" src="/site/story/edition-1-colab.webp" width="1340" height="892" alt="The first edition of Chernozem: a map of Ukraine with its black soil shaded green, oblast by oblast" loading="eager" decoding="async" />
-            <figcaption>The first edition: Ukraine’s black soil, oblast by oblast.</figcaption>
-          </figure>
-        </div>
-      </section>
-
-      <section className="pg-sec" aria-labelledby="story-meal">
-        <div className="pg-grid">
-          <Reveal className="story-row-head">
-            <h2 className="pg-h2" id="story-meal">
-              The meal
-            </h2>
-          </Reveal>
-          <Reveal className="story-row-body" delay={0.08}>
-            <p>There is a meal in William’s family that no one was supposed to have. His great-grandparents farmed black soil in northeastern China; a war went through it and left the land unusable, and for a while there was nothing to eat. The story was told at the table for three generations.</p>
-          </Reveal>
-        </div>
-      </section>
-
-      <section className="pg-sec" aria-labelledby="story-soil">
-        <div className="pg-grid">
-          <Reveal className="story-soil-pic" y={36}>
-            <figure className="pg-fig">
-              <img className="pg-pic" src="/site/shots/atlas-map-satellite.webp" width="1920" height="1200" alt="Satellite imagery of Ukraine and the Black Sea in the Atlas, with the squares and borders switched off" loading="lazy" decoding="async" />
-              <figcaption>Ukraine from orbit in the Atlas: one of the largest black-soil belts on Earth.</figcaption>
-            </figure>
-          </Reveal>
-          <div className="story-soil-text">
-            <Reveal>
-              <h2 className="pg-h2" id="story-soil">
-                The soil
-              </h2>
-            </Reveal>
-            <Reveal delay={0.1}>
-              <p style={{ marginTop: 22 }}>
-                Chernozem means black earth: deep, dark and full of carbon. It makes up about {NUMBERS.blackSoilCroplandPercent}% of the world’s cropland and grows about {NUMBERS.blackSoilWheatPercent}% of its wheat (FAO, 2022). Two of the great belts are Ukraine’s and northeastern China’s.
-              </p>
-            </Reveal>
+          <div className="story-meal-text">
+            <p className="story-statement pg-fade">For three generations, one story was told at William’s family table.</p>
+            <p className="pg-fade-2">His great-grandparents farmed black soil in northeastern China. The Sino-Japanese War left their land unusable, and for a while there was nothing to eat.</p>
           </div>
         </div>
       </section>
 
-      <section className="pg-sec pg-sec-dark" aria-labelledby="story-ukraine">
-        <div className="pg-grid">
-          <Reveal className="story-ua-head">
-            <h2 className="pg-h2" id="story-ukraine">
-              Ukraine
-            </h2>
-          </Reveal>
-          <Reveal className="story-ua-col" delay={0.08}>
-            <p>
-              On 24 February 2022 the war came to one of the largest black-soil belts on Earth. The FAO has found more than a million shell craters in the {compactHa(NUMBERS.surveyedHa).replace("M", " million")} hectares of farmland it surveyed from satellite; before the war, Ukraine’s food exports fed about {NUMBERS.peopleFedMillions} million people a year.
-            </p>
-          </Reveal>
-          <Reveal className="story-ua-col" delay={0.16}>
-            <p>
-              William’s paper ranked {NUMBERS.paperOblasts} oblasts with a gated aggregation method and checked it against {formatInt(NUMBERS.acledEvents)} recorded attacks (rank correlation {NUMBERS.acledCorrelation}) and harvest figures (r = {NUMBERS.harvestCorrelation}). The data and code are on Harvard Dataverse.
-            </p>
-          </Reveal>
-          <Reveal className="story-ua-link" delay={0.24}>
-            <a className="pg-link" href={LINKS.paper} target="_blank" rel="noreferrer">
-              The paper’s data and code on Harvard Dataverse
-            </a>
-          </Reveal>
-        </div>
-      </section>
-
-      <section className="pg-sec" aria-labelledby="story-editions">
-        <Reveal className="story-editions-head">
-          <h2 className="pg-display" id="story-editions">
-            Three editions
+      {/* 2. The meeting. */}
+      <section className="pg-sec story-penn" aria-labelledby="story-penn">
+        <div className="pg-grid" ref={reveal}>
+          <h2 className="pg-h2 story-penn-head" id="story-penn" data-rise="">
+            At Penn
           </h2>
-        </Reveal>
-        <Stagger className="pg-grid">
-          {EDITIONS.map((item, index) => (
-            <StaggerItem key={item.src} as="figure" className={`pg-fig story-ed ${index < 3 ? "story-ed-3" : "story-ed-2"}`}>
-              <img className="pg-pic" src={item.src} width={item.w} height={item.h} alt={item.alt} loading="lazy" decoding="async" />
-              <figcaption>{item.caption}</figcaption>
-            </StaggerItem>
-          ))}
-        </Stagger>
-      </section>
-
-      <section className="pg-sec pg-sec-dark" aria-labelledby="story-who">
-        <div className="pg-grid">
-          <div className="story-who-text">
-            <Reveal>
-              <h2 className="pg-h2" id="story-who">
-                Who makes it
-              </h2>
-            </Reveal>
-            <Reveal delay={0.1}>
-              <p style={{ marginTop: 22 }}>William Pan, a high-school student in Pasadena, California (Polytechnic School and Stanford Online High School). Chernozem is his entry to the Congressional App Challenge 2026; this is the three-minute film from it.</p>
-            </Reveal>
+          <div className="story-penn-text">
+            <p className="story-statement" data-rise="" style={{ "--i": 1 }}>
+              William took that story with him to a business program at the University of Pennsylvania.
+            </p>
+            <p data-rise="" style={{ "--i": 2 }}>
+              There he met some of his current partners. They have worked on Chernozem together since.
+            </p>
           </div>
-          <Reveal className="story-who-film" delay={0.12} y={36}>
-            <Film caption="" />
-          </Reveal>
         </div>
       </section>
 
-      <section className="pg-sec pg-sec-sage" aria-labelledby="story-stands">
-        <div className="pg-grid">
-          <Reveal className="story-stand-head">
-            <h2 className="pg-h2" id="story-stands">
-              What it stands for
-            </h2>
-          </Reveal>
-          <Stagger as="ul" className="story-stand-list">
-            <StaggerItem as="li">It never declares land safe.</StaggerItem>
-            <StaggerItem as="li">You set the weights; the app shows the numbers and the sources.</StaggerItem>
-            <StaggerItem as="li">It is honest about its limits: 10‑metre pixels, clouds, and years that were not calm.</StaggerItem>
-            <StaggerItem as="li">Open data, read for people who are not scientists.</StaggerItem>
-          </Stagger>
-        </div>
-      </section>
+      {/* 3-5. The editions, with the bar that follows the reading. */}
+      <div className="story-editions">
+        <nav className="story-mark" aria-label="The three editions">
+          <ol className="story-mark-list">
+            {EDITIONS.map(({ id, word }) => (
+              <li key={id}>
+                <a className="story-mark-link" href={`#${id}`} aria-label={`${word} edition`} aria-current={active === id ? "true" : undefined}>
+                  <span
+                    className="story-mark-fill"
+                    aria-hidden="true"
+                    ref={(node) => {
+                      fills.current[id] = node;
+                    }}
+                  />
+                  <span className="story-mark-label">
+                    {word}
+                    <span className="story-mark-rest"> edition</span>
+                  </span>
+                </a>
+              </li>
+            ))}
+          </ol>
+        </nav>
 
-      <section className="pg-sec pg-sec-dark" aria-labelledby="story-close">
-        <div className="pg-grid">
-          <Reveal className="story-close-head">
-            <h2 className="pg-h2" id="story-close">
-              Try it on your own land
+        <section className="pg-sec story-ed story-ed-1" id="first-edition" aria-labelledby="first-edition-title">
+          <div className="pg-grid" ref={reveal}>
+            <h2 className="pg-h2 story-ed-head" id="first-edition-title" data-rise="">
+              First edition
             </h2>
-          </Reveal>
-          <Reveal className="story-close-act" delay={0.1}>
-            <p>Register, draw your fields, and read the first pass in about twenty seconds.</p>
-            <div className="pg-actions">
-              <Link className="pg-btn" to={SITE_ACTIONS.register.path}>
-                Register
-              </Link>
-              <Link className="pg-link" to="/#letter">
-                Read the founder’s letter
-              </Link>
+            <div className="story-ed-text" data-rise="" style={{ "--i": 1 }}>
+              <p>A Google Colab notebook on Google Earth Engine that mapped Ukraine’s black soil, oblast by oblast, and the disturbance on it.</p>
+              <p>
+                Checked against {formatInt(NUMBERS.acledEvents)} explosions and remote attacks recorded by ACLED (rank correlation {NUMBERS.acledCorrelation}) and against the change in harvests (r = {signed(NUMBERS.harvestCorrelation)}), it became a research paper ranking {NUMBERS.paperOblasts} oblasts.
+              </p>
+              <p className="story-ed-link">
+                <a className="pg-link" href={LINKS.paper} target="_blank" rel="noreferrer">
+                  The paper’s data and code on Harvard Dataverse
+                </a>
+              </p>
             </div>
-          </Reveal>
-        </div>
-      </section>
+            <figure className="pg-fig story-ed1-main" data-settle="" style={{ "--i": 2 }}>
+              <img className="pg-pic" src="/site/story/edition-1-colab.webp" width="1340" height="892" alt="The first edition's map: Ukraine's black soil shaded green, oblast by oblast, on a plain base map" loading="lazy" decoding="async" />
+              <figcaption>Ukraine’s black soil in green, oblast by oblast.</figcaption>
+            </figure>
+            <div className="story-ed1-side">
+              <figure className="pg-fig" data-settle="" style={{ "--i": 3 }}>
+                <img className="pg-pic story-crop" src="/site/story/disturbance-map.webp" width="1600" height="964" alt="The disturbance layer: unusual change on Ukraine's land in orange and red, heaviest in the east and the south" loading="lazy" decoding="async" />
+                <figcaption>The disturbance layer: unusual change on the land in orange and red.</figcaption>
+              </figure>
+              <figure className="pg-fig" data-settle="" style={{ "--i": 4 }}>
+                <img className="pg-pic story-crop" src="/site/story/acled-events.webp" width="1324" height="942" alt="ACLED's recorded attacks across Ukraine as orange and red dots, crowded along the front line in the east and the south" loading="lazy" decoding="async" />
+                <figcaption>The check: ACLED’s recorded attacks, as orange and red dots.</figcaption>
+              </figure>
+            </div>
+          </div>
+        </section>
+
+        <section className="pg-sec pg-sec-surface story-ed story-ed-2" id="second-edition" aria-labelledby="second-edition-title">
+          <div className="pg-grid" ref={reveal}>
+            <div className="story-ed2-text">
+              <h2 className="pg-h2 story-ed-head" id="second-edition-title" data-rise="">
+                Second edition
+              </h2>
+              <div className="story-ed2-words" data-rise="" style={{ "--i": 1 }}>
+                <p>The Chernozem Recovery Atlas, a web page run on a laptop.</p>
+                <p>Near-term and postwar readings, sliders for soil value, disturbance and recovery context, about a dozen map layers and a ranked list of oblasts, in English or Chinese.</p>
+              </div>
+            </div>
+            <figure className="pg-fig story-ed2-pic" data-settle="" style={{ "--i": 2 }}>
+              <img className="pg-pic" src="/site/story/edition-2-atlas.webp" width="1497" height="1280" alt="The second edition, the Chernozem Recovery Atlas in a browser on localhost: the weights and map layers on the left, Ukraine's oblasts coloured by priority, the top oblasts on the right" loading="lazy" decoding="async" />
+              <figcaption>The Recovery Atlas on localhost: the weights and map layers on the left, the top oblasts on the right.</figcaption>
+            </figure>
+          </div>
+        </section>
+
+        <section className="pg-sec story-ed story-ed-3" id="third-edition" aria-labelledby="third-edition-title">
+          <div className="pg-grid" ref={reveal}>
+            <h2 className="pg-h2 story-ed-head" id="third-edition-title" data-rise="">
+              Third edition
+            </h2>
+            <div className="story-ed-text" data-rise="" style={{ "--i": 1 }}>
+              <p>This app, at chernozem.app.</p>
+              <p>Field reads a farmer’s own fields on every clear Sentinel-2 pass: plant health, water, stress and harvest timing, against 2019 to 2021.</p>
+              <p>Atlas scores any country or region square by square for governments and NGOs, after a war, flood, wildfire or drought.</p>
+            </div>
+            <figure className="pg-fig story-ed3-pic story-ed3-field" data-settle="" style={{ "--i": 2 }}>
+              <img className="pg-pic story-crop story-crop-field" src="/site/shots/field-fields-detail.webp" width="1920" height="1369" alt="Field: the demo farm near Kupiansk on satellite imagery, Field 11 selected with its water, plant health, stress and harvest readings" loading="lazy" decoding="async" />
+              <figcaption>Field: Field 11 on the demo farm near Kupiansk, with its four readings.</figcaption>
+            </figure>
+            <figure className="pg-fig story-ed3-pic story-ed3-atlas" data-settle="" style={{ "--i": 3 }}>
+              <img className="pg-pic story-crop story-crop-atlas" src="/site/shots/atlas-overview.webp" width="1920" height="1200" alt="Atlas: the overview of Ukraine for September 2026, with the cropland analysed, the damage, and the map of where to start" loading="lazy" decoding="async" />
+              <figcaption>Atlas: Ukraine in September 2026, with the places to start.</figcaption>
+            </figure>
+          </div>
+        </section>
+      </div>
     </div>
   );
 }

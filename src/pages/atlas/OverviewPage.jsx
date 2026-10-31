@@ -17,6 +17,11 @@
 // live in src/lib/atlas/overview.js; the short area names, the month in
 // the address (?month=2026-09) and the step dates in ./overviewHelpers.js.
 //
+// In the public demo (read-only) the month and Near term / Postwar still
+// switch (and the weights moved on the map page show here), but ticking a
+// next step or changing the budget opens the "This is the demo" dialog
+// instead (src/state/useDemoGuard.js).
+//
 // WHO EDITS IT
 // Whoever changes how the Atlas overview looks or is laid out.
 
@@ -34,6 +39,7 @@ import { alertPlaces, describeAlert, kpis, seasonWords, shownNewDamage, springPl
 import { COST_NOTE } from "../../lib/atlas/method.js";
 import { dueLabel, formatHaShort, formatUsd, listNames, toDay } from "../../lib/format.js";
 import { areaOfAlert, atlasLink, haFixed, nameAreas, planSteps, useMonthInUrl, warNote, weightItems } from "./overviewHelpers.js";
+import { useDemoGuard } from "../../state/useDemoGuard.js";
 import "./OverviewPage.css";
 
 // The Near term | Postwar switch ("Long term" where no war is listed): timeframeOptions(run).
@@ -260,20 +266,21 @@ function NewDamageNote({ run, runs }) {
 function NextSteps({ run, hotspots, isLatest, linkTo }) {
   const navigate = useNavigate();
   const { workspace, actions } = useAtlasData();
+  const { guard } = useDemoGuard();
   const [error, setError] = useState(null);
   const steps = planSteps({ run, hotspots, alerts: run.alerts || [], isLatest });
   const done = new Set(workspace?.doneSteps || []);
   const doneCount = steps.filter((step) => done.has(step.id)).length;
   const today = toDay(new Date());
 
-  const toggle = async (stepId) => {
+  const toggle = guard(async (stepId) => {
     setError(null);
     try {
       await actions.toggleStep(stepId);
     } catch (err) {
       setError(err.message);
     }
-  };
+  });
 
   return (
     <Card title="Next steps" actions={<span className="ao-count">{doneCount} of {steps.length} done</span>}>
@@ -381,6 +388,7 @@ function haRange(low, high) {
 
 function Budget({ hotspots, blackSoilHa }) {
   const { workspace, actions } = useAtlasData();
+  const { guard } = useDemoGuard();
   const budget = workspace?.budgetUsd ?? 0;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -399,12 +407,13 @@ function Budget({ hotspots, blackSoilHa }) {
     if (editing) inputRef.current?.select();
   }, [editing]);
 
-  const startEditing = () => {
+  // The demo: the dialog instead of the box.
+  const startEditing = guard(() => {
     setDraft(budget > 0 ? budget.toLocaleString("en-US") : "");
     setError(null);
     closing.current = false;
     setEditing(true);
-  };
+  });
 
   const save = async () => {
     if (closing.current) return;

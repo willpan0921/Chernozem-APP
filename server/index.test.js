@@ -6,8 +6,9 @@
 // than Render's proxy keeps them), and that stopping it (SIGTERM, as the
 // host does before a new version starts) lets go of the monthly check's
 // lock and ends cleanly. Then, as on Render (RENDER=true): it refuses to
-// start without a proper access code or without the disk, saying why, and
-// starts with both. Run with "npm test".
+// start without a proper owner's key (ATLAS_ACCESS_CODE) or without the
+// disk, saying why, and starts with both: a visitor then gets the
+// read-only demo. Run with "npm test".
 //
 // WHO EDITS IT
 // Whoever changes server/index.js or server/online.js.
@@ -47,6 +48,10 @@ function startServer(env) {
       ATLAS_TRUST_PROXY: "",
       IMPORT_TOKEN: "",
       RENDER: "",
+      // Never a real e-mail from a test.
+      GMAIL_APP_PASSWORD: "",
+      SMTP_HOST: "",
+      RESEND_API_KEY: "",
       ...env,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -69,10 +74,12 @@ test("npm start: a fresh data folder starts cleanly, and SIGTERM lets go of the 
   const server = startServer({ PORT: String(port), CHERNOZEM_DATA_DIR: dataDir });
   const { child } = server;
   try {
-    // Started: the log says where the data is kept.
-    for (let i = 0; i < 200 && !/Data folder: /.test(server.log); i += 1) await new Promise((resolve) => setTimeout(resolve, 25));
+    // Started: the log says where the data is kept and where contact
+    // messages go (the last start-up line; output can arrive in pieces).
+    for (let i = 0; i < 200 && !/Contact e-mail: /.test(server.log); i += 1) await new Promise((resolve) => setTimeout(resolve, 25));
     assert.match(server.log, /is running at http:\/\/127\.0\.0\.1:\d+/);
     assert.ok(server.log.includes(`Data folder: ${dataDir}`), server.log);
+    assert.match(server.log, /Contact e-mail: off .*chernozem\.app@gmail\.com/, "where the contact messages go, and that they wait");
 
     const health = await fetch(`http://127.0.0.1:${port}/api/health`);
     assert.equal(health.status, 200);
@@ -135,10 +142,10 @@ test("on Render: no start without a proper access code or without the disk, and 
     const server = startServer({ RENDER: "true", PORT: String(port), ATLAS_ACCESS_CODE: "orchard-lantern-pebble-cobalt", CHERNOZEM_DATA_DIR: disk });
     try {
       for (let i = 0; i < 200 && !/Data folder: /.test(server.log); i += 1) await new Promise((resolve) => setTimeout(resolve, 25));
-      assert.match(server.log, /Access code: on/, server.log);
+      assert.match(server.log, /Owner's key \(ATLAS_ACCESS_CODE\): on/, server.log);
       assert.equal((await fetch(`http://127.0.0.1:${port}/api/health`)).status, 200);
       const status = await (await fetch(`http://127.0.0.1:${port}/api/auth/status`)).json();
-      assert.deepEqual(status, { required: true, signedIn: false, shared: true, account: null });
+      assert.deepEqual(status, { required: true, signedIn: false, shared: true, account: null, mode: "demo", readOnly: true });
       server.child.kill("SIGTERM");
       assert.equal((await server.exited).code, 0, server.log);
     } finally {

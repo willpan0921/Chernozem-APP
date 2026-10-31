@@ -1,9 +1,10 @@
 // WHAT THIS FILE DOES
-// What one registered account may do, in numbers. Anyone can register on
-// the website, so one account must not be able to fill the disk, hold the
-// Earth Engine line for hours or spend the owner's Claude key without end.
-// The shared demo behind the access code (the owner's own workspace) has
-// none of these limits: it works exactly as before.
+// What one registered account may do, and what a visitor of the public
+// demo may ask of the AI assistant, in numbers. Anyone can register or
+// open the demo, so nobody must be able to fill the disk, hold the Earth
+// Engine line for hours or spend the owner's Claude key without end. The
+// owner (and the app on one's own computer without a key) has none of
+// these limits.
 //
 // THE LIMITS (QUOTAS below; where each one is applied)
 //   areas             saved areas per account             server/app.js POST /api/areas
@@ -31,12 +32,32 @@
 // switched off (server/store.js defaultWorkspace); the person can switch
 // it on in Settings.
 //
+// THE PUBLIC DEMO (read-only for everyone; server/auth.js, server/app.js)
+//   demoChatPerVisitor   questions to the demo's assistant    server/ai/demoChats.js
+//                        per visitor (the chernozem_demo
+//                        cookie) in 24 hours
+//   demoChatPerAddress   ... per internet address in 24 hours  (server/auth.js clientAddress)
+//   demoChatPerDay       ... for the whole demo in 24 hours
+//   demoChatVisitors     visitors whose chats are kept in memory at once
+//   demoChatThreads      chats kept per visitor (the oldest goes first)
+//   demoChatMessages     messages kept per chat (the oldest go first)
+//   demoChatKeepHours    a chat is forgotten this long after its last message
+//   demoPlaceSearchesPerHour     place names looked up with OpenStreetMap
+//   demoPlaceSearchesPerHourAll  per internet address / for the whole demo,
+//                        an hour (typed coordinates and names already looked
+//                        up are free): server/field/routes.js GET /api/geocode
+// Over a limit the demo's assistant answers 429 "quota": "The demo's
+// assistant has answered enough questions for now. Register to ask about
+// your own land." Nothing a demo visitor asks is written to disk.
+//
 // HOW A ROUTE KNOWS
 // server/app.js runs every route of a registered account inside that
 // account's own folder (server/store.js withDataRoot). isAccount() is true
 // there and false in the demo's folder, so the routes ask it and apply the
-// numbers only to accounts. The counts over time (spend) are kept in this
-// server's memory, per account; a restart forgets them, which is fine.
+// numbers only to accounts (the demo's are asked for with
+// server/session.js isDemoSession()). The counts over time (spend) are
+// kept in this server's memory, per account; a restart forgets them,
+// which is fine.
 //
 // WHO EDITS IT
 // The owner, to change a number. Tests use setQuotasForTests.
@@ -59,6 +80,16 @@ const DEFAULTS = Object.freeze({
   reports: 30,
   uploadBytes: 40 * MB,
   photoMaxSide: 8000,
+  // The public demo (see the top of this file).
+  demoChatPerVisitor: 8,
+  demoChatPerAddress: 24,
+  demoChatPerDay: 300,
+  demoChatVisitors: 2000,
+  demoChatThreads: 10,
+  demoChatMessages: 30,
+  demoChatKeepHours: 24,
+  demoPlaceSearchesPerHour: 20,
+  demoPlaceSearchesPerHourAll: 200,
 });
 
 // The numbers in force. Read a number from here where it is applied, never

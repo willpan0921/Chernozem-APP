@@ -1,24 +1,25 @@
 /*
   WHAT THIS FILE DOES
-  The layouts of five website pages: Story (/story), Methodology (/method),
-  Contact (/contact), the demo page (/demo) and "page not found", plus the
-  gate laboratory fragment the Methodology page shows (GateLab.jsx, the
-  sliders). Every colour and size here is a token from src/site/site.css
-  (--bg, --ink, --accent, --step-body ... ); nothing is invented here.
+  The layouts of six website pages: Story (/story), Methodology (/method),
+  Contact (/contact), the demo page (/demo), the owner's sign-in (/owner)
+  and "page not found", plus the gate laboratory fragment the Methodology
+  page shows (GateLab.jsx, the sliders). Every colour and size here is a
+  token from src/site/site.css (--bg, --ink, --accent, --step-body ... );
+  nothing is invented here.
 
-  How to read it: ".pg-" names are shared by all five pages (a section, the
-  twelve-column grid, a heading, a button, a form field). Then one block per
-  page: ".story-", ".meth-", ".ct-" (contact), ".dm-" (demo), ".nf-" (not
-  found) and ".gl-" (the gate laboratory).
+  How to read it: ".pg-" names are shared by all the pages (a section, the
+  twelve-column grid, a heading, a button, a form field). Then one block
+  per page: ".story-", ".meth-", ".ct-" (contact), ".dm-" (demo), ".nf-"
+  (not found), ".ow" (owner) and ".gl-" (the gate laboratory).
 
   The look follows the website brief: flat colours, square corners, one
   typeface, no cards, no lines except inside forms, tables and the data
   fragment, pictures at a real size. Motion is transform and opacity only,
   and every entrance is switched off for visitors who asked their system
-  for reduced motion (the block at the end).
+  for reduced motion (the block at the end, and site.css "Entrances").
 
   WHO EDITS IT
-  Whoever changes these five pages. The home page has its own home.css;
+  Whoever changes these pages. The home page has its own home.css;
   the register and sign-in pages have register.css.
 */
 
@@ -379,95 +380,185 @@
 
 /* ---------- Story ---------- */
 
-.story-open-text {
-  grid-column: 1 / 6;
+/* A sentence set larger than the running text, in the full ink. */
+.story-statement {
+  font-size: var(--step-lead);
+  line-height: 1.3;
+  letter-spacing: -0.015em;
+}
+
+.pg .story-statement {
+  max-width: 30em;
+}
+
+/* 1. The meal: the black-soil field. The title and the family story stand
+   side by side on its foot, like a caption under a picture of the soil. */
+.story-meal {
+  display: grid;
+}
+
+.story-meal-grid {
+  align-content: end;
+}
+
+.story-meal-title {
+  grid-column: 1 / 8;
   align-self: end;
 }
 
-.story-open-pic {
-  grid-column: 6 / 13;
-}
-
-.story-row-head {
-  grid-column: 1 / 5;
-}
-
-.story-row-body {
-  grid-column: 5 / 13;
-}
-
-.story-soil-pic {
-  grid-column: 1 / 8;
-}
-
-.story-soil-text {
+.story-meal-text {
   grid-column: 8 / 13;
-  align-self: center;
+  align-self: end;
 }
 
-.story-ua-head {
+/* 2. The meeting: the heading at the left, the two sentences beside it. */
+.story-penn-head {
   grid-column: 1 / 5;
 }
 
-.story-ua-col {
-  grid-column: span 4;
-}
-
-.story-ua-link {
+.story-penn-text {
   grid-column: 5 / 13;
-  margin-top: 8px;
 }
 
-.story-editions-head {
-  grid-column: 1 / 13;
-  margin-bottom: 24px;
+/* 3-5. The editions. The bar of the three sticks to the top of the screen
+   while the editions pass (it lives inside .story-editions, so it leaves
+   with the third). Each part is a link on the surface tone; the sage fill
+   grows across it as the visitor reads that edition. */
+.story-editions {
+  position: relative;
 }
 
-.story-ed-3 {
-  grid-column: span 4;
+.story-mark {
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  padding: 12px var(--margin);
+  background: var(--bg);
 }
 
-.story-ed-2 {
-  grid-column: span 6;
+.story-mark-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
 }
 
-.story-ed .pg-pic {
-  aspect-ratio: 3 / 2;
+.pg .story-mark-link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 0 16px;
+  overflow: hidden;
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 600;
+  line-height: 1.2;
+  text-decoration: none;
+}
+
+.story-mark-fill {
+  position: absolute;
+  inset: 0;
+  background: var(--field-sage);
+  transform: scaleX(0);
+  transform-origin: left center;
+}
+
+.story-mark-label {
+  position: relative;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-decoration-thickness: 0.09em;
+  text-underline-offset: 0.25em;
+  transition: text-decoration-color 180ms ease;
+}
+
+.story-mark-link[aria-current="true"] .story-mark-label {
+  text-decoration-color: currentColor;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .pg .story-mark-link:hover {
+    color: var(--ink);
+  }
+
+  .story-mark-link:hover .story-mark-label {
+    text-decoration-color: currentColor;
+  }
+}
+
+/* A jump to an edition lands below the bar. */
+.site section.story-ed[id] {
+  scroll-margin-top: 72px;
+}
+
+.story-ed-head {
+  grid-column: 1 / 6;
+}
+
+.story-ed-text {
+  grid-column: 7 / 13;
+}
+
+/* Pictures cut to one shape so the pairs line up. */
+.story-crop {
+  aspect-ratio: 16 / 10;
   object-fit: cover;
   object-position: center;
 }
 
-.story-who-text {
-  grid-column: 1 / 5;
+.story-crop-field {
+  object-position: center top;
 }
 
-.story-who-film {
-  grid-column: 5 / 13;
+/* First edition: the black-soil map large, the disturbance layer and the
+   check beside it, one above the other. */
+.story-ed1-main {
+  grid-column: 1 / 9;
+  margin-top: 24px;
 }
 
-.story-stand-head {
-  grid-column: 1 / 5;
-}
-
-.story-stand-list {
-  grid-column: 5 / 13;
-  margin: 0;
-  padding: 0;
-  list-style: none;
+.story-ed1-side {
+  grid-column: 9 / 13;
   display: grid;
-  gap: 18px;
-  font-size: var(--step-lead);
-  line-height: 1.25;
-  letter-spacing: -0.015em;
-  max-width: 30ch;
+  gap: 20px;
+  align-content: start;
+  margin-top: 24px;
 }
 
-.story-close-head {
-  grid-column: 1 / 7;
+/* Second edition: the words at the left, the screenshot large beside them. */
+.story-ed2-text {
+  grid-column: 1 / 6;
 }
 
-.story-close-act {
-  grid-column: 8 / 13;
+.story-ed2-words {
+  margin-top: 28px;
+}
+
+.story-ed2-pic {
+  grid-column: 6 / 13;
+}
+
+/* Third edition: Field large, and Atlas beside it as a tall crop of the
+   same height (on wide screens), so the app today is shown as large as
+   the editions before it. */
+.story-ed3-pic {
+  margin-top: 24px;
+}
+
+.story-ed3-field {
+  grid-column: 1 / 9;
+}
+
+.story-ed3-atlas {
+  grid-column: 9 / 13;
+}
+
+@media (min-width: 1101px) {
+  .story-crop-atlas {
+    aspect-ratio: 25 / 32;
+    object-position: 27% top;
+  }
 }
 
 /* ---------- Methodology ---------- */
@@ -850,136 +941,268 @@
   margin-right: 8px;
 }
 
+
 /* ---------- Contact ---------- */
 
-.ct-open-text {
-  grid-column: 1 / 6;
+/* The title at the left; the lead and the address beside it, on its foot. */
+.ct-head {
+  grid-column: 1 / 8;
 }
 
-.ct-open-form {
+.ct-intro {
+  grid-column: 8 / 13;
+  align-self: end;
+}
+
+.pg .ct-address {
+  margin-top: 16px;
+  font-weight: 600;
+}
+
+.ct-body {
+  margin-top: clamp(32px, 4vw, 56px);
+}
+
+/* The form: who you are (the four maps) at the left, the fields at the right. */
+.ct-form {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  column-gap: var(--gutter);
+  row-gap: 28px;
+  align-items: start;
+}
+
+.ct-roles {
+  grid-column: 1 / 7;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.ct-legend {
+  padding: 0;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.ct-legend small {
+  font-size: var(--step-small);
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.ct-role-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+/* One choice: the map, then its name; the whole of it is the radio button. */
+.ct-role {
+  position: relative;
+  display: grid;
+  background: var(--surface);
+}
+
+/* The real radio button stays in the page for the keyboard and screen
+   readers. It is invisible and covers the whole choice, so a press
+   anywhere on the map or the name picks it. */
+.ct-role-input {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+
+.ct-role-frame {
+  display: block;
+  overflow: hidden;
+}
+
+.ct-role-pic {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  transition: transform 400ms var(--ease-out);
+}
+
+.ct-role-name {
+  position: relative;
+  display: block;
+  padding: 12px 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  background: var(--surface);
+  color: var(--ink);
+  transition: background-color 180ms ease, color 180ms ease;
+}
+
+.ct-role-input:checked ~ .ct-role-name {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* Inside a form a line may mark the chosen one and the keyboard's place. */
+.ct-role:has(.ct-role-input:checked) {
+  outline: 3px solid var(--accent);
+  outline-offset: 0;
+}
+
+.ct-role:has(.ct-role-input:focus-visible) {
+  outline: 3px solid var(--ink);
+  outline-offset: 3px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ct-role:hover .ct-role-pic {
+    transform: scale(1.04);
+  }
+
+  .ct-role:hover .ct-role-input:not(:checked) ~ .ct-role-name {
+    background: var(--ink);
+    color: var(--bg);
+  }
+}
+
+.ct-fields {
   grid-column: 7 / 13;
+  display: grid;
+  gap: 20px;
 }
 
-.ct-aside {
-  margin-top: 40px;
-}
-
-.ct-foot {
+.ct-send {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: center;
-  gap: 14px 24px;
+  justify-content: flex-start;
 }
 
 .ct-done {
+  max-width: 46rem;
   padding: 32px;
   background: var(--surface);
 }
 
-.ct-pics-head {
-  grid-column: 1 / 13;
-}
-
-.ct-pic {
-  grid-column: span 3;
-}
-
-.ct-pic .pg-pic {
-  aspect-ratio: 4 / 3;
-  object-fit: cover;
-  object-position: left top;
-}
-
-.ct-else-head {
-  grid-column: 1 / 5;
-}
-
-.ct-else-list {
-  grid-column: 5 / 13;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: 14px;
-  font-size: var(--step-lead);
-  line-height: 1.3;
-  letter-spacing: -0.015em;
+.ct-done .pg-lead {
+  margin-top: 18px;
+  max-width: 34em;
 }
 
 /* ---------- Demo ---------- */
 
 .dm-open-text {
-  grid-column: 1 / 6;
+  grid-column: 1 / 10;
 }
 
-.dm-open-pics {
-  grid-column: 7 / 13;
+/* The two doors into the app, side by side. Each is one link: the
+   product's computer screen and phone, then the action. */
+.dm-doors {
+  grid-column: 1 / 13;
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--gutter);
+  margin-top: 16px;
 }
 
-.dm-open-pics .pg-pic {
-  aspect-ratio: 16 / 10;
+.pg .dm-door {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.dm-door-pics {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 3fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 8px;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+/* Each picture in its own frame, cut from the top-left corner of the
+   screen so its edges fall on the app's own panels. */
+.dm-door-pic {
+  display: block;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.dm-door-pics img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
   object-fit: cover;
   object-position: left top;
+  transition: transform 500ms var(--ease-out);
 }
 
-.dm-gate {
-  margin-top: 36px;
-  max-width: 44ch;
+.dm-door-phone img {
+  object-position: center top;
 }
 
-.dm-gate .pg-form {
-  margin-top: 8px;
+/* The action under the pictures: a large flat button. */
+.dm-door-label {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  min-height: 60px;
+  padding: 0 30px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: var(--step-lead);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1;
+  transition: transform 140ms var(--ease-out), background-color 180ms ease, color 180ms ease;
 }
 
-.dm-buttons {
+.dm-door:active .dm-door-label {
+  transform: scale(0.97);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .dm-door:hover .dm-door-pics img {
+    transform: scale(1.03);
+  }
+
+  .dm-door:hover .dm-door-label {
+    background: var(--ink);
+    color: var(--bg);
+  }
+}
+
+.pg .dm-door:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 6px;
+}
+
+/* The close: one line and the Register button, on the sage field. */
+.pg-sec.dm-close {
+  padding-block: clamp(36px, 4.4vw, 64px);
+}
+
+.dm-close-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 8px;
+  align-items: center;
+  gap: 18px 32px;
 }
 
-.dm-what-head {
-  grid-column: 1 / 7;
-}
-
-/* The two sentences on what the demo holds, beside the heading. */
-.dm-what-text {
-  grid-column: 7 / 13;
-  align-self: end;
-}
-
-.dm-big {
-  grid-column: 1 / 9;
-}
-
-.dm-big .pg-pic {
-  /* As tall as the two pictures beside it, so the row closes on both sides. */
-  aspect-ratio: 20 / 17;
-  object-fit: cover;
-  object-position: left top;
-}
-
-.dm-side {
-  grid-column: 9 / 13;
-  display: grid;
-  gap: 28px;
-}
-
-.dm-side .pg-pic {
-  aspect-ratio: 4 / 3;
-  object-fit: cover;
-  object-position: left top;
-}
-
-.dm-close-head {
-  grid-column: 1 / 7;
-}
-
-.dm-close-act {
-  grid-column: 8 / 13;
+.dm-close-line {
+  margin: 0;
+  font-size: var(--step-lead);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
 }
 
 /* ---------- Not found ---------- */
@@ -991,23 +1214,41 @@
   gap: 20px;
 }
 
+/* ---------- Owner sign-in (unlinked, small and plain) ---------- */
+
+.ow {
+  min-height: 52svh;
+}
+
+.ow-form,
+.ow-open {
+  max-width: 26rem;
+  margin-top: 28px;
+}
+
+/* ---------- Wide screens: the Story opens on a tall field of black soil ---------- */
+
+@media (min-width: 1101px) {
+  .story-meal {
+    min-height: min(50svh, 500px);
+  }
+}
+
 /* ---------- Tablet (under 1100px): the compositions loosen ---------- */
 
 @media (max-width: 1100px) {
-  .story-open-text,
-  .story-open-pic,
-  .story-row-head,
-  .story-row-body,
-  .story-soil-pic,
-  .story-soil-text,
-  .story-ua-head,
-  .story-ua-link,
-  .story-who-text,
-  .story-who-film,
-  .story-stand-head,
-  .story-stand-list,
-  .story-close-head,
-  .story-close-act,
+  .story-meal-title,
+  .story-meal-text,
+  .story-penn-head,
+  .story-penn-text,
+  .story-ed-head,
+  .story-ed-text,
+  .story-ed1-main,
+  .story-ed1-side,
+  .story-ed2-text,
+  .story-ed2-pic,
+  .story-ed3-field,
+  .story-ed3-atlas,
   .meth-open-text,
   .meth-open-pic,
   .meth-head,
@@ -1026,23 +1267,21 @@
   .meth-logo,
   .meth-close-head,
   .meth-close-act,
-  .ct-open-text,
-  .ct-open-form,
-  .ct-else-head,
-  .ct-else-list,
-  .dm-open-text,
-  .dm-open-pics,
-  .dm-what-head,
-  .dm-what-text,
-  .dm-big,
-  .dm-side,
-  .dm-close-head,
-  .dm-close-act {
+  .ct-head,
+  .ct-intro,
+  .ct-roles,
+  .ct-fields,
+  .dm-open-text {
     grid-column: 1 / 13;
   }
 
-  .story-ua-col {
-    grid-column: span 6;
+  .story-ed1-side {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--gutter);
+  }
+
+  .story-ed2-words {
+    margin-top: 18px;
   }
 
   .meth-use-list {
@@ -1059,14 +1298,6 @@
     grid-template-columns: 1fr;
   }
 
-  .ct-pic {
-    grid-column: span 6;
-  }
-
-  .dm-side {
-    grid-template-columns: 1fr 1fr;
-  }
-
   .meth-limits-head,
   .meth-limits-text,
   .meth-logo {
@@ -1075,6 +1306,15 @@
 
   .meth-product-crop + .meth-product-text {
     margin-top: 24px;
+  }
+
+  /* The lead stays close under the title once it is its own row. */
+  .ct-intro {
+    align-self: start;
+  }
+
+  .pg .ct-intro .pg-lead {
+    margin-top: 4px;
   }
 }
 
@@ -1098,16 +1338,39 @@
     grid-template-columns: 1fr;
   }
 
-  .story-ua-col,
-  .story-ed-3,
-  .story-ed-2,
-  .meth-use-list,
-  .ct-pic {
+  /* The Story's title at the heading size on a phone: at the display size
+     "Where Chernozem comes from" would need three lines. */
+  .story-meal .pg-display {
+    font-size: var(--step-head);
+  }
+
+  .story-ed1-side,
+  .story-ed3-pic,
+  .meth-use-list {
     grid-column: 1 / 13;
   }
 
-  .story-stand-list {
-    max-width: none;
+  .story-ed1-side {
+    grid-template-columns: 1fr;
+  }
+
+  .story-ed1-main,
+  .story-ed1-side,
+  .story-ed3-pic {
+    margin-top: 4px;
+  }
+
+  /* On a phone each part of the bar says its edition on two lines
+     ("Second" above "edition"), so the three fit side by side. */
+  .story-mark-rest {
+    display: block;
+  }
+
+  .pg .story-mark-link {
+    justify-content: center;
+    min-height: 56px;
+    padding: 6px 8px;
+    text-align: center;
   }
 
   .meth-toc {
@@ -1154,12 +1417,40 @@
     padding: 18px;
   }
 
+  .ct-form {
+    row-gap: 24px;
+  }
+
+  .ct-role-grid {
+    gap: 8px;
+  }
+
+  .ct-role-name {
+    padding: 10px 10px;
+  }
+
   .ct-done {
     padding: 24px;
   }
 
-  .dm-side {
+  /* One door above the other, each with its computer screen only. */
+  .dm-doors {
     grid-template-columns: 1fr;
+    gap: 32px;
+  }
+
+  .dm-door-pics {
+    grid-template-columns: 1fr;
+    aspect-ratio: 16 / 10;
+  }
+
+  .dm-door-phone {
+    display: none;
+  }
+
+  .dm-door-label {
+    min-height: 56px;
+    padding: 0 24px;
   }
 }
 
@@ -1167,7 +1458,11 @@
 
 @media (prefers-reduced-motion: reduce) {
   .pg-btn,
-  .gl-modes button {
+  .gl-modes button,
+  .dm-door-label,
+  .dm-door-pics img,
+  .ct-role-pic,
+  .ct-role-name {
     transition: none;
   }
 }

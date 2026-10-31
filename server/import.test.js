@@ -146,9 +146,10 @@ test("the right token writes every data file, the token alone (no access code ne
   assert.deepEqual(res.json, { written: Object.keys(files).length, skipped: [] });
   for (const [rel, text] of Object.entries(files)) assert.equal(fs.readFileSync(path.join(dataDir(), rel), "utf8"), text, rel);
   assert.deepEqual(listAll(dataDir()), Object.keys(files).sort(), "no other file, no temporary file left");
-  // The rest of the API still needs the code.
-  assert.equal((await fetch(`${base}/api/areas`)).status, 401);
-  // And with the code off the server reads what was written.
+  // A change through the rest of the API still needs the owner's key (the
+  // demo is read-only without it).
+  assert.equal((await fetch(`${base}/api/areas`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source: "country", id: "804" }) })).status, 403);
+  // And with the key off the server reads what was written.
   process.env.ATLAS_ACCESS_CODE = "";
   const areas = await (await fetch(`${base}/api/areas`)).json();
   assert.deepEqual(areas.areas.map((a) => a.id), ["area-1"]);

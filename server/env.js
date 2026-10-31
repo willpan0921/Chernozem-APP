@@ -144,6 +144,23 @@ export function config() {
     // Only on one's own computer: the local Firebase Auth emulator, for
     // example 127.0.0.1:9099. The Firebase library reads it itself.
     firebaseEmulatorHost: (env.FIREBASE_AUTH_EMULATOR_HOST || "").trim() || null,
+    // The contact form's e-mail (server/mail.js): where messages go
+    // (MAIL_TO; blank: chernozem.app@gmail.com) and how they are sent, the
+    // first one set winning: Gmail with an app password, any SMTP server,
+    // or Resend. None: the messages wait on the server until one is set.
+    mailTo: (env.MAIL_TO || "").trim() || null,
+    mailFrom: (env.MAIL_FROM || "").trim() || null,
+    gmailUser: (env.GMAIL_USER || "").trim() || null,
+    // Google shows an app password as four groups of four letters; the
+    // spaces are not part of it.
+    gmailAppPassword: (env.GMAIL_APP_PASSWORD || "").replace(/\s+/g, "") || null,
+    smtpHost: (env.SMTP_HOST || "").trim() || null,
+    smtpPort: Number(env.SMTP_PORT) || null,
+    smtpUser: (env.SMTP_USER || "").trim() || null,
+    smtpPass: env.SMTP_PASS || null,
+    // Blank: secure (TLS from the start) only on port 465.
+    smtpSecure: String(env.SMTP_SECURE ?? "").trim() === "" ? null : flag(env.SMTP_SECURE),
+    resendApiKey: (env.RESEND_API_KEY || "").trim() || null,
   };
 }
 

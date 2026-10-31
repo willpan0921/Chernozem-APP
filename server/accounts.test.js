@@ -4,12 +4,13 @@
 // a Firebase sign-in makes the account's own folder and cookie; a wrong
 // token is refused; the sign-in is "off" when the server cannot check
 // tokens; the profile is checked field by field; an account may only use
-// the product it chose (403 wrong_product); two accounts and the shared
-// demo never see each other's areas, farm, jobs or settings; with an
-// access code set, an account still works without the code; and "Sign
-// out" ends every cookie made for the account, a Firebase user deleted or
-// disabled is signed out within the hour, and the demo's code session is
-// untouched. Firebase itself is stood in for (setDepsForTests), so it runs
+// the product it chose (403 wrong_product) and never reads the website's
+// messages (403 owner_only); two accounts and the demo never see each
+// other's areas, farm, jobs or settings; with the owner's key set, an
+// account still works without the key; and "Sign out" ends every cookie
+// made for the account (a copy of it is then the read-only demo, never
+// the account), a Firebase user deleted or disabled is signed out within
+// the hour, and the owner's session is untouched. Firebase itself is stood in for (setDepsForTests), so it runs
 // offline. The limits on what an account may do are in quotas.test.js.
 // Run with "npm test".
 //
@@ -155,7 +156,14 @@ test("a Firebase sign-in makes the account's own folder, sets the account cookie
   // The status names the account, never "shared".
   const cookie = cookieOf(res.cookies, "chernozem_account");
   const status = await call("GET", "/api/auth/status", { cookie });
-  assert.deepEqual(status.json, { required: false, signedIn: true, shared: false, account: { uid: "AliceUID001", email: "aliceuid001@example.com", name: "Alice Farmer", product: null, profileComplete: false } });
+  assert.deepEqual(status.json, {
+    required: false,
+    signedIn: true,
+    shared: false,
+    account: { uid: "AliceUID001", email: "aliceuid001@example.com", name: "Alice Farmer", product: null, profileComplete: false },
+    mode: "account",
+    readOnly: false,
+  });
 });
 
 test("a wrong token is refused with 401 bad_token, and nothing is made", async () => {
@@ -281,7 +289,7 @@ test("the profile: read, checked field by field (400 with a plain sentence), sav
   assert.equal((await call("GET", "/api/account/more", { cookie })).status, 404);
 });
 
-test("an account uses the product it chose: 403 wrong_product on the other one; the demo uses both", async () => {
+test("an account uses the product it chose: 403 wrong_product on the other one, 403 owner_only on the website's messages; the demo uses both", async () => {
   const field = await signIn("FieldUID0001");
   assert.equal((await call("PUT", "/api/account", { cookie: field, body: { name: "F", role: "farmer", product: "field" } })).status, 200);
   const atlas = await signIn("AtlasUID0001");
@@ -299,8 +307,6 @@ test("an account uses the product it chose: 403 wrong_product on the other one; 
     ["POST", "/api/jobs/job-x/cancel"],
     ["GET", "/api/runs"],
     ["GET", "/api/soil?lat=49&lon=37&sizeDeg=0.1"],
-    ["GET", "/api/messages"],
-    ["DELETE", "/api/messages/msg-x"],
     ["GET", "/api/chats?product=atlas"],
     ["POST", "/api/chat", { product: "atlas", message: "hi" }],
   ];
@@ -329,7 +335,14 @@ test("an account uses the product it chose: 403 wrong_product on the other one; 
   assert.deepEqual((await call("GET", "/api/chats?product=field", { cookie: field })).json, { threads: [] });
   assert.equal((await call("GET", "/api/workspace", { cookie: atlas })).status, 200);
   assert.deepEqual((await call("GET", "/api/areas", { cookie: atlas })).json, { areas: [] });
-  assert.deepEqual((await call("GET", "/api/messages", { cookie: atlas })).json, { messages: [] }, "the website's messages stay in the demo's folder");
+  // The website's messages are the owner's alone, whatever the product.
+  for (const cookie of [field, atlas, fresh]) {
+    for (const [method, url] of [["GET", "/api/messages"], ["DELETE", "/api/messages/msg-x"]]) {
+      const res = await call(method, url, { cookie });
+      assert.equal(res.status, 403, `${method} ${url}`);
+      assert.equal(res.json.error.code, "owner_only", `${method} ${url}`);
+    }
+  }
   assert.deepEqual((await call("GET", "/api/chats?product=atlas", { cookie: atlas })).json, { threads: [] });
   // The AI chat gets the body the guard read (no key here: the stream says so).
   const chat = await call("POST", "/api/chat", { cookie: field, body: { product: "field", message: "hi" } });
@@ -415,7 +428,17 @@ test("two accounts and the demo never see each other's areas, analyses, farm or 
   assert.equal(fs.existsSync(path.join(dir, "field-analysis")), false);
 });
 
-test("with an access code set, an account still works without the code; the code's sign-in replaces it; Sign out clears both; a changed cookie is nobody", async () => {
+// The read-only demo: what a visitor without a valid cookie gets when the
+// owner's key is set (server/auth.js; the rest is in demo.test.js).
+const DEMO_STATUS = { required: true, signedIn: false, shared: true, account: null, mode: "demo", readOnly: true };
+const assertDemo = async (cookie, label) => {
+  assert.deepEqual((await call("GET", "/api/auth/status", { cookie })).json, DEMO_STATUS, label);
+  const change = await call("PATCH", "/api/workspace", { cookie, body: { name: "Changed" } });
+  assert.equal(change.status, 403, label);
+  assert.equal(change.json.error.code, "demo_read_only", label);
+};
+
+test("with the owner's key set, an account still works without the key; the owner's sign-in replaces it; Sign out clears both; a changed cookie is nobody (the read-only demo)", async () => {
   process.env.ATLAS_ACCESS_CODE = "orchard-lantern-pebble-cobalt";
   try {
     const cookie = await signIn("CodeUID00001");
@@ -423,11 +446,13 @@ test("with an access code set, an account still works without the code; the code
     assert.equal(status.json.required, true);
     assert.equal(status.json.signedIn, true);
     assert.equal(status.json.shared, false);
+    assert.equal(status.json.mode, "account");
     assert.equal(status.json.account.uid, "CodeUID00001");
     assert.equal((await call("GET", "/api/account", { cookie })).status, 200);
-    assert.equal((await call("GET", "/api/workspace")).status, 401, "without anything: the code is needed");
-    const changed = await call("GET", "/api/workspace", { cookie: `${cookie}x` });
-    assert.equal(changed.status, 401, "a changed account cookie is nobody");
+    await assertDemo(undefined, "without anything: the read-only demo");
+    await assertDemo(`${cookie}x`, "a changed account cookie is nobody");
+    const changed = await call("GET", "/api/account", { cookie: `${cookie}x` });
+    assert.equal(changed.status, 401, "and is not the account");
     assert.equal(changed.json.error.code, "auth_required");
 
     // Entering the code makes this browser the demo's: the account cookie goes.
@@ -440,16 +465,16 @@ test("with an access code set, an account still works without the code; the code
     // Sign out removes both cookies.
     const out = await call("POST", "/api/auth/logout", { cookie });
     assert.equal(out.status, 200);
-    assert.deepEqual(out.json, { ok: true, required: true, signedIn: false, shared: true, account: null });
+    assert.deepEqual(out.json, { ok: true, ...DEMO_STATUS });
     assert.ok(out.cookies.some((line) => /^atlas_session=; Path=\/; Max-Age=0; HttpOnly; SameSite=Lax$/.test(line)));
     assert.ok(out.cookies.some((line) => /^chernozem_account=; Path=\/; Max-Age=0; HttpOnly; SameSite=Lax$/.test(line)));
   } finally {
     process.env.ATLAS_ACCESS_CODE = "";
   }
-  // Without a code, a changed account cookie is the open demo, not the account.
+  // Without a key, a changed account cookie is the open workspace, not the account.
   const cookie = await signIn("CodeUID00001");
   const open = await call("GET", "/api/auth/status", { cookie: `${cookie}x` });
-  assert.deepEqual(open.json, { required: false, signedIn: true, shared: false, account: null });
+  assert.deepEqual(open.json, { required: false, signedIn: true, shared: true, account: null, mode: "open", readOnly: false });
   // And asking for the demo without a code, as an account, drops the account cookie.
   const toDemo = await call("POST", "/api/auth/login", { cookie, body: { code: "" } });
   assert.equal(toDemo.status, 200);
@@ -457,11 +482,11 @@ test("with an access code set, an account still works without the code; the code
   assert.deepEqual((await call("POST", "/api/auth/login", { body: { code: "" } })).cookies, [], "no cookie to drop: none sent");
 });
 
-test("Sign out ends every cookie made for the account; a Firebase user deleted or disabled is signed out within the hour; a fresh sign-in works again; the demo's code is untouched", async () => {
+test("Sign out ends every cookie made for the account; a Firebase user deleted or disabled is signed out within the hour; a fresh sign-in works again; the owner's session is untouched", async () => {
   const hour = 60 * 60 * 1000;
   const pause = () => new Promise((resolve) => setTimeout(resolve, 5));
-  // With a code set, a cookie that no longer counts is refused everywhere
-  // (without one it would be the open demo, as any stranger is).
+  // With the owner's key set, a cookie that no longer counts is the
+  // read-only demo, as any stranger is (without a key it would be open).
   process.env.ATLAS_ACCESS_CODE = "orchard-lantern-pebble-cobalt";
   firebase.clock = Date.now();
   firebase.revoked.length = 0;
@@ -479,14 +504,16 @@ test("Sign out ends every cookie made for the account; a Firebase user deleted o
     for (const [method, url, body] of [
       ["GET", "/api/account"],
       ["PUT", "/api/account", { name: "x", role: "farmer", product: "field" }],
-      ["GET", "/api/workspace"],
-      ["GET", "/api/farm"],
     ]) {
       const res = await call(method, url, { cookie, body });
       assert.equal(res.status, 401, `${method} ${url} with the old cookie: ${res.status} ${JSON.stringify(res.json)}`);
       assert.equal(res.json.error.code, "auth_required");
     }
-    assert.deepEqual((await call("GET", "/api/auth/status", { cookie })).json, { required: true, signedIn: false, shared: true, account: null });
+    // Everything else with the old cookie is the demo's, read-only.
+    await assertDemo(cookie, "the old cookie");
+    const farm = await call("POST", "/api/farm/demo", { cookie, body: { example: "ukraine" } });
+    assert.equal(farm.status, 403, "no change to anybody's farm");
+    assert.equal(fs.existsSync(path.join(folderOf("OutUID000001"), "farm.json")), false);
     // A second Sign out with the dead cookie does nothing more.
     await call("POST", "/api/auth/logout", { cookie });
     assert.deepEqual(firebase.revoked, ["OutUID000001"]);
@@ -528,15 +555,16 @@ test("Sign out ends every cookie made for the account; a Firebase user deleted o
     const back = await signIn("OutageUID001");
     assert.equal((await call("GET", "/api/account", { cookie: back })).status, 200);
 
-    // 6. The demo's code session is untouched: Sign out drops the cookie
-    // from that browser and writes nothing; a copy of it works as before
-    // (only a new code ends every code sign-in at once).
+    // 6. The owner's session is untouched: Sign out drops the cookie from
+    // that browser and writes nothing; a copy of it works as before (only
+    // a new key ends every owner sign-in at once).
     const login = await call("POST", "/api/auth/login", { body: { code: "orchard-lantern-pebble-cobalt" } });
     const codeCookie = cookieOf(login.cookies, "atlas_session");
-    assert.equal((await call("GET", "/api/workspace", { cookie: codeCookie })).status, 200);
+    const rename = () => call("PATCH", "/api/workspace", { cookie: codeCookie, body: { name: "Regional office" } });
+    assert.equal((await rename()).status, 200);
     assert.equal((await call("POST", "/api/auth/logout", { cookie: codeCookie })).status, 200);
     assert.equal(fs.existsSync(path.join(dir, "session.json")), false);
-    assert.equal((await call("GET", "/api/workspace", { cookie: codeCookie })).status, 200);
+    assert.equal((await rename()).status, 200, "a copy of the owner's cookie still counts");
     assert.deepEqual(firebase.revoked, ["OutUID000001"], "no account was signed out by it");
   } finally {
     process.env.ATLAS_ACCESS_CODE = "";

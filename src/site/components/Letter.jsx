@@ -13,7 +13,7 @@ import { LOGO_SRC } from "../../components/ui/Logo.jsx";
 const PARAGRAPHS = [
   "I grew up hearing about a meal my family almost did not have. My great-grandparents farmed black soil in northeastern China. A war went through their land and left it unusable, and for a time there was nothing to eat.",
   "One summer I stood on those fields. The soil was dark and alive again, but that had taken decades, and nobody at the time could have said where to start.",
-  "When the war in Ukraine began I saw the same black earth in the news and the same question. I wrote a paper on where recovery should begin, ranking 24 oblasts from satellite data. Then I built this app, so that anyone could do it for their own land without writing a paper.",
+  "When the war in Ukraine began I saw the same black earth in the news and the same question. I wrote a paper on where recovery should begin, ranking 24 oblasts from satellite data. Then, with the partners I met at Penn, I built this app, so that anyone could do it for their own land without writing a paper.",
   "Chernozem is honest by design. It never declares land safe. It shows its numbers, its sources and its limits, and it lets you change the weights yourself.",
   "If you farm, try Field. If you plan for many farms, try Atlas. Then tell me what is wrong with it; that is how it gets better.",
 ];

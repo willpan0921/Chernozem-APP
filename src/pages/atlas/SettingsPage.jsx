@@ -23,8 +23,19 @@
 //   Team   who has access: add, change role, remove
 //   Messages from the website   what visitors sent through the public
 //          website's contact page (server/messages.js): read, write back
-//          by e-mail (a mailto link), delete. No e-mail is sent by the app
+//          by e-mail (a mailto link), delete. The owner (and one's own
+//          computer) only
 // Everything is saved on the Atlas server (server/app.js) straight away.
+//
+// THE PUBLIC DEMO (read-only, src/lib/access.js): one line under the title,
+// "This is the demo. Register to set up your own." (src/components/
+// DemoDialog.jsx DemoSettingsNote), and every card shows its values with
+// its controls turned off (dimmed; pressing one opens the "This is the
+// demo" dialog: src/state/useDemoGuard.js lock): "New area", Open and
+// remove, the crisis choice, re-run, the monthly switch, the team's roles
+// and remove, "Check connections". The names are plain text (no renaming),
+// the team's e-mail addresses and the "add" row are left out, and the
+// messages card is not shown at all.
 //
 // WHO EDITS IT
 // Whoever changes the Atlas Settings page. The shared data and actions
@@ -53,7 +64,12 @@ import { PageHeader, Card, Badge, Button, Segmented, Toggle } from "../../compon
 import { AnalysisNotice, AnalysisProgress, AtlasGate, useAtlasData } from "../../state/AtlasData.jsx";
 import AreaPicker from "../../components/atlas/AreaPicker.jsx";
 import { AccountCard } from "../../components/atlas/AccessGate.jsx";
-import { API_ROOT, ApiError, AUTH_REQUIRED_EVENT, OFFLINE_MESSAGE, deleteMessage, listJobs, listMessages } from "../../api/atlasApi.js";
+import { DemoSettingsNote } from "../../components/DemoDialog.jsx";
+import { useAccess } from "../../state/useAccess.js";
+import { useDemoGuard } from "../../state/useDemoGuard.js";
+import { canSeeMessages } from "../../lib/access.js";
+import { demoHeaders } from "../../lib/demoMode.js";
+import { API_ROOT, ApiError, AUTH_REQUIRED_EVENT, OFFLINE_MESSAGE, deleteMessage, listJobs, listMessages, noticeDemoRefusal } from "../../api/atlasApi.js";
 import { lineMarks } from "../../lib/atlas/analysisNotice.js";
 import { formatReceived, messageCountText } from "../../lib/atlas/messages.js";
 import { formatAreaSize, formatMonthYear } from "../../lib/format.js";
@@ -97,13 +113,14 @@ const CONNECTING_MAX_POLLS = 45; // about 3 minutes
 const errorText = (err) => err?.message || String(err);
 
 // The few server calls this page makes that the shared data layer does not
-// (rename / remove an area, test the connections). Same error format.
+// (rename / remove an area, test the connections). Same error format, and
+// the demo's header too (src/lib/demoMode.js), like every other call.
 async function send(method, path, body) {
   let response;
   try {
     response = await fetch(`${API_ROOT}${path}`, {
       method,
-      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+      headers: { ...demoHeaders(), ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
       body: body === undefined ? undefined : JSON.stringify(body),
       cache: "no-store",
     });
@@ -117,12 +134,15 @@ async function send(method, path, body) {
     // Not JSON.
   }
   if (!response.ok) {
-    // Signed out (access code on): bring the access screen back.
+    // Not signed in any more: the access gate asks who this is again.
     if (response.status === 401 && json?.error?.code === "auth_required") window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT));
-    throw new ApiError(json?.error?.message || `The server answered with error ${response.status}.`, {
+    const error = new ApiError(json?.error?.message || `The server answered with error ${response.status}.`, {
       code: json?.error?.code,
       status: response.status,
     });
+    // The demo may not change this: the "This is the demo" dialog.
+    noticeDemoRefusal(error);
+    throw error;
   }
   return json;
 }
@@ -184,7 +204,10 @@ function StatusRow({ icon, title, badge, meta, action }) {
 //   onError(message | null)
 //   words: what the asking button says, ["Remove", "Removing…"] unless
 //          given (the messages card says Delete)
+// In the demo the bin looks turned off and opens the "This is the demo"
+// dialog instead of asking.
 function RemoveButton({ label, onRemove, onError, disabled, words = ["Remove", "Removing…"] }) {
+  const { lock } = useDemoGuard();
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const binRef = useRef(null);
@@ -236,17 +259,17 @@ function RemoveButton({ label, onRemove, onError, disabled, words = ["Remove", "
       icon={<Trash2 size={15} />}
       aria-label={label}
       disabled={disabled}
-      onClick={() => {
+      {...lock(() => {
         onError?.(null);
         setConfirming(true);
-      }}
+      })}
     />
   );
 }
 
 // An area's name; click it to rename. Enter or leaving the box saves,
-// Escape cancels.
-function AreaName({ area, className, onError }) {
+// Escape cancels. disabled (the demo): just the name.
+function AreaName({ area, className, onError, disabled = false }) {
   const { actions } = useAtlasData();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(area.name);
@@ -294,6 +317,13 @@ function AreaName({ area, className, onError }) {
     }
   };
 
+  if (disabled) {
+    return (
+      <span className={`aset-name is-static ${className}`}>
+        <span className="aset-name-text">{area.name}</span>
+      </span>
+    );
+  }
   if (editing) {
     return (
       <input
@@ -377,7 +407,7 @@ function useLineMarks() {
     tick();
     // Signed out (the sidebar's "Sign out", or any call answered 401): the
     // asking stops at once, rather than going on (and being refused) until
-    // the access card replaces this page.
+    // the app starts again for whoever is looking now (the access gate).
     window.addEventListener(AUTH_REQUIRED_EVENT, stop);
     return () => {
       stop();
@@ -395,13 +425,14 @@ const LINE_MARKS = {
 
 function SavedArea({ item, busy, onOpen, opening, mark }) {
   const { actions } = useAtlasData();
+  const { readOnly, lock } = useDemoGuard();
   const [error, setError] = useState(null);
   const kind = areaKind(item);
   const line = LINE_MARKS[mark];
   return (
     <li className="aset-saved-row" data-area={item.id}>
       <kind.Icon size={15} className="aset-saved-icon" aria-hidden="true" />
-      <AreaName area={item} className="aset-saved-name" onError={setError} />
+      <AreaName area={item} className="aset-saved-name" onError={setError} disabled={readOnly} />
       {line && (
         <span className="aset-saved-mark" title={mark === "analyzing" ? "Being analyzed now" : "Waiting for its turn: one area at a time"}>
           <Badge tone={line.tone}>{line.label}</Badge>
@@ -410,7 +441,7 @@ function SavedArea({ item, busy, onOpen, opening, mark }) {
       <span className="aset-row-meta aset-saved-meta">
         {kind.label} · {formatAreaSize(item.areaHa)}
       </span>
-      <Button size="sm" className="aset-open" aria-label={`Open ${item.name}`} onClick={() => onOpen(item.id)} disabled={busy}>
+      <Button size="sm" className="aset-open" aria-label={`Open ${item.name}`} disabled={busy} {...lock(() => onOpen(item.id))}>
         {opening ? "Opening…" : "Open"}
       </Button>
       <RemoveButton
@@ -433,7 +464,8 @@ function SavedArea({ item, busy, onOpen, opening, mark }) {
 
 function AreaCard() {
   const { area, areas, runs, actions } = useAtlasData();
-  const [picking, setPicking] = useState(!area);
+  const { readOnly, lock } = useDemoGuard();
+  const [picking, setPicking] = useState(!area && !readOnly);
   const [switching, setSwitching] = useState(null);
   const [error, setError] = useState(null);
   const others = areas.filter((item) => item.id !== area?.id);
@@ -462,7 +494,7 @@ function AreaCard() {
             variant={picking ? "ghost" : "primary"}
             size="sm"
             icon={picking ? <X size={14} /> : <Plus size={14} />}
-            onClick={() => setPicking((value) => !value)}
+            {...lock(() => setPicking((value) => !value))}
           >
             {picking ? "Cancel" : "New area"}
           </Button>
@@ -475,7 +507,7 @@ function AreaCard() {
             <kind.Icon size={18} />
           </span>
           <div className="aset-current-text">
-            <AreaName key={area.id} area={area} className="aset-current-name" onError={setError} />
+            <AreaName key={area.id} area={area} className="aset-current-name" onError={setError} disabled={readOnly} />
             <span className="aset-row-meta">
               {kind.label} · {formatAreaSize(area.areaHa)} · {runs.length === 1 ? "1 month" : `${runs.length} months`}
             </span>
@@ -484,7 +516,7 @@ function AreaCard() {
         </div>
       )}
 
-      {picking && (
+      {picking && !readOnly && (
         <div className="aset-picker">
           <AreaPicker onDone={() => setPicking(false)} />
         </div>
@@ -649,6 +681,7 @@ function rerunOutcome(final, months = 12) {
 //   confirm  the question's button (default "Re-run 12 months")
 function RerunButton({ rerun, primary = false, confirm }) {
   const { runs } = useAtlasData();
+  const { lock } = useDemoGuard();
   const [asking, setAsking] = useState(false);
   const confirmRef = useRef(null);
   useEffect(() => {
@@ -679,7 +712,7 @@ function RerunButton({ rerun, primary = false, confirm }) {
       variant={primary || !runs.length ? "primary" : "secondary"}
       size="sm"
       icon={<RefreshCw size={14} className={running && !waiting ? "atlas-spin" : undefined} />}
-      onClick={askFirst ? () => setAsking(true) : start}
+      {...lock(askFirst ? () => setAsking(true) : start)}
       disabled={starting || running}
       className="aset-rerun"
     >
@@ -703,6 +736,7 @@ function RerunResult({ rerun }) {
 
 function DataCard() {
   const { serverStatus, workspace, area, runs, job, actions } = useAtlasData();
+  const { readOnly, guard } = useDemoGuard();
   const [toggleError, setToggleError] = useState(null);
   const rerun = useRerun();
 
@@ -796,7 +830,8 @@ function DataCard() {
           title="Analyze every saved area automatically each month"
           help="One area at a time, the current one first"
           checked={autoMonthly}
-          onChange={setAuto}
+          onChange={guard(setAuto)}
+          locked={readOnly}
         />
         {toggleError && <p className="aset-error">{toggleError}</p>}
       </div>
@@ -836,6 +871,7 @@ function listWords(list) {
 
 function WarCard() {
   const { area, runs, serverStatus, actions } = useAtlasData();
+  const { readOnly, guard } = useDemoGuard();
   const savedMode = ["war", "disaster", "peace"].includes(area?.war?.mode) ? area.war.mode : "list";
   const list = area?.listConflict;
   // What the form starts from for each choice: the saved day, name and
@@ -976,7 +1012,7 @@ function WarCard() {
           meta={meta}
         />
         <div className="aset-war-controls">
-          <Segmented light options={WAR_MODES} value={mode} onChange={choose} ariaLabel={`Crisis setting for ${area.name}`} />
+          <Segmented light options={WAR_MODES} value={mode} onChange={guard(choose)} ariaLabel={`Crisis setting for ${area.name}`} locked={readOnly} />
           {DAY_MODES.includes(mode) && (
             // noValidate: the app's own message says why a day is refused
             // (the date picker still offers 2022-01-01 to today only).
@@ -987,7 +1023,7 @@ function WarCard() {
                   <select
                     className="select"
                     value={type}
-                    disabled={busy}
+                    disabled={busy || readOnly}
                     onChange={(event) => {
                       setError(null);
                       setType(event.target.value);
@@ -1012,7 +1048,7 @@ function WarCard() {
                   min={EARLIEST_WAR_DAY}
                   max={todayUtc()}
                   value={since}
-                  disabled={busy}
+                  disabled={busy || readOnly}
                   onChange={(event) => {
                     setError(null);
                     setSince(event.target.value);
@@ -1026,14 +1062,14 @@ function WarCard() {
                   maxLength={WAR_NAME_MAX}
                   placeholder={mode === "disaster" ? "For example Storm Daniel floods" : "For example Fighting in Amhara"}
                   value={name}
-                  disabled={busy}
+                  disabled={busy || readOnly}
                   onChange={(event) => {
                     setError(null);
                     setName(event.target.value);
                   }}
                 />
               </label>
-              <Button variant="primary" size="sm" type="submit" className="aset-war-save" disabled={busy || !since || unchanged || (mode === "disaster" && !type)}>
+              <Button variant="primary" size="sm" type="submit" className="aset-war-save" disabled={busy || readOnly || !since || unchanged || (mode === "disaster" && !type)}>
                 {busy ? "Saving…" : "Save"}
               </Button>
               {mode === "disaster" ? (
@@ -1130,10 +1166,11 @@ function AiCard({ ai, checking }) {
 
 function MemberRow({ member }) {
   const { actions } = useAtlasData();
+  const { readOnly, guard, lockList } = useDemoGuard();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
-  const changeRole = async (role) => {
+  const changeRole = guard(async (role) => {
     setBusy(true);
     setError(null);
     try {
@@ -1143,7 +1180,7 @@ function MemberRow({ member }) {
     } finally {
       setBusy(false);
     }
-  };
+  });
 
   return (
     <li className="aset-member" data-member={member.id}>
@@ -1152,7 +1189,8 @@ function MemberRow({ member }) {
       </span>
       <div className="aset-member-text">
         <span className="aset-member-name">{member.name}</span>
-        {member.email && <span className="aset-row-meta">{member.email}</span>}
+        {/* The demo is public: the team's addresses stay private. */}
+        {member.email && !readOnly && <span className="aset-row-meta">{member.email}</span>}
       </div>
       <select
         className="select aset-role"
@@ -1160,6 +1198,7 @@ function MemberRow({ member }) {
         value={member.role}
         disabled={busy}
         onChange={(event) => changeRole(event.target.value)}
+        {...lockList()}
       >
         {ROLES.map((role) => (
           <option key={role.value} value={role.value}>
@@ -1242,6 +1281,7 @@ function AddMember() {
 
 function TeamCard() {
   const { workspace } = useAtlasData();
+  const { readOnly } = useAccess();
   const team = workspace?.team || [];
   return (
     <Card className="aset-card" title="Team" actions={<Badge tone="outline">{team.length}</Badge>}>
@@ -1250,7 +1290,8 @@ function TeamCard() {
           <MemberRow key={member.id} member={member} />
         ))}
       </ul>
-      <AddMember />
+      {/* The demo cannot add anyone: no empty form for it. */}
+      {!readOnly && <AddMember />}
     </Card>
   );
 }
@@ -1341,6 +1382,8 @@ function MessagesCard() {
 
 export default function SettingsPage() {
   const { status, serverStatus, area, actions } = useAtlasData();
+  const access = useAccess();
+  const { readOnly, lock } = useDemoGuard();
   const [checking, setChecking] = useState(false);
   const [checkError, setCheckError] = useState(null);
   const [testedAi, setTestedAi] = useState(null); // the AI part of the last ?check=1 answer
@@ -1362,8 +1405,9 @@ export default function SettingsPage() {
   };
 
   // A key in .env that has not been tested yet is tested once when the
-  // page opens, so "Connected" means the key really works.
-  const untested = status === "ready" && serverStatus?.ai?.configured && serverStatus.ai.ok === null;
+  // page opens, so "Connected" means the key really works. (Not by the
+  // demo's visitors: testing the setup is the owner's.)
+  const untested = !readOnly && status === "ready" && serverStatus?.ai?.configured && serverStatus.ai.ok === null;
   useEffect(() => {
     if (!untested || autoChecked.current) return;
     autoChecked.current = true;
@@ -1389,13 +1433,15 @@ export default function SettingsPage() {
             size="sm"
             className="aset-check"
             icon={<RefreshCw size={14} className={checking ? "atlas-spin" : undefined} />}
-            onClick={recheck}
+            {...lock(recheck)}
             disabled={checking}
           >
             {checking ? "Checking…" : "Check connections"}
           </Button>
         }
       />
+      {/* The demo: "This is the demo. Register to set up your own." */}
+      <DemoSettingsNote />
       {checkError && (
         <p className="aset-error" role="alert">
           {checkError}
@@ -1411,7 +1457,8 @@ export default function SettingsPage() {
       <DataCard key={`data-${area?.id || "none"}`} />
       <AiCard ai={ai} checking={checking} />
       <TeamCard />
-      <MessagesCard />
+      {/* The website's messages are the owner's (and one's own computer's). */}
+      {canSeeMessages(access) && <MessagesCard />}
     </div>
   );
 }

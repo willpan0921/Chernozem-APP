@@ -7,10 +7,14 @@
 //   loadFirebaseAuth()  downloads the Firebase code (only when called, so
 //                       the rest of the website never fetches it), sets it
 //                       up once, and gives back { auth, ...functions }:
-//                       auth, GoogleAuthProvider, signInWithPopup,
-//                       createUserWithEmailAndPassword,
+//                       auth, GoogleAuthProvider, googleProvider,
+//                       signInWithPopup, createUserWithEmailAndPassword,
 //                       signInWithEmailAndPassword, sendPasswordResetEmail,
 //                       onAuthStateChanged, getIdToken, signOut.
+//                       googleProvider() is Google's sign-in set to always
+//                       show the account chooser, so after "Not you? Sign
+//                       out" the next person picks their own Google account
+//                       instead of being signed in as the last one.
 //   firebaseConfig      the project's web settings (below)
 //
 // THE WEB CONFIG IS PUBLIC BY DESIGN. These values (the project id, the
@@ -59,7 +63,12 @@ export function loadFirebaseAuth() {
         authModule.connectAuthEmulator(auth, emulator, { disableWarnings: true });
       }
       const { GoogleAuthProvider, signInWithPopup, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, onAuthStateChanged, getIdToken, signOut } = authModule;
-      return { auth, GoogleAuthProvider, signInWithPopup, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, onAuthStateChanged, getIdToken, signOut };
+      const googleProvider = () => {
+        const provider = new GoogleAuthProvider();
+        provider.setCustomParameters({ prompt: "select_account" });
+        return provider;
+      };
+      return { auth, GoogleAuthProvider, googleProvider, signInWithPopup, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, onAuthStateChanged, getIdToken, signOut };
     })();
     // A failed download (offline) may be tried again later.
     loading.catch(() => {

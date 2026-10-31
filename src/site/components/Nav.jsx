@@ -22,11 +22,15 @@ export default function Nav() {
 
   // Close the phone menu when the page changes, keep the page from
   // scrolling behind it while it is open, let Esc close it and keep the
-  // Tab key inside it.
+  // Tab key inside it. While it is open the page's root says so
+  // (<html data-menu="open">): the About page's globe stops drawing then.
   useEffect(() => setOpen(false), [pathname]);
   useEffect(() => {
-    document.documentElement.classList.toggle("site-menu-open", open);
-    if (!open) return () => document.documentElement.classList.remove("site-menu-open");
+    const html = document.documentElement;
+    html.classList.toggle("site-menu-open", open);
+    if (open) html.setAttribute("data-menu", "open");
+    else html.removeAttribute("data-menu");
+    if (!open) return () => html.classList.remove("site-menu-open");
     function onKey(event) {
       if (event.key === "Escape") {
         setOpen(false);
@@ -48,7 +52,8 @@ export default function Nav() {
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.documentElement.classList.remove("site-menu-open");
+      html.classList.remove("site-menu-open");
+      html.removeAttribute("data-menu");
     };
   }, [open]);
 

@@ -346,7 +346,8 @@ export default function AtlasMap({
     let labelFrame = 0;
     const relayout = () => {
       cancelAnimationFrame(labelFrame);
-      labelFrame = requestAnimationFrame(() => layoutLabels(map, layers.current.labelList, { units: unitsById.current, timeframe: latest.current.timeframe, selectedUnitId: latest.current.selectedUnitId }));
+      // Only while this map is still the one on screen (see the clean-up).
+      labelFrame = requestAnimationFrame(() => mapRef.current === map && layoutLabels(map, layers.current.labelList, { units: unitsById.current, timeframe: latest.current.timeframe, selectedUnitId: latest.current.selectedUnitId }));
     };
     map.on("zoomend moveend resize", relayout);
     layers.current.relayout = relayout;
@@ -376,6 +377,10 @@ export default function AtlasMap({
 
     return () => {
       stopWatching();
+      // A names layout still waiting for the next frame would run on this
+      // map once it is gone (with the next map's names: React draws a page
+      // twice while developing), so it is called off.
+      cancelAnimationFrame(labelFrame);
       // Take our shapes off first, while their canvas still exists: removing
       // the map first leaves a redraw queued on a canvas that is gone.
       for (const name of ["cells", "marks", "draw", "outline", "unitFill", "unitLines", "unitLabels"]) layers.current[name]?.remove();

@@ -4,9 +4,10 @@
 // Online, a mistake in the settings must stop the new version from going
 // live, with the reason in Render's log (the deploy then shows as failed
 // and nothing is served), rather than:
-//   - open the app to everyone on the internet: no access code, or one
-//     that is short or is the example once printed in the docs
-//     (server/auth.js accessCodeProblem);
+//   - open the app to everyone on the internet: no owner's key
+//     (ATLAS_ACCESS_CODE: without it everyone could change everything, the
+//     public demo included), or one that is short or is the example once
+//     printed in the docs (server/auth.js accessCodeProblem);
 //   - keep the data where the next deploy wipes it: CHERNOZEM_DATA_DIR
 //     missing, not a full path, inside the app's own folder, or a folder
 //     that does not exist or cannot be written to (the disk not attached).
@@ -30,7 +31,7 @@ import { ACCESS_CODE_MIN_LENGTH, accessCode, accessCodeProblem } from "./auth.js
 const WHERE = "Set it on the service's Environment page in Render (docs/DEPLOY.md, section 4).";
 
 const CODE_PROBLEMS = {
-  missing: `ATLAS_ACCESS_CODE is not set, so anyone on the internet could open the app and change everything. ${WHERE}`,
+  missing: `ATLAS_ACCESS_CODE is not set, so anyone on the internet could change everything, the public demo included (it is the owner's key, typed at /owner). ${WHERE}`,
   short: `ATLAS_ACCESS_CODE is shorter than ${ACCESS_CODE_MIN_LENGTH} characters, too easy to guess for a site on the internet. Use four or more random words. ${WHERE}`,
   published: `ATLAS_ACCESS_CODE is the example once printed in the docs, which anyone can still read. Make up your own. ${WHERE}`,
 };

@@ -702,3 +702,10 @@
     align-items: center;
   }
 }
+
+/* The demo: a name that cannot be renamed is plain text. */
+.fset-name.is-static,
+.fset-name.is-static:hover {
+  background: none;
+  cursor: default;
+}

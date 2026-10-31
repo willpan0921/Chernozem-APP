@@ -9,6 +9,12 @@
   links and forms → tables → interface fragments (data-ui) → the proof
   table → entrances (motion) → reduced motion.
 
+  The cursor is the pin logo (public/site/cursor-pin.png, 22 x 32, and its
+  @2x copy). It clicks at the centre of the pin's round head (11, 10), not
+  at its tip; src/site/cursorAssist.js also lets a click anywhere on the
+  pin reach the nearest link or button under it, and gives that link or
+  button its hover look ([data-near], next to each :hover rule below).
+
   Motion: an element with data-rise, data-settle, data-slide or data-open
   starts hidden only when the page has the class "js" (set in index.html)
   and the visitor has not asked for reduced motion; it moves into place
@@ -95,9 +101,16 @@
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   font-kerning: normal;
-  cursor: url(/site/cursor-pin.png) 11 31, auto;
-  cursor: -webkit-image-set(url(/site/cursor-pin.png) 1x, url(/site/cursor-pin@2x.png) 2x) 11 31, auto;
-  cursor: image-set(url(/site/cursor-pin.png) 1x, url(/site/cursor-pin@2x.png) 2x) 11 31, auto;
+  cursor: url(/site/cursor-pin.png) 11 10, auto;
+  cursor: -webkit-image-set(url(/site/cursor-pin.png) 1x, url(/site/cursor-pin@2x.png) 2x) 11 10, auto;
+  cursor: image-set(url(/site/cursor-pin.png) 1x, url(/site/cursor-pin@2x.png) 2x) 11 10, auto;
+}
+
+/* The menu bar is 60 px tall on a phone (components/nav.css). */
+@media (max-width: 860px) {
+  .site {
+    --nav-h: 60px;
+  }
 }
 
 .site a,
@@ -108,9 +121,9 @@
 .site input[type="range"],
 .site input[type="radio"],
 .site input[type="checkbox"] {
-  cursor: url(/site/cursor-pin.png) 11 31, pointer;
-  cursor: -webkit-image-set(url(/site/cursor-pin.png) 1x, url(/site/cursor-pin@2x.png) 2x) 11 31, pointer;
-  cursor: image-set(url(/site/cursor-pin.png) 1x, url(/site/cursor-pin@2x.png) 2x) 11 31, pointer;
+  cursor: url(/site/cursor-pin.png) 11 10, pointer;
+  cursor: -webkit-image-set(url(/site/cursor-pin.png) 1x, url(/site/cursor-pin@2x.png) 2x) 11 10, pointer;
+  cursor: image-set(url(/site/cursor-pin.png) 1x, url(/site/cursor-pin@2x.png) 2x) 11 10, pointer;
 }
 
 .site input:not([type="range"]):not([type="radio"]):not([type="checkbox"]):not([type="submit"]):not([type="button"]),
@@ -435,6 +448,19 @@ body:has(> #root > .site) {
   }
 }
 
+/* The same looks when the pin is near rather than on it (cursorAssist.js). */
+.site .btn[data-near] {
+  background: #163a20;
+}
+
+.site .btn-light[data-near] {
+  background: #ffffff;
+}
+
+.site .link[data-near] {
+  text-decoration-color: currentColor;
+}
+
 /* ---- Forms: filled fields, no borders, the focus in the accent ---- */
 .site .field {
   display: block;
@@ -550,6 +576,42 @@ body:has(> #root > .site) {
 .site .film-caption {
   margin-top: 1rem;
   font-size: 15px;
+}
+
+/* The chapters under the film: each one jumps there and plays. */
+.site .film-chapters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 24px;
+  margin-top: 1rem;
+}
+
+.site .film-chapter {
+  min-height: 40px;
+  font-size: 15px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 0.22em;
+  text-decoration-thickness: 0.08em;
+  transition: text-decoration-color var(--t-hover) ease;
+}
+
+.site .film-chapter-time {
+  font-weight: 400;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+
+.site .film-chapter.is-on,
+.site .film-chapter[data-near] {
+  text-decoration-color: currentColor;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .site .film-chapter:hover {
+    text-decoration-color: currentColor;
+  }
 }
 
 /* ---- The proof table (components/ProofTable.jsx) ---- */
@@ -753,4 +815,11 @@ body:has(> #root > .site) {
     transition-duration: 0.001s !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* The Ukraine demo's chosen tab (components/DemoRanking.jsx, frozen): its
+   pill already paints the accent behind the white label; painting the tab
+   itself too changes nothing on screen and lets contrast checks see it. */
+.site .demo-tab.is-on {
+  background: var(--accent);
 }

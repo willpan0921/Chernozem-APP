@@ -46,6 +46,7 @@ import { latestCompleteMonth } from "./runs.js";
 import { getJob, startAnalysis } from "./jobs.js";
 import { fieldUnavailableError, getFieldProvider, getProvider, unavailableError } from "./providers/index.js";
 import { needsRefresh, sampleWhileEarthEngine, startFieldAnalysis } from "./field/run.js";
+import { outsideSession } from "./session.js";
 
 const EVERY_MS = 6 * 60 * 60 * 1000;
 const LOCK_MAX_AGE_MS = 30 * 60 * 1000; // renewed every 30 s while a job runs
@@ -74,11 +75,16 @@ async function rootsToCheck() {
 }
 
 // Runs one check in every folder, the demo's first, each inside its own
-// folder, and gives back what each gave, as one list.
-async function sweep(fn) {
-  const results = [];
-  for (const root of await rootsToCheck()) results.push(...[].concat(await withDataRoot(root, fn)));
-  return results;
+// folder, and gives back what each gave, as one list. As nobody's
+// (server/session.js outsideSession): a check that a request happens to
+// start (Earth Engine just came on) is never taken for that visitor's, so
+// a demo visitor's request cannot stop the demo's own monthly analyses.
+function sweep(fn) {
+  return outsideSession(async () => {
+    const results = [];
+    for (const root of await rootsToCheck()) results.push(...[].concat(await withDataRoot(root, fn)));
+    return results;
+  });
 }
 
 // Only one check at a time in this server. Gives back the Atlas jobs it

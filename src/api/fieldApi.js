@@ -25,13 +25,20 @@
 //   getJob(id) / pollJob(id, { onProgress, signal })   follow a background job
 //
 // Errors are thrown as ApiError (from atlasApi.js) with { code, message,
-// status }. A 401 "not signed in" brings the access screen back, exactly
-// as on the Atlas pages.
+// status }. Every call sends the demo's header while this tab looks at the
+// demo (src/lib/demoMode.js), exactly as on the Atlas pages; a 401 "not
+// signed in" makes the access gate ask who this is again, and a 403
+// "demo_read_only" shows the "This is the demo" dialog (atlasApi.js).
+//
+// The download links (exportUrl) and photo addresses (photoUrl) are plain
+// links the browser opens itself, so they carry the cookies but not the
+// demo's header: for a visitor without an account they are the demo's.
 //
 // WHO EDITS IT
 // Whoever adds a Field route on the server. Add its function here too.
 
-import { API_ROOT, ApiError, AUTH_REQUIRED_EVENT, OFFLINE_MESSAGE } from "./atlasApi.js";
+import { demoHeaders, isDemoView } from "../lib/demoMode.js";
+import { API_ROOT, ApiError, AUTH_REQUIRED_EVENT, OFFLINE_MESSAGE, noticeDemoRefusal } from "./atlasApi.js";
 
 export { ApiError };
 
@@ -57,7 +64,7 @@ async function request(method, path, body, { signal } = {}) {
   try {
     response = await fetch(`${API_ROOT}${path}`, {
       method,
-      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+      headers: { ...demoHeaders(), ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal,
       cache: "no-store",
@@ -70,6 +77,7 @@ async function request(method, path, body, { signal } = {}) {
   if (!response.ok) {
     const error = await readError(response);
     noticeSignedOut(error);
+    noticeDemoRefusal(error);
     throw error;
   }
   return response.json();
@@ -190,10 +198,14 @@ export async function listReports(options) {
   return reports || [];
 }
 
-export const photoUrl = (photoId) => `${API_ROOT}/farm/uploads/${enc(photoId)}`;
+// A tab looking at the demo says so in the address too: a plain link
+// cannot send the demo header (src/lib/demoMode.js, server/auth.js).
+const viewSuffix = () => (isDemoView() ? "?view=demo" : "");
+
+export const photoUrl = (photoId) => `${API_ROOT}/farm/uploads/${enc(photoId)}${viewSuffix()}`;
 
 // name: "fields.geojson" | "readings.csv" | "history.csv"
-export const exportUrl = (name) => `${API_ROOT}/farm/export/${name}`;
+export const exportUrl = (name) => `${API_ROOT}/farm/export/${name}${viewSuffix()}`;
 
 // The photo limits: the server takes 3.75 MB; the AI 5 MB once encoded.
 export const PHOTO_MAX_SIDE = 2000;

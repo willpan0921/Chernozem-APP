@@ -1,6 +1,6 @@
 // WHAT THIS FILE DOES
 // The Field product's web addresses. server/app.js hands every /api/farm...
-// and /api/geocode request here (after the access-code check).
+// and /api/geocode request here (after the sign-in check: server/auth.js).
 //
 //   GET    /api/farm                       the farm, each field's latest analysis (?full=1: with
 //                                          season and normal curve; zones stay in downloads), the data source, the running job.
@@ -43,7 +43,25 @@
 // keeps at most 30 reports and 40 MB of photos in all (413 quota); and its
 // photos must be real JPEG, PNG or WebP pictures of at most 8,000 pixels a
 // side whose declared type matches the bytes (server/field/images.js).
-// The demo has none of these limits (its photos keep the first-bytes check).
+// The owner has none of these limits (its photos keep the first-bytes check).
+//
+// THE PUBLIC DEMO (server/auth.js; read-only: server/app.js refuses every
+// change before it reaches this file). Its reads cost nothing paid:
+//   GET /api/geocode            typed coordinates and names looked up in
+//                               the last 24 hours are free; other names
+//                               ask OpenStreetMap, at most
+//                               QUOTAS.demoPlaceSearchesPerHour (20) an
+//                               hour per internet address and
+//                               demoPlaceSearchesPerHourAll (200) for the
+//                               whole demo, then 429 "quota"
+//   GET /api/farm/fields/:id/geotiff   403 demo_read_only (Earth Engine
+//                               would make the file)
+//   GET /api/farm/weather       the hour-old answer as for everyone; when
+//                               it has run out, Open-Meteo is asked at most
+//                               once every DEMO_WEATHER_GAP_MS (10 minutes)
+//                               for the whole demo (the last answer in
+//                               between, marked stale)
+//   every other GET             the demo's saved files only
 //
 // WHO EDITS IT
 // Whoever adds a Field route. Keep the list above up to date.
@@ -78,9 +96,11 @@ import { CROP_SOURCES, cropSourceOf, stripForList } from "./analysis.js";
 import { conflictAt } from "../conflicts.js";
 import { exampleFarmParts } from "./demo.js";
 import { fieldsGeoJson, historyCsv, readingsCsv } from "./exports.js";
-import { geocode } from "./geocode.js";
+import { geocode, needsLookup } from "./geocode.js";
 import { farmCentre, orderNorthWestFirst, runningFieldAnalysis, startFieldAnalysis, startFieldDetection } from "./run.js";
 import { getWeather } from "./weather.js";
+import { clientAddress, createLoginLimiter } from "../auth.js";
+import { demoReadOnly, isDemoSession } from "../session.js";
 
 export const LIMITS = {
   fields: { min: 1, max: 60 },
@@ -99,6 +119,10 @@ export const LIMITS = {
   reportBodyBytes: 24 * 1024 * 1024,
 };
 const PHOTO_LIMIT_TEXT = "3.75 MB";
+// The public demo (see the top of this file).
+export const DEMO_WEATHER_GAP_MS = 10 * 60 * 1000;
+export const DEMO_GEOTIFF_MESSAGE = "The demo can't make GeoTIFF downloads. Register to download your own fields.";
+export const DEMO_PLACES_MESSAGE = 'The demo has looked up enough places for now. Type coordinates instead, like "49.74, 37.54".';
 const REPORT_KINDS = ["shelling", "fire", "flood", "hail", "pests", "other"];
 const SOURCES = ["detected", "drawn", "demo"];
 
@@ -328,6 +352,31 @@ function spendFieldJob(what) {
   if (turn.ok) return;
   const name = what === "field-detect" ? "searches for fields" : "analyses on request";
   throw quotaError(`An account can start ${QUOTAS.fieldJobsPerHour} ${name} an hour. Try again ${inWords(turn.retryAfterMs)}.`);
+}
+
+// ---------- The public demo's place search (see the top of this file) ----------
+
+// Kept on globalThis so the dev server, which reloads this file after
+// edits, keeps the counts.
+const demoPlaces = (globalThis.__chernozemDemoPlaces ??= { limits: null });
+
+// For tests (after setQuotasForTests): forget every count.
+export function resetDemoPlaceSearches() {
+  demoPlaces.limits = null;
+}
+
+// One more name looked up for the demo, or 429 quota when this address or
+// the whole demo has asked enough this hour.
+function spendDemoPlaceSearch(req) {
+  const limits = (demoPlaces.limits ??= {
+    address: createLoginLimiter({ max: QUOTAS.demoPlaceSearchesPerHour, windowMs: HOUR_MS }),
+    all: createLoginLimiter({ max: QUOTAS.demoPlaceSearchesPerHourAll, windowMs: HOUR_MS }),
+  });
+  const who = clientAddress(req);
+  const asked = [limits.address.check(who), limits.all.check("demo")];
+  if (asked.some((answer) => answer.blocked)) throw quotaError(DEMO_PLACES_MESSAGE);
+  limits.address.fail(who);
+  limits.all.fail("demo");
 }
 
 // ---------- Farm ----------
@@ -683,6 +732,7 @@ export async function handleFieldRoutes(req, res, url) {
     if (method !== "GET") throw new HttpError(405, "method_not_allowed", `${method} is not supported on ${url.pathname}.`);
     const text = (q.get("q") || "").trim();
     if (!text) throw bad("Type a place name or coordinates.");
+    if (isDemoSession() && needsLookup(text)) spendDemoPlaceSearch(req);
     return sendJson(res, 200, { results: await geocode(text) }), true;
   }
   if (first !== "farm") return false;
@@ -746,6 +796,7 @@ export async function handleFieldRoutes(req, res, url) {
       return sendJson(res, 200, { analysis, history }), true;
     }
     if (third && fourth === "geotiff" && method === "GET") {
+      if (isDemoSession()) throw demoReadOnly(DEMO_GEOTIFF_MESSAGE);
       const { field } = await fieldOf(third);
       const provider = await getFieldProvider();
       if (provider.id !== "gee" || typeof provider.geotiffUrl !== "function") {
@@ -760,7 +811,7 @@ export async function handleFieldRoutes(req, res, url) {
     const farm = await getFarm();
     const centre = farmCentre(farm);
     if (!centre) throw notFound("Add your farm first.", "no_farm");
-    const { current, rain, daily, hourly, today, at, stale } = await getWeather(centre);
+    const { current, rain, daily, hourly, today, at, stale } = await getWeather(centre, isDemoSession() ? { minFetchGapMs: DEMO_WEATHER_GAP_MS } : {});
     return sendJson(res, 200, { current, rain, daily, hourly: hourly ?? null, today: today ?? null, at, stale: Boolean(stale) }), true;
   }
 

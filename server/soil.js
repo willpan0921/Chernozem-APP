@@ -18,6 +18,11 @@
 // Without Earth Engine nothing is made up: the answer says the soil type
 // needs Earth Engine (available false).
 //
+// THE PUBLIC DEMO (server/session.js isDemoSession) answers from what is
+// saved only: a square or a state read before (by the owner) shows its
+// soil types; any other answers available false, reason "demo", and never
+// asks Earth Engine or writes a file.
+//
 // WHO EDITS IT
 // Whoever changes how a place's soil type is found. Tested in soil.test.js.
 
@@ -27,6 +32,7 @@ import { getProvider, unavailableError } from "./providers/index.js";
 import { pointInGeometry } from "./geo.js";
 import { BUILT_IN_CLASSES, soilMix } from "./soil-names.js";
 import { unitsForArea } from "./units.js";
+import { isDemoSession } from "./session.js";
 
 // Bumped when the saved answers change: older ones are worked out again.
 export const SOIL_VERSION = 1;
@@ -38,6 +44,7 @@ const notFound = (message) => new HttpError(404, "not_found", message);
 const NEEDS_GEE = {
   "no-gee": "The soil type needs Earth Engine, which is not connected (sample data), so no soil type is shown.",
   "gee-unavailable": "The soil type needs Earth Engine, which cannot be reached right now. Try again in a few minutes.",
+  demo: "The demo shows soil types only for places read before. Register to read them for your own land.",
 };
 
 // A map square [west, south, east, north] around a centre.
@@ -80,6 +87,8 @@ function changedClasses(classes) {
 // time). Gives back what to save (see answerOf), or { available: false }
 // without Earth Engine.
 async function measure(key, geometry, place) {
+  // The demo never asks Earth Engine (see the top of this file).
+  if (isDemoSession()) return unavailable("demo", place);
   const provider = await getProvider();
   if (provider?.id !== "gee") return unavailable(unavailableError(provider) ? "gee-unavailable" : "no-gee", place);
   // Connected, but the server still runs an older copy of the code.

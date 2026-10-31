@@ -8,10 +8,15 @@
 // value    - the selected value
 // onChange - called with the new value when someone clicks an option
 // light    - true gives the selected option a white background instead of black
+// locked   - true: the choice stays readable but the other options look
+//            turned off; a click still calls onChange (the public demo's
+//            Settings pages, where that opens the "This is the demo" dialog:
+//            src/state/useDemoGuard.js)
 
-export default function Segmented({ options, value, onChange, light, ariaLabel }) {
+export default function Segmented({ options, value, onChange, light, ariaLabel, locked = false }) {
+  const classes = ["segmented", light ? "segmented-light" : "", locked ? "is-locked" : ""].filter(Boolean).join(" ");
   return (
-    <div className={light ? "segmented segmented-light" : "segmented"} role="group" aria-label={ariaLabel}>
+    <div className={classes} role="group" aria-label={ariaLabel}>
       {options.map((option) => (
         <button
           key={option.value}
@@ -19,6 +24,7 @@ export default function Segmented({ options, value, onChange, light, ariaLabel }
           className={option.value === value ? "segmented-option is-active" : "segmented-option"}
           onClick={() => onChange(option.value)}
           aria-pressed={option.value === value}
+          aria-disabled={locked || undefined}
           disabled={option.disabled || undefined}
           title={option.title}
         >

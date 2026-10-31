@@ -7,8 +7,8 @@
 //   2. the reviewed list of wars (server/world/conflicts.js);
 //   3. the app's own Ukraine measurement (the numbers the website quotes),
 //      attached to the Ukraine war as "measured".
-// Open to anyone, no access code, read-only (server/app.js sends
-// /api/world/... here before the access code).
+// Open to anyone, read-only (server/app.js sends /api/world/... here
+// before anyone's session).
 //
 // The answer is kept in memory for an hour. GDACS is slow and sometimes
 // down, so: the six kinds are fetched at the same time with 10 seconds

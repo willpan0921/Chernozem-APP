@@ -14,7 +14,11 @@
 //   is looking up, then the answer as it is written. The square button
 //   stops it; the part already written stays (and is saved) as "Stopped".
 // - Problems show as a red line with "Try again". Without an AI key the
-//   "Connect Claude" steps show instead.
+//   "Connect Claude" steps show instead. A limit reached (the public demo's
+//   few questions, or an account's quota: code "quota") shows the server's
+//   own sentence with no "Try again", since trying again would not help;
+//   nor does a change the demo may not make (code "demo_read_only"), which
+//   opens the "This is the demo" dialog (src/api/atlasApi.js).
 // - Until the first chat is saved, the "Chats" column is hidden.
 // - A "Try asking" question is sent straight away.
 // - The bin icon deletes the open chat (after "Delete" to confirm).
@@ -51,6 +55,7 @@ import Logo from "../ui/Logo.jsx";
 import { useSearchParams } from "react-router-dom";
 
 import { getAiStatus, listThreads, openThread, removeThread, sendChatMessage } from "../../api/chatApi.js";
+import { isDemoRefusal } from "../../lib/access.js";
 import { titleFrom, upsertThread } from "../../lib/chat/threads.js";
 import ChatLayout from "./ChatLayout.jsx";
 import ChatThreadList from "./ChatThreadList.jsx";
@@ -69,6 +74,10 @@ const labels = {
 
 let localCount = 0;
 const localId = (prefix) => `${prefix}-local-${Date.now()}-${(localCount += 1)}`;
+
+// Problems "Try again" cannot fix: no key yet (the setup card shows), a
+// limit reached, a change the demo may not make.
+const NO_RETRY = new Set(["ai_not_configured", "quota", "demo_read_only"]);
 
 export default function ChatScreen({ product, context, text, suggestions = [], using = [], chips = [], initialDraft = "", autoSend = "", onThread, about = null }) {
   const [params, setParams] = useSearchParams();
@@ -321,7 +330,9 @@ export default function ChatScreen({ product, context, text, suggestions = [], u
       await removeThread(id);
       setThreads((list) => list.filter((item) => item.id !== id));
       newChat();
-    } catch {
+    } catch (err) {
+      // The demo may not delete it: its dialog already says so.
+      if (isDemoRefusal(err)) return;
       setError({ code: "error", message: labels.deleteFailed });
     }
   }
@@ -377,7 +388,7 @@ export default function ChatScreen({ product, context, text, suggestions = [], u
           messages={messages}
           pending={pending}
           error={error?.code === "ai_not_configured" ? null : error}
-          onRetry={error && error.code !== "ai_not_configured" ? retry : undefined}
+          onRetry={error && !NO_RETRY.has(error.code) ? retry : undefined}
           loading={threadLoading}
           about={about}
           notice={setupCard && messages.length > 0 ? setupCard : null}

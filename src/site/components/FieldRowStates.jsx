@@ -1,102 +1,141 @@
 // WHAT THIS FILE DOES
 // The showcase on the About page, "One field, one pass": the app's field
-// row shown three times, one under the other, in its three states:
-//   Arrives    a new satellite pass is in, the row says "Reading"
-//   Read       the pointer is on the row, its actions are showing, and the
-//              button "Read this pass" really works: pressing it turns this
-//              copy into the finished state
-//   Answered   the pass is read: plant health, stress, water, the harvest
-// Each copy is built in HTML at true size (640px wide) with the app's own
-// look (white panel, its 1px borders, Inter at 13–15px), so its root
-// carries data-ui. The numbers are the demo farm's real Field 11
-// (src/site/content/site.js, DEMO). Styles: src/site/pages/home.css
-// (.showcase, .frow).
+// row, once, at true size, in one of its three states, with three buttons
+// beside it that switch between them:
+//   Arrives    a new satellite pass is in ("New pass")
+//   Read       the row as the pointer finds it, with "Read this pass";
+//              pressing it shows "Reading" for 900 ms, then the answer
+//   Answered   the pass read: plant health, stress, water, the harvest,
+//              with "Read it again"
+// The row moves from Arrives to Read by itself once, 1.2 s after it is
+// half in view; visitors who asked for reduced motion find it at Read.
+// The row is built in HTML with the app's own look (white panel, its 1px
+// border, Inter at 13 to 15px), so its root carries data-ui. The numbers
+// are the demo farm's real Field 11 (src/site/content/site.js, DEMO).
+// Styles: src/site/pages/home.css (.showcase, .frow).
 //
 // WHO EDITS IT
 // Whoever changes the showcase. Keep the numbers true to the demo farm.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DEMO } from "../content/site.js";
+import { useMediaQuery } from "../hooks.js";
 
 const FIELD = `${DEMO.field11.name} · ${DEMO.field11.crop}`;
-
-function RowArrives() {
-  return (
-    <div className="frow" data-ui>
-      <span className="frow-mark is-reading" aria-hidden="true" />
-      <div className="frow-main">
-        <strong className="frow-name">{FIELD}</strong>
-        <span className="frow-meta">New pass · Sentinel-2 · {DEMO.field11.latestPass} · clear sky</span>
-      </div>
-      <span className="frow-chip">Reading</span>
-    </div>
-  );
-}
-
-function RowAnswered() {
-  return (
-    <div className="frow is-done" data-ui>
-      <span className="frow-mark is-good" aria-hidden="true" />
-      <div className="frow-main">
-        <strong className="frow-name">{FIELD}</strong>
-        <span className="frow-meta">
-          Plant health {DEMO.field11.plantHealth} · Stress {DEMO.field11.stress} · Water {DEMO.field11.water}
-        </span>
-        <span className="frow-answer">Past peak; greenest on {DEMO.field11.peakDate}</span>
-      </div>
-      <span className="frow-chip is-good">Growing well</span>
-    </div>
-  );
-}
-
-// The live copy: hovered, with its actions showing, until its button is pressed.
-function RowRead() {
-  const [read, setRead] = useState(false);
-  if (read) return <RowAnswered />;
-  return (
-    <div className="frow is-hover" data-ui>
-      <span className="frow-mark is-reading" aria-hidden="true" />
-      <div className="frow-main">
-        <strong className="frow-name">{FIELD}</strong>
-        <span className="frow-meta">New pass · Sentinel-2 · {DEMO.field11.latestPass} · clear sky</span>
-        <span className="frow-actions" aria-label="Row actions">
-          <button type="button" className="frow-action" onClick={() => setRead(true)}>
-            Open
-          </button>
-          <button type="button" className="frow-action" onClick={() => setRead(true)}>
-            Ask
-          </button>
-          <button type="button" className="frow-action" onClick={() => setRead(true)}>
-            Export
-          </button>
-        </span>
-      </div>
-      <button type="button" className="frow-button" onClick={() => setRead(true)}>
-        Read this pass
-      </button>
-    </div>
-  );
-}
-
+const PASS = `New pass · Sentinel-2 · ${DEMO.field11.latestPass} · clear sky`;
 const STATES = [
-  { word: "Arrives", Row: RowArrives },
-  { word: "Read", Row: RowRead },
-  { word: "Answered", Row: RowAnswered },
+  { id: "arrives", word: "Arrives" },
+  { id: "read", word: "Read" },
+  { id: "answered", word: "Answered" },
 ];
+const READING_MS = 900;
+const AUTO_MS = 1200;
+
+function Row({ state, reading, onRead }) {
+  if (state === "answered") {
+    return (
+      <div className="frow is-done" data-ui>
+        <span className="frow-mark is-good" aria-hidden="true" />
+        <div className="frow-main">
+          <strong className="frow-name">{FIELD}</strong>
+          <span className="frow-meta">
+            Plant health {DEMO.field11.plantHealth} · Stress {DEMO.field11.stress} · Water {DEMO.field11.water}
+          </span>
+          <span className="frow-answer">Past peak; greenest on {DEMO.field11.peakDate}</span>
+        </div>
+        <span className="frow-chip is-good">Growing well</span>
+        <button type="button" className="frow-button is-quiet" onClick={onRead}>
+          Read it again
+        </button>
+      </div>
+    );
+  }
+  const hovered = state === "read";
+  return (
+    <div className={`frow${hovered ? " is-hover" : ""}`} data-ui>
+      <span className="frow-mark is-reading" aria-hidden="true" />
+      <div className="frow-main">
+        <strong className="frow-name">{FIELD}</strong>
+        <span className="frow-meta">{PASS}</span>
+      </div>
+      {reading ? (
+        <span className="frow-chip" role="status">
+          Reading
+        </span>
+      ) : hovered ? (
+        <button type="button" className="frow-button" onClick={onRead}>
+          Read this pass
+        </button>
+      ) : (
+        <span className="frow-chip">New pass</span>
+      )}
+    </div>
+  );
+}
 
 export default function FieldRowStates() {
+  const reduced = useMediaQuery("(prefers-reduced-motion: reduce)");
+  const [state, setState] = useState(() => (typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "read" : "arrives"));
+  const [reading, setReading] = useState(false);
+  const touched = useRef(false);
+  const rowRef = useRef(null);
+  const readTimer = useRef(0);
+
+  // Once, 1.2 s after the row is half in view, it moves from Arrives to Read.
+  useEffect(() => {
+    if (reduced) return undefined;
+    const el = rowRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return undefined;
+    let timer = 0;
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting || entry.intersectionRatio < 0.5) return;
+        io.disconnect();
+        timer = setTimeout(() => {
+          if (!touched.current) setState((s) => (s === "arrives" ? "read" : s));
+        }, AUTO_MS);
+      },
+      { threshold: [0, 0.5, 1] }
+    );
+    io.observe(el);
+    return () => {
+      io.disconnect();
+      clearTimeout(timer);
+    };
+  }, [reduced]);
+
+  useEffect(() => () => clearTimeout(readTimer.current), []);
+
+  const choose = (id) => {
+    touched.current = true;
+    clearTimeout(readTimer.current);
+    setReading(false);
+    setState(id);
+  };
+
+  const read = () => {
+    touched.current = true;
+    clearTimeout(readTimer.current);
+    setState("read");
+    setReading(true);
+    readTimer.current = setTimeout(() => {
+      setReading(false);
+      setState("answered");
+    }, READING_MS);
+  };
+
   return (
     <div className="showcase-rows">
-      {STATES.map(({ word, Row }, i) => (
-        <div className="showcase-pair" key={word}>
-          <span className="showcase-word muted" data-slide style={{ "--i": i * 2 }}>
+      <div className="showcase-states" role="group" aria-label="The row's state" data-slide>
+        {STATES.map(({ id, word }) => (
+          <button type="button" key={id} className={`showcase-word${state === id ? " is-on" : ""}`} aria-pressed={state === id} onClick={() => choose(id)}>
             {word}
-          </span>
-          <div className="showcase-copy" data-rise style={{ "--i": i * 2 + 1 }}>
-            <Row />
-          </div>
-        </div>
-      ))}
+          </button>
+        ))}
+      </div>
+      <div className="showcase-copy" ref={rowRef} data-rise style={{ "--i": 1 }}>
+        <Row state={state} reading={reading} onRead={read} />
+      </div>
     </div>
   );
 }

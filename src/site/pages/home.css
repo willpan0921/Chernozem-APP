@@ -1,43 +1,41 @@
 /*
   WHAT THIS FILE DOES
   The layout of the About page (HomePage.jsx) and of the parts only it
-  uses: the hero split by tone with the globe, the showcase rows, the
-  stage slider, the proof table's heading, the feature modules, the demo
-  on its sage stage, the film, the founder's letter and the action tiles.
+  uses: the hero (one dark field the globe fills; the globe's own layout
+  is in components/globe.css), the showcase row and its three state
+  buttons, the stage slider, the proof table's heading, the features (an
+  index beside one window on a wide screen, modules on a narrow one), the
+  demo on its sage stage, the film, the founder's letter with the line on
+  what Chernozem was made for, the action tiles and the small print.
   Every colour and size is a token from src/site/site.css.
 
   WHO EDITS IT
   Whoever works on the About page.
 */
 
-/* ---- 1. The hero: a dark field split at 50% by tone ---- */
+/* ---- 1. The hero: one dark field, the Earth fills it ---- */
 .site .hero {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  min-height: calc(100svh - var(--nav-h));
-}
-
-.site .hero-copy {
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  padding: 40px var(--margin);
+  position: relative;
+  z-index: 0;
+  height: max(520px, calc(100svh - var(--nav-h)));
+  overflow: clip;
   background: var(--field-dark);
 }
 
+/* Two set lines, at the section heading's size. */
 .site .hero-title {
-  font-size: 2rem;
-  font-weight: 600;
-  letter-spacing: -0.03em;
-  line-height: 1.05;
-  max-width: 20ch;
+  font-size: var(--step-head);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 0.92;
 }
 
 .site .hero-lead {
-  margin-top: 1rem;
+  margin-top: 32px;
   font-size: var(--step-body);
   line-height: 1.45;
   max-width: 44ch;
+  color: var(--field-dark-ink);
 }
 
 .site .hero-actions {
@@ -45,52 +43,13 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 1rem 1.5rem;
-  margin-top: 1.75rem;
+  margin-top: 32px;
 }
 
-.site .hero-copy,
-.site .hero-globe {
-  min-width: 0;
-}
-
-.site .hero-globe {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 40px var(--margin);
-  background: var(--field-dark-2);
-  position: relative;
-  overflow: clip;
-}
-
-@media (max-width: 860px) {
-  .site .hero {
-    grid-template-columns: 1fr;
-    min-height: 0;
-  }
-
-  .site .hero-globe {
-    order: 1;
-    min-height: 58svh;
-    padding: 20px var(--margin);
-  }
-
-  .site .hero-copy {
-    order: 2;
-    padding: 32px var(--margin) 40px;
-  }
-
-  .site .hero-title {
-    font-size: clamp(26px, 6.4vw, 32px);
-    max-width: 16ch;
-  }
-
-}
-
-/* ---- 2. The showcase: three states of one row ---- */
+/* ---- 2. The showcase: one row, and the three states beside it ---- */
 .site .showcase-head {
   grid-column: 4 / 13;
-  margin-bottom: 96px;
+  margin-bottom: 72px;
 }
 
 .site .showcase-rows {
@@ -98,22 +57,46 @@
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
   column-gap: var(--gutter);
-  row-gap: 56px;
+  align-items: center;
 }
 
-.site .showcase-pair {
-  display: contents;
+.site .showcase-states {
+  grid-column: 1 / 4;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
 }
 
 .site .showcase-word {
-  grid-column: 1 / 4;
-  align-self: start;
-  text-align: right;
-  font-size: 22px;
-  font-weight: 400;
-  letter-spacing: -0.02em;
-  line-height: 1.2;
-  padding-top: 14px;
+  min-height: 48px;
+  padding: 0 4px;
+  font-size: 2rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  color: var(--muted);
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 0.2em;
+  text-decoration-thickness: 0.06em;
+  transition: color var(--t-hover) ease, text-decoration-color var(--t-hover) ease;
+}
+
+.site .showcase-word.is-on {
+  color: var(--ink);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .site .showcase-word:hover {
+    color: var(--ink);
+    text-decoration-color: currentColor;
+  }
+}
+
+.site .showcase-word[data-near] {
+  color: var(--ink);
+  text-decoration-color: currentColor;
 }
 
 .site .showcase-copy {
@@ -194,26 +177,6 @@
   color: #1f4a2a;
 }
 
-.site .frow-actions {
-  display: flex;
-  gap: 10px;
-  margin-top: 4px;
-}
-
-.site .frow-action {
-  font-size: 13px;
-  font-weight: 500;
-  color: #1f4a2a;
-  text-decoration: underline;
-  text-underline-offset: 0.2em;
-  text-decoration-color: transparent;
-  transition: text-decoration-color var(--t-hover) ease;
-}
-
-.site .frow-action:hover {
-  text-decoration-color: currentColor;
-}
-
 .site .frow-button {
   flex: 0 0 auto;
   min-height: 34px;
@@ -226,8 +189,21 @@
   transition: transform var(--t-press) var(--ease-out), background-color var(--t-hover) ease;
 }
 
-.site .frow-button:hover {
+.site .frow-button:hover,
+.site .frow-button[data-near] {
   background: #163a20;
+}
+
+/* "Read it again": the same button, quieter, once the pass is read (the app's own look). */
+.site .frow[data-ui] .frow-button.is-quiet {
+  background: #ffffff;
+  color: #1f4a2a;
+  border: 1px solid #cfc8bb;
+}
+
+.site .frow[data-ui] .frow-button.is-quiet:hover,
+.site .frow[data-ui] .frow-button.is-quiet[data-near] {
+  background: #f6f5f1;
 }
 
 .site .frow-button:active {
@@ -237,24 +213,29 @@
 @media (max-width: 860px) {
   .site .showcase-head {
     grid-column: 1 / 13;
-    margin-bottom: 40px;
+    margin-bottom: 32px;
   }
 
   .site .showcase-rows {
     display: flex;
     flex-direction: column;
-    gap: 48px;
+    align-items: stretch;
+    gap: 16px;
   }
 
-  .site .showcase-pair {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    width: 100%;
+  .site .showcase-states {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 16px;
+  }
+
+  .site .showcase-word {
+    font-size: 22px;
+    min-height: 44px;
   }
 
   .site .showcase-copy {
-    order: 1;
     width: 100%;
     overflow: clip;
   }
@@ -278,13 +259,6 @@
   .site .showcase-copy .frow-chip,
   .site .showcase-copy .frow-button {
     margin-left: auto;
-  }
-
-  .site .showcase-word {
-    order: 2;
-    text-align: left;
-    font-size: 17px;
-    padding-top: 0;
   }
 }
 
@@ -346,6 +320,15 @@
 
 .site .stages-shot.is-on {
   opacity: 1;
+}
+
+/* The whole picture is a tap target that moves on to the next stage. */
+.site .stages-next {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
 }
 
 /* The control along the bottom: the track under a transparent range input. */
@@ -437,6 +420,16 @@
 }
 
 .site .stages-name.is-on {
+  color: var(--ink);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .site .stages-name:hover {
+    color: var(--ink);
+  }
+}
+
+.site .stages-name[data-near] {
   color: var(--ink);
 }
 
@@ -611,10 +604,108 @@
   margin-top: 0.6em;
 }
 
+.site .feature-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  margin-top: 0.9em;
+}
+
 .site .feature-link {
   display: inline-block;
-  margin-top: 0.8em;
-  font-size: 15px;
+  font-size: 16px;
+}
+
+/* Wide: each group is an index (columns 1 to 5) beside one window onto
+   the app at true size (columns 6 to 12). The open item shows its lines
+   and its links; the window shows its part of the app. */
+.site .findex {
+  align-items: start;
+}
+
+.site .findex-list {
+  grid-column: 1 / 6;
+}
+
+.site .findex .features-head {
+  margin-bottom: 40px;
+}
+
+.site .findex-item + .findex-item {
+  margin-top: 6px;
+}
+
+.site .findex-title {
+  font-size: var(--step-lead);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.site .findex-title button {
+  display: block;
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 0;
+  text-align: left;
+  color: var(--muted);
+  transition: color var(--t-hover) ease;
+}
+
+.site .findex-item.is-open .findex-title button {
+  color: var(--ink);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .site .findex-title button:hover {
+    color: var(--ink);
+  }
+}
+
+.site .findex-title button[data-near] {
+  color: var(--ink);
+}
+
+.site .findex-body {
+  max-width: 48ch;
+  padding-bottom: 14px;
+}
+
+.site .findex-body .feature-line:first-child {
+  margin-top: 0;
+}
+
+.site .findex-window {
+  grid-column: 6 / 13;
+  justify-self: end;
+  position: relative;
+  width: 100%;
+  max-width: 720px;
+  height: 450px;
+  overflow: clip;
+  background: var(--bg);
+}
+
+.site .findex-shot {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+
+.site .findex-shot.is-on {
+  opacity: 1;
+}
+
+/* Each picture is the window's size; the app shows through at its true
+   size (object-fit: none), today's crop in the middle. */
+.site .findex-shot img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  object-fit: none;
 }
 
 @media (max-width: 1100px) {
@@ -632,8 +723,10 @@
     margin-bottom: 40px;
   }
 
+  /* Wide enough that the last item's link reads as closing it, not as a
+     label over the next group's heading. */
   .site .features-group + .features-group {
-    margin-top: 72px;
+    margin-top: 112px;
   }
 
   .site .feature {
@@ -761,6 +854,15 @@
   font-size: 15px;
 }
 
+/* What Chernozem was made for: 40 px under the signature, the letter's width. */
+.site .letter-made {
+  width: 520px;
+  max-width: 100%;
+  margin: 40px auto 0;
+  font-size: 15px;
+  line-height: 1.45;
+}
+
 @media (max-width: 760px) {
   .site .letter-section {
     padding-block: 6rem;
@@ -856,4 +958,16 @@
     transform: scale(2.6);
     transform-origin: 58% 50%;
   }
+}
+
+/* ---- The small print: where the globe's pictures and data come from ---- */
+.site .small-print-wrap {
+  margin-top: 40px;
+}
+
+.site .small-print {
+  max-width: 60ch;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
 }

@@ -224,7 +224,7 @@ test("the AI chat's live stream is never gzipped", async () => {
   assertSafetyHeaders(res, "chat stream");
 });
 
-test("the health check needs no access code and says nothing else", async () => {
+test("the health check needs no owner's key and says nothing else", async () => {
   process.env.ATLAS_ACCESS_CODE = "test-code";
   try {
     const health = await call("GET", "/api/health");
@@ -233,8 +233,9 @@ test("the health check needs no access code and says nothing else", async () => 
     assert.equal(health.headers["cache-control"], "no-store");
     const head = await call("HEAD", "/api/health");
     assert.equal(head.status, 200);
-    assert.equal((await call("GET", "/api/workspace")).status, 401, "the rest still needs the code");
-    assert.equal((await call("POST", "/api/health")).status, 401, "other methods are not open");
+    // The rest is the read-only demo without the owner's cookie.
+    assert.equal((await call("PATCH", "/api/workspace", { body: { name: "x" } })).status, 403, "a change needs the owner's key");
+    assert.equal((await call("POST", "/api/health")).status, 403, "other methods are not open");
   } finally {
     process.env.ATLAS_ACCESS_CODE = "";
   }

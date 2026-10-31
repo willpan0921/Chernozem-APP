@@ -3,6 +3,11 @@
 // the server about accounts (server/accounts.js). The browser sends the
 // account cookie by itself, so nothing here handles it.
 //
+//   getStatus()                  GET /api/auth/status -> { required,
+//                                signedIn, shared, account, mode, readOnly }:
+//                                who this browser is. account is null, or
+//                                { uid, email, name, product,
+//                                profileComplete } for a registered account.
 //   postFirebaseToken(idToken)   POST /api/auth/firebase { idToken }
 //                                -> { ok, account }. The server checks the
 //                                token with Firebase and sets the account
@@ -11,18 +16,23 @@
 //                                the server cannot check tokens at all.
 //   getAccount()                 GET /api/account -> { account, profile }
 //                                (401 auth_required without an account)
-//   putAccount(profile)          PUT /api/account { name, age?, organization?,
-//                                role, product, country?, address?, place? }
+//   putAccount(profile)          PUT /api/account { name, product, role,
+//                                organization?, country?, place? }
 //                                -> { ok, account, profile }
 //   logoutEverywhere()           POST /api/auth/logout -> { ok }: removes
-//                                the account cookie and the demo's code
-//                                cookie. (Firebase's own sign-out is done
-//                                by the page, with firebase/auth.)
+//                                the account cookie (and the owner's, if
+//                                any). Firebase's own sign-out is done by
+//                                the page, with firebase/auth.
 //   searchPlace(q)               GET /api/geocode?q= -> { results: [{ label,
 //                                lat, lon }] }: the place a person wants to
-//                                watch. The route is behind the sign-in, so
-//                                it answers 401 until the account cookie is
-//                                set.
+//                                watch. It needs the account cookie, so the
+//                                page asks it in "About you", once the
+//                                account exists.
+//
+// None of these sends the demo's "X-Chernozem-View: demo" header
+// (src/lib/demoMode.js): these pages are about the person's own account,
+// even in a browser tab that was looking at the public demo, so the server
+// answers about the account, never about the demo.
 //
 // Every function gives back the server's answer, or throws an Error whose
 // message is the server's own words, with error.code ("bad_token",
@@ -70,6 +80,8 @@ async function request(method, path, body) {
   }
   return json || { ok: true };
 }
+
+export const getStatus = () => request("GET", "/auth/status");
 
 export const postFirebaseToken = (idToken) => request("POST", "/auth/firebase", { idToken });
 

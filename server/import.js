@@ -16,9 +16,9 @@
 //
 // The address exists only while IMPORT_TOKEN is set on the server (without
 // it: 404; a token shorter than 16 characters keeps it off too, with a 503
-// that says so). The token alone lets the upload in (no access code
+// that says so). The token alone lets the upload in (no owner's key
 // needed); it is compared in constant time, and 10 wrong tokens from one
-// address lock it out for 10 minutes, like wrong access codes.
+// address lock it out for 10 minutes, like wrong owner's keys.
 //
 // What is checked before anything is written:
 //   - a path that could leave the data folder (".." or an absolute path),
@@ -54,7 +54,7 @@ export const IMPORT_MAX_BYTES = UPLOAD_MAX_BYTES;
 // all the data.
 export const IMPORT_TOKEN_MIN_LENGTH = 16;
 
-// Kept on globalThis like the access code's limiter (server/auth.js).
+// Kept on globalThis like the owner's key's limiter (server/auth.js).
 const memory = (globalThis.__chernozemImport ??= { limiter: null, busy: false });
 
 // The upload token from the environment, or null (the address is off).
@@ -139,7 +139,7 @@ async function writeAtomic(dir, rel, text) {
   }
 }
 
-// Answers /api/admin/... (server/app.js calls it before the access-code
+// Answers /api/admin/... (server/app.js calls it before the sign-in
 // check). parts: the address after /api/ ("admin", "import").
 export async function handleAdmin(req, res, { method, parts, pathname }) {
   const token = importToken();

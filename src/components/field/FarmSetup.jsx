@@ -22,7 +22,9 @@
 // it, the map flown there), the example row is not shown (their farm is
 // their own, not an example), and the grey example coordinates are drawn
 // around their place instead of Iowa (src/lib/profile.js). The demo
-// visitor sees everything exactly as before.
+// visitor sees everything exactly as before, but "Find my fields", saving
+// and the example farms open the "This is the demo" dialog instead
+// (src/state/useDemoGuard.js): the demo's farm cannot be changed.
 //
 // WHAT IT RECEIVES
 //   onDone()    called once the farm is saved (or an example loaded), e.g. to close Settings' panel
@@ -41,6 +43,7 @@ import { Button, Segmented, Tabs } from "../ui/index.js";
 import FieldMap from "./FieldMap.jsx";
 import { useFieldData } from "../../state/FieldData.jsx";
 import { useAccess } from "../../state/useAccess.js";
+import { useDemoGuard } from "../../state/useDemoGuard.js";
 import { EXAMPLE_FARMS, geocode } from "../../api/fieldApi.js";
 import { checkPolygon, parseCoordinates } from "../../lib/atlas/coords.js";
 import { candidateTotals, formatArea } from "../../lib/field/format.js";
@@ -204,6 +207,7 @@ function Examples({ current, busy, onPick }) {
 export default function FarmSetup({ onDone, onCancel, title = "Set up your farm", showDemo = true, current = null }) {
   const { provider, actions } = useFieldData();
   const { account, profile } = useAccess();
+  const { readOnly, ask } = useDemoGuard();
   // An account's home place (the one given when registering), or null.
   const home = useMemo(() => (account ? profilePlace(profile) : null), [account, profile]);
   // The example farms are the demo's; an account never sees them.
@@ -286,6 +290,7 @@ export default function FarmSetup({ onDone, onCancel, title = "Set up your farm"
 
   const findFields = async () => {
     if (!body || busy) return;
+    if (readOnly) return ask();
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -316,6 +321,7 @@ export default function FarmSetup({ onDone, onCancel, title = "Set up your farm"
   const save = async () => {
     const list = (found?.candidates || []).filter((c) => chosen.includes(c.id));
     if (!list.length || busy) return;
+    if (readOnly) return ask();
     setBusy("save");
     setError(null);
     try {
@@ -336,6 +342,7 @@ export default function FarmSetup({ onDone, onCancel, title = "Set up your farm"
 
   const tryExample = async (example) => {
     if (busy) return;
+    if (readOnly) return ask();
     setBusy(`demo:${example}`);
     setError(null);
     try {

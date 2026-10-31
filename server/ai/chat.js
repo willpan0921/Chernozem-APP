@@ -28,7 +28,17 @@
 //
 // A registered account may send 40 messages a day (server/quotas.js; the
 // owner's Claude key pays for every one): the 41st gets a plain 429
-// "quota" answer before any stream opens. The demo has no such limit.
+// "quota" answer before any stream opens. The owner has no such limit.
+//
+// THE PUBLIC DEMO (a visitor without an account, server/auth.js)
+// The demo's assistant answers from the demo's own data like the owner's,
+// but its chats are the visitor's alone and live in memory only
+// (server/ai/demoChats.js: a cookie with a random number, at most 10 chats
+// of 30 messages, forgotten after 24 hours): nothing the visitor asks is
+// written to disk. It answers 8 questions per visitor, 24 per internet
+// address and 300 for the whole demo in 24 hours; then 429 "quota": "The
+// demo's assistant has answered enough questions for now. Register to ask
+// about your own land."
 //
 // WHO EDITS IT
 // Whoever changes how the AI talks. The AI's instructions are the
@@ -39,6 +49,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { buildAtlasContext } from "./context.js";
 import { buildFieldContext } from "./field-context.js";
 import { DAY_MS, inWords, QUOTAS, spend } from "../quotas.js";
+import { isDemoSession } from "../session.js";
+import { DEMO_QUOTA_MESSAGE, demoChatStore, ensureVisitor, spendDemoQuestion, visitorOf } from "./demoChats.js";
 
 // ---------- Settings ----------
 
@@ -126,7 +138,11 @@ export async function handleChatRoutes(req, res, url) {
   const http = await import("../http.js");
 
   try {
-    const { store } = await deps();
+    // The demo's chats are the visitor's own, in memory (see the top of
+    // this file); everyone else's are files in their data folder.
+    const demo = isDemoSession();
+    const base = (await deps()).store;
+    let store = demo ? demoChatStore(base, visitorOf(req)) : base;
 
     if (path === "/api/chat") {
       if (req.method !== "POST") {
@@ -145,7 +161,18 @@ export async function handleChatRoutes(req, res, url) {
         http.sendError(res, 400, "bad_request", problem);
         return true;
       }
-      // A registered account's daily allowance (the demo: always ok).
+      if (demo) {
+        // The demo's three limits, before Claude is asked anything.
+        const visitor = ensureVisitor(req, res);
+        const allowed = spendDemoQuestion(req, visitor);
+        if (!allowed.ok) {
+          res.setHeader("Retry-After", String(allowed.retryAfterSec));
+          http.sendError(res, 429, "quota", DEMO_QUOTA_MESSAGE);
+          return true;
+        }
+        store = demoChatStore(base, visitor);
+      }
+      // A registered account's daily allowance (everyone else: always ok).
       const turn = spend("chat", QUOTAS.chatMessagesPerDay, DAY_MS);
       if (!turn.ok) {
         http.sendError(res, 429, "quota", `An account can send the AI ${QUOTAS.chatMessagesPerDay} messages a day. Try again ${inWords(turn.retryAfterMs)}.`);
@@ -158,7 +185,7 @@ export async function handleChatRoutes(req, res, url) {
       try {
         await runChat(body, (event, data) => {
           if (!abort.signal.aborted) sse.send(event, data);
-        }, { signal: abort.signal });
+        }, { signal: abort.signal, store });
       } finally {
         sse.close();
       }
@@ -219,9 +246,12 @@ export function checkBody(body) {
 // ---------- Answering one message ----------
 
 // Answers one message. send(event, data) delivers each event to the page.
-// Never throws: problems become an "error" event.
-export async function runChat(body, send, { signal } = {}) {
-  const { store, runs, config, getWeather } = await deps();
+// Never throws: problems become an "error" event. store: where the chat is
+// kept and the data read from (the demo's: server/ai/demoChats.js); else
+// server/store.js (or the tests' stand-in).
+export async function runChat(body, send, { signal, store: given } = {}) {
+  const { store: kept, runs, config, getWeather } = await deps();
+  const store = given || kept;
   const cfg = config();
   const product = body.product === "field" ? "field" : "atlas";
   const message = body.message.trim();

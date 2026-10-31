@@ -15,6 +15,10 @@
 // Every job has a kind: "atlas" (an area analysis), "field-detect" or
 // "field-analyze". Atlas jobs keep their old shape (areaId, runIds...).
 //
+// The public demo never starts a job (server/session.js isDemoSession):
+// startAnalysis and startJob refuse with 403 demo_read_only, whatever
+// route asked.
+//
 // WHOSE JOB (registered accounts, server/store.js withDataRoot)
 // Every job belongs to the data folder it was started in (job.root: the
 // shared demo's or a registered account's) and does its work inside that
@@ -128,6 +132,7 @@ import { listWarFor } from "./conflicts.js";
 import { teamConflict } from "../src/config/conflicts.js";
 import { METHOD_VERSION } from "../src/lib/atlas/method.js";
 import { keepsMonth, warKey } from "../src/lib/atlas/overview.js";
+import { demoReadOnly, isDemoSession } from "./session.js";
 
 // A saved run made with an older method (before versions were saved, or
 // another version): its numbers cannot be compared with a new month's.
@@ -418,6 +423,9 @@ function joinRequest(job, { count, rerun, trigger }) {
 // analyzes the area: that one waits in line behind it (a follow-up, which
 // later requests for the area join).
 export async function startAnalysis({ areaId, months = 12, rerun = false, trigger = "manual" }) {
+  // Never for the public demo (server/session.js): its routes refuse every
+  // change first, and this is the last word.
+  if (isDemoSession()) throw demoReadOnly();
   const area = await getArea(areaId);
   if (!area) throw notFound("That area does not exist.");
   const count = Math.min(24, Math.max(1, Math.round(Number(months) || 12)));
@@ -712,6 +720,8 @@ async function runJob(job, area, count, rerun) {
 //            gives back the result (job.result). Throwing marks the job failed.
 export function startJob({ kind, key = null, total = 1, message = "Working…", trigger = "manual", info = {}, run }) {
   if (!kind || kind === "atlas") throw new Error('startJob needs a kind other than "atlas" (use startAnalysis).');
+  // Never for the public demo (see startAnalysis).
+  if (isDemoSession()) throw demoReadOnly();
   // The folder this request works in: the job's from now on, also for
   // "the same job again" (two folders may each have a job with key "farm").
   const root = dataDir();

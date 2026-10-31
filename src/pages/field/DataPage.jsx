@@ -27,6 +27,10 @@
 // GET /api/farm/fields/:id/analysis; the downloads are the server's export
 // routes (server/field/routes.js). On sample data the page says so.
 //
+// In the public demo (read-only) everything can be read and downloaded;
+// only "Get history" (which starts an analysis) opens the "This is the
+// demo" dialog instead (src/state/useDemoGuard.js).
+//
 // WHO EDITS IT
 // Whoever changes how the Field Data page looks or behaves. The styling is
 // in DataPage.css next to this file (every class starts with "fdata-").
@@ -36,6 +40,7 @@ import { useSearchParams } from "react-router-dom";
 import { Download, FileImage, FileSpreadsheet, FileText, Loader2, Map as MapIcon, Printer, RefreshCw } from "lucide-react";
 import { PageHeader, Card, Badge, Button, Segmented, ChipSelect } from "../../components/ui/index.js";
 import { FarmGate, FieldProgress, useFieldData } from "../../state/FieldData.jsx";
+import { useDemoGuard } from "../../state/useDemoGuard.js";
 import { exportUrl, getGeotiffUrl } from "../../api/fieldApi.js";
 import { BASELINE } from "../../lib/field/method.js";
 import { ANALYSING_LABEL, cropInfo, farmLine, formatArea, formatDay, formatIndex, stageWord, statusOf, stressWord, versusWord, waterWord } from "../../lib/field/format.js";
@@ -176,6 +181,7 @@ export default function DataPage() {
 
 function FieldDataPage() {
   const { farm, analyses, provider, job, analysing, conflict: farmWar, actions } = useFieldData();
+  const { guard } = useDemoGuard();
   const [params, setParams] = useSearchParams();
   const [measureId, setMeasureId] = useState("ndvi");
   const measure = MEASURES.find((item) => item.value === measureId);
@@ -300,7 +306,7 @@ function FieldDataPage() {
             measure={measure}
             showFarm={fields.length > 1}
             running={running}
-            onAnalyze={() => actions.analyze([field.id])}
+            onAnalyze={guard(() => actions.analyze([field.id]))}
           />
         </Card>
 

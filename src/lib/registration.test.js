@@ -1,8 +1,10 @@
 // WHAT THIS FILE DOES
 // Tests src/lib/registration.js: the rules behind the website's Register
-// and Sign in pages. A farmer gets Field and an organisation gets Atlas;
-// every answer has a limit and a plain-words message; typed coordinates
-// are read; Firebase's error codes become sentences a person can act on.
+// and Sign in pages. The choice at the top gives Field or Atlas; an Atlas
+// account names its organisation and its kind; every answer has a limit and
+// a plain-words message; a place found by the search gives the country;
+// Firebase's error codes become sentences a person can act on; the
+// pictures beside the form never print what the website no longer says.
 // Run with "npm test" or "node --test src/lib/registration.test.js".
 //
 // WHO EDITS IT
@@ -11,9 +13,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  KINDS,
+  DEFAULT_ORG_KIND,
   LIMITS,
-  ROLES,
+  ORG_KINDS,
+  PICTURES,
+  PRODUCTS,
+  STEPS,
+  countryFromLabel,
+  destinationFor,
   emailProblem,
   firebaseProblem,
   isNotOpen,
@@ -21,42 +28,75 @@ import {
   parsePlace,
   passwordProblem,
   placeFromResult,
-  placeOffer,
   productForRole,
+  productFromParam,
   profileForServer,
-  roleForProduct,
+  roleForSave,
   validateProfile,
 } from "./registration.js";
 
-const good = { role: "farmer", name: "Olena Kovalenko", email: "olena@example.org" };
+const farmer = { product: "field", name: "Olena Kovalenko" };
+const ngo = { product: "atlas", kind: "ngo", name: "Sam Okafor", organization: "FAO" };
 
-test("the choice decides the product, both ways", () => {
-  assert.equal(productForRole("farmer"), "field");
-  assert.equal(productForRole("organisation"), "atlas");
-  assert.equal(productForRole("investor"), null);
-  assert.equal(productForRole(undefined), null);
-  assert.equal(roleForProduct("field"), "farmer");
-  assert.equal(roleForProduct("atlas"), "organisation");
-  assert.equal(roleForProduct("both"), null);
-  assert.equal(ROLES.farmer.title, "A farmer or landowner");
-  assert.equal(ROLES.organisation.text, "Chernozem Atlas: a whole region, ranked");
+test("the two products, in the owner's words", () => {
+  assert.deepEqual(Object.keys(PRODUCTS), ["field", "atlas"]);
+  assert.equal(`${PRODUCTS.field.name} — ${PRODUCTS.field.tagline}`, "Field — for my farm");
+  assert.equal(`${PRODUCTS.atlas.name} — ${PRODUCTS.atlas.tagline}`, "Atlas — for a region");
+  assert.equal(PRODUCTS.field.path, "/field");
+  assert.equal(PRODUCTS.atlas.path, "/atlas");
+  assert.equal(PRODUCTS.field.placeLabel, "Where is your land?");
+  assert.equal(PRODUCTS.atlas.placeLabel, "Which region do you work on?");
 });
 
-test("the server's exact roles each belong to one product", () => {
+test("?product= in the address chooses in advance; Field otherwise", () => {
+  assert.equal(productFromParam("atlas"), "atlas");
+  assert.equal(productFromParam(" Atlas "), "atlas");
+  assert.equal(productFromParam("field"), "field");
+  assert.equal(productFromParam(null), "field");
+  assert.equal(productFromParam(""), "field");
+  assert.equal(productFromParam("both"), "field");
+});
+
+test("the steps are words, never numbers", () => {
+  assert.deepEqual(
+    STEPS.map((step) => step.label),
+    ["Account", "About you"]
+  );
+  for (const step of STEPS) assert.doesNotMatch(step.label, /\d/);
+});
+
+test("the server's six roles each belong to one product", () => {
   // The same six as server/accounts.js ROLES.
-  const all = [...KINDS.field, ...KINDS.atlas].map((kind) => kind.role);
-  assert.deepEqual(all.sort(), ["farmer", "government", "landowner", "ngo", "other", "research"]);
-  for (const kind of KINDS.field) assert.equal(productForRole(kind.role), "field", kind.role);
-  for (const kind of KINDS.atlas) assert.equal(productForRole(kind.role), "atlas", kind.role);
+  for (const role of ["farmer", "landowner"]) assert.equal(productForRole(role), "field", role);
+  for (const role of ["government", "ngo", "research", "other"]) assert.equal(productForRole(role), "atlas", role);
+  assert.equal(productForRole("investor"), null);
+  assert.equal(productForRole(undefined), null);
+  assert.deepEqual(
+    ORG_KINDS.map((kind) => kind.label),
+    ["Government", "NGO", "Research", "Other"]
+  );
+  assert.equal(DEFAULT_ORG_KIND, "other");
+});
+
+test("the role saved: Field is a farmer, Atlas is its kind (Other when none)", () => {
+  assert.equal(roleForSave("field"), "farmer");
+  assert.equal(roleForSave("field", "ngo"), "farmer", "an Atlas kind left over does not reach Field");
+  assert.equal(roleForSave("field", "landowner"), "landowner", "an older profile's landowner stays one");
+  assert.equal(roleForSave("atlas", "government"), "government");
+  assert.equal(roleForSave("atlas", "research"), "research");
+  assert.equal(roleForSave("atlas"), "other");
+  assert.equal(roleForSave("atlas", "farmer"), "other");
+  assert.equal(roleForSave(undefined, "ngo"), "");
 });
 
 test("the limits match the server's (server/accounts.js PROFILE_LIMITS)", () => {
   assert.equal(LIMITS.name, 80);
   assert.equal(LIMITS.organization, 120);
   assert.equal(LIMITS.country, 120);
-  assert.equal(LIMITS.address, 120);
   assert.ok(LIMITS.place <= 200, "the place label may be 200 at most on the server");
-  assert.deepEqual(LIMITS.age, { min: 13, max: 120 });
+  assert.deepEqual(LIMITS.password, { min: 8, max: 200 });
+  assert.equal(LIMITS.age, undefined, "the page no longer asks the age");
+  assert.equal(LIMITS.address, undefined, "the page no longer asks the address");
 });
 
 test("e-mail: missing, malformed, too long, fine", () => {
@@ -65,105 +105,116 @@ test("e-mail: missing, malformed, too long, fine", () => {
   assert.equal(emailProblem("olena"), "That e-mail address does not look right.");
   assert.equal(emailProblem("olena@site"), "That e-mail address does not look right.");
   assert.equal(emailProblem("ol ena@site.org"), "That e-mail address does not look right.");
-  assert.equal(emailProblem(`${"a".repeat(LIMITS.email)}@site.org`), `Keep the e-mail under ${LIMITS.email} characters.`);
+  assert.equal(emailProblem(`${"a".repeat(LIMITS.email)}@site.org`), `Keep the e-mail to ${LIMITS.email} characters or fewer.`);
   assert.equal(emailProblem(" olena@site.org "), "");
 });
 
-test("password: 8 characters or more, and the repeat must match", () => {
-  assert.equal(passwordProblem("", ""), "Enter a password.");
-  assert.equal(passwordProblem("short", "short"), "Use 8 characters or more.");
-  assert.equal(passwordProblem("longenough", ""), "Repeat the password.");
-  assert.equal(passwordProblem("longenough", "longenougH"), "The passwords do not match.");
-  assert.equal(passwordProblem("longenough", "longenough"), "");
-  assert.equal(passwordProblem("x".repeat(LIMITS.password.max + 1), undefined), `Keep the password under ${LIMITS.password.max} characters.`);
-  // The Sign in page has no repeat field.
-  assert.equal(passwordProblem("longenough"), "");
+test("password: one field, 8 characters or more", () => {
+  assert.equal(passwordProblem(""), "Enter a password.");
+  assert.equal(passwordProblem(undefined), "Enter a password.");
   assert.equal(passwordProblem("short"), "Use 8 characters or more.");
+  assert.equal(passwordProblem("1234567"), "Use 8 characters or more.");
+  assert.equal(passwordProblem("12345678"), "");
+  assert.equal(passwordProblem("x".repeat(LIMITS.password.max)), "");
+  assert.equal(passwordProblem("x".repeat(LIMITS.password.max + 1)), `Keep the password to ${LIMITS.password.max} characters or fewer.`);
 });
 
-test("the profile: a farmer needs a name and an e-mail, nothing else", () => {
-  assert.deepEqual(validateProfile(good), { ok: true, problems: {} });
-  assert.equal(validateProfile({ ...good, role: "landowner" }).ok, true);
+test("About you, Field: a name is all that is needed", () => {
+  assert.deepEqual(validateProfile(farmer), { ok: true, problems: {} });
+  assert.equal(validateProfile({ ...farmer, organization: "" }).ok, true, "a farmer need not name an organisation");
   const empty = validateProfile({});
   assert.equal(empty.ok, false);
-  assert.equal(empty.problems.role, "Choose who you are.");
+  assert.equal(empty.problems.product, "Choose Field or Atlas.");
   assert.equal(empty.problems.name, "Enter your name.");
-  assert.equal(empty.problems.email, "Enter your e-mail address.");
-  assert.equal(empty.problems.organization, undefined, "a farmer need not name an organisation");
+  assert.equal(validateProfile({ product: "field", name: "   " }).problems.name, "Enter your name.");
 });
 
-test("the profile: an organisation must be named and given its kind for Atlas", () => {
-  const atlas = validateProfile({ ...good, role: "organisation" });
-  assert.equal(atlas.ok, false);
-  assert.equal(atlas.problems.organization, "Name your organisation.");
-  assert.equal(atlas.problems.kind, "Say what kind of organisation.");
-  assert.equal(validateProfile({ ...good, role: "ngo", organization: "FAO" }).ok, true);
-  assert.equal(validateProfile({ ...good, role: "government", organization: "Ministry of Agrarian Policy" }).ok, true);
-  // The product can be given on its own (an account made earlier): the
-  // kind is still needed.
-  const product = validateProfile({ ...good, role: undefined, product: "atlas" });
-  assert.equal(product.problems.organization, "Name your organisation.");
-  assert.equal(product.problems.kind, "Say what kind of organisation.");
-  assert.equal(validateProfile({ ...good, role: undefined, product: "field" }).problems.kind, "Farmer or landowner?");
-  // A kind from the other product does not fit.
-  assert.equal(validateProfile({ ...good, role: "ngo", product: "field" }).problems.kind, "Farmer or landowner?");
+test("About you, Atlas: the organisation is needed, its kind is Other until chosen", () => {
+  assert.deepEqual(validateProfile(ngo), { ok: true, problems: {} });
+  assert.equal(validateProfile({ ...ngo, kind: undefined }).ok, true, "no kind chosen yet: Other");
+  const missing = validateProfile({ ...ngo, organization: " " });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.problems.organization, "Name your organisation.");
+  assert.equal(validateProfile({ ...ngo, kind: "farmer" }).problems.kind, "Choose what kind of organisation.");
 });
 
-test("the profile: every limit has its message", () => {
-  assert.equal(validateProfile({ ...good, name: "x".repeat(81) }).problems.name, "Keep your name under 80 characters.");
-  assert.equal(validateProfile({ ...good, organization: "x".repeat(121) }).problems.organization, "Keep the organisation under 120 characters.");
-  assert.equal(validateProfile({ ...good, country: "x".repeat(121) }).problems.country, "Keep the country under 120 characters.");
-  assert.equal(validateProfile({ ...good, address: "x".repeat(121) }).problems.address, "Keep the town or address under 120 characters.");
-  assert.equal(validateProfile({ ...good, name: "x".repeat(80), country: "x".repeat(120), address: "x".repeat(120) }).ok, true);
+test("About you: every limit has its message", () => {
+  assert.equal(validateProfile({ ...farmer, name: "x".repeat(81) }).problems.name, "Keep your name to 80 characters or fewer.");
+  assert.equal(validateProfile({ ...ngo, organization: "x".repeat(121) }).problems.organization, "Keep the organisation to 120 characters or fewer.");
+  assert.equal(validateProfile({ ...farmer, name: "x".repeat(80) }).ok, true);
+  assert.equal(validateProfile({ ...ngo, organization: "x".repeat(120) }).ok, true);
 });
 
-test("the profile: age is optional, a whole number from 13 to 120", () => {
-  const message = "Age is a whole number from 13 to 120.";
-  assert.equal(validateProfile({ ...good, age: "" }).ok, true);
-  assert.equal(validateProfile({ ...good, age: undefined }).ok, true);
-  assert.equal(validateProfile({ ...good, age: "17" }).ok, true);
-  assert.equal(validateProfile({ ...good, age: 120 }).ok, true);
-  assert.equal(validateProfile({ ...good, age: "12" }).problems.age, message);
-  assert.equal(validateProfile({ ...good, age: "121" }).problems.age, message);
-  assert.equal(validateProfile({ ...good, age: "17.5" }).problems.age, message);
-  assert.equal(validateProfile({ ...good, age: "old" }).problems.age, message);
+test("About you: a chosen place must carry coordinates and a name", () => {
+  assert.equal(validateProfile({ ...farmer, place: null }).ok, true);
+  assert.equal(validateProfile({ ...farmer, place: { lat: 49.71, lng: 37.62, label: "Kupiansk" } }).ok, true);
+  assert.equal(validateProfile({ ...farmer, place: { lat: 91, lng: 37.62, label: "Nowhere" } }).problems.place, "That place has no coordinates.");
+  assert.equal(validateProfile({ ...farmer, place: { lat: 49.71, lng: 37.62, label: "" } }).problems.place, "That place has no coordinates.");
 });
 
-test("the profile: a chosen place must carry coordinates", () => {
-  assert.equal(validateProfile({ ...good, place: null }).ok, true);
-  assert.equal(validateProfile({ ...good, place: { lat: 49.71, lng: 37.62, label: "Kupiansk" } }).ok, true);
-  assert.equal(validateProfile({ ...good, place: { lat: 91, lng: 37.62, label: "Nowhere" } }).problems.place, "That place has no coordinates.");
-  assert.equal(validateProfile({ ...good, place: { lat: 49.71, lng: 37.62, label: "" } }).problems.place, "That place has no coordinates.");
+test("the country is the last part of a found place's name", () => {
+  assert.equal(countryFromLabel("Kupiansk, Kharkiv Oblast, Ukraine"), "Ukraine");
+  assert.equal(countryFromLabel("Kharkiv Oblast, Ukraine"), "Ukraine");
+  assert.equal(countryFromLabel(" Ames , Iowa , United States "), "United States");
+  assert.equal(countryFromLabel("Ukraine"), "", "one part: nothing to tell it by");
+  assert.equal(countryFromLabel("49.7400° N, 37.5400° E"), "", "coordinates have no country");
+  assert.equal(countryFromLabel("49.71, 37.62"), "");
+  assert.equal(countryFromLabel(""), "");
+  assert.equal(countryFromLabel(undefined), "");
+  assert.equal(countryFromLabel(`Somewhere, ${"x".repeat(200)}`).length, LIMITS.country);
 });
 
-test("what goes to the server: trimmed, empty answers left out, numbers as numbers", () => {
-  assert.deepEqual(profileForServer({ role: "farmer", name: "  Olena ", email: "o@x.org", age: "", organization: " ", country: "Ukraine", address: "" }), {
+test("what goes to PUT /api/account: trimmed, empty answers left out", () => {
+  assert.deepEqual(profileForServer({ product: "field", name: "  Olena ", organization: "Left from Atlas" }), {
     name: "Olena",
-    role: "farmer",
     product: "field",
-    country: "Ukraine",
+    role: "farmer",
   });
-  assert.deepEqual(profileForServer({ role: "ngo", name: "Sam", age: "34", organization: "FAO", place: { lat: "49.71", lng: "37.62", label: " Kupiansk " } }), {
+  assert.deepEqual(
+    profileForServer({ product: "atlas", kind: "ngo", name: "Sam", organization: " FAO ", place: { lat: "49.71", lng: "37.62", label: " Kupiansk, Kharkiv Oblast, Ukraine " } }),
+    {
+      name: "Sam",
+      product: "atlas",
+      role: "ngo",
+      organization: "FAO",
+      place: { lat: 49.71, lng: 37.62, label: "Kupiansk, Kharkiv Oblast, Ukraine" },
+      country: "Ukraine",
+    }
+  );
+  // Atlas without a chosen kind is Other; a place from coordinates has no country.
+  assert.deepEqual(profileForServer({ product: "atlas", name: "Sam", organization: "FAO", place: { lat: 49.71, lng: 37.62, label: "49.71, 37.62" } }), {
     name: "Sam",
-    role: "ngo",
     product: "atlas",
-    age: 34,
+    role: "other",
     organization: "FAO",
-    place: { lat: 49.71, lng: 37.62, label: "Kupiansk" },
+    place: { lat: 49.71, lng: 37.62, label: "49.71, 37.62" },
   });
-  // The product can be named on its own (the server then refuses the
-  // empty role, as validateProfile would have).
-  assert.deepEqual(profileForServer({ product: "atlas", name: "Sam", organization: "FAO" }), { name: "Sam", role: "", product: "atlas", organization: "FAO" });
+  // A place without coordinates is left out (validateProfile has said why).
+  assert.equal(profileForServer({ ...farmer, place: { lat: 95, lng: 0, label: "x" } }).place, undefined);
+  // Never the questions the page no longer asks.
+  const body = profileForServer({ ...farmer, age: "34", address: "Main street" });
+  assert.equal(body.age, undefined);
+  assert.equal(body.address, undefined);
 });
 
-test("which part of the page comes next", () => {
+test("which part of the Register page comes next", () => {
   assert.equal(nextStep(null, null), "account");
   assert.equal(nextStep({ signedIn: false, account: null }, null), "account");
-  assert.equal(nextStep({ signedIn: true, account: null }, null), "account", "the demo's code session is not an account");
+  assert.equal(nextStep({ mode: "demo", readOnly: true, signedIn: false, account: null }, null), "account", "the public demo is not an account");
+  assert.equal(nextStep({ mode: "owner", signedIn: true, account: null }, null), "account", "the owner's key is not an account");
   assert.equal(nextStep({ account: null }, { uid: "abc" }), "token");
   assert.equal(nextStep({ account: { uid: "abc", profileComplete: false } }, null), "profile");
   assert.equal(nextStep({ account: { uid: "abc", profileComplete: false } }, { uid: "abc" }), "profile");
-  assert.equal(nextStep({ account: { uid: "abc", profileComplete: true } }, null), "done");
+  assert.equal(nextStep({ account: { uid: "abc", profileComplete: true } }, null), "signed");
+});
+
+test("after signing in: the product, or the Register page to finish", () => {
+  assert.equal(destinationFor({ product: "field", profileComplete: true }), "/field");
+  assert.equal(destinationFor({ product: "atlas", profileComplete: true }), "/atlas");
+  assert.equal(destinationFor({ product: null, profileComplete: false }), "/register");
+  assert.equal(destinationFor({ product: "atlas", profileComplete: false }), "/register?product=atlas");
+  assert.equal(destinationFor({ product: "both", profileComplete: true }), "/register");
+  assert.equal(destinationFor(null), "/register");
 });
 
 test("typed coordinates are read; anything else is a search", () => {
@@ -179,22 +230,24 @@ test("typed coordinates are read; anything else is a search", () => {
   assert.equal(parsePlace(undefined), null);
 });
 
-test("a place-search answer becomes a place and an offer", () => {
-  const result = { label: "Kupiansk, Kharkiv, Ukraine", lat: 49.7106, lon: 37.6156, bbox: [37.5, 49.6, 37.7, 49.8] };
-  assert.deepEqual(placeFromResult(result), { lat: 49.7106, lng: 37.6156, label: "Kupiansk, Kharkiv, Ukraine" });
-  assert.equal(placeOffer(result), "Use: Kupiansk, Kharkiv, Ukraine (49.71, 37.62)");
+test("a place-search answer becomes a place", () => {
+  const result = { label: "Kupiansk, Kharkiv Oblast, Ukraine", lat: 49.7106, lon: 37.6156, bbox: [37.5, 49.6, 37.7, 49.8] };
+  assert.deepEqual(placeFromResult(result), { lat: 49.7106, lng: 37.6156, label: "Kupiansk, Kharkiv Oblast, Ukraine" });
   assert.deepEqual(placeFromResult({ label: "x", lat: 1, lng: 2 }), { lat: 1, lng: 2, label: "x" }, "lng works like lon");
+  assert.deepEqual(placeFromResult({ label: " ", lat: 1.234, lon: 2.345 }), { lat: 1.234, lng: 2.345, label: "1.23, 2.35" });
   assert.equal(placeFromResult({ label: "x", lat: "n", lon: 2 }), null);
-  assert.equal(placeOffer(null), "");
+  assert.equal(placeFromResult(null), null);
   assert.equal(placeFromResult({ label: "x".repeat(300), lat: 1, lon: 2 }).label.length, LIMITS.place);
 });
 
 test("Firebase's codes become plain words beside the right field", () => {
-  assert.deepEqual(firebaseProblem({ code: "auth/email-already-in-use" }), { field: "email", message: "That e-mail already has an account; sign in instead." });
+  assert.deepEqual(firebaseProblem({ code: "auth/email-already-in-use" }), { field: "email", message: "That e-mail already has an account.", signIn: true });
+  assert.deepEqual(firebaseProblem({ code: "auth/account-exists-with-different-credential" }), { field: "email", message: "That e-mail already has an account.", signIn: true });
   assert.deepEqual(firebaseProblem({ code: "auth/weak-password" }), { field: "password", message: "Use 8 characters or more." });
   assert.deepEqual(firebaseProblem({ code: "auth/invalid-email" }), { field: "email", message: "That e-mail address does not look right." });
-  assert.equal(firebaseProblem({ code: "auth/wrong-password" }).message, "That e-mail and password do not match.");
-  assert.equal(firebaseProblem({ code: "auth/invalid-credential" }).message, "That e-mail and password do not match.");
+  for (const code of ["auth/wrong-password", "auth/user-not-found", "auth/invalid-credential", "auth/invalid-login-credentials"]) {
+    assert.deepEqual(firebaseProblem({ code }), { field: "password", message: "That e-mail and password do not match." }, code);
+  }
   assert.equal(firebaseProblem({ code: "auth/popup-closed-by-user" }).message, "The Google window was closed before you signed in. Try again.");
   assert.equal(firebaseProblem({ code: "auth/network-request-failed" }).field, "form");
   assert.equal(firebaseProblem({ code: "auth/too-many-requests" }).message, "Too many attempts. Wait a few minutes and try again.");
@@ -202,8 +255,8 @@ test("Firebase's codes become plain words beside the right field", () => {
   assert.deepEqual(firebaseProblem(new Error("boom")), { field: "form", message: "Something went wrong. Try again." });
 });
 
-test("registration not open: Firebase's two codes and our server's 503", () => {
-  for (const code of ["auth/configuration-not-found", "auth/operation-not-allowed"]) {
+test("registration not open: Firebase's codes and our server's 503", () => {
+  for (const code of ["auth/configuration-not-found", "auth/operation-not-allowed", "auth/admin-restricted-operation"]) {
     assert.equal(isNotOpen({ code }), true, code);
     assert.deepEqual(firebaseProblem({ code }), { field: "closed", message: "Registration is not open yet." });
   }
@@ -219,4 +272,25 @@ test("our server's own answers: no connection, a bad token", () => {
   assert.deepEqual(firebaseProblem(offline), { field: "form", message: offline.message });
   const bad = Object.assign(new Error("Token rejected"), { code: "bad_token", status: 401 });
   assert.equal(firebaseProblem(bad).message, "The sign-in could not be checked by our server. Try again.");
+});
+
+test("the pictures: four real shots per set, described, and nothing the site no longer says", () => {
+  assert.deepEqual(Object.keys(PICTURES), ["field", "atlas", "signin"]);
+  for (const [set, list] of Object.entries(PICTURES)) {
+    assert.equal(list.length, 4, `${set}: one large and three small`);
+    for (const picture of list) {
+      assert.match(picture.src, /^\/site\/shots\/[a-z0-9-]+\.webp$/, picture.src);
+      assert.ok(picture.width > 0 && picture.height > 0, `${picture.src} has its size`);
+      assert.ok(picture.alt.length > 20, `${picture.src} is described`);
+      assert.ok(picture.caption.split(" ").length <= 7, `${picture.src}: a short caption`);
+      const words = `${picture.alt} ${picture.caption}`;
+      // The demo farm has grown past twelve fields, and the website no
+      // longer mentions an access code anywhere.
+      assert.doesNotMatch(words, /\b(12|twelve) fields\b/i, picture.src);
+      assert.doesNotMatch(words, /access code|\bcode\b/i, picture.src);
+    }
+  }
+  // Each product's own set shows that product first.
+  assert.match(PICTURES.field[0].src, /field-/);
+  assert.match(PICTURES.atlas[0].src, /atlas-/);
 });

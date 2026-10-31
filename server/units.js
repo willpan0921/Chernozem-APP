@@ -32,6 +32,11 @@
 // Earth Engine again (at most once every FAILURE_PAUSE_MS after a failure).
 // Squares with no names (sample data) give no units; the page says so.
 //
+// The public demo (server/session.js isDemoSession) never asks Earth
+// Engine: an area whose borders were worked out before gets them from the
+// saved file; any other gets the squares' units, reason "demo", and
+// nothing is saved.
+//
 // Every square of the run is put in one unit (cellUnit): by its own place
 // name when that names one of the units (so a square and its state always
 // agree), else the unit its centre is in, else the nearest unit within one
@@ -46,6 +51,7 @@ import { dataDir, getArea, getRun, getUnitsCache, listRuns, saveUnitsCache } fro
 import { getProvider, unavailableError } from "./providers/index.js";
 import { areaHa, bboxOf, displayTolerance, distanceToGeometry, labelPoint, pointInGeometry, roundGeometry, simplifyGeometry, squaresOutline } from "./geo.js";
 import { displayPlaceName, nameKey } from "../src/lib/atlas/placeNames.js";
+import { isDemoSession } from "./session.js";
 
 // Bumped when the saved units change shape or rule: older files are worked
 // out again.
@@ -318,6 +324,8 @@ const slotOf = (id) => `${dataDir()}\0${id}`;
 async function gaulUnitsOf(area) {
   const cached = await getUnitsCache(area.id);
   if (cached?.version === UNITS_VERSION && Array.isArray(cached.units)) return { file: cached };
+  // The demo: saved borders only (see the top of this file).
+  if (isDemoSession()) return { reason: "demo" };
   const provider = await getProvider();
   if (provider?.id !== "gee") return { reason: unavailableError(provider) ? "gee-unavailable" : "no-gee" };
   // Earth Engine is connected but the server still runs an older copy of
@@ -372,6 +380,7 @@ export function resetUnitsState() {
 }
 
 const FALLBACK_WORDS = {
+  demo: "The demo shows only the borders worked out before",
   "no-gee": "Earth Engine is not connected (sample data)",
   "gee-unavailable": "Earth Engine cannot be reached right now",
   "gee-failed": "Earth Engine could not give the borders just now",

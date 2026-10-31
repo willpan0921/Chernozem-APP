@@ -1,12 +1,16 @@
 // WHAT THIS FILE DOES
-// Tests the optional access code (server/auth.js): signing and checking
-// the sign-in cookie, running out after 30 days, the wrong-code limit (and
-// which visitor it counts behind a proxy such as Render's), "shared" in the
-// status, that without a code everything stays open, and that a change
-// asked for by another website is refused (403 cross_site) while scripts
-// and our own pages go through. Also a registered account's cookie: signed
-// and checked the same way, named in the status, working with a code set,
-// and cleared by Sign out together with the code's. Run with "npm test".
+// Tests who is asking (server/auth.js): signing and checking the owner's
+// cookie (the owner's key, ATLAS_ACCESS_CODE), running out after 30 days,
+// the wrong-key limit (and which visitor it counts behind a proxy such as
+// Render's), the status ({ required, signedIn, shared, account, mode,
+// readOnly }), that without a key everything stays open, that with one a
+// visitor without the cookie is the read-only demo while the owner may
+// change everything, and that a change asked for by another website is
+// refused (403 cross_site) while scripts and our own pages go through.
+// Also a registered account's cookie: signed and checked the same way,
+// named in the status, working with a key set, and cleared by Sign out
+// together with the owner's. The demo header and the demo's other rules
+// are in demo.test.js. Run with "npm test".
 //
 // WHO EDITS IT
 // Whoever changes server/auth.js.
@@ -24,6 +28,9 @@ process.env.GEE_DISABLED = "1";
 // Not on Render (where a short code keeps the app locked).
 process.env.RENDER = "";
 process.env.ATLAS_ACCESS_CODE = "";
+// The demo may ask the AI assistant: never the real Claude from a test
+// (a value set here wins over the project's .env).
+process.env.ANTHROPIC_API_KEY = "";
 const auth = await import("./auth.js");
 const { handleApi } = await import("./app.js");
 
@@ -156,11 +163,26 @@ test("cookies are read from the Cookie header", () => {
 
 // ---------- Through the API ----------
 
+// What GET /api/auth/status says for each kind of visitor.
+const OPEN = { required: false, signedIn: true, shared: true, account: null, mode: "open", readOnly: false };
+const DEMO = { required: true, signedIn: false, shared: true, account: null, mode: "demo", readOnly: true };
+const OWNER = { required: true, signedIn: true, shared: true, account: null, mode: "owner", readOnly: false };
+const READ_ONLY = "This is the demo, so it can't be changed. Register to do this on your own land.";
+
+// A change that only the owner (or open mode) may make, and its answer.
+const rename = (options = {}) => call("PATCH", "/api/workspace", { body: { name: "Regional office" }, ...options });
+const assertReadOnly = (res, label) => {
+  assert.equal(res.status, 403, label);
+  assert.equal(res.json.error.code, "demo_read_only", label);
+  assert.equal(res.json.error.message, READ_ONLY, label);
+};
+
 test("open mode: without a code everything works as before", async () => {
   process.env.ATLAS_ACCESS_CODE = "";
   const status = await call("GET", "/api/auth/status");
   assert.equal(status.status, 200);
-  assert.deepEqual(status.json, { required: false, signedIn: true, shared: false, account: null });
+  assert.deepEqual(status.json, OPEN);
+  assert.equal((await rename()).status, 200, "everything can be changed");
   assert.equal((await call("GET", "/api/workspace")).status, 200);
   assert.equal((await call("GET", "/api/status")).status, 200);
   const login = await call("POST", "/api/auth/login", { body: { code: "anything" } });
@@ -169,18 +191,19 @@ test("open mode: without a code everything works as before", async () => {
   assert.equal(fs.existsSync(path.join(process.env.CHERNOZEM_DATA_DIR, "auth.json")), false, "no salt made in open mode");
 });
 
-test("with a code: the API needs the cookie, the chat too", async () => {
+test("with a key: a visitor without the cookie reads the read-only demo; the owner's cookie may change everything", async () => {
   process.env.ATLAS_ACCESS_CODE = "test123";
   auth.resetLoginLimits();
 
-  assert.deepEqual((await call("GET", "/api/auth/status")).json, { required: true, signedIn: false, shared: true, account: null });
+  assert.deepEqual((await call("GET", "/api/auth/status")).json, DEMO);
   for (const [method, url] of [["GET", "/api/workspace"], ["GET", "/api/status"], ["GET", "/api/runs"], ["GET", "/api/chats?product=atlas"]]) {
     const res = await call(method, url);
-    assert.equal(res.status, 401, url);
-    assert.equal(res.json.error.code, "auth_required", url);
+    assert.equal(res.status, 200, url);
   }
+  assertReadOnly(await rename(), "a change without the cookie");
+  // The demo's assistant answers (without a Claude key here, the stream says so).
   const chat = await call("POST", "/api/chat", { body: { product: "atlas", message: "hi" } });
-  assert.equal(chat.status, 401, "the AI stream is protected");
+  assert.equal(chat.status, 200, "the demo's assistant");
 
   const wrong = await call("POST", "/api/auth/login", { body: { code: "nope" } });
   assert.equal(wrong.status, 401);
@@ -194,10 +217,12 @@ test("with a code: the API needs the cookie, the chat too", async () => {
   assert.match(ok.setCookie, /^atlas_session=[^;]+; Path=\/; Max-Age=2592000; HttpOnly; SameSite=Lax(, chernozem_account=; Path=\/; Max-Age=0; HttpOnly; SameSite=Lax)?$/);
   const cookie = cookieOf(ok.setCookie);
 
-  assert.deepEqual((await call("GET", "/api/auth/status", { cookie })).json, { required: true, signedIn: true, shared: true, account: null });
-  assert.equal(ok.json.shared, true, "the sign-in answer says so too");
+  assert.deepEqual((await call("GET", "/api/auth/status", { cookie })).json, OWNER);
+  assert.deepEqual(ok.json, { ok: true, ...OWNER }, "the sign-in answer says so too");
   assert.equal((await call("GET", "/api/workspace", { cookie })).status, 200);
-  assert.equal((await call("GET", "/api/workspace", { cookie: cookie + "x" })).status, 401, "a changed cookie is refused");
+  assert.equal((await rename({ cookie })).status, 200, "the owner changes the demo");
+  assert.deepEqual((await call("GET", "/api/auth/status", { cookie: cookie + "x" })).json, DEMO, "a changed cookie is nobody");
+  assertReadOnly(await rename({ cookie: cookie + "x" }), "a changed cookie");
   assert.ok(fs.existsSync(path.join(process.env.CHERNOZEM_DATA_DIR, "auth.json")), "the salt is saved");
 
   // Behind an https proxy the cookie is marked Secure.
@@ -208,12 +233,14 @@ test("with a code: the API needs the cookie, the chat too", async () => {
   const out = await call("POST", "/api/auth/logout", { cookie });
   assert.equal(out.status, 200);
   assert.match(out.setCookie, /^atlas_session=; Path=\/; Max-Age=0;/);
+  assert.deepEqual(out.json, { ok: true, ...DEMO }, "without its cookie the browser is the demo");
 
-  // A new code signs everybody out.
+  // A new key signs the owner out everywhere.
   process.env.ATLAS_ACCESS_CODE = "new-code";
-  assert.equal((await call("GET", "/api/workspace", { cookie })).status, 401);
+  assert.deepEqual((await call("GET", "/api/auth/status", { cookie })).json, DEMO);
+  assertReadOnly(await rename({ cookie }), "a cookie made with the old key");
   process.env.ATLAS_ACCESS_CODE = "";
-  assert.equal((await call("GET", "/api/workspace")).status, 200, "back to open");
+  assert.equal((await rename()).status, 200, "back to open");
 });
 
 test("with a code: 10 wrong codes lock this address for 10 minutes", async () => {
@@ -388,7 +415,7 @@ test("online a code must be at least 16 characters and not the docs' example", (
   assert.equal(auth.ACCESS_CODE_MIN_LENGTH, 16);
 });
 
-test("online with no code, a short one or the example, the app stays locked whatever is typed", async () => {
+test("online with no key, a short one or the example, nobody can sign in as the owner: everyone reads the read-only demo", async () => {
   const before = process.env.RENDER;
   process.env.RENDER = "true";
   auth.resetLoginLimits();
@@ -396,9 +423,10 @@ test("online with no code, a short one or the example, the app stays locked what
     for (const code of ["", "x", "river-tractor-winter-maple"]) {
       process.env.ATLAS_ACCESS_CODE = code;
       const label = JSON.stringify(code);
-      assert.deepEqual((await call("GET", "/api/auth/status")).json, { required: true, signedIn: false, shared: true, account: null }, label);
-      assert.equal((await call("GET", "/api/workspace")).status, 401, label);
-      assert.equal((await call("GET", "/api/status")).status, 401, label);
+      assert.deepEqual((await call("GET", "/api/auth/status")).json, DEMO, label);
+      assert.equal((await call("GET", "/api/workspace")).status, 200, label);
+      assert.equal((await call("GET", "/api/status")).status, 200, label);
+      assertReadOnly(await rename(), label);
       const login = await call("POST", "/api/auth/login", { body: { code: code || "anything" } });
       assert.equal(login.status, 503, label);
       assert.equal(login.json.error.code, "access_code_off", label);
@@ -406,24 +434,25 @@ test("online with no code, a short one or the example, the app stays locked what
       assert.equal(login.setCookie, null, `${label}: no sign-in`);
       const logout = await call("POST", "/api/auth/logout");
       assert.equal(logout.json.signedIn, false, label);
+      assert.equal(logout.json.mode, "demo", label);
     }
-    // A proper code works online as anywhere.
+    // A proper key works online as anywhere.
     process.env.ATLAS_ACCESS_CODE = "orchard-lantern-pebble-cobalt";
     assert.equal((await call("POST", "/api/auth/login", { body: { code: "wrong-but-long-enough" } })).status, 401);
     const ok = await call("POST", "/api/auth/login", { body: { code: "orchard-lantern-pebble-cobalt" } });
     assert.equal(ok.status, 200);
-    assert.equal((await call("GET", "/api/workspace", { cookie: cookieOf(ok.setCookie) })).status, 200);
-    // A cookie made with a good code stops working once the code becomes a bad one.
+    assert.equal((await rename({ cookie: cookieOf(ok.setCookie) })).status, 200);
+    // A cookie made with a good key stops counting once the key becomes a bad one.
     process.env.ATLAS_ACCESS_CODE = "short";
-    assert.equal((await call("GET", "/api/workspace", { cookie: cookieOf(ok.setCookie) })).status, 401);
+    assertReadOnly(await rename({ cookie: cookieOf(ok.setCookie) }), "the key became a bad one");
   } finally {
     process.env.RENDER = before ?? "";
     process.env.ATLAS_ACCESS_CODE = "";
     auth.resetLoginLimits();
   }
-  // On one's own computer (no RENDER) no code still means open.
-  assert.deepEqual((await call("GET", "/api/auth/status")).json, { required: false, signedIn: true, shared: false, account: null });
-  assert.equal((await call("GET", "/api/workspace")).status, 200);
+  // On one's own computer (no RENDER) no key still means open.
+  assert.deepEqual((await call("GET", "/api/auth/status")).json, OPEN);
+  assert.equal((await rename()).status, 200);
 });
 
 test("a change asked for by another website is refused (403); reads, our own pages and scripts are not", async () => {
@@ -546,20 +575,21 @@ test("through the API: the status names the account, the account works with a co
     const account = cookieOf(signedIn.setCookies.find((line) => line.startsWith("chernozem_account=")));
     const expected = { uid: "AuthTestUID1", email: "auth@example.com", name: "Auth Test", product: null, profileComplete: false };
     assert.deepEqual(signedIn.json, { ok: true, account: expected });
-    assert.deepEqual((await call("GET", "/api/auth/status", { cookie: account })).json, { required: false, signedIn: true, shared: false, account: expected });
+    const asAccount = (required) => ({ required, signedIn: true, shared: false, account: expected, mode: "account", readOnly: false });
+    assert.deepEqual((await call("GET", "/api/auth/status", { cookie: account })).json, asAccount(false));
 
-    // With a code set the account still works, without the code.
+    // With a key set the account still works, without the key.
     process.env.ATLAS_ACCESS_CODE = "orchard-lantern-pebble-cobalt";
     auth.resetLoginLimits();
-    assert.deepEqual((await call("GET", "/api/auth/status", { cookie: account })).json, { required: true, signedIn: true, shared: false, account: expected });
+    assert.deepEqual((await call("GET", "/api/auth/status", { cookie: account })).json, asAccount(true));
     assert.equal((await call("GET", "/api/account", { cookie: account })).status, 200);
-    assert.deepEqual((await call("GET", "/api/auth/status")).json, { required: true, signedIn: false, shared: true, account: null });
+    assert.deepEqual((await call("GET", "/api/auth/status")).json, DEMO);
     assert.equal((await call("GET", "/api/account")).status, 401);
     assert.equal((await call("GET", "/api/account", { cookie: `${account}x` })).status, 401, "a changed cookie is nobody");
 
     // Sign out clears both cookies.
     const out = await call("POST", "/api/auth/logout", { cookie: account });
-    assert.deepEqual(out.json, { ok: true, required: true, signedIn: false, shared: true, account: null });
+    assert.deepEqual(out.json, { ok: true, ...DEMO });
     assert.ok(out.setCookies.some((line) => /^atlas_session=; Path=\/; Max-Age=0; HttpOnly; SameSite=Lax$/.test(line)), out.setCookies.join(" | "));
     assert.ok(out.setCookies.some((line) => /^chernozem_account=; Path=\/; Max-Age=0; HttpOnly; SameSite=Lax$/.test(line)), out.setCookies.join(" | "));
     // ...and ends the account's cookies everywhere (accounts.test.js has

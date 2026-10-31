@@ -4,6 +4,9 @@
 // (index.js) both pass requests here.
 //
 //   GET    /api/status                  data source, AI and scheduler state
+//                                       (and, for the owner, the contact
+//                                       e-mail's: mail { configured,
+//                                       transport, to }, server/mail.js)
 //   GET    /api/areas/search?q=         find a country (or a region, with Earth Engine)
 //   POST   /api/areas                   save an area (country, coordinates, box, drawn)
 //   GET    /api/areas                   saved areas
@@ -50,7 +53,7 @@
 //                                       (server/soil.js)
 //   /api/chat, /api/chats...            the AI (server/ai/chat.js)
 //   /api/farm..., /api/geocode          the Field product (server/field/routes.js)
-//   /api/auth/status, login, logout     the optional access code (server/auth.js)
+//   /api/auth/status, login, logout     who is asking, the owner's key (server/auth.js)
 //   POST   /api/auth/firebase           a registered account's sign-in
 //                                       (server/accounts.js)
 //   GET    /api/account                 the signed-in account and its profile
@@ -60,35 +63,60 @@
 //   POST   /api/admin/import            the one-time data upload, only while
 //                                       IMPORT_TOKEN is set (server/import.js)
 //   POST   /api/contact                 a message from the public website's
-//                                       contact form (no code; 5 an hour per
-//                                       visitor; server/messages.js)
-//   GET    /api/messages                those messages, newest first (Atlas
-//                                       Settings shows them)
+//                                       contact form (open to everyone; 5
+//                                       an hour per visitor; kept, then
+//                                       e-mailed to chernozem.app@gmail.com:
+//                                       server/messages.js, server/mail.js)
+//   GET    /api/messages                those messages, newest first, with
+//                                       how each one's e-mail went (Atlas
+//                                       Settings shows them to the owner)
 //   DELETE /api/messages/:id            remove one
 //
-// When ATLAS_ACCESS_CODE is set in .env, every address above except the
-// sign-in ones (/api/auth/...), /api/health, /api/contact (the website's
-// form) and /api/admin/import (which has its own token) needs a signed-in
-// browser.
+// WHO IS ASKING (server/auth.js): the owner (the owner's key, typed on the
+// hidden page /owner), "open" (no key set: one's own computer), a
+// registered account, or the public demo (everyone else when a key is
+// set, and any request with the header "X-Chernozem-View: demo" that does
+// not bring the owner's cookie). Nobody is turned away at the door: a
+// visitor without a cookie is the demo. Open to everyone before that:
+// /api/health, /api/contact, /api/world/... and /api/admin/import (which
+// has its own token).
+//
+// THE PUBLIC DEMO IS READ-ONLY (assertDemoMayDo below)
+// In a demo session every request that would change something (anything
+// but GET and HEAD) is refused with 403 demo_read_only, "This is the
+// demo, so it can't be changed. Register to do this on your own land.",
+// except two: a question to the AI assistant (POST /api/chat) and
+// removing one of the visitor's own chats (DELETE /api/chats/:id), both
+// kept in memory per visitor (server/ai/demoChats.js; limits in
+// server/quotas.js). /api/account answers 401 by itself to anyone who is
+// not an account. Its reads never start paid work either: the area search
+// gives countries only (the regions need Earth Engine), the soil types and
+// the states' borders come from what was saved before (server/soil.js,
+// server/units.js), a missing current area is not written back, and no
+// job can start (server/jobs.js); the Field reads are in
+// server/field/routes.js.
+//
+// THE OWNER'S ALONE: the website's messages (GET /api/messages, DELETE
+// /api/messages/:id) answer 403 owner_only to the demo and to every
+// account; the owner and "open" read them.
 //
 // WHOSE DATA (server/auth.js handleAuth, server/store.js withDataRoot)
 // Every route after the sign-in check runs inside the data folder of the
-// session that asked: the shared demo's (the access code, or everything
-// on one's own computer without a code) or a registered account's own
-// folder (users/<id>/). The route handlers do not know which: the store
-// reads and writes the right folder by itself, and a job they start
-// carries the folder with it (server/jobs.js).
+// session that asked: the demo's own (the owner, open and the demo share
+// it) or a registered account's own folder (users/<id>/), and inside that
+// session (server/session.js withSession). The route handlers do not know
+// which folder: the store reads and writes the right one by itself, and a
+// job they start carries the folder with it (server/jobs.js).
 //
 // A registered account chose one product, and may only use that one:
 // an account for Field gets 403 wrong_product on the Atlas routes (status,
 // areas, workspace, team, analyze, the jobs list and cancel, runs, soil,
-// messages, and the Atlas AI chat), an account for Atlas on the Field
-// ones (farm, the Field AI chat; /api/geocode is open to every account); an account that has not chosen
-// yet gets it on both. GET /api/jobs/:id is both products' (the Field
-// pages follow their field jobs with it; an account only ever sees its
-// own jobs). The shared demo is never restricted. The website's messages
-// (/api/messages) live in the demo's folder, so an account's list of them
-// is simply empty.
+// and the Atlas AI chat), an account for Atlas on the Field ones (farm,
+// the Field AI chat; /api/geocode is open to every account); an account
+// that has not chosen yet gets it on both. GET /api/jobs/:id is both
+// products' (the Field pages follow their field jobs with it; an account
+// only ever sees its own jobs). The demo, the owner and open are never
+// restricted to one product.
 //
 // WHAT AN ACCOUNT MAY DO (server/quotas.js has the numbers)
 // A registered account keeps at most 5 areas, each at most 1,000,000 km²
@@ -96,7 +124,7 @@
 // one Atlas analysis at a time (429 busy) of at most 12 months; and the
 // Field and the AI chat have their own limits (server/field/routes.js,
 // server/ai/chat.js). A limit reached answers 429 (or 413) with the code
-// "quota" and a plain sentence. The demo has none of these limits.
+// "quota" and a plain sentence. The owner has none of these limits.
 //
 // Errors always come back as { error: { code, message } }. A request that
 // changes something (anything but GET or HEAD) sent by another website a
@@ -140,6 +168,8 @@ import { handleFieldRoutes } from "./field/routes.js";
 import { unitsForArea } from "./units.js";
 import { soilFor } from "./soil.js";
 import { isAccount, QUOTAS, quotaError } from "./quotas.js";
+import { demoReadOnly, withSession } from "./session.js";
+import { mailStatus } from "./mail.js";
 
 const MIN_AREA_HA = 0.5;
 const MAX_CUSTOM_AREA_HA = 3000000 * 100; // 3,000,000 km²
@@ -366,11 +396,13 @@ function cleanRole(value, fallback) {
 // The workspace, with a current area that still exists: when the saved
 // area was deleted (its file is gone), currentAreaId is cleared and saved,
 // so the pages start at "pick an area" instead of asking for a missing
-// area and getting a 404.
-async function workspaceWithArea() {
+// area and getting a 404. save false (the public demo): cleared in the
+// answer only, nothing written.
+async function workspaceWithArea({ save = true } = {}) {
   const ws = await getWorkspace();
   const id = ws.currentAreaId;
   if (!id || (isSafeId(id) && (await getArea(id)))) return ws;
+  if (!save) return { ...ws, currentAreaId: null };
   return updateWorkspace((current) => {
     // Only clear it if nobody picked another area in the meantime.
     if (current.currentAreaId === id) current.currentAreaId = null;
@@ -482,7 +514,7 @@ async function handleChat(req, res, url) {
 
 // ---------- Which product a route belongs to (registered accounts) ----------
 
-const ATLAS_ROUTES = new Set(["status", "areas", "workspace", "team", "analyze", "jobs", "runs", "soil", "messages"]);
+const ATLAS_ROUTES = new Set(["status", "areas", "workspace", "team", "analyze", "jobs", "runs", "soil"]);
 // /api/geocode (a place lookup, no one's data) is open to every account:
 // the register page uses it before the person has chosen a product.
 const FIELD_ROUTES = new Set(["farm"]);
@@ -507,7 +539,7 @@ async function productOf(req, { method, first, second, third, q }) {
 }
 
 // A registered account may only use the product it chose (see the top of
-// this file); the shared demo may use both.
+// this file); the demo, the owner and open may use both.
 async function assertProduct(req, session, context) {
   if (session.kind !== "account") return;
   const wanted = await productOf(req, context);
@@ -515,6 +547,24 @@ async function assertProduct(req, session, context) {
   const chosen = session.account.product;
   if (!chosen) throw new HttpError(403, "wrong_product", "Finish registering first: choose Field or Atlas on the register page.");
   if (chosen !== wanted) throw new HttpError(403, "wrong_product", `This account is for ${PRODUCT_NAMES[chosen]}, so it cannot use ${PRODUCT_NAMES[wanted]}.`);
+}
+
+// ---------- The public demo and the owner (see the top of this file) ----------
+
+// The sessions that may change the demo's own data and read its messages.
+const OWNER_KINDS = new Set(["owner", "open"]);
+
+// What a demo session may send besides reads: a question to the AI
+// assistant, removing one of its own chats (both in memory:
+// server/ai/demoChats.js) and the account routes, which answer 401 to
+// anyone who is not an account (server/accounts.js). Anything else that
+// would change something: 403 demo_read_only.
+function assertDemoMayDo(method, [first, second, third]) {
+  if (method === "GET" || method === "HEAD") return;
+  if (first === "chat" && !second && method === "POST") return;
+  if (first === "chats" && second && !third && method === "DELETE") return;
+  if (first === "account") return;
+  throw demoReadOnly();
 }
 
 // ---------- Router ----------
@@ -529,7 +579,7 @@ async function route(req, res, url) {
   // (server/auth.js). Reads (GET, HEAD) are left alone.
   assertSameSite(req, method);
 
-  // Before the access code: the health check (the host asks it every few
+  // Before anyone's session: the health check (the host asks it every few
   // seconds; it says nothing about the data), the data upload, which has
   // its own token (server/import.js), and the public website's contact
   // form, which has its own limits (server/messages.js).
@@ -539,22 +589,31 @@ async function route(req, res, url) {
   // The website's globe (server/world/index.js): public, read-only.
   if (first === "world") return handleWorld(req, res, { method, parts, pathname: url.pathname });
 
-  // The sign-in check (server/auth.js) comes before every other route: it
+  // Who is asking (server/auth.js) comes before every other route: it
   // answers /api/auth/... itself (and gives back false), and for anything
-  // else says whose data the route works on: the shared demo's or a
-  // registered account's folder (the session). When a code is set, a
-  // browser that has neither is stopped here with 401 (the AI chat
-  // included).
+  // else says whose data the route works on (the session): the demo's own
+  // folder, for the owner, open or the read-only demo, or a registered
+  // account's.
   const session = await handleAuth(req, res, { method, first, second, third });
   if (!session) return;
-  // Everything from here reads and writes that folder (server/store.js).
-  return withDataRoot(session.root, () => dispatch(req, res, url, { method, parts, session }));
+  // Everything from here runs in that session (server/session.js) and
+  // reads and writes that folder (server/store.js).
+  return withSession(session, () => withDataRoot(session.root, () => dispatch(req, res, url, { method, parts, session })));
 }
 
 // The routes after the sign-in check, inside the session's data folder.
 async function dispatch(req, res, url, { method, parts, session }) {
   const [first, second, third] = parts;
   const q = url.searchParams;
+
+  // The messages the contact form brought: the owner's alone.
+  if (first === "messages") {
+    if (!OWNER_KINDS.has(session.kind)) throw new HttpError(403, "owner_only", "Only the owner can read the messages sent from the website.");
+    return handleMessages(req, res, { method, second, third, pathname: url.pathname });
+  }
+
+  // The public demo is read-only.
+  if (session.readOnly) assertDemoMayDo(method, parts);
 
   // A registered account uses the product it chose, Field or Atlas.
   await assertProduct(req, session, { method, first, second, third, q });
@@ -563,9 +622,6 @@ async function dispatch(req, res, url, { method, parts, session }) {
   if (first === "account") return handleAccountRoutes(req, res, { method, parts, pathname: url.pathname, session });
 
   if (first === "chat" || first === "chats") return handleChat(req, res, url);
-
-  // The messages the contact form brought, for Atlas Settings.
-  if (first === "messages") return handleMessages(req, res, { method, second, third, pathname: url.pathname });
 
   // The Field product (farm, fields, reports, weather, place search).
   if (first === "farm" || first === "geocode") {
@@ -581,6 +637,8 @@ async function dispatch(req, res, url, { method, parts, session }) {
       ai: { configured: Boolean(env.anthropicKey), model: env.claudeModel },
       scheduler,
       jobs: listJobs({ status: "running" }),
+      // Where the contact form's messages go, for the owner (no secrets).
+      ...(OWNER_KINDS.has(session.kind) ? { mail: mailStatus() } : {}),
     });
   }
 
@@ -588,7 +646,8 @@ async function dispatch(req, res, url, { method, parts, session }) {
     if (second === "search" && !third && method === "GET") {
       const text = (q.get("q") || "").slice(0, 100);
       const countries = searchCountries(text, MAX_SEARCH_RESULTS);
-      const regions = text.trim().length >= 2 ? await searchRegions(text.trim()) : [];
+      // The regions come from Earth Engine: not for the public demo.
+      const regions = text.trim().length >= 2 && !session.readOnly ? await searchRegions(text.trim()) : [];
       // Countries first, but always leave room for some regions.
       const room = regions.length ? Math.max(MAX_SEARCH_RESULTS - regions.length, MIN_COUNTRY_RESULTS) : MAX_SEARCH_RESULTS;
       const results = [...countries.slice(0, room), ...regions].slice(0, MAX_SEARCH_RESULTS);
@@ -658,7 +717,13 @@ async function dispatch(req, res, url, { method, parts, session }) {
   }
 
   if (first === "workspace" && !second) {
-    if (method === "GET") return sendJson(res, 200, { workspace: await workspaceWithArea() });
+    if (method === "GET") {
+      const workspace = await workspaceWithArea({ save: !session.readOnly });
+      // The demo is public: its team's names and roles show, their e-mail
+      // addresses never.
+      if (session.readOnly) return sendJson(res, 200, { workspace: { ...workspace, team: (workspace.team || []).map((member) => ({ ...member, email: "" })) } });
+      return sendJson(res, 200, { workspace });
+    }
     if (method === "PATCH") return sendJson(res, 200, { workspace: await patchWorkspace(await readJson(req)) });
   }
 

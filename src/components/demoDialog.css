@@ -1,0 +1,90 @@
+/*
+  WHAT THIS FILE DOES
+  The look of the public demo's two small pieces (src/components/DemoDialog.jsx):
+  the "This is the demo" dialog and the one line at the top of the Settings
+  pages. The sidebar's demo box and "Back to the website" are in
+  src/styles/shell.css with the rest of the sidebar.
+
+  WHO EDITS IT
+  Whoever changes how the demo says it cannot be changed. Colours come from
+  src/styles/tokens.css.
+*/
+
+/* ---------- The dialog ---------- */
+
+/* The dialog element itself has no padding, so a click on it (and not on
+   its inner box) is a click on the backdrop: it closes. */
+.demo-dialog {
+  width: min(400px, calc(100vw - 32px));
+  max-width: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-lg);
+  background: var(--c-surface);
+  color: var(--c-text);
+  box-shadow: var(--shadow-pop);
+}
+
+.demo-dialog::backdrop {
+  background: rgba(28, 28, 26, 0.38);
+}
+
+.demo-dialog-inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-6);
+}
+
+.demo-dialog-title {
+  font-size: 17px;
+  font-weight: 650;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+
+.demo-dialog-text {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--c-text-2);
+}
+
+.demo-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin-top: var(--s-4);
+}
+
+.demo-dialog-actions .btn {
+  min-width: 104px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  font-size: 14px;
+}
+
+/* ---------- The Settings pages' line ---------- */
+
+.demo-settings-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 14px;
+  border-radius: var(--r-sm);
+  background: var(--c-surface-3);
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--c-text);
+}
+
+.demo-settings-note svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--c-text-2);
+}
+
+.demo-settings-note a {
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

@@ -7,6 +7,10 @@
 //
 //   parseCoordinates(text)  -> { lat, lon } | null
 //   geocode(text)           -> [{ label, lat, lon, bbox: [w, s, e, n] }] (at most 6)
+//   needsLookup(text)       -> true when geocode(text) would ask Nominatim
+//                              (not coordinates, not a name looked up in the
+//                              last 24 hours): the public demo counts only
+//                              those (server/field/routes.js)
 //
 // Throws status 503 "geocode_unavailable" when Nominatim cannot be reached.
 //
@@ -133,8 +137,17 @@ function nextSlot() {
   return slot;
 }
 
+const cleanQuery = (input) => String(input || "").replace(/\s+/g, " ").trim().slice(0, 200);
+
+export function needsLookup(input) {
+  const text = cleanQuery(input);
+  if (!text || parseCoordinates(text)) return false;
+  const hit = state.cache.get(text.toLowerCase());
+  return !(hit && Date.now() - hit.at < CACHE_MS);
+}
+
 export async function geocode(input, { fetchImpl = globalThis.fetch } = {}) {
-  const text = String(input || "").replace(/\s+/g, " ").trim().slice(0, 200);
+  const text = cleanQuery(input);
   if (!text) return [];
   const coords = parseCoordinates(text);
   if (coords) {

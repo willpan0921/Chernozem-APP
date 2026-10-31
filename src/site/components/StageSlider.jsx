@@ -3,9 +3,11 @@
 // the left field holds the current stage as a clause ("First, the
 // satellites pass"), the right field holds a true-size crop of the real
 // app in the matching state, and a range input with four stops along the
-// bottom moves both. Dragging, clicking a stage name or the arrow keys
-// swap the clause and the picture with a short crossfade; nothing depends
-// on scrolling. Styles: src/site/pages/home.css (.stages).
+// bottom moves both. Dragging, clicking a stage name, the arrow keys or a
+// tap on the picture (which moves on to the next stage, and from the last
+// back to the first) swap the clause and the picture with a short
+// crossfade; nothing depends on scrolling. Styles: src/site/pages/home.css
+// (.stages).
 //
 // WHO EDITS IT
 // Whoever changes the four stages. A crop is a window over the 1920-px
@@ -82,6 +84,8 @@ export default function StageSlider() {
                 <Shot name={s.shot} alt={s.alt} crop={{ ...s.crop, w: FRAME.w, h: FRAME.h }} />
               </div>
             ))}
+            {/* Tapping the picture moves on to the next stage (the slider and the names do the same from the keyboard). */}
+            <button type="button" className="stages-next" tabIndex={-1} aria-hidden="true" onClick={() => setStage((s) => (s + 1) % STAGES.length)} />
           </div>
         </div>
       </div>

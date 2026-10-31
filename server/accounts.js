@@ -2,7 +2,7 @@
 // Registered accounts: a person who registered on the website (Google, or
 // e-mail and password, through Firebase Authentication) gets a workspace
 // of their own, fresh and separate from the shared demo and from every
-// other account. The demo behind the access code is untouched.
+// other account. The public demo (the owner's own workspace) is untouched.
 //
 // HOW IT WORKS
 // The browser signs in with Firebase (src/lib/firebase.js) and gets an
@@ -14,7 +14,7 @@
 //     not run out. The account's folder is made or opened (server/store.js
 //     userRoot), its profile.json gets the e-mail and name from the token,
 //     and the browser gets the account cookie (server/auth.js
-//     accountCookie, 30 days; the access code's cookie, if any, is
+//     accountCookie, 30 days; the owner's cookie, if any, is
 //     removed: the latest sign-in wins). Answers { ok, account }.
 //       401 bad_token      the token is not valid or has run out
 //       503 accounts_off   accounts cannot work on this server (see below)
@@ -396,7 +396,7 @@ export async function handleFirebaseSignIn(req, res) {
 
   noteSignedIn(uid);
   const token = signAccountSession(deriveAccountSecret(await installSalt()), uid);
-  // This browser is the account from now on; the access code's cookie, if
+  // This browser is the account from now on; the owner's cookie, if
   // it had one, goes (server/auth.js prefers the account cookie).
   res.setHeader("Set-Cookie", [accountCookie(req, token), sessionCookie(req, "", 0)]);
   sendJson(res, 200, { ok: true, account: accountSummary(uid, profile) });

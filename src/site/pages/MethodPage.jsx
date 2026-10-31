@@ -17,7 +17,7 @@ import DemoRanking from "../components/DemoRanking.jsx";
 import GateLab from "../components/GateLab.jsx";
 import ProofTable from "../components/ProofTable.jsx";
 import { Reveal, Stagger, StaggerItem } from "../components/motion.jsx";
-import { DATASETS, LINKS, NUMBERS, SITE_ACTIONS, formatInt } from "../content/site.js";
+import { CONTACT_EMAIL, DATASETS, LINKS, NUMBERS, SITE_ACTIONS, formatInt } from "../content/site.js";
 import { usePageTitle } from "../hooks.js";
 import "./pages.css";
 
@@ -254,7 +254,7 @@ export default function MethodPage() {
             </Stagger>
             <Reveal className="meth-accounts" delay={0.08}>
               <h3 className="pg-h3">Accounts and privacy</h3>
-              <p>Accounts run on Firebase (Google or e‑mail and password); Google holds your sign-in. Your fields, readings, reports and messages are kept on our own server and never sold. When you ask the assistant, your question and your fields’ readings go to Anthropic’s Claude to be answered; the satellite maths runs on Google Earth Engine. The demo is behind one access code.</p>
+              <p>Accounts run on Firebase (Google or e‑mail and password); Google holds your sign-in. Your fields, readings and reports are kept on our own server and never sold; messages from the contact page are e‑mailed to {CONTACT_EMAIL}. When you ask the assistant, your question and your fields’ readings go to Anthropic’s Claude to be answered; the satellite maths runs on Google Earth Engine. The demo is open to everyone and read-only.</p>
               <ul className="meth-links">
                 <li>
                   <a className="pg-link" href={LINKS.github} target="_blank" rel="noreferrer">
@@ -311,7 +311,7 @@ export default function MethodPage() {
             </h2>
           </Reveal>
           <Reveal className="meth-close-act" delay={0.1}>
-            <p>Register for Field or Atlas and read the first pass yourself. The demo is open with a code.</p>
+            <p>Register for Field or Atlas and read the first pass yourself. The demo is open to everyone and read-only.</p>
             <div className="pg-actions">
               <Link className="pg-btn" to={SITE_ACTIONS.register.path}>
                 Register

@@ -43,6 +43,16 @@
 // progress card while the first analysis runs. Inside it a page can
 // assume farm.fields and at least one analysis are there.
 //
+// THE PUBLIC DEMO (read-only, src/state/useAccess.js): every action that
+// would change something (an example farm, finding or saving fields, a
+// field added, renamed, re-cropped or removed, the farm's settings, an
+// analysis, a report with its photos) is refused here before the server is
+// asked: the "This is the demo" dialog opens (src/state/useDemoGuard.js
+// refuseInDemo) and the action throws that refusal. The pages' buttons
+// usually open the dialog themselves first (useDemoGuard), so this is the
+// safety net. Reading (the farm, a field's history, the weather) works as
+// for everyone.
+//
 // WHO EDITS IT
 // Whoever changes what data the Field pages share. To change how the
 // server is called, edit src/api/fieldApi.js.
@@ -53,6 +63,8 @@ import { Loader2, RefreshCw, TriangleAlert } from "lucide-react";
 import * as api from "../api/fieldApi.js";
 import { analysingIds, farmConflict } from "../lib/field/format.js";
 import { Button } from "../components/ui/index.js";
+import { useAccess } from "./useAccess.js";
+import { refuseInDemo, useDemoGuard } from "./useDemoGuard.js";
 import "../components/field/field.css";
 
 // The farm setup shows a map, so it (and the map library) is only
@@ -66,6 +78,10 @@ const WEATHER_REFRESH_MS = 30 * 60 * 1000;
 export function FieldDataProvider({ children }) {
   const { pathname } = useLocation();
   const inField = pathname === "/" || pathname.startsWith("/field");
+  // The demo: read-only (a ref, so the saved callbacks below always see it).
+  const { readOnly } = useAccess();
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
 
   const [base, setBase] = useState({ status: "idle", error: null, farm: null, analyses: {}, provider: null });
   const [job, setJob] = useState(null);
@@ -274,9 +290,27 @@ export function FieldDataProvider({ children }) {
   const fieldDetail = useCallback((fieldId) => api.getFieldAnalysis(fieldId), []);
   const reloadWeather = useCallback(() => loadWeather(farmKey), [loadWeather, farmKey]);
 
+  // The demo: a change is refused before the server is asked (the dialog
+  // opens and the action throws the refusal; see the top of this file).
+  const inDemo = useCallback((action) => (...args) => (readOnlyRef.current ? Promise.reject(refuseInDemo()) : action(...args)), []);
+
   const actions = useMemo(
-    () => ({ reload, loadDemo, detect, saveFarm, addField, updateField, removeField, updateFarm, deleteFarm, analyze, report, fieldDetail, reloadWeather }),
-    [reload, loadDemo, detect, saveFarm, addField, updateField, removeField, updateFarm, deleteFarm, analyze, report, fieldDetail, reloadWeather]
+    () => ({
+      reload,
+      loadDemo: inDemo(loadDemo),
+      detect: inDemo(detect),
+      saveFarm: inDemo(saveFarm),
+      addField: inDemo(addField),
+      updateField: inDemo(updateField),
+      removeField: inDemo(removeField),
+      updateFarm: inDemo(updateFarm),
+      deleteFarm: inDemo(deleteFarm),
+      analyze: inDemo(analyze),
+      report: inDemo(report),
+      fieldDetail,
+      reloadWeather,
+    }),
+    [inDemo, reload, loadDemo, detect, saveFarm, addField, updateField, removeField, updateFarm, deleteFarm, analyze, report, fieldDetail, reloadWeather]
   );
 
   const analysing = useMemo(() => analysingIds(base.farm, base.analyses, job), [base.farm, base.analyses, job]);
@@ -379,6 +413,7 @@ export function FarmSetupPage() {
 // Shows the page only once there is a farm with at least one analysed field.
 export function FarmGate({ children }) {
   const { status, error, farm, analyses, job, actions } = useFieldData();
+  const { guard } = useDemoGuard();
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState(null);
 
@@ -423,7 +458,7 @@ export function FarmGate({ children }) {
           </div>
           {(failed || startError) && <p className="fd-error-text">{startError?.message || failed}</p>}
           <div className="cluster">
-            <Button variant="primary" size="lg" onClick={start} disabled={starting}>
+            <Button variant="primary" size="lg" onClick={guard(start)} disabled={starting}>
               {starting ? "Starting…" : "Analyse now"}
             </Button>
             <Button variant="ghost" to="/field/settings">

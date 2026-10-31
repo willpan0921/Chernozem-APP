@@ -27,6 +27,10 @@
 //
 // All the data comes from the shared Atlas layer (src/state/AtlasData.jsx);
 // weight changes there recolour the map at once and are saved for the team.
+// In the public demo (read-only) the weights, the cutoff, the month and the
+// views still change the map, in this browser only (never saved); "Change
+// area" opens the "This is the demo" dialog instead
+// (src/state/useDemoGuard.js).
 //
 // On screens 860 px or narrower the columns stack: area, map, weights, then
 // the top areas or the picked place.
@@ -74,6 +78,7 @@ import { unitRanking } from "../../lib/atlas/units.js";
 import { COST_NOTE } from "../../lib/atlas/method.js";
 import { formatAreaSize, formatCoord, formatCount, formatHaShort } from "../../lib/format.js";
 import { haFixed } from "./overviewHelpers.js";
+import { useDemoGuard } from "../../state/useDemoGuard.js";
 import "./MapPage.css";
 
 // The width at which the columns stack (keep in step with MapPage.css).
@@ -549,6 +554,8 @@ function MapView({ held }) {
   const unitsPending = detailLevel === "units" && unitsAnswer.status === "loading";
   const [hoverUnit, setHoverUnit] = useState(null);
   const [changing, setChanging] = useState(false);
+  // The demo: "Change area" opens the "This is the demo" dialog instead.
+  const { guard } = useDemoGuard();
   // On a phone the map key starts folded so it covers less of the map.
   const [keyOpen, setKeyOpen] = useState(() => !isNarrow());
 
@@ -837,7 +844,7 @@ function MapView({ held }) {
             <h1 className="mp-area" title={area.name}>
               {area.name}
             </h1>
-            <Button size="sm" icon={<MapPin size={13} />} onClick={() => setChanging(true)}>
+            <Button size="sm" icon={<MapPin size={13} />} onClick={guard(() => setChanging(true))}>
               Change area
             </Button>
           </div>

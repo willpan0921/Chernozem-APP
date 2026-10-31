@@ -1,8 +1,8 @@
 // WHAT THIS FILE DOES
 // The Chernozem logo: the map pin with layers of field, black soil and
 // subsoil and an orange sun (transparent background). Used in the sidebar,
-// on the access-code screen, as the AI's avatar in chats and, big, on the
-// public website. The browser tab uses public/favicon-*.png (index.html).
+// as the AI's avatar in chats and, big, on the public website. The
+// browser tab uses public/favicon-*.png (index.html).
 //
 // Two copies of the picture: public/chernozem-logo-128.png (128 px, a few
 // KB) for the small logo the app shows everywhere, up to 64 px (sharp on a

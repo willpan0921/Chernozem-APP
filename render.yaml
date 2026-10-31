@@ -16,11 +16,14 @@
 # "sync: false" are typed into Render's dashboard (the service's
 # Environment page) and never leave it.
 #
-# The server refuses to start online without a proper access code (at
-# least 16 characters, not the example from the docs) or without the disk
-# (server/online.js): the deploy then fails, with the reason in the log,
-# instead of putting an open or forgetful app live. (HOST is not set: with
-# an access code the server answers on every address by itself.)
+# The server refuses to start online without a proper owner's key
+# (ATLAS_ACCESS_CODE, once "the access code": at least 16 characters, not
+# the example from the docs) or without the disk (server/online.js): the
+# deploy then fails, with the reason in the log, instead of putting live
+# an app anyone could change, or a forgetful one. Visitors need no key:
+# they get the read-only public demo; the owner types the key at /owner.
+# (HOST is not set: with the owner's key the server answers on every
+# address by itself.)
 #
 # WHO EDITS IT
 # Nobody, normally. The secrets are changed in the dashboard only.
@@ -48,7 +51,7 @@ services:
     # node itself, not "npm start": npm would stay running beside it and
     # use about 70 MB of the 512.
     startCommand: node server/index.js
-    # Answers { ok: true } without the access code (server/app.js).
+    # Answers { ok: true } without any sign-in (server/app.js).
     healthCheckPath: /api/health
     # Only this folder survives a restart or a new version.
     disk:
@@ -63,8 +66,9 @@ services:
       - key: CHERNOZEM_DATA_DIR
         value: /var/data
       # Every request comes through Cloudflare, which says who the visitor
-      # is in CF-Connecting-IP (server/auth.js reads it for the limit of
-      # 10 wrong codes per visitor).
+      # is in CF-Connecting-IP (server/auth.js reads it for the limits per
+      # visitor: 10 wrong keys, 5 contact messages an hour, the demo
+      # assistant's questions).
       - key: ATLAS_TRUST_PROXY
         value: cloudflare
       - key: GEE_PROJECT_ID
@@ -82,9 +86,23 @@ services:
         sync: false
       - key: GEE_SERVICE_ACCOUNT_JSON
         sync: false
-      # At least 16 characters, made up (never one printed anywhere).
+      # The owner's key, typed only at /owner: at least 16 characters,
+      # made up (never one printed anywhere).
       - key: ATLAS_ACCESS_CODE
         sync: false
+      # The contact form's e-mail to chernozem.app@gmail.com
+      # (server/mail.js, docs/DEPLOY.md section 14): the owner's Gmail app
+      # password, typed in the dashboard only. Until it is set the messages
+      # wait on the disk. (A note only, so nothing is asked for at a
+      # Blueprint sync: add it on the service's Environment page.)
+      # - key: GMAIL_APP_PASSWORD
+      #   sync: false
+      # ...or, instead of Gmail, Resend's API key:
+      # - key: RESEND_API_KEY
+      #   sync: false
+      # Optional, with their defaults: MAIL_TO (chernozem.app@gmail.com),
+      # GMAIL_USER (MAIL_TO), MAIL_FROM; or another mail server: SMTP_HOST,
+      # SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_SECURE.
       # Only for the one-time upload of the data (docs/DEPLOY.md); remove
       # it in the dashboard once the upload is done.
       - key: IMPORT_TOKEN

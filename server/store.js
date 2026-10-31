@@ -25,9 +25,10 @@
 // file outside this folder.
 //
 // ONE FOLDER PER ACCOUNT (added with the registered accounts, 2026-10)
-// The folder above is the BASE folder: the demo everyone with the access
-// code shares. A person who registered (server/accounts.js) gets a folder
-// of their own under it, users/<32 hex characters made from their id>/,
+// The folder above is the BASE folder: the public demo (the owner's own
+// workspace, read-only for everyone else: server/auth.js). A person who
+// registered (server/accounts.js) gets a folder of their own under it,
+// users/<32 hex characters made from their id>/,
 // with the same files inside (workspace.json, areas/, farm.json...) and a
 // profile.json on top. Nothing is copied into it: a fresh folder simply
 // has no areas and no farm yet.
@@ -551,10 +552,32 @@ export async function saveMessage(message) {
   return message;
 }
 
+// Changes and removals of messages, one at a time, so a message removed
+// while its e-mail was being sent is never written back
+// (server/messages.js records how the e-mail went with updateMessage).
+const messageLock = (globalThis.__chernozemMessageLock ??= { chain: Promise.resolve() });
+function oneMessageAtATime(work) {
+  const next = messageLock.chain.then(work);
+  messageLock.chain = next.catch(() => {});
+  return next;
+}
+
+// change(message) edits it in place or returns a new one. Gives back the
+// saved message, or null when there is none (nothing is written then).
+export function updateMessage(id, change) {
+  return oneMessageAtATime(async () => {
+    const current = await getMessage(id);
+    if (!current) return null;
+    const changed = (await change(current)) || current;
+    await writeFile(fileFor("messages", id), changed);
+    return changed;
+  });
+}
+
 // True when there was one to remove.
 export async function deleteMessage(id) {
   if (!isSafeId(id)) return false;
-  return removeFile(fileFor("messages", id));
+  return oneMessageAtATime(() => removeFile(fileFor("messages", id)));
 }
 
 // ---------- Field: the farm, its analyses, history, reports and photos ----------

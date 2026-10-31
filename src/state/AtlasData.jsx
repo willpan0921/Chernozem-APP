@@ -24,6 +24,16 @@
 // Weight changes (actions.updateSettings) show on the map at once and are
 // saved to the server 0.4 s after the last change.
 //
+// THE PUBLIC DEMO (read-only, src/state/useAccess.js): the weights, the
+// cutoff, the month and the views still change on screen, but only in this
+// browser: nothing is saved (no request, so no "not saved" line either).
+// Every other action that would change something (a new or another area,
+// an analysis or a Stop, the crisis setting, the team, the budget, the
+// next steps) is refused here before the server is asked: the "This is the
+// demo" dialog opens (src/state/useDemoGuard.js refuseInDemo) and the
+// action throws that refusal. The pages' buttons usually open the dialog
+// themselves first (useDemoGuard), so this is the safety net.
+//
 // WHO EDITS IT
 // Whoever changes what data the Atlas pages share. To change how the server
 // is called, edit src/api/atlasApi.js.
@@ -37,6 +47,8 @@ import { analysisNotice } from "../lib/atlas/analysisNotice.js";
 import { scorePlaces } from "../lib/atlas/scoring.js";
 import { groupHotspots } from "../lib/atlas/hotspots.js";
 import { Button } from "../components/ui/index.js";
+import { useAccess } from "./useAccess.js";
+import { refuseInDemo, useDemoGuard } from "./useDemoGuard.js";
 import { usePref } from "./usePref.js";
 import "../components/atlas/atlas.css";
 
@@ -62,6 +74,10 @@ const runKey = (summary) => (summary ? `${summary.id}@${summary.createdAt || ""}
 export function AtlasDataProvider({ children }) {
   const { pathname } = useLocation();
   const inAtlas = pathname.startsWith("/atlas");
+  // The demo: read-only (a ref, so the saved callbacks below always see it).
+  const { readOnly } = useAccess();
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
 
   const [base, setBase] = useState({
     status: "idle", // "idle" until an Atlas page opens, then "loading" | "ready" | "error"
@@ -183,6 +199,9 @@ export function AtlasDataProvider({ children }) {
     clearTimeout(settingsTimer.current);
     const toSend = pendingSettings.current;
     if (!toSend) return;
+    // The demo: the weights stay in this browser (pendingSettings keeps
+    // winning over the server's when the data loads again), never saved.
+    if (readOnlyRef.current) return;
     try {
       const workspace = await api.patchWorkspace({ settings: toSend }, { keepalive });
       if (pendingSettings.current === toSend) {
@@ -401,25 +420,31 @@ export function AtlasDataProvider({ children }) {
 
   const selectRun = useCallback((runId) => setChosenRunId(runId || null), []);
 
+  // The demo: a change is refused before the server is asked (the dialog
+  // opens and the action throws the refusal; see the top of this file).
+  // The weights (updateSettings, resetSettings) are left out: they change
+  // on screen and are simply never saved.
+  const inDemo = useCallback((action) => (...args) => (readOnlyRef.current ? Promise.reject(refuseInDemo()) : action(...args)), []);
+
   const actions = useMemo(
     () => ({
       reload: load,
       selectRun,
       updateSettings,
       resetSettings,
-      updateWorkspace,
-      toggleStep,
-      createArea,
-      setCurrentArea,
-      updateArea,
-      analyzeArea,
-      cancelAnalysis,
-      chooseArea,
-      addMember,
-      updateMember,
-      removeMember,
+      updateWorkspace: inDemo(updateWorkspace),
+      toggleStep: inDemo(toggleStep),
+      createArea: inDemo(createArea),
+      setCurrentArea: inDemo(setCurrentArea),
+      updateArea: inDemo(updateArea),
+      analyzeArea: inDemo(analyzeArea),
+      cancelAnalysis: inDemo(cancelAnalysis),
+      chooseArea: inDemo(chooseArea),
+      addMember: inDemo(addMember),
+      updateMember: inDemo(updateMember),
+      removeMember: inDemo(removeMember),
     }),
-    [load, selectRun, updateSettings, resetSettings, updateWorkspace, toggleStep, createArea, setCurrentArea, updateArea, analyzeArea, cancelAnalysis, chooseArea, addMember, updateMember, removeMember]
+    [inDemo, load, selectRun, updateSettings, resetSettings, updateWorkspace, toggleStep, createArea, setCurrentArea, updateArea, analyzeArea, cancelAnalysis, chooseArea, addMember, updateMember, removeMember]
   );
 
   const value = useMemo(
@@ -549,12 +574,14 @@ export function AnalysisProgress({ job, compact = false }) {
 }
 
 // Cancels a job that waits for its turn, or stops one that has started
-// (server/jobs.js cancelAnalysis): -> { busy, error, run }
+// (server/jobs.js cancelAnalysis): -> { busy, error, run }. In the demo the
+// button opens the "This is the demo" dialog instead.
 function useCancelJob(jobId) {
   const { actions } = useAtlasData();
+  const { guard } = useDemoGuard();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  const run = async () => {
+  const run = guard(async () => {
     setBusy(true);
     setError(null);
     try {
@@ -563,7 +590,7 @@ function useCancelJob(jobId) {
       setError(err?.message || String(err));
       setBusy(false);
     }
-  };
+  });
   return { busy, error, run };
 }
 
@@ -688,6 +715,7 @@ function ErrorBox({ error, onRetry }) {
 // Shows the page only once there is an area with an analyzed month.
 export function AtlasGate({ children }) {
   const { status, error, area, runs, run, runStatus, runError, job, actions } = useAtlasData();
+  const { guard } = useDemoGuard();
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState(null);
 
@@ -730,7 +758,7 @@ export function AtlasGate({ children }) {
           </div>
           {startError ? <p className="atlas-error-text">{startError.message}</p> : said && <p className={said.tone === "error" ? "atlas-error-text" : "atlas-muted-text"}>{said.text}</p>}
           <div className="cluster">
-            <Button variant="primary" size="lg" onClick={start} disabled={starting}>
+            <Button variant="primary" size="lg" onClick={guard(start)} disabled={starting}>
               {starting ? "Starting…" : "Analyze 12 months"}
             </Button>
             <Button variant="ghost" to="/atlas/settings">

@@ -4,7 +4,9 @@
 // address changes the new page rises in softly and the window goes back
 // to the top. Everything inside is scoped by the class "site", so the
 // website's styling (site.css) never touches the app's pages and the
-// app's never touches the website.
+// app's never touches the website. It also starts the pin cursor's click
+// assist (cursorAssist.js) for as long as the website is open; the app
+// never has it.
 //
 // WHO EDITS IT
 // Whoever works on the website's frame. The menu's links come from
@@ -16,6 +18,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import Nav from "./components/Nav.jsx";
 import Footer from "./components/Footer.jsx";
 import { useScrollTop } from "./hooks.js";
+import { startCursorAssist } from "./cursorAssist.js";
 import "./site.css";
 
 export default function SiteShell() {
@@ -29,6 +32,8 @@ export default function SiteShell() {
   useEffect(() => {
     first.current = false;
   }, []);
+  // A click anywhere on the pin cursor reaches the link or button under it.
+  useEffect(() => startCursorAssist(), []);
   return (
     <div className="site">
       <a className="skip" href="#main">

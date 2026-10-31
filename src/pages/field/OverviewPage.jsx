@@ -29,6 +29,11 @@
 // items are worded in src/lib/field/overview.js (tested there). The report
 // kinds are REPORT_KINDS in src/data/chats.js (shared with the AI page).
 //
+// In the public demo (read-only) everything can be looked at, the tiles
+// pressed and the report form filled in, but "Send", "Add photos" and an
+// update's "Try again" open the "This is the demo" dialog instead
+// (src/state/useDemoGuard.js).
+//
 // WHO EDITS IT
 // Whoever changes how the Field overview looks or is laid out. Its styles
 // are in OverviewPage.css next to this file (every class starts "fo-").
@@ -65,6 +70,7 @@ import { fieldKind, latestPass, likelyRain, needsDoing, statTiles, statusSentenc
 import { LookSwatch } from "../../components/field/ConditionLegend.jsx";
 import { REPORT_KINDS } from "../../data/chats.js";
 import { PHOTO_TYPES } from "../../api/fieldApi.js";
+import { useDemoGuard } from "../../state/useDemoGuard.js";
 import "./OverviewPage.css";
 
 // The map (and the map library) only downloads once the page shows.
@@ -104,6 +110,7 @@ function WeatherIcon({ code, size = 26 }) {
 function Overview() {
   const navigate = useNavigate();
   const { farm, analyses, provider, job, weather, weatherError, analysing, conflict, actions } = useFieldData();
+  const { guard } = useDemoGuard();
   const [hoveredId, setHoveredId] = useState(null);
   // A status tile that is pressed: its fields stand out in "Your fields".
   const [group, setGroup] = useState(null);
@@ -167,7 +174,7 @@ function Overview() {
 
       <div className="fo-grid">
         <div className="fo-main">
-          <NeedsDoing items={items} onAnalyze={actions.analyze} />
+          <NeedsDoing items={items} onAnalyze={guard(actions.analyze)} />
           <TellUs farm={farm} inWar={Boolean(conflict)} onSent={(report) => navigate(`/field/ai?report=${encodeURIComponent(report.id)}`)} />
         </div>
 
@@ -400,6 +407,8 @@ const kindsFor = (inWar) => (inWar ? REPORT_KINDS : REPORT_KINDS.filter((item) =
 
 function TellUs({ farm, inWar, onSent }) {
   const { actions } = useFieldData();
+  // The demo: Send and Add photos open the "This is the demo" dialog.
+  const { readOnly, ask } = useDemoGuard();
   const [fieldId, setFieldId] = useState("");
   const [kind, setKind] = useState(null);
   const [text, setText] = useState("");
@@ -439,6 +448,7 @@ function TellUs({ farm, inWar, onSent }) {
   const submit = async (event) => {
     event.preventDefault();
     if (sending) return;
+    if (readOnly) return ask();
     if (!kind) return setError("Choose what happened.");
     if (!text.trim() && photos.length === 0) return setError("Add a few words or a photo.");
     setSending(true);
@@ -519,7 +529,7 @@ function TellUs({ farm, inWar, onSent }) {
               event.target.value = "";
             }}
           />
-          <Button variant="secondary" icon={<Camera size={14} />} onClick={() => fileRef.current?.click()} disabled={photos.length >= MAX_PHOTOS || sending}>
+          <Button variant="secondary" icon={<Camera size={14} />} onClick={() => (readOnly ? ask() : fileRef.current?.click())} disabled={photos.length >= MAX_PHOTOS || sending}>
             {photos.length ? `Photos ${photos.length}/${MAX_PHOTOS}` : "Add photos"}
           </Button>
           {error && (

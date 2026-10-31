@@ -514,12 +514,12 @@ test("GDACS down from the start: the route still answers with the wars", async (
 
 // ---------- The route ----------
 
-test("the feed is public: no access code, GET and HEAD, kept for 10 minutes, gzipped when accepted", async () => {
+test("the feed is public: no owner's key, GET and HEAD, kept for 10 minutes, gzipped when accepted", async () => {
   process.env.ATLAS_ACCESS_CODE = "orchard-lantern-pebble-cobalt";
   try {
-    assert.equal((await call("GET", "/api/workspace")).status, 401, "the app needs the code...");
+    assert.equal((await call("DELETE", "/api/team/member-x")).status, 403, "a change to the app needs the owner's key...");
     const feed = await call("GET", "/api/world/crises");
-    assert.equal(feed.status, 200, "...the feed does not");
+    assert.equal(feed.status, 200, "...the feed needs nothing");
     assert.equal(feed.headers["cache-control"], "public, max-age=600");
     assert.equal(feed.headers["content-type"], "application/json; charset=utf-8");
     assert.equal(feed.headers["content-encoding"], undefined);

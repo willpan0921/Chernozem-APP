@@ -9,19 +9,36 @@ The data comes from Google Earth Engine (Sentinel-2, Sentinel-1, NASA FIRMS, ESA
 
 **How every number is measured, with its dataset, formula, update frequency and limits: [docs/METHODS.md](docs/METHODS.md).**
 
-**The public copy at https://chernozem.app (Render): what runs where, what it costs, how updates go live, the data and the access code: [docs/DEPLOY.md](docs/DEPLOY.md).**
+**The public copy at https://chernozem.app (Render): what runs where, what it costs, how updates go live, the data, the public demo, the owner's key and the contact e-mail: [docs/DEPLOY.md](docs/DEPLOY.md).**
 
 ## The public website
 
-The app also carries its own public website: the home page and the Story,
-Product, How to use, Method, Technology, Design and Contact pages, open to
-anyone at https://chernozem.app without an access code. It lives in
-`src/site/` (pages in `src/site/pages/`, shared parts in
-`src/site/components/`, the facts it quotes in `src/site/content/site.js`,
-the real screenshots in `public/site/shots/`). The Ukraine demo on the home
-and Method pages reads `public/site/ukraine-demo.json`, built from the
-latest saved Ukraine month by `node scripts/site-demo-data.js`. Messages
-from the contact page arrive in Atlas > Settings.
+The app also carries its own public website, open to anyone at
+https://chernozem.app: the About page (the home page), Story, Method,
+Contact, Demo, Register and Sign in. It lives in `src/site/` (pages in
+`src/site/pages/`, shared parts in `src/site/components/`, the facts it
+quotes in `src/site/content/site.js`, the real screenshots in
+`public/site/shots/`). The Ukraine ranking on the website reads
+`public/site/ukraine-demo.json`, built from the latest saved Ukraine month
+by `node scripts/site-demo-data.js`. Messages from the contact page are
+e-mailed to chernozem.app@gmail.com (`server/mail.js`: the owner's Gmail
+with an app password, `GMAIL_APP_PASSWORD`, or Resend) and kept on the
+server for the owner's Atlas > Settings; one not sent yet is tried again
+every 10 minutes (`server/messages.js`).
+
+**The public demo.** Anyone without an account who opens `/field` or
+`/atlas` gets the Ukraine demo, both products, read-only: every change
+answers 403 `demo_read_only` ("This is the demo, so it can't be changed.
+Register to do this on your own land."), no job or Earth Engine work ever
+starts for it (soil types and borders come from what is saved), and its AI
+assistant answers 8 questions per visitor, 24 per address and 300 a day,
+with the chats in memory only (`server/ai/demoChats.js`). A browser tab
+sends `X-Chernozem-View: demo` to see the demo while signed in to an
+account (`src/lib/demoMode.js`). The old access code,
+`ATLAS_ACCESS_CODE`, is now only the owner's key: typed on the hidden
+page `/owner`, it lets the owner change the demo and read the messages.
+How each request is told apart (owner, open without a key, account,
+demo) is at the top of `server/auth.js`.
 
 **Accounts.** The website's Register page makes a personal account
 (Google, or e-mail and password, through Firebase Authentication): the
@@ -30,9 +47,9 @@ workspace of their own. The server checks the sign-in with Firebase
 (`server/accounts.js`, the `firebase-admin` package) and keeps each
 account's data in its own folder, `server/.data/users/<id>/` (online:
 `/var/data/users/`), with a `profile.json` beside the usual files. The
-demo behind the access code is a separate, shared workspace with both
-products, exactly as before. An account has limits the demo does not
-(`server/quotas.js`): 5 areas of at most 1,000,000 km², one analysis at
+public demo is separate: the owner's own workspace, read-only for
+everyone else, with both products. An account has limits the owner does
+not (`server/quotas.js`): 5 areas of at most 1,000,000 km², one analysis at
 a time of at most 12 months, 2 Field searches and 2 updates an hour, 30
 reports and 40 MB of real photos, 40 AI messages a day, and the monthly
 update off until switched on; "Sign out" ends every copy of its cookie,
@@ -97,7 +114,7 @@ npm run build    # makes the finished app in dist/
 npm start        # serves dist/ and the API at http://localhost:8787
 ```
 
-Set an access code first (see below).
+Set the owner's key (`ATLAS_ACCESS_CODE`) first: without it everyone who reaches the server can change everything, so `npm start` then answers this computer only.
 
 ## Connect Earth Engine and Claude
 
@@ -108,7 +125,8 @@ Everything goes into one private settings file, `.env` (copy it from `.env.examp
 | Real satellite data | `GEE_PROJECT_ID=`, `GOOGLE_APPLICATION_CREDENTIALS=` (full path to the service-account key, kept outside the project folder), `GEE_CHERNOZEM_ASSET=none` | `npm run gee:check` ends with "Earth Engine is ready." |
 | The AI | `ANTHROPIC_API_KEY=` (from console.anthropic.com) | Settings > AI says Connected |
 | Real front lines (optional) | `ACLED_CSV_PATH=` | `npm run gee:check` shows the battles found |
-| An access code (before sharing) | `ATLAS_ACCESS_CODE=` | A sign-in card appears |
+| The owner's key (before sharing) | `ATLAS_ACCESS_CODE=` | Visitors get the read-only demo; you sign in at `/owner` |
+| The contact e-mail | `GMAIL_APP_PASSWORD=` (or `RESEND_API_KEY=`) | `npm start` says "Contact e-mail: to chernozem.app@gmail.com" |
 
 Weather (Open-Meteo) and place search (OpenStreetMap) need no key. `GEE_DISABLED=1` switches back to sample data. Restart `npm run dev` after changing `.env`.
 

@@ -3,7 +3,7 @@
 //
 // The public website (src/site/), open to anyone, no sign-in:
 //   /             About: what Chernozem is   /contact      Contact
-//   /story        The story                  /demo         Try the Ukraine demo (with a code)
+//   /story        The story                  /demo         Try the Ukraine demo (open to all, read-only)
 //   /method       Methodology                /register     Make an account (Field or Atlas)
 //                                            /signin       Sign in to an account
 //                                            /owner        The owner's key (not linked anywhere)

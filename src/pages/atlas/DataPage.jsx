@@ -19,6 +19,10 @@
 // compareRuns() in src/api/atlasApi.js, so it works the same on sample data
 // and on Google Earth Engine.
 //
+// In the public demo (read-only) everything can be read and compared; only
+// "Analyze" (which starts an analysis) opens the "This is the demo" dialog
+// instead (src/state/useDemoGuard.js).
+//
 // WHO EDITS IT
 // Whoever changes how the Data page looks or behaves. The styling is in
 // DataPage.css next to this file (every class starts with "dp-").
@@ -28,6 +32,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeftRight, ArrowDownRight, ArrowUpRight, ChevronRight, ExternalLink, Info, TriangleAlert } from "lucide-react";
 import { PageHeader, Card, Badge, Button, Segmented } from "../../components/ui/index.js";
 import { AtlasGate, AnalysisNotice, AnalysisProgress, useAtlasData } from "../../state/AtlasData.jsx";
+import { useDemoGuard } from "../../state/useDemoGuard.js";
 import { compareRuns } from "../../api/atlasApi.js";
 import { placeLabel } from "../../lib/atlas/hotspots.js";
 import { disasterValidation, validation, citation } from "../../config/research.js";
@@ -158,6 +163,7 @@ function DataArchive() {
 function TrendsCard() {
   const navigate = useNavigate();
   const { area, runs, job, actions } = useAtlasData();
+  const { guard } = useDemoGuard();
   const [measure, setMeasure] = useState("heavy");
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState(null);
@@ -169,7 +175,7 @@ function TrendsCard() {
   };
 
   const running = job?.status === "running" && job.areaId === area.id;
-  const analyze = async () => {
+  const analyze = guard(async () => {
     setStarting(true);
     setStartError(null);
     try {
@@ -179,7 +185,7 @@ function TrendsCard() {
     } finally {
       setStarting(false);
     }
-  };
+  });
 
   // New damage is hidden for a month whose month before is not comparable
   // (another data source, method, grid or war setting: method.js runsComparable).

@@ -1100,104 +1100,21 @@ a.scope-card:hover {
   text-decoration: none;
 }
 
-/* ---------- Access screen (AccessGate.jsx) ---------- */
+/* ---------- While the app asks who the visitor is (AccessGate.jsx) ---------- */
 
-/* Shown only when the owner set an access code on the server. */
+/* A plain page for the moment before the server has answered. (There is no
+   access-code card any more: the app always opens.) */
 .access-gate {
   min-height: 100vh;
   min-height: 100dvh;
-  display: grid;
-  place-items: center;
-  padding: var(--s-4);
   background: var(--c-bg);
 }
 
-.access-card {
-  width: 100%;
-  max-width: 360px;
-  display: flex;
-  flex-direction: column;
-  padding: var(--s-8) var(--s-6) var(--s-6);
-  background: var(--c-surface);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-pop);
-}
-
-.access-logo {
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  margin-bottom: var(--s-4);
-}
-
-.access-title {
-  margin: 0 0 var(--s-2);
-  font-size: 22px;
-  font-weight: 650;
-  letter-spacing: -0.01em;
-  color: var(--c-text);
-}
-
-.access-foot {
-  margin: var(--s-5) 0 0;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--c-muted);
-  text-align: center;
-}
-
-.access-foot a {
-  color: var(--c-green);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.access-lead {
-  margin: 0 0 var(--s-6);
-  font-size: 14px;
-  line-height: 1.45;
-  color: var(--c-text-2);
-}
-
-.access-input {
-  padding: 10px 12px;
-  font-size: 15px;
-}
-
+/* "Could not reach the server..." under the account card's Sign out. */
 .access-error {
   margin: var(--s-2) 0 0;
   font-size: 13px;
   color: var(--c-red-text);
-}
-
-.access-card .btn {
-  margin-top: var(--s-4);
-}
-
-.access-card .btn:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-
-/* The two website links under the code: "Have an account? Sign in" and
-   "No account? Register". */
-.access-links {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin: var(--s-5) 0 0;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--c-text-2);
-  text-align: center;
-}
-
-.access-links a {
-  color: var(--c-green);
-  font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 
 /* ---------- The Settings pages' "Account" card (AccessGate.jsx AccountCard) ---------- */

@@ -41,6 +41,9 @@
 }
 
 .site .sn-link {
+  /* A larger target than the word, without moving it. */
+  padding: 10px 8px;
+  margin: -10px -8px;
   font-size: 15px;
   font-weight: 600;
   letter-spacing: -0.01em;
@@ -75,6 +78,13 @@
   .site .sn-link:hover {
     text-decoration-color: currentColor;
   }
+}
+
+/* The hover look when the pin cursor is near the link (src/site/cursorAssist.js). */
+.site .sn-link[data-near],
+.site .sn-menu-button[data-near] {
+  text-decoration: underline;
+  text-decoration-color: currentColor;
 }
 
 /* The phone sheet: the whole screen, six links, nothing else. */

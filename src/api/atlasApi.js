@@ -21,21 +21,30 @@
 //   streamChat({ ...body, onEvent })  the AI, streamed as it is written
 //   listChats(product) / getChat(id) / deleteChat(id)
 //   listMessages() / deleteMessage(id)   messages from the public website's
-//                                    contact form (Atlas Settings shows them)
-//   getAuthStatus() / signIn(code) / signOut()   the access code, or an account's sign-in
+//                                    contact form (Atlas Settings shows them
+//                                    to the owner)
+//   getAuthStatus() / signOut()      who this browser is, and ending its sign-in
+//   signIn(key)                      the owner's key (the hidden /owner page)
 //   getAccount()                     a registered person's account and profile
 //
-// THE ACCESS CODE, AND ACCOUNTS
-// When the owner sets ATLAS_ACCESS_CODE on the server, every call needs the
-// sign-in cookie (the browser sends it by itself). A person registered on
-// the website has an account cookie instead (set by the website's sign-in
-// page, server/auth.js). If the server answers "not signed in" (401), this
-// file announces AUTH_REQUIRED_EVENT and the access screen
-// (src/components/atlas/AccessGate.jsx) comes back; it offers the code and
-// the website's sign-in. signOut() ends either kind of sign-in and also
-// announces ACCOUNT_SIGNED_OUT_EVENT, so the website's Firebase sign-in
-// (src/lib/firebase.js, loaded only by its pages) can end its own session
-// when it happens to be loaded; nothing here imports Firebase.
+// WHO IS ASKING (server/auth.js)
+// The browser sends its cookies by itself: the owner's (signed in with the
+// owner's key on the hidden /owner page) or a registered account's (set by
+// the website's sign-in page). Without either, the server answers as the
+// public demo: the Ukraine data, read-only. A tab that chose the demo on
+// the website's Demo page also sends the header X-Chernozem-View: demo with
+// every call here (src/lib/demoMode.js demoHeaders), so an account holder
+// sees the demo there instead of their own workspace.
+//
+// A change the demo may not make comes back as 403 "demo_read_only"; this
+// file then announces DEMO_READ_ONLY_EVENT, and the access gate
+// (src/components/atlas/AccessGate.jsx) shows the "This is the demo"
+// dialog. If the server answers "not signed in" (401), it announces
+// AUTH_REQUIRED_EVENT and the gate asks who this is again. signOut() ends
+// either kind of sign-in and also announces ACCOUNT_SIGNED_OUT_EVENT, so the
+// website's Firebase sign-in (src/lib/firebase.js, loaded only by its
+// pages) can end its own session when it happens to be loaded; nothing here
+// imports Firebase.
 //
 // Every function gives back the server's answer, or throws an ApiError with
 // a message a person can read ("The area is too small (0.2 ha)...") and the
@@ -48,6 +57,9 @@
 //
 // WHO EDITS IT
 // Whoever adds a route to server/app.js. Add its function here too.
+
+import { demoHeaders } from "../lib/demoMode.js";
+import { isDemoRefusal } from "../lib/access.js";
 
 // Where the server answers. The same site in development (the Vite dev
 // server passes /api/ on) and in production (server/index.js).
@@ -64,16 +76,38 @@ export const OFFLINE_MESSAGE = import.meta.env.DEV
 // Announced on window when the server says this browser is not signed in.
 export const AUTH_REQUIRED_EVENT = "atlas:auth-required";
 // Announced on window after signOut() ended the sign-in on the server, so
-// a loaded Firebase module can sign out of Firebase too (the access screen
+// a loaded Firebase module can sign out of Firebase too (the access gate
 // itself listens to AUTH_REQUIRED_EVENT, announced right after).
 export const ACCOUNT_SIGNED_OUT_EVENT = "chernozem:account-signed-out";
+// Announced on window when a change was refused because this is the demo
+// (the server's 403 "demo_read_only", or the app's own refusal before it
+// asks: src/state/useDemoGuard.js refuseInDemo). The access gate shows the
+// "This is the demo" dialog.
+export const DEMO_READ_ONLY_EVENT = "chernozem:demo-read-only";
 
-// Tells the access screen to show again (only for "not signed in", not for
-// a wrong code typed into it).
+// Tells the access gate to ask who this is again (only for "not signed
+// in", not for a wrong key typed on the owner's page).
 function noticeSignedOut(error) {
   if (error?.status === 401 && error.code === "auth_required" && typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT));
   }
+}
+
+// Tells the access gate to show the demo's dialog.
+export function noticeDemoRefusal(error) {
+  if (isDemoRefusal(error) && typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(DEMO_READ_ONLY_EVENT));
+  }
+}
+
+// The headers every call sends: the demo's (while this tab looks at the
+// demo) and, with a body, its type. view "own" leaves the demo's out, to
+// ask who this browser is without it (the access gate, for "Open your own
+// workspace").
+function headersFor(body, view) {
+  const headers = view === "own" ? {} : { ...demoHeaders() };
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  return headers;
 }
 
 export class ApiError extends Error {
@@ -96,12 +130,13 @@ async function readError(response) {
 }
 
 // Sends one request and gives back the JSON answer.
-async function request(method, path, body, { signal, keepalive } = {}) {
+//   options: { signal, keepalive, view: "own" (see headersFor) }
+async function request(method, path, body, { signal, keepalive, view } = {}) {
   let response;
   try {
     response = await fetch(`${API_ROOT}${path}`, {
       method,
-      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+      headers: headersFor(body, view),
       body: body === undefined ? undefined : JSON.stringify(body),
       signal,
       keepalive,
@@ -115,6 +150,7 @@ async function request(method, path, body, { signal, keepalive } = {}) {
   if (!response.ok) {
     const error = await readError(response);
     noticeSignedOut(error);
+    noticeDemoRefusal(error);
     throw error;
   }
   return response.json();
@@ -134,23 +170,27 @@ const id = (value) => encodeURIComponent(value);
 //   scheduler: { autoMonthly, lastCheck }, jobs: [running jobs] }
 export const getStatus = (options) => request("GET", "/status", undefined, options);
 
-// ---------- Access code and accounts ----------
+// ---------- Who is asking ----------
 
-// -> { required, signedIn, shared, account }. required is false when no
-// code is set. account is null for the demo (the code) and for a visitor
-// who is not signed in; for a registered person { uid, email, name,
-// product: "field" | "atlas" | null, profileComplete }.
+// -> { required, signedIn, shared, account, mode, readOnly }: mode "demo"
+// (read-only), "owner", "open" (no key set on the server) or "account";
+// account is null unless mode is "account", then { uid, email, name,
+// product: "field" | "atlas" | null, profileComplete } (src/lib/access.js
+// reads it). While this tab looks at the demo the answer is the demo's;
+// options.view "own" asks without that (who the browser itself is).
 export const getAuthStatus = (options) => request("GET", "/auth/status", undefined, options);
 
-// Signs this browser in with the access code for 30 days. Throws an
-// ApiError with code "wrong_code" or "too_many_attempts" (wait 10 minutes).
+// Signs this browser in with the owner's key for 30 days (the hidden
+// /owner page; the server's ATLAS_ACCESS_CODE). Throws an ApiError with
+// code "wrong_code" or "too_many_attempts" (wait 10 minutes).
 export const signIn = (code) => request("POST", "/auth/login", { code });
 
-// Signs this browser out (the code's cookie and the account's cookie both
-// end on the server); the access screen shows again. For a registered
-// account the browser's own Firebase sign-in is ended too (the website's
-// sign-in page would otherwise offer "Continue as ..." to the next person
-// at this computer); Firebase is downloaded only for that, and only then.
+// Signs this browser out (the owner's cookie and the account's cookie both
+// end on the server). For a registered account the browser's own Firebase
+// sign-in is ended too (the website's sign-in page would otherwise offer
+// "Continue as ..." to the next person at this computer); Firebase is
+// downloaded only for that, and only then. The app's buttons then go back
+// to the website.
 export async function signOut({ account = false } = {}) {
   await request("POST", "/auth/logout", {});
   if (account) {
@@ -345,7 +385,7 @@ export async function streamChat({ onEvent = () => {}, signal, ...body }) {
   try {
     response = await fetch(`${API_ROOT}/chat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+      headers: { ...headersFor(body), Accept: "text/event-stream" },
       body: JSON.stringify(body),
       signal,
       credentials: "same-origin", // sends the sign-in cookie
@@ -357,10 +397,13 @@ export async function streamChat({ onEvent = () => {}, signal, ...body }) {
     return { threadId: body.threadId || null, messageId: null, text: "", error: failure };
   }
 
-  // A bad request (empty message...) comes back as JSON before any stream.
+  // A bad request (empty message...) comes back as JSON before any stream,
+  // and so does the demo's limit (429 "quota", with the server's own
+  // sentence, shown in the chat as it is).
   if (!response.ok || !response.body) {
     const error = await readError(response);
     noticeSignedOut(error);
+    noticeDemoRefusal(error);
     const failure = { code: error.code, message: error.message };
     onEvent("error", failure);
     return { threadId: body.threadId || null, messageId: null, text: "", error: failure };
@@ -374,7 +417,10 @@ export async function streamChat({ onEvent = () => {}, signal, ...body }) {
       result.threadId = data.threadId || result.threadId;
       result.messageId = data.messageId || null;
     }
-    if (name === "error") result.error = data;
+    if (name === "error") {
+      result.error = data;
+      noticeDemoRefusal(data);
+    }
     onEvent(name, data);
   };
 
@@ -434,8 +480,9 @@ export async function deleteChat(chatId) {
 }
 
 // ---------- Messages from the website's contact form ----------
-// Sent by visitors through src/api/siteApi.js sendContact (no code needed
-// for that); read here, with the code (server/messages.js).
+// Sent by visitors through src/api/siteApi.js sendContact (no sign-in
+// needed for that); read here by the owner (server/messages.js; the demo
+// gets 403 "owner_only", and Atlas Settings does not ask then).
 
 // -> [{ id, receivedAt, name, email, organization, message }], newest first
 export async function listMessages() {

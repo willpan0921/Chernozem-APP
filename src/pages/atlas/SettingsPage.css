@@ -660,3 +660,10 @@
     padding-top: 0;
   }
 }
+
+/* The demo: a name that cannot be renamed is plain text. */
+.aset-name.is-static,
+.aset-name.is-static:hover {
+  background: none;
+  cursor: default;
+}

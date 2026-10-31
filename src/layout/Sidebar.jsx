@@ -1,8 +1,9 @@
 // WHAT THIS FILE DOES
-// The left sidebar: the Chernozem logo, the Field / Atlas switch, the "My
-// farm" box or (in the Atlas) the current area, the page list, and the
-// account row at the bottom. It draws itself from
-// src/config/navigation.js and highlights whichever page is open.
+// The left sidebar: the Chernozem logo, "Back to the website", the Field /
+// Atlas switch, the "My farm" box or (in the Atlas) the current area, the
+// page list, and at the bottom the demo box or the account row. It draws
+// itself from src/config/navigation.js and highlights whichever page is
+// open.
 //
 // In the Atlas the area box is live: the current area's name and its
 // cropland from the latest run (src/state/AtlasData.jsx), or "No area yet".
@@ -12,21 +13,34 @@
 // (in the farm's unit) from src/state/FieldData.jsx, or "No farm yet".
 // Clicking it opens Field Settings, where the farm is changed.
 //
-// TWO KINDS OF VISITOR (src/state/useAccess.js, rules in src/lib/access.js):
-// The demo visitor (the access code) sees the Field / Atlas switch, the
-// demo's "Account" / "Regional office" row and the note "Shared with
-// everyone who has the access code". A person registered on the website
-// sees no switch (they chose one product when they registered;
-// src/components/ProductGuard.jsx keeps them on it), their own name and
-// initials in the account row, and the note "Your fields are private to
-// your account". On one's own computer without a code the note says "Your
-// fields are private". No note while that is not known.
+// "BACK TO THE WEBSITE" (everyone): under the logo, back to the public
+// website's front page (/). It also ends this tab's choice to look at the
+// demo (src/lib/demoMode.js leaveDemo). In the rail it is an arrow with a
+// tooltip; on a phone it sits at the right of the logo's row.
 //
-// "Sign out" under the account row, when an access code is set (on a
-// shared computer, so the next person needs the code again) or an account
-// is signed in: the access card comes back
-// (src/components/atlas/AccessGate.jsx). Without either there is nothing
-// to sign out of, so it is not shown.
+// WHO IS LOOKING (src/state/useAccess.js, rules in src/lib/access.js):
+//   The demo     the Field / Atlas switch, and at the bottom the demo box:
+//                "Demo · Ukraine, read-only", "Everyone sees this farm"
+//                (or area), "Register" (the website's register page, the
+//                product already chosen) and "Sign in". An account holder
+//                looking at the demo gets "Open your own workspace" instead
+//                of both: back to their own fields or area. No account row
+//                and no "Sign out": the demo has no account.
+//   The owner    the switch, "You are editing the demo", the demo's
+//                "Account" / "Regional office" row and "Sign out".
+//   Open         (one's own computer, no key set) the switch, "Your fields
+//                are private" on the Field side, the same row; nothing to
+//                sign out of.
+//   An account   no switch (they chose one product when they registered;
+//                src/components/ProductGuard.jsx keeps them on it), "Your
+//                fields are private to your account", their own name and
+//                initials in the row, and "Sign out".
+// While the visitor is not known (the server could not be reached): the
+// switch and the row as before, no note, no "Sign out".
+//
+// "Sign out" ends the sign-in on the server (and Firebase's, for an
+// account) and goes back to the website, the page loading afresh so
+// nothing of the account stays in this tab.
 //
 // FOLDED TO A RAIL (wider screens): the button next to the logo folds the
 // sidebar to a narrow rail of icons (and unfolds it again), so the pages,
@@ -35,8 +49,10 @@
 // tooltip on hover or keyboard focus; the Field / Atlas switch stacks its
 // two words. The farm / area box becomes a grey map pin (its tooltip:
 // "Demo farm · 10 fields · 437 ha · Change farm"), so it never looks like
-// a second "Fields" or "Atlas" page. The choice is kept by AppShell.jsx. On
-// a phone the sidebar sits above the page and never folds.
+// a second "Fields" or "Atlas" page; the demo box becomes a green
+// "Register" icon (a house for "Open your own workspace"). The choice is
+// kept by AppShell.jsx. On a phone the sidebar sits above the page and
+// never folds.
 //
 // WHAT IT RECEIVES
 //   collapsed  true: drawn as the rail
@@ -44,16 +60,19 @@
 //
 // WHO EDITS IT
 // Whoever changes how the sidebar looks. To add or rename a page, edit
-// src/config/navigation.js instead.
+// src/config/navigation.js instead; the demo's words are demoWords there.
 
 import { useEffect, useState } from "react";
 import Logo from "../components/ui/Logo.jsx";
 import { NavLink, Link, useLocation } from "react-router-dom";
-import { ChevronDown, Lock, LogOut, MapPin, PanelLeftClose, PanelLeftOpen, Users } from "lucide-react";
-import { products, productForPath } from "../config/navigation.js";
+import { ArrowLeft, ChevronDown, Eye, House, Lock, LogOut, MapPin, PanelLeftClose, PanelLeftOpen, UserPlus, Users } from "lucide-react";
+import { Button } from "../components/ui/index.js";
+import { demoWords, products, productForPath } from "../config/navigation.js";
 import { signOut } from "../api/atlasApi.js";
-import { accountLabel, canSignOut, canSwitchProduct, privacyNoteFor } from "../lib/access.js";
+import { accountLabel, backToWebsitePath, canSignOut, canSwitchProduct, demoRegisterPath, showDemoNote, sidebarNoteFor } from "../lib/access.js";
+import { leaveDemo } from "../lib/demoMode.js";
 import { useAccess } from "../state/useAccess.js";
+import { openOwnWorkspace } from "../state/useDemoGuard.js";
 import { useFieldData } from "../state/FieldData.jsx";
 import { farmLine } from "../lib/field/format.js";
 import { useAtlasData } from "../state/AtlasData.jsx";
@@ -118,9 +137,76 @@ function FieldScope({ icon: Icon, collapsed, tipFor }) {
   return <ScopeCard to="/field/settings" change="Change farm" icon={Icon} title={title} subtitle={subtitle} collapsed={collapsed} tipFor={tipFor} />;
 }
 
-// "Sign out": the server removes this browser's sign-in, and the access card
-// comes back. If the server cannot be reached the browser stays signed in
-// (the page cannot remove the sign-in by itself), so it says so.
+// "Back to the website": the public website's front page, leaving the
+// demo view of this tab behind.
+function BackToWebsite({ collapsed, tipFor }) {
+  return (
+    <Link
+      to={backToWebsitePath()}
+      className="sidebar-back"
+      onClick={leaveDemo}
+      aria-label={collapsed ? demoWords.back : undefined}
+      {...tipFor(demoWords.back)}
+    >
+      <ArrowLeft size={15} aria-hidden="true" />
+      <span className="sidebar-label">{demoWords.back}</span>
+    </Link>
+  );
+}
+
+// The demo box at the bottom: what this is, and the way to one's own.
+//   note     the product's demo words ("Everyone sees this farm")
+//   ownHome  an account holder's own workspace, else null: then "Open your
+//            own workspace" takes the place of Register and Sign in (they
+//            already have an account)
+function DemoBox({ productId, note, ownHome, collapsed, tipFor }) {
+  const registerTo = demoRegisterPath(productId);
+  if (collapsed) {
+    const tip = `${demoWords.note} · ${ownHome ? demoWords.ownWorkspace : demoWords.register}`;
+    return (
+      <div className="sidebar-demo is-rail">
+        {ownHome ? (
+          <button type="button" className="sidebar-demo-icon is-primary" onClick={() => openOwnWorkspace(ownHome)} aria-label={tip} {...tipFor(tip)}>
+            <House size={16} aria-hidden="true" />
+          </button>
+        ) : (
+          <Link to={registerTo} className="sidebar-demo-icon is-primary" aria-label={tip} {...tipFor(tip)}>
+            <UserPlus size={16} aria-hidden="true" />
+          </Link>
+        )}
+      </div>
+    );
+  }
+  return (
+    <section className="sidebar-demo" aria-label="Demo">
+      <p className="sidebar-demo-title">
+        <Eye size={13} aria-hidden="true" />
+        {demoWords.note}
+      </p>
+      {note && <p className="sidebar-demo-text">{note.text}</p>}
+      <div className="sidebar-demo-actions">
+        {ownHome ? (
+          <Button variant="primary" size="sm" icon={<House size={13} aria-hidden="true" />} className="sidebar-demo-register is-own" onClick={() => openOwnWorkspace(ownHome)}>
+            {demoWords.ownWorkspace}
+          </Button>
+        ) : (
+          <>
+            <Button variant="primary" size="sm" to={registerTo} className="sidebar-demo-register">
+              {demoWords.register}
+            </Button>
+            <Link to="/signin" className="sidebar-demo-signin">
+              {demoWords.signIn}
+            </Link>
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// "Sign out": the server removes this browser's sign-in, then the website's
+// front page opens afresh. If the server cannot be reached the browser stays
+// signed in (the page cannot remove the sign-in by itself), so it says so.
 function SignOutButton({ collapsed, tipFor, hideTip, account = false }) {
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -131,11 +217,10 @@ function SignOutButton({ collapsed, tipFor, hideTip, account = false }) {
     setBusy(true);
     setFailed(false);
     try {
-      // On success the access card replaces the whole app.
       await signOut({ account });
+      window.location.assign(backToWebsitePath());
     } catch {
       setFailed(true);
-    } finally {
       setBusy(false);
     }
   }
@@ -187,9 +272,10 @@ export default function Sidebar({ collapsed = false, onToggle }) {
   const { tip, tipFor, hideTip } = useRailTips(collapsed);
   const toggleLabel = collapsed ? "Expand sidebar" : "Collapse sidebar";
   const access = useAccess();
-  const { shared, account } = access;
-  const note = product.id !== "atlas" ? privacyNoteFor(product.privacyNote, shared, account) : null;
-  const NoteIcon = note?.kind === "shared" ? Users : Lock;
+  const { account, ownHome } = access;
+  const demo = showDemoNote(access);
+  const note = sidebarNoteFor(product.privacyNote, access);
+  const NoteIcon = note?.kind === "owner" ? Users : Lock;
   // The account row: the person's own name for an account, the demo's
   // "Account" / "Regional office" otherwise.
   const who = account ? accountLabel(account) : product.account;
@@ -222,7 +308,10 @@ export default function Sidebar({ collapsed = false, onToggle }) {
         )}
       </div>
 
-      {/* Field / Atlas switch: the demo visitor only. An account has one product. */}
+      <BackToWebsite collapsed={collapsed} tipFor={tipFor} />
+
+      {/* Field / Atlas switch: the demo, the owner, one's own computer. An
+          account has one product. */}
       {canSwitchProduct(access) && (
         <nav className="product-switch" aria-label="Product">
           {Object.values(products).map((item) => (
@@ -272,25 +361,31 @@ export default function Sidebar({ collapsed = false, onToggle }) {
       <div className="sidebar-spacer" />
 
       <div className="sidebar-footer">
-        {note && (
-          <p className="sidebar-note">
-            <NoteIcon size={12} aria-hidden="true" />
-            {note.text}
-          </p>
+        {demo ? (
+          <DemoBox productId={product.id} note={note} ownHome={ownHome} collapsed={collapsed} tipFor={tipFor} />
+        ) : (
+          <>
+            {note && (
+              <p className="sidebar-note">
+                <NoteIcon size={12} aria-hidden="true" />
+                {note.text}
+              </p>
+            )}
+            <Link
+              to={`${product.basePath}/settings`}
+              className="sidebar-account"
+              aria-label={collapsed ? who.label : undefined}
+              title={collapsed || !account ? undefined : who.label}
+              {...tipFor(who.label)}
+            >
+              <span className={`avatar avatar-${product.account.tone}`}>
+                {who.initials}
+              </span>
+              <span className="sidebar-label">{who.label}</span>
+            </Link>
+          </>
         )}
-        <Link
-          to={`${product.basePath}/settings`}
-          className="sidebar-account"
-          aria-label={collapsed ? who.label : undefined}
-          title={collapsed || !account ? undefined : who.label}
-          {...tipFor(who.label)}
-        >
-          <span className={`avatar avatar-${product.account.tone}`}>
-            {who.initials}
-          </span>
-          <span className="sidebar-label">{who.label}</span>
-        </Link>
-        {canSignOut(shared, account) && <SignOutButton collapsed={collapsed} tipFor={tipFor} hideTip={hideTip} account={Boolean(account)} />}
+        {canSignOut(access) && <SignOutButton collapsed={collapsed} tipFor={tipFor} hideTip={hideTip} account={Boolean(account)} />}
       </div>
 
       {/* Only for the eye: each item already carries its name (aria-label). */}

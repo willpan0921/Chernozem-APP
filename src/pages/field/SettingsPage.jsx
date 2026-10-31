@@ -19,6 +19,15 @@
 //          .env line that connects it.
 // Everything is saved on the server (server/field/routes.js) straight away.
 //
+// THE PUBLIC DEMO (read-only, src/lib/access.js): one line under the title,
+// "This is the demo. Register to set up your own." (src/components/
+// DemoDialog.jsx DemoSettingsNote), and every card shows its values with
+// its controls turned off (dimmed; pressing one opens the "This is the
+// demo" dialog: src/state/useDemoGuard.js lock): "Change farm", "Add a
+// field", "Find fields again", a field's crop and remove, the units,
+// "Update now" and the switch. The names are plain text (no renaming). The
+// map still moves and a field can still be picked out on it.
+//
 // WHO EDITS IT
 // Whoever changes the Field Settings page. The shared data and actions come
 // from src/state/FieldData.jsx; the farm setup is
@@ -45,6 +54,10 @@ import {
 import { PageHeader, Card, Badge, Button, Segmented, Toggle } from "../../components/ui/index.js";
 import { FarmGate, FieldProgress, useFieldData } from "../../state/FieldData.jsx";
 import { AccountCard } from "../../components/atlas/AccessGate.jsx";
+import { DemoSettingsNote } from "../../components/DemoDialog.jsx";
+import { useAccess } from "../../state/useAccess.js";
+import { useDemoGuard } from "../../state/useDemoGuard.js";
+import { demoHeaders } from "../../lib/demoMode.js";
 import { API_ROOT, getStatus } from "../../api/atlasApi.js";
 import { checkPolygon, pointsToGeometry } from "../../lib/atlas/coords.js";
 import { STATUS_GROUPS, UNITS } from "../../lib/field/method.js";
@@ -138,8 +151,10 @@ function StatusRow({ icon, title, badge, meta, action }) {
   );
 }
 
-// A bin button that asks first: Remove / Keep.
+// A bin button that asks first: Remove / Keep. In the demo it looks turned
+// off and opens the "This is the demo" dialog instead of asking.
 function RemoveButton({ label, onRemove, onError, disabled }) {
+  const { lock } = useDemoGuard();
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const binRef = useRef(null);
@@ -190,17 +205,18 @@ function RemoveButton({ label, onRemove, onError, disabled }) {
       icon={<Trash2 size={15} />}
       aria-label={label}
       disabled={disabled}
-      onClick={() => {
+      {...lock(() => {
         onError?.(null);
         setConfirming(true);
-      }}
+      })}
     />
   );
 }
 
 // A name that renames when clicked. Enter or leaving the box saves, Escape
-// cancels. onSave(name) saves it (throw to show an error).
-function InlineName({ value, label, className = "", maxLength = 60, onSave, onError }) {
+// cancels. onSave(name) saves it (throw to show an error). disabled (the
+// demo): just the name.
+function InlineName({ value, label, className = "", maxLength = 60, onSave, onError, disabled = false }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(value);
   const [busy, setBusy] = useState(false);
@@ -246,6 +262,13 @@ function InlineName({ value, label, className = "", maxLength = 60, onSave, onEr
     }
   };
 
+  if (disabled) {
+    return (
+      <span className={`fset-name is-static ${className}`}>
+        <span className="fset-name-text">{value}</span>
+      </span>
+    );
+  }
   if (editing) {
     return (
       <input
@@ -307,6 +330,9 @@ function statusMark(analysis, analysing) {
 
 function FieldRow({ field, analysis, analysing, units, selected, onSelect, busy }) {
   const { actions } = useFieldData();
+  // The demo: the crop list looks turned off and trying it opens the
+  // "This is the demo" dialog (the choice snaps back).
+  const { readOnly, guard, lockList } = useDemoGuard();
   const [error, setError] = useState(null);
   const [savingCrop, setSavingCrop] = useState(false);
   const look = analysis ? mapLook(analysis) : null;
@@ -317,7 +343,7 @@ function FieldRow({ field, analysis, analysing, units, selected, onSelect, busy 
   const own = cropInfo(field, analysis).source === "user" ? field.crop : "";
   const crops = own && !CROPS.includes(own) ? [own, ...CROPS] : CROPS;
 
-  const setCrop = async (crop) => {
+  const setCrop = guard(async (crop) => {
     setSavingCrop(true);
     setError(null);
     try {
@@ -327,7 +353,7 @@ function FieldRow({ field, analysis, analysing, units, selected, onSelect, busy 
     } finally {
       setSavingCrop(false);
     }
-  };
+  });
 
   return (
     <li
@@ -354,6 +380,7 @@ function FieldRow({ field, analysis, analysing, units, selected, onSelect, busy 
           className="fset-field-name"
           onError={setError}
           onSave={(name) => actions.updateField(field.id, { name })}
+          disabled={readOnly}
         />
         {mark.badge && <Badge tone={mark.badge.tone}>{mark.badge.label}</Badge>}
       </span>
@@ -363,6 +390,7 @@ function FieldRow({ field, analysis, analysing, units, selected, onSelect, busy 
         value={own || ""}
         disabled={savingCrop || busy}
         onChange={(event) => setCrop(event.target.value)}
+        {...lockList()}
       >
         <option value="">{detectedChoice(analysis, { analysing })}</option>
         {crops.map((crop) => (
@@ -386,6 +414,7 @@ function FieldRow({ field, analysis, analysing, units, selected, onSelect, busy 
 
 function FarmCard({ onChangeFarm }) {
   const { farm, analyses, job, provider, analysing: newIds, actions } = useFieldData();
+  const { readOnly, lock } = useDemoGuard();
   const [mode, setMode] = useState("view"); // view | draw | find
   const [selectedId, setSelectedId] = useState(null);
   const [nameError, setNameError] = useState(null);
@@ -585,6 +614,7 @@ function FarmCard({ onChangeFarm }) {
             maxLength={80}
             onError={setNameError}
             onSave={(name) => actions.updateFarm({ name })}
+            disabled={readOnly}
           />
           {farm.location?.label && (
             <span className="fset-farm-place">
@@ -593,7 +623,7 @@ function FarmCard({ onChangeFarm }) {
             </span>
           )}
         </div>
-        <Button variant="primary" onClick={onChangeFarm} disabled={Boolean(busy)} className="fset-change">
+        <Button variant="primary" {...lock(onChangeFarm)} disabled={Boolean(busy)} className="fset-change">
           Change farm
         </Button>
       </div>
@@ -710,10 +740,10 @@ function FarmCard({ onChangeFarm }) {
 
       {mode === "view" && (
         <div className="fset-farm-actions">
-          <Button icon={<Plus size={15} />} onClick={startDraw} disabled={Boolean(busy)}>
+          <Button icon={<Plus size={15} />} {...lock(startDraw)} disabled={Boolean(busy)}>
             Add a field
           </Button>
-          <Button icon={<ScanSearch size={15} />} onClick={findAgain} disabled={!canFind || Boolean(busy) || analysing}>
+          <Button icon={<ScanSearch size={15} />} {...lock(findAgain)} disabled={!canFind || Boolean(busy) || analysing}>
             Find fields again
           </Button>
           {notice && (
@@ -746,10 +776,13 @@ function FarmCard({ onChangeFarm }) {
 
 function UnitsCard() {
   const { farm, actions } = useFieldData();
+  const { readOnly, ask } = useDemoGuard();
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const change = async (units) => {
     if (units === farm.units || busy) return;
+    // The demo: the dialog instead (the unit shown stays).
+    if (readOnly) return ask();
     setBusy(true);
     setError(null);
     try {
@@ -764,7 +797,7 @@ function UnitsCard() {
     <Card
       className="fset-card fset-units"
       title="Units"
-      actions={<Segmented light options={UNIT_OPTIONS} value={farm.units || "ha"} onChange={change} ariaLabel="Area units" />}
+      actions={<Segmented light options={UNIT_OPTIONS} value={farm.units || "ha"} onChange={change} ariaLabel="Area units" locked={readOnly} />}
     >
       {error && (
         <p className="fset-error" role="alert">
@@ -836,6 +869,7 @@ function ago(iso) {
 
 function DataCard() {
   const { farm, analyses, provider, job, actions } = useFieldData();
+  const { readOnly, guard, lock } = useDemoGuard();
   const [starting, setStarting] = useState(false);
   const [result, setResult] = useState(null); // { ok, text }
   const [toggleError, setToggleError] = useState(null);
@@ -920,7 +954,7 @@ function DataCard() {
           <Button
             variant={needsRealData ? "primary" : "secondary"}
             icon={<RefreshCw size={14} className={running ? "fd-spin" : undefined} />}
-            onClick={update}
+            {...lock(update)}
             disabled={starting || running}
             className="fset-update"
           >
@@ -937,7 +971,7 @@ function DataCard() {
       </div>
 
       <div className="fset-block fset-auto">
-        <Toggle title="Update automatically" checked={farm.autoUpdate !== false} onChange={setAuto} />
+        <Toggle title="Update automatically" checked={farm.autoUpdate !== false} onChange={guard(setAuto)} locked={readOnly} />
         {toggleError && <p className="fset-error">{toggleError}</p>}
       </div>
     </Card>
@@ -947,10 +981,12 @@ function DataCard() {
 // ---------- AI ----------
 
 // Asks the server for the AI status and to test the Claude key (one cheap
-// call, no tokens). A server that cannot test keys leaves "ok" out.
-async function checkAi() {
+// call, no tokens). A server that cannot test keys leaves "ok" out. The
+// demo's visitors only read the status (testing the setup is the owner's).
+async function checkAi({ test = true } = {}) {
+  if (!test) return (await getStatus())?.ai || null;
   try {
-    const response = await fetch(`${API_ROOT}/status?check=1`, { cache: "no-store", credentials: "same-origin" });
+    const response = await fetch(`${API_ROOT}/status?check=1`, { cache: "no-store", credentials: "same-origin", headers: demoHeaders() });
     if (response.ok) return (await response.json())?.ai || null;
   } catch {
     // Fall back to the plain status below.
@@ -971,12 +1007,13 @@ function claudeState(ai) {
 }
 
 function AiCard() {
+  const { readOnly } = useAccess();
   const [ai, setAi] = useState(undefined); // undefined while loading, null when the server could not say
   const [error, setError] = useState(null);
 
   useEffect(() => {
     let stopped = false;
-    checkAi()
+    checkAi({ test: !readOnly })
       .then((status) => !stopped && setAi(status))
       .catch((err) => {
         if (stopped) return;
@@ -986,7 +1023,7 @@ function AiCard() {
     return () => {
       stopped = true;
     };
-  }, []);
+  }, [readOnly]);
 
   const state = claudeState(ai);
   const rejected = ai?.ok === false;
@@ -1053,6 +1090,8 @@ export default function SettingsPage() {
   return (
     <div className="page fset">
       <PageHeader title="Settings" />
+      {/* The demo: "This is the demo. Register to set up your own." */}
+      <DemoSettingsNote />
       {/* Only for a registered account; nothing for the demo. */}
       <AccountCard />
       <FarmCard onChangeFarm={() => setChanging(true)} />
