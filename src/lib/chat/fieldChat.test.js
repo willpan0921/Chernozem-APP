@@ -3,7 +3,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { starterFields, latestPass, sourceRow, weatherLine, reportRow, reportLine, reportFirstQuestion, reportMessage } from "./fieldChat.js";
+import { starterFields, latestPass, sourceRow, weatherLine, reportRow, reportLine, reportFirstQuestion, reportMessage, localDay, reportChatStep } from "./fieldChat.js";
 import { fieldSuggestions, REPORT_KINDS, reportKind } from "../../data/chats.js";
 
 const farm = {
@@ -72,7 +72,7 @@ test("a report becomes one line and a first question", () => {
 });
 
 test("the report becomes the chat's first message: what was chosen, written and photographed", () => {
-  const report = { id: "rep-1", fieldId: "d", kind: "shelling", text: "  Craters in the north corner after last night.  ", photos: ["p1", "p2"], createdAt: "2026-10-24T00:18:25.818Z" };
+  const report = { id: "rep-1", fieldId: "d", kind: "shelling", text: "  Craters in the north corner after last night.  ", photos: ["p1", "p2"], createdAt: "2026-10-24T12:18:25.818Z" }; // midday UTC: 24 October wherever the test runs (the day shown is the farmer's own: see the Kyiv test below)
   const url = (id) => `/api/farm/uploads/${id}`;
   assert.deepEqual(reportMessage(report, farm, url), {
     kind: "Shelling",
@@ -103,4 +103,45 @@ test("one list of report kinds, with unknown kinds counted as other", () => {
   assert.equal(reportKind("hail").label, "Hail");
   assert.equal(reportKind("meteor").id, "other");
   assert.equal(reportKind(undefined).phrase, "a problem");
+});
+
+test("a report's day is the farmer's own day, not the UTC one", () => {
+  const before = process.env.TZ;
+  try {
+    // 23:30 UTC on 1 November is 01:30 on 2 November in Kyiv.
+    process.env.TZ = "Europe/Kyiv";
+    assert.equal(localDay("2026-11-01T23:30:00.000Z"), "2026-11-02");
+    assert.equal(reportMessage({ id: "r", kind: "shelling", photos: [], createdAt: "2026-11-01T23:30:00.000Z" }, { fields: [] }).when, "Nov 2");
+    // Midday is the same day everywhere near Ukraine.
+    assert.equal(localDay("2026-11-01T12:00:00.000Z"), "2026-11-01");
+    process.env.TZ = "America/Chicago";
+    assert.equal(localDay("2026-11-01T03:00:00.000Z"), "2026-10-31");
+  } finally {
+    if (before === undefined) delete process.env.TZ;
+    else process.env.TZ = before;
+  }
+  assert.equal(localDay("not a date"), null);
+  assert.equal(localDay(""), null);
+  assert.equal(localDay(undefined), null);
+});
+
+test("a report stays only with the chat its own question created", () => {
+  // Arriving from "Tell us what happened": a new chat, the question goes by itself.
+  assert.equal(reportChatStep({ reportId: "rep-1", chatId: null }), "keep");
+  // That question created chat-9: the report stays with it.
+  assert.equal(reportChatStep({ reportId: "rep-1", chatId: "chat-9", created: "chat-9" }), "adopt");
+  assert.equal(reportChatStep({ reportId: "rep-1", chatId: "chat-9", adopted: "chat-9", created: "chat-9" }), "keep");
+  // The assistant could not answer (no key, its limit, an error), so no chat
+  // was created, and the farmer opens a saved chat: the report must not
+  // join it (it would show at its top and go to the assistant with it).
+  assert.equal(reportChatStep({ reportId: "rep-1", chatId: "chat-old" }), "drop");
+  // After the report's own chat: another chat, or a new one, lets it go.
+  assert.equal(reportChatStep({ reportId: "rep-1", chatId: "chat-old", adopted: "chat-9", created: "chat-9" }), "drop");
+  assert.equal(reportChatStep({ reportId: "rep-1", chatId: null, adopted: "chat-9" }), "drop");
+  // A reload of /field/ai?report=rep-1&chat=chat-9: nothing was created on
+  // this page; the address lets the report go and the saved chat shows its
+  // own report (the server keeps it with the chat).
+  assert.equal(reportChatStep({ reportId: "rep-1", chatId: "chat-9" }), "drop");
+  // No report in the address.
+  assert.equal(reportChatStep({ reportId: null, chatId: "chat-9", adopted: "chat-9" }), "reset");
 });

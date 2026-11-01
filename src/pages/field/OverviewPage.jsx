@@ -184,7 +184,8 @@ function Overview() {
       <div className="fo-grid">
         <div className="fo-main">
           <NeedsDoing items={items} onAnalyze={guard(actions.analyze)} />
-          <TellUs farm={farm} inWar={Boolean(conflict)} onSent={(report) => navigate(`/field/ai?report=${encodeURIComponent(report.id)}`)} />
+          {/* The saved report travels with the click, so the AI page shows it at once, without reading it back. */}
+          <TellUs farm={farm} inWar={Boolean(conflict)} onSent={(report) => navigate(`/field/ai?report=${encodeURIComponent(report.id)}`, { state: { report } })} />
         </div>
 
         <section className="card fo-fields" aria-labelledby="fo-fields-title">

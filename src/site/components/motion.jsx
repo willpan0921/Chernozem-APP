@@ -9,6 +9,10 @@
 //   useReducedMotion  true when the visitor asked for reduced motion; every
 //                     part here then stands still, already in place
 //
+// Each of them passes an id on to the element it draws, so a link to that
+// block (for example /method#use, where the old /guide address goes) finds
+// it and the page scrolls there.
+//
 // Most of the home page's entrances are plain CSS instead (site.css,
 // "Entrances", with the useReveal hook in hooks.js); these components are
 // for the pages that prefer to write them in React.
@@ -23,11 +27,12 @@ export { motion, useReducedMotion };
 
 const EASE = [0.16, 1, 0.3, 1];
 
-export function Reveal({ children, delay = 0, y = 24, once = true, className, as = "div", style, amount = 0.2 }) {
+export function Reveal({ children, delay = 0, y = 24, once = true, className, as = "div", style, amount = 0.2, id }) {
   const reduced = useReducedMotion();
   const Tag = motion[as] || motion.div;
   return (
     <Tag
+      id={id}
       className={className}
       style={style}
       initial={reduced ? false : { opacity: 0, y }}
@@ -50,20 +55,20 @@ const staggerChild = {
   show: { opacity: 1, y: 0, transition: { duration: 0.7, ease: EASE } },
 };
 
-export function Stagger({ children, className, style, once = true, amount = 0.15, as = "div" }) {
+export function Stagger({ children, className, style, once = true, amount = 0.15, as = "div", id }) {
   const reduced = useReducedMotion();
   const Tag = motion[as] || motion.div;
   return (
-    <Tag className={className} style={style} variants={staggerParent} initial={reduced ? false : "hidden"} whileInView="show" viewport={{ once, amount, margin: "0px 0px -8% 0px" }}>
+    <Tag id={id} className={className} style={style} variants={staggerParent} initial={reduced ? false : "hidden"} whileInView="show" viewport={{ once, amount, margin: "0px 0px -8% 0px" }}>
       {children}
     </Tag>
   );
 }
 
-export function StaggerItem({ children, className, style, as = "div" }) {
+export function StaggerItem({ children, className, style, as = "div", id }) {
   const Tag = motion[as] || motion.div;
   return (
-    <Tag className={className} style={style} variants={staggerChild}>
+    <Tag id={id} className={className} style={style} variants={staggerChild}>
       {children}
     </Tag>
   );

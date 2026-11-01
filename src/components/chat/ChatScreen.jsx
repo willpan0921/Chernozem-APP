@@ -50,6 +50,10 @@
 // onThread     - called with each saved chat as it opens ({ id, reportId?, ... }),
 //                and with null for a new chat, so the page can show what that
 //                chat is about (e.g. the report a Field chat was started from)
+// onCreated    - called with a chat's id when a question sent here has just
+//                created it on the server (the first question of a new chat),
+//                before the address names it, so the page can tell its own
+//                new chat from a saved one picked from the list
 // about        - a short line about what the chat is about, shown at the top
 //                of the conversation on narrow screens (where "Using" is far
 //                below): { icon, text } or null
@@ -84,7 +88,7 @@ const localId = (prefix) => `${prefix}-local-${Date.now()}-${(localCount += 1)}`
 // limit reached, a change the demo may not make.
 const NO_RETRY = new Set(["ai_not_configured", "quota", "demo_read_only"]);
 
-export default function ChatScreen({ product, context, text, suggestions = [], using = [], chips = [], initialDraft = "", autoSend = "", onThread, about = null }) {
+export default function ChatScreen({ product, context, text, suggestions = [], using = [], chips = [], initialDraft = "", autoSend = "", onThread, onCreated, about = null }) {
   const [params, setParams] = useSearchParams();
   const selectedId = params.get("chat") || null;
   const access = useAccess();
@@ -132,6 +136,8 @@ export default function ChatScreen({ product, context, text, suggestions = [], u
   // The latest onThread, so a new function from the page never reopens a chat.
   const onThreadRef = useRef(onThread);
   onThreadRef.current = onThread;
+  const onCreatedRef = useRef(onCreated);
+  onCreatedRef.current = onCreated;
 
   const notConfigured = aiStatus?.configured === false;
   const busy = Boolean(pending);
@@ -289,6 +295,7 @@ export default function ChatScreen({ product, context, text, suggestions = [], u
           setThreads((list) => upsertThread(list, { id: threadId, title: title || titleFrom(textToSend), updatedAt: new Date().toISOString() }));
           if (threadId !== startedIn) {
             createdRef.current = threadId;
+            onCreatedRef.current?.(threadId);
             setChat(threadId);
           }
         },

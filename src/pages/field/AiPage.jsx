@@ -22,7 +22,14 @@
 //     or over its limit (a plain sentence then), or the sending failed.
 //     Reopening that chat later (from the Chats list, or a ?chat= link)
 //     shows the report again: the server remembers it with the chat
-//     (thread.reportId).
+//     (thread.reportId). The report arrives with the click from the
+//     Overview (the page's "state"), so it is on screen at once; opened
+//     from a link or a reload, it is read from the server, and a read that
+//     fails is tried again (never dropped: the farmer's words must not
+//     vanish). It stays only with the chat its own question created: if
+//     the assistant could not answer (so no chat was made) and the farmer
+//     opens a saved chat, the report leaves the address instead of joining
+//     that chat (fieldChat.js reportChatStep).
 //   - /field/ai?about=<fieldId> (from "Ask AI about <field>" on the Fields
 //     page) puts "Tell me about <field>" in the message box.
 //   - No AI key yet: the shared "Connect Claude" card.
@@ -36,18 +43,19 @@
 // made from the farm is in src/lib/chat/fieldChat.js.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import "./AiPage.css";
 import ChatScreen from "../../components/chat/ChatScreen.jsx";
 import { FarmGate, useFieldData } from "../../state/FieldData.jsx";
 import { listReports, photoUrl } from "../../api/fieldApi.js";
 import { farmLine } from "../../lib/field/format.js";
-import { reportFirstQuestion, reportLine, reportMessage, reportRow, sourceRow, starterFields, weatherLine } from "../../lib/chat/fieldChat.js";
+import { reportChatStep, reportFirstQuestion, reportLine, reportMessage, reportRow, sourceRow, starterFields, weatherLine } from "../../lib/chat/fieldChat.js";
 import { composer, fieldSuggestions } from "../../data/chats.js";
 
 function FieldAi() {
   const { farm, analyses, provider, weather, conflict } = useFieldData();
   const [params, setParams] = useSearchParams();
+  const location = useLocation();
   const reportId = params.get("report");
   const aboutId = params.get("about");
   const chatId = params.get("chat");
@@ -65,6 +73,28 @@ function FieldAi() {
     [setParams]
   );
 
+  // The report stays with the chat its own question created (the chat
+  // screen says which: onCreated). Opening any other chat, or a new one,
+  // lets it go (fieldChat.js reportChatStep). That is decided while the
+  // page draws, so the report never shows, not even for a moment, over a
+  // chat it does not belong to; the address is tidied just after.
+  const reportChatRef = useRef(null);
+  const createdRef = useRef(null); // { reportId, chatId }: the chat a question sent here created
+  const reportIdRef = useRef(reportId);
+  reportIdRef.current = reportId;
+  const handleCreated = useCallback((id) => {
+    if (reportIdRef.current) createdRef.current = { reportId: reportIdRef.current, chatId: id };
+  }, []);
+  const createdChat = createdRef.current?.reportId === reportId ? createdRef.current.chatId : null;
+  const liveReportId = reportChatStep({ reportId, chatId, adopted: reportChatRef.current, created: createdChat }) === "drop" ? null : reportId;
+  useEffect(() => {
+    const created = createdRef.current?.reportId === reportId ? createdRef.current.chatId : null;
+    const step = reportChatStep({ reportId, chatId, adopted: reportChatRef.current, created });
+    if (step === "reset") reportChatRef.current = null;
+    else if (step === "adopt") reportChatRef.current = chatId;
+    else if (step === "drop") dropParam("report");
+  }, [reportId, chatId, dropParam]);
+
   // The report a saved chat was started from (the server keeps it with the
   // chat), so a chat reopened from the list still shows its report.
   const [threadReport, setThreadReport] = useState(null);
@@ -73,53 +103,60 @@ function FieldAi() {
   }, []);
   const savedReportId = chatId && threadReport?.chatId === chatId ? threadReport.reportId : null;
   // ?report= wins (a chat being started about it); else the open chat's own.
-  const shownReportId = reportId || savedReportId;
+  const shownReportId = liveReportId || savedReportId;
 
-  // The report itself. An unknown ?report= id is dropped from the address.
+  // The report itself: the one handed over by the Overview's Send (at
+  // once), else read from the server. An id the server does not know is
+  // dropped from the address. A read that fails (a dropped connection, a
+  // server hiccup) is tried again after 1.5, 3 and 4.5 seconds, then every
+  // 15 seconds while the page is open; meanwhile "Using" says the report is
+  // loading, and the address keeps it all along.
+  const handed = location.state?.report;
   const [report, setReport] = useState(null);
+  const [reading, setReading] = useState({ id: null, status: "" }); // status: "loading" | "retrying" | ""
   useEffect(() => {
     if (!shownReportId) {
       setReport(null);
       return undefined;
     }
+    if (handed && handed.id === shownReportId) {
+      setReport(handed);
+      return undefined;
+    }
     let gone = false;
-    const fromAddress = shownReportId === reportId;
-    listReports()
-      .then((list) => {
-        if (gone) return;
-        const found = list.find((item) => item.id === shownReportId);
-        if (found) setReport(found);
-        else if (fromAddress) dropParam("report");
-      })
-      .catch(() => !gone && fromAddress && dropParam("report"));
+    let timer = 0;
+    let tries = 0;
+    const fromAddress = shownReportId === liveReportId;
+    setReading({ id: shownReportId, status: "loading" });
+    const read = () =>
+      listReports()
+        .then((list) => {
+          if (gone) return;
+          const found = list.find((item) => item.id === shownReportId);
+          setReading({ id: shownReportId, status: "" });
+          if (found) setReport(found);
+          else if (fromAddress) dropParam("report");
+        })
+        .catch(() => {
+          if (gone) return;
+          tries += 1;
+          if (tries > 3) setReading({ id: shownReportId, status: "retrying" });
+          timer = window.setTimeout(read, tries <= 3 ? 1500 * tries : 15000);
+        });
+    read();
     return () => {
       gone = true;
+      window.clearTimeout(timer);
     };
-  }, [shownReportId, reportId, dropParam]);
+  }, [shownReportId, liveReportId, dropParam, handed]);
   const activeReport = report && report.id === shownReportId ? report : null;
-
-  // The report stays with the chat it started. Opening another chat, or a
-  // new one, lets it go.
-  const reportChatRef = useRef(null);
-  useEffect(() => {
-    if (!reportId) {
-      reportChatRef.current = null;
-      return;
-    }
-    if (!chatId) {
-      if (reportChatRef.current) dropParam("report");
-      return;
-    }
-    if (!reportChatRef.current) reportChatRef.current = chatId;
-    else if (chatId !== reportChatRef.current) dropParam("report");
-  }, [reportId, chatId, dropParam]);
 
   // The field from "Ask AI about <field>" (?about=).
   const aboutField = farm.fields.find((field) => field.id === aboutId) || null;
 
   // Only a chat being started about a report sends it; a saved chat already
   // has its report on the server.
-  const context = useMemo(() => (activeReport && reportId ? { reportId: activeReport.id } : {}), [activeReport, reportId]);
+  const context = useMemo(() => (activeReport && liveReportId ? { reportId: activeReport.id } : {}), [activeReport, liveReportId]);
 
   const weatherText = weatherLine(weather);
   const source = sourceRow(provider, analyses);
@@ -129,7 +166,11 @@ function FieldAi() {
     { key: "source", icon: "satellite", label: source.label, value: source.value, to: "/field/data" },
     ...(weatherText ? [{ key: "weather", icon: "cloud", label: "Weather", value: weatherText }] : []),
     // No x on the report: the chat about it starts by itself (autoSend).
-    ...(activeReport ? [{ key: "report", icon: "camera", label: reportInfo.label, value: reportInfo.value }] : []),
+    ...(activeReport
+      ? [{ key: "report", icon: "camera", label: reportInfo.label, value: reportInfo.value }]
+      : shownReportId && reading.id === shownReportId && reading.status
+        ? [{ key: "report", icon: "camera", label: "Your report", value: reading.status === "retrying" ? "Not loaded yet, trying again" : "Loading…" }]
+        : []),
     ...(aboutField ? [{ key: "field", icon: "sprout", label: "Field", value: aboutField.name, onClear: () => dropParam("about") }] : []),
   ];
 
@@ -154,8 +195,9 @@ function FieldAi() {
         suggestions={suggestions}
         using={using}
         initialDraft={aboutField ? `Tell me about ${aboutField.name}` : ""}
-        autoSend={activeReport && reportId && !chatId ? reportFirstQuestion(activeReport, farm) : ""}
+        autoSend={activeReport && liveReportId && !chatId ? reportFirstQuestion(activeReport, farm) : ""}
         onThread={handleThread}
+        onCreated={handleCreated}
         about={activeReport ? { icon: "camera", text: reportLine(activeReport, farm), report: reportMessage(activeReport, farm, photoUrl) } : null}
       />
     </div>

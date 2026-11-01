@@ -494,10 +494,19 @@ function reportFieldName(report, fields) {
   return typeof report.removedFieldName === "string" && report.removedFieldName ? `${report.removedFieldName} (removed)` : null;
 }
 
+// When a report was made, for the assistant: the day and the time in UTC
+// ("2026-11-01 23:30 UTC"), so it can work out the farmer's own day (a
+// report sent at 01:30 in Kyiv is still 1 November in UTC; the page shows
+// the farmer's day, src/lib/chat/fieldChat.js localDay).
+export function reportWhen(createdAt) {
+  const iso = String(createdAt || "");
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(iso) ? `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC` : iso.slice(0, 10);
+}
+
 function reportLine(report, fields) {
   const photos = Array.isArray(report.photos) ? report.photos.length : 0;
   const text = String(report.text || "").replace(/\s+/g, " ").trim().slice(0, 300);
-  return `- ${String(report.createdAt || "").slice(0, 10)}, ${reportFieldName(report, fields) || "no field chosen"}, ${report.kind || "other"}: "${text}"${photos ? ` (${photos} photo${photos > 1 ? "s" : ""})` : ""}`;
+  return `- ${reportWhen(report.createdAt)}, ${reportFieldName(report, fields) || "no field chosen"}, ${report.kind || "other"}: "${text}"${photos ? ` (${photos} photo${photos > 1 ? "s" : ""})` : ""}`;
 }
 
 // The known war covering the farm: from its analyses, else from its place.

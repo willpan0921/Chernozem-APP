@@ -94,6 +94,11 @@ test("codeFor() names the website's frame and page, or the app's page, for every
   assert.deepEqual(codeFor("/atlas/x/y"), [APP_PAGES["/atlas"]]);
   assert.deepEqual(codeFor(""), codeFor("/"));
   assert.equal(codeFor("/fieldwork")[0], codeFor("/")[0], "an address that only starts like /field is a website address");
+  // Capitals do not matter, as for the router: /Story is the Story page.
+  assert.equal(codeFor("/Story")[1], SITE_PAGES["/story"]);
+  assert.equal(codeFor("/DEMO/")[1], SITE_PAGES["/demo"]);
+  assert.deepEqual(codeFor("/Field/Fields"), [APP_PAGES["/field/fields"]]);
+  assert.deepEqual(codeFor("/ATLAS"), [APP_PAGES["/atlas"]]);
 });
 
 test("the page list agrees with the routes in src/App.jsx", () => {

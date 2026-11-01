@@ -370,6 +370,17 @@ test("the Methodology page is two parts, Field and Atlas, each with its film, an
   for (const id of ["scores", "gate", "demo", "product", "use", "checks", "technology", "design"]) {
     assert.ok(source.includes(`id="${id}"`), `MethodPage keeps #${id}`);
   }
+  // An id written on <Reveal>, <Stagger> or <StaggerItem> reaches the page
+  // only if the component passes it on (motion.jsx); otherwise /guide lands
+  // at the top of the page instead of on "How to use it".
+  const motionSource = readFileSync(join(here, "..", "components", "motion.jsx"), "utf8");
+  for (const name of ["Reveal", "Stagger", "StaggerItem"]) {
+    const fn = motionSource.slice(motionSource.indexOf(`export function ${name}(`));
+    const head = fn.slice(0, fn.indexOf(")"));
+    const body = fn.slice(0, fn.indexOf("\n}\n"));
+    assert.match(head, /\bid\b/, `${name} takes an id`);
+    assert.match(body, /<Tag\s+id=\{id\}/, `${name} puts the id on its element`);
+  }
   // One walkthrough film per product, right after its two sentences.
   assert.match(source, /import Walkthrough from "\.\.\/components\/Walkthrough\.jsx"/);
   const field = between(source, 'id="product"', 'id="atlas"');

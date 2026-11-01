@@ -17,6 +17,7 @@ import {
   historyWithNormal,
   seasonText,
   FIELD_TOOLS,
+  reportWhen,
 } from "./field-context.js";
 
 // The first bytes of each image type, padded to a plausible file.
@@ -146,7 +147,7 @@ test("the context text lists every field with status and readings, and says SAMP
   // Reports newest first.
   assert.ok(text.indexOf("Craters near the road") < text.indexOf("Hail on the east side"));
   assert.match(text, /shelling: "Craters near the road" \(1 photo\)/);
-  assert.match(text, /2026-08-01, Field 9 \(removed\), pests: "Aphids"/);
+  assert.match(text, /2026-08-01 08:00 UTC, Field 9 \(removed\), pests: "Aphids"/);
   assert.deepEqual(ctx.images, []);
 
   // Tool definitions are strict.
@@ -279,7 +280,7 @@ test("a report's photos come back as images: real types only, at most 4", async 
   const ctx = await buildFieldContext({ store, reportId: "rep-x", getWeather: async () => null, today: "2026-10-18" });
   assert.deepEqual(ctx.images.map((i) => i.media_type), ["image/jpeg", "image/png", "image/webp", "image/jpeg"]);
   assert.equal(ctx.images[0].data, JPEG.toString("base64"));
-  assert.match(ctx.text, /This chat is about the farmer's report: 2026-10-17, Field 1, shelling: "Two craters" \(7 photos\)/);
+  assert.match(ctx.text, /This chat is about the farmer's report: 2026-10-17 09:00 UTC, Field 1, shelling: "Two craters" \(7 photos\)/);
   assert.match(ctx.text, /Its 4 photos are attached above as images/);
   assert.match(ctx.text, /3 photos could not be shown/);
 
@@ -398,4 +399,12 @@ test("the AI is told how a harvested field's season went, not a condition for th
   assert.match(line, /not the crop now/);
   assert.match(seasonText({ label: "Fair", peak: 0.66, normalPeak: 0.8, soFar: true }), /^This season so far: Fair/);
   assert.equal(seasonText(null), null);
+});
+
+test("a report's time is given to the assistant in UTC, so it can find the farmer's own day", () => {
+  // 01:30 on 2 November in Kyiv is 23:30 on 1 November in UTC.
+  assert.equal(reportWhen("2026-11-01T23:30:00.000Z"), "2026-11-01 23:30 UTC");
+  assert.equal(reportWhen("2026-10-17T09:00:00Z"), "2026-10-17 09:00 UTC");
+  assert.equal(reportWhen("2026-10-17"), "2026-10-17");
+  assert.equal(reportWhen(undefined), "");
 });

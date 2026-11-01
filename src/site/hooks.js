@@ -36,24 +36,53 @@ export function usePageTitle(sub) {
   }, [sub]);
 }
 
+// How long a part the address points at (/method#use) is held in place.
+export const HOLD_PART_MS = 1500;
+
 export function useScrollTop() {
   const { pathname, hash } = useLocation();
   useEffect(() => {
     if (hash) {
       // The part may not exist yet (the page's code is still arriving): keep
-      // looking for up to two seconds, then give up quietly.
+      // looking for up to two seconds, then give up quietly. Once there, the
+      // part is held in place for a second and a half: something that
+      // arrives above it after the jump (a film's chapter list, a picture)
+      // would otherwise push it down the screen, as happened to /guide on
+      // phones. The visitor scrolling, touching or pressing a key lets go
+      // at once.
       let tries = 0;
       let timer = 0;
+      let held = false;
+      const letGo = () => {
+        held = false;
+      };
+      const HANDS = ["wheel", "touchstart", "pointerdown", "keydown"];
       const look = () => {
         const target = document.getElementById(hash.slice(1));
-        if (target) {
-          target.scrollIntoView({ block: "start" });
+        if (!target) {
+          if (tries++ < 40) timer = window.setTimeout(look, 50);
           return;
         }
-        if (tries++ < 40) timer = window.setTimeout(look, 50);
+        target.scrollIntoView({ block: "start" });
+        held = true;
+        HANDS.forEach((name) => window.addEventListener(name, letGo, { passive: true, once: true }));
+        const until = performance.now() + HOLD_PART_MS;
+        let top = target.getBoundingClientRect().top;
+        const hold = () => {
+          if (!held || performance.now() > until || !target.isConnected) return;
+          if (Math.abs(target.getBoundingClientRect().top - top) > 4) {
+            target.scrollIntoView({ block: "start" });
+            top = target.getBoundingClientRect().top;
+          }
+          timer = window.setTimeout(hold, 100);
+        };
+        timer = window.setTimeout(hold, 100);
       };
       look();
-      return () => window.clearTimeout(timer);
+      return () => {
+        window.clearTimeout(timer);
+        HANDS.forEach((name) => window.removeEventListener(name, letGo));
+      };
     }
     window.scrollTo({ top: 0, left: 0, behavior: "instant" });
     return undefined;

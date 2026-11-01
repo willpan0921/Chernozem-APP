@@ -84,9 +84,10 @@ export const APP_PAGES = {
 // The pages an address needs, in the order they are drawn: the website's
 // frame and its page, or the app's page (any other Field or Atlas address
 // lands on that product's overview; an unknown website address on the
-// "page not found" page).
+// "page not found" page). Capitals do not matter, as for the router
+// (/Story is the Story page).
 export function codeFor(pathname) {
-  const path = String(pathname || "/").replace(/[?#].*$/, "").replace(/\/+$/, "") || "/";
+  const path = String(pathname || "/").replace(/[?#].*$/, "").replace(/\/+$/, "").toLowerCase() || "/";
   if (path === "/field" || path.startsWith("/field/")) return [APP_PAGES[path] || FieldOverviewPage];
   if (path === "/atlas" || path.startsWith("/atlas/")) return [APP_PAGES[path] || AtlasOverviewPage];
   const target = OLD_ADDRESSES[path] || path;

@@ -8,11 +8,11 @@
   "chapters": [
    {
     "label": "The farm",
-    "t": 3.3
+    "t": 5.3
    },
    {
     "label": "Weather",
-    "t": 16.6
+    "t": 18.6
    },
    {
     "label": "Fields",
@@ -28,7 +28,7 @@
    },
    {
     "label": "The assistant",
-    "t": 84.1
+    "t": 86.1
    },
    {
     "label": "Settings",
@@ -36,7 +36,7 @@
    },
    {
     "label": "Change farm",
-    "t": 137.2
+    "t": 139.2
    }
   ]
  },
@@ -49,7 +49,7 @@
   "chapters": [
    {
     "label": "The overview",
-    "t": 3.3
+    "t": 5.3
    },
    {
     "label": "The map",
@@ -57,15 +57,15 @@
    },
    {
     "label": "Weights and the cutoff",
-    "t": 61.4
+    "t": 64.2
    },
    {
     "label": "A place's details",
-    "t": 74.1
+    "t": 76.9
    },
    {
     "label": "Data",
-    "t": 79.9
+    "t": 81.9
    },
    {
     "label": "The report",
@@ -81,7 +81,7 @@
    },
    {
     "label": "Team and crisis",
-    "t": 152.5
+    "t": 157.3
    }
   ]
  }

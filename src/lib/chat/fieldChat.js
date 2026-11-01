@@ -86,14 +86,51 @@ export function reportFirstQuestion(report, farm) {
   });
 }
 
+// What the Field AI page does with a report in its address (?report=)
+// when the open chat changes (src/pages/field/AiPage.jsx):
+//   reportId  the report in the address, or null
+//   chatId    the chat open now (?chat=), or null for a new chat
+//   adopted   the chat the report already belongs to on this page, or null
+//   created   the chat that a question sent on this page created while
+//             this report was in the address (the report's own chat), or null
+// The answer:
+//   "reset"  no report in the address: forget the adopted chat
+//   "keep"   nothing to do (the report's new chat, or its own chat, is open)
+//   "adopt"  the report's own question has just created this chat: the
+//            report stays with it
+//   "drop"   any other chat is open (one picked from the list, a link, a
+//            new chat after the report's own): the report leaves the
+//            address, so it never shows in, or is sent with, a chat that is
+//            not about it. (A saved chat about a report still shows its own
+//            report: the server keeps it with the chat.)
+export function reportChatStep({ reportId, chatId, adopted = null, created = null }) {
+  if (!reportId) return "reset";
+  if (!chatId) return adopted ? "drop" : "keep";
+  if (chatId === adopted) return "keep";
+  if (!adopted && chatId === created) return "adopt";
+  return "drop";
+}
+
+// The day a moment fell on where the visitor is ("2026-11-02" for a
+// report sent at 01:30 in Kyiv, although it is still 1 November in UTC),
+// or null for a time that cannot be read.
+export function localDay(iso) {
+  const at = new Date(iso);
+  if (typeof iso !== "string" || !iso || Number.isNaN(at.getTime())) return null;
+  const two = (n) => String(n).padStart(2, "0");
+  return `${at.getFullYear()}-${two(at.getMonth() + 1)}-${two(at.getDate())}`;
+}
+
 // The report as the chat's first message. photoUrl(photoId) gives the
 // address of a photo (src/api/fieldApi.js photoUrl); without it the photos
-// are listed with no address.
+// are listed with no address. Its date is the farmer's own day (a report
+// of night shelling sent after midnight shows the new day).
 export function reportMessage(report, farm, photoUrl) {
   if (!report) return null;
   const ids = Array.isArray(report.photos) ? report.photos.filter((id) => typeof id === "string" && id) : [];
   const text = typeof report.text === "string" ? report.text.trim() : "";
-  const when = typeof report.createdAt === "string" && report.createdAt ? formatDay(report.createdAt.slice(0, 10)) : null;
+  const day = localDay(report.createdAt);
+  const when = day ? formatDay(day) : null;
   return {
     kind: reportKind(report.kind).label,
     where: fieldName(report, farm) || "Whole farm",
