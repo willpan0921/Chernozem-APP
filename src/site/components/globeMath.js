@@ -13,6 +13,9 @@
 //                           figure with its year (none from before a war)
 //   tourStops(events)       the order the tour visits the events in
 //   flightMs(degrees)       how long the camera takes to fly that far
+//   zoomRoom(from, factor, limits)  whether a scroll over the Earth can
+//                           still zoom it, or the camera is already fully
+//                           out (or in) that way, so the page scrolls
 //   captionFor(event, ...)  the words on the small tile beside the marker
 //   alertWhen(event, now)   when a disaster alert ran: "since 26 October
 //                           2026", or once it is over "from 14 to 25
@@ -434,6 +437,34 @@ export function ringPeriod(id) {
   let h = 0;
   for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   return 2600 + (h % 401);
+}
+
+// ---------- The wheel ----------
+
+// Whether one scroll of the wheel (or of two fingers on a trackpad) over
+// the Earth has room to zoom the camera:
+//   from    the camera's altitude, or the one it is already easing towards
+//   factor  what the scroll multiplies it by (src/lib/wheelZoom.js
+//           globeZoomFactor): below 1 zooms in, above 1 zooms out, and
+//           exactly 1 for a scroll with no up or down in it
+//   limits  { near, far } (wheelZoom.js globeZoomLimits); far is the
+//           layout's own height, the Earth filling the first screen
+// The answer is "zoom" when the camera can still go that way; "fully-out"
+// when the visitor scrolls down (zooms out) with the camera already as far
+// out as it goes; "fully-in" when they scroll up (zoom in) with it already
+// as close as it goes; and "none" for a sideways swipe. Fully out or fully
+// in, the scroll would change nothing on the screen, so WorldGlobe lets the
+// page have it: a visitor scrolling down past a fully zoomed-out Earth
+// reaches the rest of the page, however long they have been scrolling.
+// A camera within a thousandth of a limit counts as there: the 3D works its
+// height out from the camera's position, which can come back a hair off
+// the number it was given.
+export const ZOOM_LIMIT_SLACK = 0.001;
+
+export function zoomRoom(from, factor, { near, far }) {
+  if (!finite(from) || !finite(factor) || factor <= 0 || factor === 1) return "none";
+  if (factor > 1) return from < far * (1 - ZOOM_LIMIT_SLACK) ? "zoom" : "fully-out";
+  return from > near * (1 + ZOOM_LIMIT_SLACK) ? "zoom" : "fully-in";
 }
 
 // ---------- Words ----------

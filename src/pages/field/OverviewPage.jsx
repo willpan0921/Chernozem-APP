@@ -17,8 +17,13 @@
 //     words on screen while it says "Sending…", then "Sent. The assistant
 //     is reading it…" for a moment, and only then opens the AI chat about
 //     it (/field/ai?report=<id>), where the report (what happened, which
-//     field, the words, the photos) is the chat's first message. If the
-//     sending fails the words stay with the reason. "Shelling" is
+//     field, the words, the photos) is the chat's first message. While it
+//     sends, the form is locked: the words can be read but not changed,
+//     and the kinds, the field menu and the photos' x are turned off, so
+//     nothing on screen differs from what is sent. If the sending fails
+//     the words stay with the reason and the form unlocks. A farmer who
+//     leaves the page while it sends stays where they went: the report is
+//     still saved, but the chat does not open by itself. "Shelling" is
 //     offered only where a known war covers the farm (analysis.conflict),
 //   - on the right, "Your fields": a small satellite map and the list of
 //     fields, each with its square in the map's colour and pattern
@@ -422,7 +427,10 @@ function TellUs({ farm, inWar, onSent }) {
   const [text, setText] = useState("");
   const [photos, setPhotos] = useState([]); // [{ id, file, url }]
   // "" (the form), "sending" (the server has it), "sent" (saved; the chat
-  // opens in a moment). The words stay on screen throughout.
+  // opens in a moment). The words stay on screen throughout, and while
+  // "sending" is true the form is locked (see the form below): what was
+  // there when Send was pressed is what gets sent, so nothing typed,
+  // chosen or removed after that may look as if it went too.
   const [stage, setStage] = useState("");
   const sending = stage !== "";
   const [error, setError] = useState(null);
@@ -430,16 +438,22 @@ function TellUs({ farm, inWar, onSent }) {
   const photosRef = useRef(photos);
   photosRef.current = photos;
   const sentTimer = useRef(0);
+  // True while this form is on screen. A farmer can leave the page while
+  // the report is still on its way (photos on a slow farm connection take
+  // a while); when it arrives after that, nothing may happen any more:
+  // no "Sent", and above all no jump to the AI page from wherever they went.
+  const onPage = useRef(false);
 
   // Free the photo previews when the page closes, and never open the chat
   // from a page that has gone.
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    onPage.current = true;
+    return () => {
+      onPage.current = false;
       photosRef.current.forEach((photo) => URL.revokeObjectURL(photo.url));
       clearTimeout(sentTimer.current);
-    },
-    []
-  );
+    };
+  }, []);
 
   const addPhotos = (fileList) => {
     const files = Array.from(fileList || []);
@@ -474,23 +488,33 @@ function TellUs({ farm, inWar, onSent }) {
     setError(null);
     try {
       const report = await actions.report({ fieldId: fieldId || null, kind, text: text.trim(), files: photos.map((photo) => photo.file) });
+      // The farmer went to another page (or back to the website) while it
+      // was sending: the report is saved, and the tab stays where they are.
+      if (!onPage.current) return;
       // Saved: say so where the farmer is looking, then open the chat.
       setStage("sent");
       clearTimeout(sentTimer.current);
       sentTimer.current = setTimeout(() => onSent(report), SENT_PAUSE_MS);
     } catch (err) {
+      if (!onPage.current) return;
       // The words stay, with the reason, so nothing has to be typed again.
       setError(err.message || String(err));
       setStage("");
     }
   };
 
+  // While it sends (and during "Sent"), every control is locked: the words
+  // are read-only (still readable and selectable), the kinds, the field
+  // menu and each photo's x are turned off, and Add photos too (below).
+  // The look is in OverviewPage.css ("Locked while it sends"). The form is
+  // deliberately not marked aria-busy: a screen reader could then hold back
+  // "Sending…" and "Sent. The assistant is reading it…" until the chat opens.
   return (
     <section className="card fo-tell" aria-labelledby="fo-tell-title">
       <form className="fo-tell-form" onSubmit={submit} noValidate>
         <div className="fo-card-head">
           <h2 id="fo-tell-title">Tell us what happened</h2>
-          <select className="select fo-tell-field" value={fieldId} onChange={(event) => setFieldId(event.target.value)} aria-label="Which field">
+          <select className="select fo-tell-field" value={fieldId} onChange={(event) => setFieldId(event.target.value)} aria-label="Which field" disabled={sending}>
             <option value="">Whole farm</option>
             {farm.fields.map((field) => (
               <option key={field.id} value={field.id}>
@@ -507,6 +531,7 @@ function TellUs({ farm, inWar, onSent }) {
               type="button"
               className={item.id === kind ? "fo-kind is-active" : "fo-kind"}
               aria-pressed={item.id === kind}
+              disabled={sending}
               onClick={() => {
                 setKind(item.id === kind ? null : item.id);
                 setError(null);
@@ -524,6 +549,7 @@ function TellUs({ farm, inWar, onSent }) {
           value={text}
           maxLength={2000}
           onChange={(event) => setText(event.target.value)}
+          readOnly={sending}
           rows={3}
         />
 
@@ -532,7 +558,7 @@ function TellUs({ farm, inWar, onSent }) {
             {photos.map((photo) => (
               <li key={photo.id} className="fo-photo">
                 <img src={photo.url} alt={photo.file.name} />
-                <button type="button" className="fo-photo-remove" onClick={() => removePhoto(photo.id)} aria-label={`Remove ${photo.file.name}`}>
+                <button type="button" className="fo-photo-remove" onClick={() => removePhoto(photo.id)} aria-label={`Remove ${photo.file.name}`} disabled={sending}>
                   <X size={12} strokeWidth={3} />
                 </button>
               </li>

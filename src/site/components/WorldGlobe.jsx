@@ -31,8 +31,14 @@
 //     two-finger scroll keeps scrolling the page, unless the visitor has
 //     clicked, dragged or zoomed the Earth in the last 10 seconds
 //     ("engaged"): then the wheel zooms it, and the quiet line says
-//     "Scroll to zoom. Esc to let the page scroll." Leaving the hero,
-//     scrolling it away or pressing Esc disengages. The tour waits while
+//     "Scroll to zoom. Esc to let the page scroll." A scroll that cannot
+//     zoom any further is the page's: scrolling down with the Earth fully
+//     zoomed out moves the page at once and disengages (so a visitor who
+//     clicked the Earth is never held on the first screen), and scrolling
+//     up with it fully zoomed in leaves the 10 seconds running (scrolling
+//     down still zooms back out). Only a scroll that zooms counts as a
+//     zoom. Leaving the hero, scrolling it away or pressing Esc also
+//     disengages. The tour waits while
 //     the visitor is zoomed in, and goes on when they zoom back out or
 //     press Play. The camera eases towards each zoom (no easing for
 //     visitors who asked for reduced motion).
@@ -102,6 +108,7 @@ import {
   tradeSource,
   tradeYear,
   viewAlong,
+  zoomRoom,
 } from "./globeMath.js";
 import { GLOBE_ZOOM_STEP, approach, globeZoomFactor, globeZoomLimits, isZoomedIn } from "../../lib/wheelZoom.js";
 import "./globe.css";
@@ -857,7 +864,10 @@ function Globe({ params, children }) {
   // ---------- Zooming ----------
 
   // The visitor has just clicked, dragged or zoomed the Earth: for the
-  // next 10 s the wheel zooms it (and the quiet line says so).
+  // next 10 s the wheel zooms it (and the quiet line says so). A scroll
+  // that had no room to zoom never calls this (see onWheel below), so the
+  // 10 s are counted from the last click, drag or real zoom, never from a
+  // scroll that changed nothing.
   const engage = useCallback(() => {
     const e = eng.current;
     e.engagedUntil = performance.now() + ENGAGED_MS;
@@ -1334,14 +1344,33 @@ function Globe({ params, children }) {
     };
     // The wheel over the Earth: a trackpad pinch (ctrlKey) always zooms;
     // a plain scroll zooms only while engaged, else the page scrolls.
+    // A scroll with no room to zoom (globeMath.js zoomRoom) is never kept
+    // from the page and never counts as a zoom, so it can never hold the
+    // visitor on the first screen: scrolling down with the Earth already
+    // fully zoomed out scrolls the page at once and gives the wheel back to
+    // it (until the next click or drag); scrolling up with the Earth fully
+    // zoomed in, or sideways, simply goes to the page, and the 10 s since
+    // the last real zoom keep running (scrolling down still zooms back
+    // out). Only a scroll that zooms keeps the wheel the Earth's for
+    // another 10 s. A pinch is never the page's, even at a limit (the
+    // browser would zoom the whole page).
     const stage = canvas.parentElement?.parentElement || canvas.parentElement;
     const onWheel = (ev) => {
       if (!eng.current.api) return;
       const pinch = ev.ctrlKey;
       if (!pinch && performance.now() > eng.current.engagedUntil) return;
-      ev.preventDefault();
-      zoomBy(globeZoomFactor(ev.deltaY, { ctrlKey: pinch, deltaMode: ev.deltaMode }));
-      engage();
+      if (pinch) ev.preventDefault();
+      const factor = globeZoomFactor(ev.deltaY, { ctrlKey: pinch, deltaMode: ev.deltaMode });
+      const room = zoomRoom(eng.current.zoomGoal ?? eng.current.api.getAltitude(), factor, zoomLimits());
+      if (room === "zoom") {
+        ev.preventDefault();
+        zoomBy(factor);
+        engage();
+        return;
+      }
+      if (pinch) return;
+      note("wheel-to-page", { room });
+      if (room === "fully-out") disengage();
     };
     // A double-click on the bare Earth zooms in one step.
     const onDoubleClick = (ev) => {

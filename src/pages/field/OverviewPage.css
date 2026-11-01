@@ -514,6 +514,34 @@
   min-width: 96px;
 }
 
+/* Locked while it sends ("Sending…", then "Sent"; OverviewPage.jsx
+   TellUs), so nothing on screen can differ from what is sent: the words
+   stay at full strength on a quieter background (read-only, still
+   selectable), the chosen kind and field stay readable while the other
+   kinds fade, and a photo's x goes away. Nothing lights up under the
+   pointer. */
+.fo-tell-text.textarea[readonly],
+.fo-tell-field.select:disabled {
+  background-color: var(--c-surface-2);
+}
+
+.fo-tell-field.select:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.fo-kind.is-active:disabled {
+  opacity: 1;
+}
+
+.fo-kind:disabled:not(.is-active):hover {
+  background: var(--c-surface);
+}
+
+.fo-photo-remove:disabled {
+  display: none;
+}
+
 /* ---------- Your fields ---------- */
 
 .card.fo-fields {

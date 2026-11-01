@@ -4,10 +4,13 @@
 // the common screen sizes (it fills the first screen), where the camera
 // looks over Ukraine and how it keeps an event clear of the words, the
 // tour's order (current alerts first) and timing, where a place lands on
-// the screen, which trade figures count for a war (none from before it
-// began) and the words of the tile and the panel: dates read in UTC (so a
-// visitor in California gets the same month), an alert that is over said
-// to be over, no strings of words joined by dots. No browser is needed.
+// the screen, when a scroll over the Earth zooms it and when it is the
+// page's (a visitor scrolling down past a fully zoomed-out Earth always
+// reaches the rest of the page), which trade figures count for a war (none
+// from before it began) and the words of the tile and the panel: dates
+// read in UTC (so a visitor in California gets the same month), an alert
+// that is over said to be over, no strings of words joined by dots. No
+// browser is needed.
 //
 // WHO EDITS IT
 // Whoever changes globeMath.js.
@@ -50,7 +53,10 @@ import {
   tradeYear,
   tradeYears,
   viewAlong,
+  zoomRoom,
+  ZOOM_LIMIT_SLACK,
 } from "./globeMath.js";
+import { globeZoomFactor, globeZoomLimits } from "../../lib/wheelZoom.js";
 import { WORLD_CONFLICTS } from "../../../server/world/conflicts.js";
 
 // The dates must not depend on the visitor's clock (the checks also pass in
@@ -317,6 +323,65 @@ test("a flight follows the great circle and rises a little in the middle", () =>
   near(end.lat, to.lat, 1e-6, "ends at the end");
   near(end.lng, to.lng, 1e-6, "ends at the end (longitude)");
   near(viewAlong(from, to, 0.5).altitude, 0.87 * 1.15, 1e-6, "1.15 times higher at the middle");
+});
+
+test("a scroll over the Earth zooms while there is room, and is the page's once the camera is fully out (or in) that way", () => {
+  // The first screen at 1440x900: the camera's far limit is the layout's own height.
+  const limits = globeZoomLimits(hero(1440, 900).altitude);
+  near(limits.far, 0.5424, 0.001, "the far limit is the layout's height");
+  const down = globeZoomFactor(100); // one notch of a mouse wheel towards the page's foot: zooms out
+  const up = globeZoomFactor(-100);
+  assert.ok(down > 1 && up < 1);
+  // As the page loads, and after a click or a drag, the camera is fully out:
+  // scrolling down cannot zoom out any further, so the page scrolls.
+  assert.equal(zoomRoom(limits.far, down, limits), "fully-out");
+  // So does a small trackpad tick, a pinch the same way, a camera a hair off
+  // the limit (the 3D reads its height back from the camera's position), and
+  // a camera above it (a tour flight rises 15% on its way).
+  assert.equal(zoomRoom(limits.far, globeZoomFactor(3), limits), "fully-out");
+  assert.equal(zoomRoom(limits.far, globeZoomFactor(8, { ctrlKey: true }), limits), "fully-out");
+  assert.equal(zoomRoom(limits.far * (1 - 1e-9), down, limits), "fully-out");
+  assert.equal(zoomRoom(limits.far * (1 - ZOOM_LIMIT_SLACK / 2), down, limits), "fully-out");
+  assert.equal(zoomRoom(limits.far * 1.15, down, limits), "fully-out");
+  // From there, scrolling up (or pinching apart) zooms in.
+  assert.equal(zoomRoom(limits.far, up, limits), "zoom");
+  assert.equal(zoomRoom(limits.far, globeZoomFactor(-8, { ctrlKey: true }), limits), "zoom");
+  // Closer in (the panel brings the camera to 0.82 of the height), scrolling
+  // down zooms out; the smallest trackpad tick still counts in the middle.
+  assert.equal(zoomRoom(limits.far * 0.82, down, limits), "zoom");
+  assert.equal(zoomRoom(0.35, globeZoomFactor(0.5), limits), "zoom");
+  assert.equal(zoomRoom(0.35, globeZoomFactor(-0.5), limits), "zoom");
+  // Fully in: scrolling up cannot zoom any closer; scrolling down zooms out.
+  assert.equal(zoomRoom(limits.near, up, limits), "fully-in");
+  assert.equal(zoomRoom(limits.near * (1 + 1e-9), up, limits), "fully-in");
+  assert.equal(zoomRoom(limits.near, down, limits), "zoom");
+  // A sideways swipe (no up or down) and nonsense are never a zoom.
+  assert.equal(zoomRoom(0.35, globeZoomFactor(0), limits), "none");
+  assert.equal(zoomRoom(0.35, Number.NaN, limits), "none");
+  assert.equal(zoomRoom(Number.NaN, down, limits), "none");
+  assert.equal(zoomRoom(0.35, 0, limits), "none");
+});
+
+test("a visitor who keeps scrolling down over the Earth always reaches the page, from any zoom", () => {
+  // The camera's goal as WorldGlobe moves it (zoomBy: multiplied, then kept
+  // between the limits), one scroll after another, until a scroll has no
+  // room left: from fully in, with mouse notches (about 11 at most, on a
+  // phone-shaped window) and with small trackpad ticks.
+  for (const [w, h] of [[1440, 900], [768, 1024], [390, 844]]) {
+    const limits = globeZoomLimits(hero(w, h).altitude);
+    for (const [deltaY, most] of [[100, 12], [4, 300]]) {
+      const factor = globeZoomFactor(deltaY);
+      let goal = limits.near;
+      let zooms = 0;
+      while (zoomRoom(goal, factor, limits) === "zoom") {
+        goal = Math.min(limits.far, Math.max(limits.near, goal * factor));
+        zooms += 1;
+        assert.ok(zooms <= most, `${w}x${h}, deltaY ${deltaY}: still zooming after ${zooms} scrolls`);
+      }
+      assert.equal(zoomRoom(goal, factor, limits), "fully-out", `${w}x${h}, deltaY ${deltaY}: the next scroll is the page's`);
+      near(goal, limits.far, limits.far * ZOOM_LIMIT_SLACK, `${w}x${h}, deltaY ${deltaY}: the camera is back at the layout's height`);
+    }
+  }
 });
 
 test("rings pulse on their own beat between 2.6 and 3 seconds", () => {

@@ -4,7 +4,7 @@
   "poster": "/site/film/field-walkthrough-poster.jpg",
   "width": 1440,
   "height": 900,
-  "seconds": 168.3,
+  "seconds": 172,
   "chapters": [
    {
     "label": "The farm",
@@ -24,19 +24,19 @@
    },
    {
     "label": "Tell us what happened",
-    "t": 59.2
+    "t": 59.1
    },
    {
     "label": "The assistant",
-    "t": 82
+    "t": 84.1
    },
    {
     "label": "Settings",
-    "t": 94.3
+    "t": 98.1
    },
    {
     "label": "Change farm",
-    "t": 133.4
+    "t": 137.2
    }
   ]
  },
