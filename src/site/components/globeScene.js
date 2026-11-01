@@ -566,8 +566,14 @@ export function createGlobeScene(host, { width, height, offset = [0, 0], view, l
     renderer.render(scene, camera);
   }
 
+  // Prepares the shaders before the first frame. compileAsync asks for the
+  // KHR_parallel_shader_compile extension, and three.js writes a warning in
+  // the console where a browser lacks it; there the shaders are prepared
+  // in one go instead (compileAsync would do the same, after the warning).
   function compile() {
-    return typeof renderer.compileAsync === "function" ? renderer.compileAsync(scene, camera) : Promise.resolve();
+    if (typeof renderer.compileAsync === "function" && renderer.extensions?.has?.("KHR_parallel_shader_compile")) return renderer.compileAsync(scene, camera);
+    renderer.compile(scene, camera);
+    return Promise.resolve();
   }
 
   // Everything this scene made, given back, then the drawing context itself.

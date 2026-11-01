@@ -11,10 +11,16 @@
 // app's own formulas (src/lib/atlas/scoring.js); the styles are the
 // ".gl-" block of src/site/pages/pages.css.
 //
+// The chart is drawn at the width it really has on the page (measured,
+// and again whenever that width changes), one unit to one pixel, so its
+// numbers are real 14 px text on a phone as on a wide screen, instead of
+// a drawing that shrinks with the screen. Under the plot come the numbers
+// (0, 50, 100), then the axis's name on a line of its own.
+//
 // WHO EDITS IT
 // Whoever changes the method. Keep the two formulas in step with the app.
 
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { useReducedMotion } from "./motion.jsx";
 import { NUMBERS } from "../content/site.js";
@@ -41,13 +47,41 @@ export function postCrisisScore(v, d, f, wv, wd, wf, r = 0.5) {
 const VALUE = 0.72;
 const DAMAGE = 0.81;
 
-// The chart's drawing box, in its own units.
-const W = 520;
-const H = 240;
-const PAD = { l: 36, r: 12, t: 12, b: 30 };
+// The chart, in screen pixels: its height, and the room around the plot
+// for the numbers at the left and, at the bottom, the numbers and the
+// axis's name. The width is the chart box's own (FIRST_WIDTH only until it
+// is measured, before the first paint).
+const H = 220;
+const PAD = { l: 44, r: 20, t: 14, b: 56 };
+const FIRST_WIDTH = 480;
+
+// The width of a box in pixels, followed when the page is resized or the
+// layout changes (clientWidth: transforms such as an entrance do not
+// count).
+function useBoxWidth(ref, fallback) {
+  const [width, setWidth] = useState(fallback);
+  useLayoutEffect(() => {
+    const box = ref.current;
+    if (!box) return undefined;
+    const measure = () => {
+      if (box.clientWidth > 0) setWidth(box.clientWidth);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+    const observer = new ResizeObserver(measure);
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [ref]);
+  return width;
+}
 
 export default function GateLab() {
   const reduced = useReducedMotion();
+  const chartRef = useRef(null);
+  const W = useBoxWidth(chartRef, FIRST_WIDTH);
   const [mode, setMode] = useState("near");
   const [feas, setFeas] = useState(0.35);
   const [cutoff, setCutoff] = useState(0.3);
@@ -133,7 +167,7 @@ export default function GateLab() {
           </div>
         </div>
       </div>
-      <div className="gl-chart">
+      <div className="gl-chart" ref={chartRef}>
         <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Priority against feasibility for the current settings">
           {near && (
             <>
@@ -144,20 +178,22 @@ export default function GateLab() {
           <line className="gl-axis" x1={PAD.l} y1={y(0)} x2={W - PAD.r} y2={y(0)} />
           <line className="gl-axis" x1={PAD.l} y1={y(0)} x2={PAD.l} y2={PAD.t} />
           {[0, 0.5, 1].map((t) => (
-            <text key={`x${t}`} x={x(t)} y={H - 10} textAnchor="middle">
+            <text key={`x${t}`} x={x(t)} y={y(0) + 20} textAnchor="middle">
               {Math.round(t * 100)}
             </text>
           ))}
           {[0, 0.5, 1].map((t) => (
-            <text key={`y${t}`} x={PAD.l - 8} y={y(t) + 4} textAnchor="end">
+            <text key={`y${t}`} x={PAD.l - 10} y={y(t) + 5} textAnchor="end">
               {Math.round(t * 100)}
             </text>
           ))}
-          <text x={W - PAD.r} y={H - 10} textAnchor="end">
-            feasibility
+          {/* The axis's name on its own line under the numbers, centred under the plot. */}
+          <text x={(x(0) + x(1)) / 2} y={H - 10} textAnchor="middle">
+            Feasibility
           </text>
-          <motion.path d={path} fill="none" stroke="var(--accent, #1f4a2a)" strokeWidth="3" strokeLinejoin="round" initial={false} animate={{ d: path }} transition={reduced ? { duration: 0 } : { duration: 0.35, ease: "easeOut" }} />
-          <motion.circle r="7" fill="var(--ink, #1b1713)" initial={false} animate={{ cx: x(feas), cy: y(score) }} transition={reduced ? { duration: 0 } : { type: "spring", stiffness: 300, damping: 28 }} />
+          {/* Drawn again (key) when the width changes, so a resize moves the curve and the dot at once instead of animating them. */}
+          <motion.path key={`curve-${W}`} d={path} fill="none" stroke="var(--accent, #1f4a2a)" strokeWidth="3" strokeLinejoin="round" initial={false} animate={{ d: path }} transition={reduced ? { duration: 0 } : { duration: 0.35, ease: "easeOut" }} />
+          <motion.circle key={`dot-${W}`} r="7" fill="var(--ink, #1b1713)" initial={false} animate={{ cx: x(feas), cy: y(score) }} transition={reduced ? { duration: 0 } : { type: "spring", stiffness: 300, damping: 28 }} />
         </svg>
         <div className="gl-legend">
           <span>

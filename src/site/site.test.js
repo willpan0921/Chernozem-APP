@@ -23,7 +23,11 @@
 //     every section on the menu's frame;
 //   - the About page opens, after the globe, with "What is Chernozem" and
 //     the owner's eight reasons ("Why Chernozem"), each beside a true-size
-//     picture of the app that exists and stays small, in honest words;
+//     picture of the app that exists and stays small, with a sharp copy
+//     twice its size for Retina screens, in honest words; the weights
+//     panel is shown alone; the three links there never split over two
+//     lines and answer the pointer and the pin (the accent), and "How it
+//     started" has a tall target;
 //   - no part of the website names the app challenge (the owner's rule
 //     since 31 October 2026), and no part of the About page mentions a
 //     demo code; the film is "Chernozem in three minutes";
@@ -132,6 +136,21 @@ test("the proof table quotes its numbers from site.js", () => {
   assert.doesNotMatch(source, /12151|8388|13554|109636/, "a number is typed in rather than read from site.js");
 });
 
+// A WebP picture's width and height, read from its header (lossy "VP8 ",
+// lossless "VP8L" or extended "VP8X"), so no image library is needed.
+function webpSize(file) {
+  const b = readFileSync(file);
+  assert.equal(b.toString("ascii", 0, 4) + b.toString("ascii", 8, 12), "RIFFWEBP", `${file} is a WebP`);
+  const chunk = b.toString("ascii", 12, 16);
+  if (chunk === "VP8 ") return [b.readUInt16LE(26) & 0x3fff, b.readUInt16LE(28) & 0x3fff];
+  if (chunk === "VP8L") {
+    const bits = b.readUInt32LE(21);
+    return [(bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1];
+  }
+  if (chunk === "VP8X") return [b.readUIntLE(24, 3) + 1, b.readUIntLE(27, 3) + 1];
+  throw new Error(`${file}: unknown WebP chunk ${chunk}`);
+}
+
 const CHALLENGE = ["Congress", "ional"].join("");
 // The old demo wording, assembled for the same reason (a search for it finds none in src/).
 const CODE_TALK = new RegExp(["with a", "access", "demo"].map((w) => `${w} code`).join("|"), "i");
@@ -198,24 +217,57 @@ test("the About page says what Chernozem is and why, after the globe, beside tru
   assert.doesNotMatch(text, /competitor/i);
   assert.match(text, /NUMBERS\.tenFieldsSeconds/);
   assert.doesNotMatch(text, /\b(12|13|twelve|thirteen) fields\b/i);
-  // The pictures: the Fields map and the Atlas weights panel, cut at true size, exist, stay small and are in the crops' manifest.
+  // The pictures: the Fields map and the Atlas weights panel, cut at true
+  // size, each with a sharp copy exactly twice its size that only a sharp
+  // (2x) screen loads (srcSet), all small and in the crops' manifest.
   const crops = join(root, "public", "site", "shots", "crops");
   const manifest = JSON.parse(readFileSync(join(crops, "manifest.json"), "utf8"));
-  for (const [name, max] of [["field-fields-map-720.webp", 90e3], ["atlas-weights-726.webp", 80e3]]) {
-    assert.ok(home.includes(`/site/shots/crops/${name}`), `the page shows ${name}`);
-    const bytes = statSync(join(crops, name)).size;
-    assert.ok(bytes > 1000 && bytes <= max, `${name} is ${bytes} bytes (at most ${max})`);
-    assert.ok(manifest.some((entry) => entry.file === name && entry.from), `${name} is in the crops' manifest with its source`);
+  for (const [small, sharp, smallMax, sharpMax] of [
+    ["field-fields-map-864.webp", "field-fields-map-1728.webp", 90e3, 150e3],
+    ["atlas-weights-374.webp", "atlas-weights-748.webp", 30e3, 60e3],
+  ]) {
+    assert.ok(home.includes(`src="/site/shots/crops/${small}"`), `the page shows ${small}`);
+    assert.ok(home.includes(`srcSet="/site/shots/crops/${small} 1x, /site/shots/crops/${sharp} 2x"`), `a sharp screen gets ${sharp}`);
+    for (const [name, max] of [[small, smallMax], [sharp, sharpMax]]) {
+      const bytes = statSync(join(crops, name)).size;
+      assert.ok(bytes > 1000 && bytes <= max, `${name} is ${bytes} bytes (at most ${max})`);
+      assert.ok(manifest.some((entry) => entry.file === name && entry.from), `${name} is in the crops' manifest with its source`);
+    }
+    const [w, h] = webpSize(join(crops, small));
+    assert.deepEqual(webpSize(join(crops, sharp)), [w * 2, h * 2], `${sharp} is twice ${small} (${w} x ${h})`);
+    assert.ok(home.includes(`width="${w}"`) && home.includes(`height="${h}"`), `the page gives ${small}'s size, ${w} x ${h}`);
+  }
+  assert.deepEqual(webpSize(join(crops, "atlas-weights-374.webp")), [374, 654], "the weights panel alone, 374 px wide");
+  for (const old of ["field-fields-map-720.webp", "atlas-weights-726.webp"]) {
+    assert.ok(!existsSync(join(crops, old)) && !home.includes(old), `the soft 1x picture ${old} is gone`);
   }
   // Each picture says what it is and opens its place in the demo.
   assert.equal((text.match(/className="window-caption/g) || []).length, 2);
   assert.match(text, /to="\/field\/fields" className="link link-under" onClick=\{enterDemo\}/);
   assert.match(text, /to="\/atlas\/map" className="link link-under" onClick=\{enterDemo\}/);
-  // The layout: both windows keep the app at its true size (no scaling), and the claims sit in two columns beside the panel.
+  assert.match(text, /the harvested ones striped and the fallow ones dotted/, "the Fields picture's alt text reads its key right");
+  // The layout: the Fields window keeps the app at its true size (no
+  // scaling); the weights panel is shown alone (never half a map), never
+  // cut at its side on a phone, from below the app's line over "Weights";
+  // the claims sit in two columns beside it.
   const css = read("pages", "home.css");
   assert.match(css, /\.site \.what-window img \{[^}]*object-fit: none/);
-  assert.match(css, /\.site \.why-window img \{[^}]*width: 726px/);
+  assert.match(css, /\.site \.why-side \{[^}]*max-width: 374px/);
+  assert.match(css, /\.site \.why-window \{[^}]*aspect-ratio: 374 \/ 654;[^}]*min-height: 0/);
+  assert.match(css, /\.site \.why-window img \{[^}]*width: 100%;[^}]*height: auto/);
+  assert.doesNotMatch(css, /width: 726px|max-width: 726px/, "no window shows the map beside the panel");
   assert.match(css, /\.site \.why-list \{[^}]*grid-template-columns: 1fr 1fr/);
+  // The three links: a caption's link never splits over two lines; "How it
+  // started" has a tall target without a box; the links show the same
+  // look under the pointer and with the pin near (the accent, underline kept).
+  assert.match(css, /\.site \.window-caption \.link \{[^}]*white-space: nowrap/);
+  assert.match(css, /\.site \.what-link \.link \{[^}]*padding: 12px;[^}]*margin-inline: -12px/);
+  assert.match(css, /\.site :is\(\.what, \.why, \.features, \.small-print\) \.link-under:hover \{[^}]*color: var\(--accent\);[^}]*text-decoration-line: underline/);
+  assert.match(css, /\.site :is\(\.what, \.why, \.features, \.small-print\) \.link-under\[data-near\] \{[^}]*color: var\(--accent\)/);
+  // On the dark field and the green tile the underline answers instead.
+  assert.match(css, /\.site \.hero-actions \.link-under:hover \{[^}]*text-decoration-line: underline;[^}]*text-decoration-thickness: 0\.14em/);
+  assert.match(css, /\.site \.hero-actions \.link-under\[data-near\] \{[^}]*text-decoration-thickness: 0\.14em/);
+  assert.match(css, /\.site \.close-actions \.link:hover \{[^}]*text-decoration-line: underline/);
   assert.doesNotMatch(css, /letter-made/, "the removed line's style is gone too");
   // The page's last three parts reveal together once the film is near, so a
   // long phone page never leaves the letter's words hidden to a fast scroll.

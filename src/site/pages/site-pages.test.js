@@ -34,6 +34,14 @@
 //   - the two walkthrough films exist with their posters and chapter list
 //     (public/site/film/walkthroughs.json), each two to three minutes and
 //     under 25 MB, and Walkthrough.jsx only downloads a film on play;
+//   - under each film the chapter playing now is marked (aria-current, an
+//     ink fill that hover never imitates), at once when it is pressed and as
+//     the film plays, and the time-to-chapter rule gives the right chapter;
+//   - the Field part's "What it reads" follows the steps closely, with the
+//     phone beside both (wide) or between them (tablet, phone); no step or
+//     score ends on one lone word; nothing on the page is under 14 px; the
+//     gate chart is drawn at its real width, its axis's name on a line of
+//     its own under the numbers;
 //   - pages.css uses only the tokens defined by src/site/site.css and none
 //     of the things the website brief bans (shadows, gradients, monospace),
 //     sets no cursor of its own (the site's pin stays), keeps the menu bar's
@@ -442,6 +450,114 @@ test("the walkthrough films: one per product, with a poster and chapters, two to
   assert.ok(source.includes('src: "/site/film/atlas-walkthrough.mp4"'));
 });
 
+// The film's own caption sits where the player's controls cover it (paused,
+// and on a phone), so the chapter list says which step is playing.
+test("under each film the chapter playing now is marked: aria-current and an ink fill, at once when pressed and as the film plays", () => {
+  const source = readFileSync(join(here, "..", "components", "Walkthrough.jsx"), "utf8");
+  // One state for the eye and for screen readers: pages.css styles aria-current itself.
+  assert.match(source, /<button type="button" className="wk-chapter" aria-current=\{i === current \? "true" : undefined\} onClick=\{\(\) => jump\(c\.t, i\)\}>/);
+  assert.doesNotMatch(source, /is-on/);
+  // It follows the film as it plays, and when the film is moved on its own timeline.
+  assert.match(source, /onTimeUpdate=\{follow\}/);
+  assert.match(source, /onSeeked=\{settled\}/);
+  assert.match(source, /onPlay=\{follow\}/);
+  assert.match(source, /setCurrent\(chapterAt\(chapters, video\.currentTime, video\.paused\)\)/);
+  // A pressed chapter is marked at once, before the film has even loaded.
+  const jump = source.slice(source.indexOf("const jump = (t, index) =>"));
+  assert.match(jump.slice(0, jump.indexOf("video.currentTime = t;")), /pressed\.current = t;\s*setCurrent\(index\);/);
+  const css = read("pages.css");
+  assert.match(css, /\.pg \.wk-chapter\[aria-current="true"\] \{\s*background: var\(--ink\);\s*color: var\(--bg\);\s*\}/);
+  // Pointing at a chapter only underlines it, so it never looks like the one playing.
+  const looks = [...css.matchAll(/([^{}]*\.wk-chapter(?::hover|\[data-near\])[^{}]*)\{([^}]*)\}/g)];
+  assert.ok(looks.length >= 2, "a hover look and a pin-near look");
+  for (const [, selector, body] of looks) {
+    assert.match(body, /text-decoration-color: currentColor;/, `${selector.trim()} underlines`);
+    assert.doesNotMatch(body, /background/, `${selector.trim()} does not fill`);
+  }
+});
+
+// chapterAt, taken from the component's source (JSX, which node cannot import).
+function walkthroughChapterAt() {
+  const source = readFileSync(join(here, "..", "components", "Walkthrough.jsx"), "utf8");
+  const start = source.indexOf("export function chapterAt");
+  const end = source.indexOf("\n}\n", start);
+  assert.ok(start > 0 && end > start, "chapterAt is where the file says");
+  const context = {};
+  vm.runInNewContext(`${source.slice(start, end + 2).replace("export function", "function")}\nthis.chapterAt = chapterAt;`, context);
+  return context.chapterAt;
+}
+
+test("the chapter playing at a time: the last one started, none before the first or on an unplayed film", () => {
+  const chapterAt = walkthroughChapterAt();
+  const films = JSON.parse(readFileSync(join(root, "public", "site", "film", "walkthroughs.json"), "utf8"));
+  for (const product of ["field", "atlas"]) {
+    const { chapters, seconds } = films[product];
+    assert.equal(chapterAt(chapters, 0, true), -1, `${product}: an unplayed film marks nothing`);
+    assert.equal(chapterAt(chapters, chapters[0].t - 1, false), -1, `${product}: before the first chapter, nothing`);
+    // A chapter well apart from the one before it.
+    const i = chapters.findIndex((c, k) => k > 0 && c.t - chapters[k - 1].t > 2);
+    assert.ok(i > 0, `${product}: two chapters more than 2 s apart`);
+    assert.equal(chapterAt(chapters, chapters[i].t, false), i, `${product}: a jump to "${chapters[i].label}" is in it`);
+    assert.equal(chapterAt(chapters, chapters[i].t - 0.2, true), i, `${product}: a quarter of a second early counts`);
+    assert.equal(chapterAt(chapters, chapters[i].t - 1, true), i - 1, `${product}: paused just before it, the part before stays marked`);
+    assert.equal(chapterAt(chapters, seconds, true), chapters.length - 1, `${product}: at the end, the last chapter`);
+  }
+});
+
+test("Field: 'What it reads' follows the steps closely, the phone beside both on a wide screen and between them below 1100 px", () => {
+  const source = read("MethodPage.jsx");
+  const field = between(source, 'id="product"', 'id="atlas"');
+  // One block of their own, in reading order: the steps, the phone, what it reads.
+  assert.match(field, /<div className="meth-use-row">\s*<Reveal className="meth-use" id="use">[\s\S]*<Reveal className="meth-use-phone"[\s\S]*<Reveal className="meth-reads"[\s\S]*?<\/Reveal>\s*<\/div>/);
+  const css = read("pages.css");
+  // Wide: two rows; the phone spans both and its extra height goes to the
+  // second (1fr) only, so the first row is as tall as the steps.
+  assert.match(css, /\.meth-use-row \{[^}]*grid-template-columns: repeat\(12, minmax\(0, 1fr\)\);[^}]*grid-template-rows: auto 1fr;/);
+  assert.match(css, /\.meth-use \{\s*grid-column: 1 \/ 8;\s*grid-row: 1;/);
+  assert.match(css, /\.meth-use-phone \{\s*grid-column: 9 \/ 13;\s*grid-row: 1 \/ 3;/);
+  assert.match(css, /\.meth-reads \{\s*grid-column: 1 \/ 8;\s*grid-row: 2;/);
+  assert.doesNotMatch(css, /grid-row: span 2/, "the phone no longer stretches a row of the page's grid");
+  // Tablet and phone: one column, in reading order.
+  const tablet = css.slice(css.indexOf("@media (max-width: 1100px)"), css.indexOf("@media (max-width: 700px)"));
+  assert.match(tablet, /\.meth-use-row \{\s*grid-template-rows: none;/);
+  assert.match(tablet, /\.meth-use,\s*\.meth-reads \{\s*grid-row: auto;/);
+});
+
+test("Methodology type: no step or score ends on one lone word, and nothing is under 14 px", () => {
+  const css = read("pages.css");
+  assert.match(css, /\.meth-use ol li \{[^}]*text-wrap: pretty;/);
+  assert.match(css, /\.meth-scores dd \{[^}]*text-wrap: pretty;/);
+  // The page's small size stays at 14 px on tablets and phones too (site.css lets it reach 13).
+  assert.match(read("MethodPage.jsx"), /<div className="pg meth">/);
+  assert.match(css, /\.pg\.meth \{\s*--step-small: 0\.875rem;\s*\}/);
+  assert.match(css, /\.meth-formula sup \{\s*font-size: max\(0\.6em, var\(--step-small\)\);/);
+  assert.match(css, /\.gl-chart text \{[^}]*font-size: var\(--step-small\);/);
+});
+
+test("the gate chart is drawn at its real width, the numbers under the axis and its name on a line of its own below them", () => {
+  const source = readFileSync(join(here, "..", "components", "GateLab.jsx"), "utf8");
+  // Measured and followed on resize: one unit is one pixel, so its 14 px text is 14 px on a phone too.
+  assert.match(source, /const W = useBoxWidth\(chartRef, FIRST_WIDTH\);/);
+  assert.match(source, /new ResizeObserver\(measure\)/);
+  assert.match(source, /<div className="gl-chart" ref=\{chartRef\}>/);
+  assert.match(source, /<svg viewBox=\{`0 0 \$\{W\} \$\{H\}`\}/);
+  // The geometry, from the file's own numbers.
+  const H = Number(source.match(/const H = (\d+);/)[1]);
+  const PAD = vm.runInNewContext(`(${source.match(/const PAD = (\{[^}]*\});/)[1]})`);
+  assert.match(source, /<text key=\{`x\$\{t\}`\} x=\{x\(t\)\} y=\{y\(0\) \+ 20\} textAnchor="middle">/);
+  assert.match(source, /<text x=\{\(x\(0\) \+ x\(1\)\) \/ 2\} y=\{H - 10\} textAnchor="middle">\s*Feasibility\s*<\/text>/);
+  const SIZE = 14; // var(--step-small) on the Methodology
+  const axis = H - PAD.b;
+  const numbers = axis + 20;
+  const name = H - 10;
+  assert.ok(numbers - 0.75 * SIZE > axis, "the numbers start under the axis line");
+  assert.ok(name - numbers >= SIZE + 4, `the name (baseline ${name}) is a whole line under the numbers (baseline ${numbers})`);
+  assert.ok(PAD.r >= SIZE, "the last number, 100, centred on the axis's end, stays inside the chart");
+  assert.ok(PAD.l - 10 >= 1.8 * SIZE, "the numbers at the left, up to 100, fit beside the axis");
+  // The old overlap: the name at the axis's right end, on the numbers' own line.
+  assert.doesNotMatch(source, /x=\{W - PAD\.r\} y=\{H - 10\} textAnchor="end"/);
+});
+
 test("the Methodology page says where contact messages are kept, and no stale test count", () => {
   const text = words("MethodPage.jsx");
   // server/messages.js saves every message before it is e-mailed.
@@ -502,8 +618,10 @@ test("pages.css gives back the spacings site.css's element resets would cancel",
   // ".site h3 / ul / p / button" outrank a single class, so these carry ".pg".
   assert.match(css, /\.pg \.pg-h3 \{\s*margin: 0 0 10px;/);
   assert.match(css, /\.pg \.meth-use ol \{[^}]*margin: 14px 0 0;/);
-  assert.match(css, /\.pg \.wk-chapters \{[^}]*margin: 16px 0 0;/);
-  assert.match(css, /\.pg \.wk-chapter \{[^}]*padding: 0;/);
+  // The chapters keep 10 px at their sides for the fill of the one playing
+  // now; the row is pulled back by as much, so the words start on the film's edge.
+  assert.match(css, /\.pg \.wk-chapters \{[^}]*margin: 16px 0 0 -10px;/);
+  assert.match(css, /\.pg \.wk-chapter \{[^}]*padding: 0 10px;/);
   assert.match(css, /\.pg \.gl-note \{[^}]*margin-bottom: 18px;/);
   assert.match(css, /\.pg \.demo-tab \{\s*padding: 10px 18px;/);
   assert.match(css, /\.pg \.demo-foot \{\s*margin-top: 12px;/);

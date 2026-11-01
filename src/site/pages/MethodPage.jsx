@@ -44,8 +44,9 @@ export default function MethodPage() {
   // The test count rounded down to the hundred ("More than 1,000"), so the
   // sentence stays true while tests are added between updates of site.js.
   const testsFloor = Math.floor(NUMBERS.automatedTests / 100) * 100;
+  // "meth": on this page the small size never drops under 14 px (pages.css).
   return (
-    <div className="pg">
+    <div className="pg meth">
       <section className="pg-sec" aria-labelledby="meth-title">
         <div className="pg-grid">
           <div className="meth-open-text">
@@ -76,24 +77,30 @@ export default function MethodPage() {
           <Reveal className="meth-film" delay={0.1} y={30}>
             <Walkthrough product="field" title="The Field walkthrough" />
           </Reveal>
-          <Reveal className="meth-use" id="use">
-            <p>
-              <strong>How to use it.</strong>
-            </p>
-            <ol>
-              {FIELD_STEPS.map((step) => (
-                <li key={step}>{step}</li>
-              ))}
-            </ol>
-          </Reveal>
-          <Reveal className="meth-use-phone" delay={0.16} y={36}>
-            <img className="pg-pic" src="/site/shots/phone-field-fields.webp" width="780" height="1688" alt="The Fields page on a phone: the satellite map with the field outlines, the condition key and the selected field's details below" loading="lazy" decoding="async" />
-          </Reveal>
-          <Reveal className="meth-reads" delay={0.08}>
-            <p>
-              <strong>What it reads.</strong> Every clear Sentinel-2 pass at ten metres, radar from Sentinel-1 for lasting change in the ground, the local forecast, and the same weeks of 2019 to 2021 as the normal to compare with.
-            </p>
-          </Reveal>
+          {/* The steps, the phone and "What it reads" in one block of their
+              own: on a wide screen the phone stands beside both texts, which
+              follow each other closely; on a tablet or a phone it sits
+              between them (pages.css, ".meth-use-row"). */}
+          <div className="meth-use-row">
+            <Reveal className="meth-use" id="use">
+              <p>
+                <strong>How to use it.</strong>
+              </p>
+              <ol>
+                {FIELD_STEPS.map((step) => (
+                  <li key={step}>{step}</li>
+                ))}
+              </ol>
+            </Reveal>
+            <Reveal className="meth-use-phone" delay={0.16} y={36}>
+              <img className="pg-pic" src="/site/shots/phone-field-fields.webp" width="780" height="1688" alt="The Fields page on a phone: the satellite map with the field outlines, the condition key and the selected field's details below" loading="lazy" decoding="async" />
+            </Reveal>
+            <Reveal className="meth-reads" delay={0.08}>
+              <p>
+                <strong>What it reads.</strong> Every clear Sentinel-2 pass at ten metres, radar from Sentinel-1 for lasting change in the ground, the local forecast, and the same weeks of 2019 to 2021 as the normal to compare with.
+              </p>
+            </Reveal>
+          </div>
         </div>
       </section>
 

@@ -105,25 +105,53 @@
     "use": "About, the closing tile: southern Ukraine and the Black Sea on Esri World Imagery, without the app's buttons"
   },
   {
-    "file": "field-fields-map-720.webp",
+    "file": "field-fields-map-864.webp",
     "from": "field-fields.webp",
     "region": {
-      "left": 515,
-      "top": 236,
-      "width": 720,
+      "left": 383,
+      "top": 290,
+      "width": 864,
       "height": 520
     },
-    "use": "About, What is Chernozem (HomePage.jsx): the farm's fields outlined on satellite imagery, at true size"
+    "shot": "Re-shot on 1 November 2026 from the website's production build: the demo opened from the About page's own link, Field 11 picked on the map, a 1440 x 900 window at pixel ratio 4/3 (this copy) and 8/3 (its sharp copy); the demo's Earth Engine reading of 26 October 2026 (Sentinel-2). The page is the one field-fields.webp shows, but this capture's map is about 10% closer (as the demo opens today), so the region is in the new capture, not in field-fields.webp.",
+    "use": "About, What is Chernozem (HomePage.jsx): the farm's fields outlined on satellite imagery, one picture pixel per CSS px; 864 px wide so the window is filled up to 860 px wide (a 900 px screen), with no field's name cut at 1440"
   },
   {
-    "file": "atlas-weights-726.webp",
+    "file": "field-fields-map-1728.webp",
+    "from": "field-fields.webp",
+    "region": {
+      "left": 383,
+      "top": 290,
+      "width": 864,
+      "height": 520
+    },
+    "scale": 2,
+    "shot": "Re-shot on 1 November 2026 from the website's production build: the demo opened from the About page's own link, Field 11 picked on the map, a 1440 x 900 window at pixel ratio 4/3 (this copy) and 8/3 (its sharp copy); the demo's Earth Engine reading of 26 October 2026 (Sentinel-2). The page is the one field-fields.webp shows, but this capture's map is about 10% closer (as the demo opens today), so the region is in the new capture, not in field-fields.webp.",
+    "use": "the same, for sharp screens (srcset 2x)"
+  },
+  {
+    "file": "atlas-weights-374.webp",
     "from": "atlas-map-near-micro.webp",
     "region": {
       "left": 258,
-      "top": 160,
-      "width": 726,
-      "height": 672
+      "top": 178,
+      "width": 374,
+      "height": 654
     },
-    "use": "About, Why Chernozem (HomePage.jsx): the Atlas weights panel at true size (its left 374 px on a wide screen; the map beside it shows on a narrower one)"
+    "shot": "Re-shot on 1 November 2026 from the website's production build: the demo opened from the About page's own link, the 1440 x 900 window of atlas-map-near-micro.webp at pixel ratio 4/3 (this copy) and 8/3 (its sharp copy); the Ukraine run of September 2026 (Earth Engine). Cut below the line over 'Weights' and above the line under the Detail switch, 13 px in from the panel's edges.",
+    "use": "About, Why Chernozem (HomePage.jsx): the Atlas weights panel alone, one picture pixel per CSS px (a phone shows it scaled to its width, down to the cutoff's line)"
+  },
+  {
+    "file": "atlas-weights-748.webp",
+    "from": "atlas-map-near-micro.webp",
+    "region": {
+      "left": 258,
+      "top": 178,
+      "width": 374,
+      "height": 654
+    },
+    "scale": 2,
+    "shot": "Re-shot on 1 November 2026 from the website's production build: the demo opened from the About page's own link, the 1440 x 900 window of atlas-map-near-micro.webp at pixel ratio 4/3 (this copy) and 8/3 (its sharp copy); the Ukraine run of September 2026 (Earth Engine). Cut below the line over 'Weights' and above the line under the Detail switch, 13 px in from the panel's edges.",
+    "use": "the same, for sharp screens (srcset 2x)"
   }
 ]

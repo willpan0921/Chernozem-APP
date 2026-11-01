@@ -9,7 +9,8 @@
 //      farm's fields outlined on satellite imagery, at true size)
 //   3. "Why Chernozem": the owner's eight reasons, each a claim and one
 //      plain sentence, in two columns, with the real Atlas weights panel
-//      beside them at its true size
+//      beside them at its true size (the panel alone; a phone shows it
+//      scaled to its width)
 //   4. "One field, one pass": the app's field row, enlarged to fill its
 //      columns, in the state the visitor picks, with its button really
 //      working
@@ -29,11 +30,12 @@
 // The words follow the website brief's copy deck and the owner's list of
 // 31 October 2026 (the two introductions). Numbers come from
 // src/site/content/site.js; the two introductions' pictures are cut from
-// the app's screenshots at true size (public/site/shots/crops/, where
-// manifest.json says from which screenshot). Layout: home.css. Every
-// section keeps to the menu's frame: text starts at the page's left edge,
-// or three columns in (the field row, the second line of "the record", the
-// letter's text).
+// the demo at true size, each with a copy twice as sharp for Retina
+// screens that only those screens load (srcSet; public/site/shots/crops/,
+// where manifest.json says from which view and how they were shot).
+// Layout: home.css. Every section keeps to the menu's frame: text starts
+// at the page's left edge, or three columns in (the field row, the second
+// line of "the record", the letter's text).
 //
 // WHO EDITS IT
 // Whoever works on the About page.
@@ -412,7 +414,15 @@ export default function HomePage() {
           </div>
           <div className="what-side" data-settle style={{ "--i": 1 }}>
             <figure className="what-window">
-              <img src="/site/shots/crops/field-fields-map-720.webp" alt="The Fields page: the farm’s fields outlined on satellite imagery, each tinted by its condition, Field 11 growing well and the harvested ones dotted." width="720" height="520" loading="lazy" decoding="async" />
+              <img
+                src="/site/shots/crops/field-fields-map-864.webp"
+                srcSet="/site/shots/crops/field-fields-map-864.webp 1x, /site/shots/crops/field-fields-map-1728.webp 2x"
+                alt="The Fields page: the farm’s fields outlined on satellite imagery, each tinted by its condition, Field 11 growing well, the harvested ones striped and the fallow ones dotted."
+                width="864"
+                height="520"
+                loading="lazy"
+                decoding="async"
+              />
             </figure>
             <p className="window-caption muted">
               Field: the demo farm near Kupiansk, Ukraine, read from one Sentinel-2 pass.{" "}
@@ -440,7 +450,15 @@ export default function HomePage() {
           </ul>
           <div className="why-side" data-settle style={{ "--i": 2 }}>
             <figure className="why-window">
-              <img src="/site/shots/crops/atlas-weights-726.webp" alt="Atlas’s weights panel for Ukraine: Near term chosen, value 76%, damage 24%, and a feasibility cutoff of 36%." width="726" height="672" loading="lazy" decoding="async" />
+              <img
+                src="/site/shots/crops/atlas-weights-374.webp"
+                srcSet="/site/shots/crops/atlas-weights-374.webp 1x, /site/shots/crops/atlas-weights-748.webp 2x"
+                alt="Atlas’s weights panel for Ukraine: Near term chosen, value 76%, damage 24%, and a feasibility cutoff of 36%."
+                width="374"
+                height="654"
+                loading="lazy"
+                decoding="async"
+              />
             </figure>
             <p className="window-caption muted">
               Atlas: the weights, as set for the Ukraine demo.{" "}

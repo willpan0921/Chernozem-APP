@@ -63,8 +63,9 @@
 }
 
 /* ---- 2. What is Chernozem: the words in the left half, one window onto
-   the Fields page in the right half (720 x 520, the picture at its true
-   size; a narrower window shows its middle), the caption under it ---- */
+   the Fields page in the right half (at most 720 x 520; the picture, 864
+   x 520 at its true size, shows its middle, and is wide enough to fill
+   the window up to a 900 px screen), the caption under it ---- */
 .site .what-words {
   grid-column: 1 / 7;
 }
@@ -76,6 +77,19 @@
 
 .site .what-link {
   margin-top: 1.75rem;
+}
+
+/* "How it started" stands on its own line, so its target is taller than
+   its words (48 px on a wide screen, 45 on a phone) without looking like
+   a button: the padding moves nothing (the margin gives the sideways part
+   back), and the focus ring keeps to the words as on the other links. */
+.site .what-link .link {
+  padding: 12px;
+  margin-inline: -12px;
+}
+
+.site .what-link .link:focus-visible {
+  outline-offset: -9px;
 }
 
 .site .what-side {
@@ -110,8 +124,48 @@
   max-width: none;
 }
 
+/* The link never breaks over two lines: it moves to the next line whole. */
 .site .window-caption .link {
   color: var(--ink);
+  white-space: nowrap;
+}
+
+/* The page's underlined text links on its light grounds (the two
+   introductions, the features, the small print) answer the pointer, and
+   the pin nearby (cursorAssist.js), as the other pages' text links do:
+   they turn the accent green. They keep their underline under the pointer
+   (site.css's ".site a:hover" reset would otherwise take it away). */
+@media (hover: hover) and (pointer: fine) {
+  .site :is(.what, .why, .features, .small-print) .link-under:hover {
+    color: var(--accent);
+    text-decoration-line: underline;
+    text-decoration-thickness: 0.07em;
+  }
+}
+
+.site :is(.what, .why, .features, .small-print) .link-under[data-near] {
+  color: var(--accent);
+}
+
+/* On the dark field and the green tile the words keep their colour and
+   the underline answers instead, as on the other pages' dark sections:
+   the hero's "Try the demo" thickens its underline, the close's shows it,
+   under the pointer as with the pin near. */
+@media (hover: hover) and (pointer: fine) {
+  .site .hero-actions .link-under:hover {
+    text-decoration-line: underline;
+    text-decoration-thickness: 0.14em;
+  }
+
+  .site .close-actions .link:hover {
+    text-decoration-line: underline;
+    text-decoration-color: currentColor;
+    text-decoration-thickness: 0.07em;
+  }
+}
+
+.site .hero-actions .link-under[data-near] {
+  text-decoration-thickness: 0.14em;
 }
 
 @media (max-width: 900px) {
@@ -130,12 +184,28 @@
   }
 }
 
+/* Where a narrower window looks at the picture, so no field's name is cut
+   at its edge: beside the words on a 901 to 1199 px screen, the farm's
+   right part (eight fields); on a phone, its left part, with Field 11
+   (picked in the app) and its neighbours. */
+@media (min-width: 901px) and (max-width: 1199px) {
+  .site .what-window img {
+    object-position: 80% 50%;
+  }
+}
+
+@media (max-width: 440px) {
+  .site .what-window img {
+    object-position: 24.5% 50%;
+  }
+}
+
 /* ---- 3. Why Chernozem, on the surface tone: the heading and the eight
    claims in two columns (columns 1 to 8), and the Atlas weights panel
-   beside them (columns 9 to 12) at its true size. The picture is 726 px
-   wide (the panel, then the map next to it); a wide screen shows its
-   left 374 px, the panel alone, and a narrower screen, where the picture
-   moves under the list, shows as much of it as fits. ---- */
+   beside them (columns 9 to 12) at its true size. The picture is the
+   panel alone, 374 x 654, at every width: under the list on a narrower
+   screen, and scaled to the column on a phone (never cut at its side),
+   where it shows the panel down to the cutoff's line. ---- */
 .site .why.section {
   background: var(--surface);
 }
@@ -175,8 +245,11 @@
   max-width: 374px;
 }
 
+/* min-height: 0 lets the phone's shorter ratio clip the picture (a box
+   with overflow: clip would otherwise grow to the picture's height). */
 .site .why-window {
-  height: 672px;
+  aspect-ratio: 374 / 654;
+  min-height: 0;
   margin: 0;
   overflow: clip;
   background: #ffffff;
@@ -184,9 +257,8 @@
 
 .site .why-window img {
   display: block;
-  width: 726px;
-  height: 672px;
-  max-width: none;
+  width: 100%;
+  height: auto;
 }
 
 @media (max-width: 1199px) {
@@ -199,8 +271,27 @@
     grid-column: 1 / 13;
     grid-row: auto;
     justify-self: start;
-    max-width: 726px;
     margin-top: 3rem;
+  }
+}
+
+/* Under the list, on a screen 701 to 1199 px wide: the panel at its true
+   size with its caption docked at its foot, beside it, so the width next
+   to the panel is not left as bare ground. */
+@media (min-width: 701px) and (max-width: 1199px) {
+  .site .why-side {
+    display: flex;
+    align-items: flex-end;
+    gap: 1.5rem;
+    max-width: none;
+  }
+
+  .site .why-window {
+    flex: 0 0 374px;
+  }
+
+  .site .why-side .window-caption {
+    margin-top: 0;
   }
 }
 
@@ -211,7 +302,7 @@
 }
 
 /* A phone: the claims in one column, and the panel shown down to the
-   cutoff's line, not the Detail switch under it. */
+   cutoff's line (512 of its 654 px), not the Detail switch under it. */
 @media (max-width: 700px) {
   .site .why-list {
     grid-template-columns: 1fr;
@@ -219,7 +310,7 @@
   }
 
   .site .why-window {
-    height: 520px;
+    aspect-ratio: 374 / 512;
   }
 }
 
