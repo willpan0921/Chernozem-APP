@@ -2,16 +2,18 @@
   WHAT THIS FILE DOES
   The layouts of six website pages: Story (/story), Methodology (/method),
   Contact (/contact), the demo page (/demo), the owner's sign-in (/owner)
-  and "page not found", plus the gate laboratory fragment the Methodology
-  page shows (GateLab.jsx, the sliders). Every colour and size here is a
-  token from src/site/site.css (--bg, --ink, --accent, --step-body ... );
-  nothing is invented here.
+  and "page not found", plus what the Methodology page shows inside them:
+  the gate laboratory fragment (GateLab.jsx, the sliders) and the films
+  (the walkthroughs, Walkthrough.jsx, and the three-minute film, Film.jsx,
+  whose look moved here from site.css with it). Every colour and size here
+  is a token from src/site/site.css (--bg, --ink, --accent, --step-body
+  ... ); nothing is invented here.
 
   How to read it: ".pg-" names are shared by all the pages (a section, the
   frame, the twelve-column grid, a heading, a button, a form field). Then
   one block per page: ".story-", ".meth-", ".ct-" (contact), ".dm-" (demo,
   whose doors the owner's page shows too), ".nf-" (not found), ".ow"
-  (owner) and ".gl-" (the gate laboratory).
+  (owner), ".gl-" (the gate laboratory), ".wk-" and ".film-" (the films).
 
   The frame: a section's colour runs to the screen's edges, but what it
   holds stays in the menu bar's frame (1760px at most, centred, the page
@@ -657,10 +659,17 @@
   max-width: 50ch;
 }
 
-/* The walkthrough film takes the whole frame. */
+/* Each film takes the whole frame: a walkthrough under the sentence that
+   says what its product is, the three-minute film (after "Behind it")
+   under its name, which runs across the top (it is longer than the parts'
+   one-word names, so it gets the width to stay on two lines or fewer). */
 .meth-film {
   grid-column: 1 / 13;
   margin-top: 8px;
+}
+
+.meth-film-head {
+  grid-column: 1 / 13;
 }
 
 /* Field: the steps at the left, "what it reads" right under them, and the
@@ -814,9 +823,11 @@
   grid-column: 8 / 13;
 }
 
-/* ---------- The walkthrough films (components/Walkthrough.jsx) ---------- */
+/* ---------- The films: the two walkthroughs (components/Walkthrough.jsx)
+   and the three-minute film (components/Film.jsx) ---------- */
 
-.pg .wk {
+.pg .wk,
+.pg .film {
   margin: 0;
 }
 
@@ -832,12 +843,34 @@
   background: var(--field-dark);
 }
 
-/* The chapters under the film: each one jumps there and plays. (".pg" in
-   front: site.css's "ol { margin: 0 }" and "button { padding: 0 }".)
-   Each chapter keeps 10 px at its sides for the fill of the chapter
-   playing now, and the row is pulled 10 px to the left, so the words
-   still start on the film's edge. */
-.pg .wk-chapters {
+/* The three-minute film is 16:9; until its poster arrives its frame is
+   the dark field's lighter step (the look it had on the About page). */
+.film-frame {
+  background: var(--field-dark-2);
+}
+
+.film-video {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  background: var(--field-dark-2);
+}
+
+.pg .film-caption {
+  margin-top: 12px;
+  font-size: var(--step-small);
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+/* The chapters under each film: each one jumps there and plays; the same
+   look under all three films. (".pg" in front: site.css's "ol { margin: 0 }"
+   and "button { padding: 0 }".) Each chapter keeps 10 px at its sides for
+   the fill of the chapter playing now, and the row is pulled 10 px to the
+   left, so the words still start on the film's edge. */
+.pg .wk-chapters,
+.pg .film-chapters {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
@@ -846,7 +879,8 @@
   list-style: none;
 }
 
-.pg .wk-chapter {
+.pg .wk-chapter,
+.pg .film-chapter {
   min-height: 40px;
   padding: 0 10px;
   border: 0;
@@ -862,29 +896,33 @@
   transition: text-decoration-color 160ms ease, background-color 180ms ease, color 180ms ease;
 }
 
-.wk-chapter-time {
+.wk-chapter-time,
+.film-chapter-time {
   font-weight: 400;
   opacity: 0.75;
   font-variant-numeric: tabular-nums;
 }
 
-/* The chapter playing now (aria-current, which Walkthrough.jsx moves as
-   the film plays and when a chapter is pressed, and keeps while the film
-   is paused): filled in ink, so the step's name can always be read under
-   the film, also when the film's own caption is under the player's
-   controls (whenever it is paused, and on a phone). Pointing at a chapter
-   only underlines it, so the two never look alike. */
-.pg .wk-chapter[aria-current="true"] {
+/* The chapter playing now (aria-current, which Walkthrough.jsx and
+   Film.jsx move as the film plays and when a chapter is pressed, and keep
+   while the film is paused): filled in ink, so the step's name can always
+   be read under the film, also when the film's own caption is under the
+   player's controls (whenever it is paused, and on a phone). Pointing at a
+   chapter only underlines it, so the two never look alike. */
+.pg .wk-chapter[aria-current="true"],
+.pg .film-chapter[aria-current="true"] {
   background: var(--ink);
   color: var(--bg);
 }
 
-.pg .wk-chapter[data-near] {
+.pg .wk-chapter[data-near],
+.pg .film-chapter[data-near] {
   text-decoration-color: currentColor;
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .pg .wk-chapter:hover {
+  .pg .wk-chapter:hover,
+  .pg .film-chapter:hover {
     text-decoration-color: currentColor;
   }
 }
@@ -1063,6 +1101,15 @@
   margin-top: clamp(32px, 4vw, 56px);
 }
 
+/* On a desktop the address paragraph takes two lines (the owner's
+   sentence), so the form starts a little closer under it and Send stays
+   on the first screen. */
+@media (min-width: 1101px) {
+  .ct-body {
+    margin-top: 28px;
+  }
+}
+
 /* The form: who you are (and the phones under it) at the left, the fields
    at the right, so the message and Send stay on the first screen. */
 .ct-form {
@@ -1094,12 +1141,14 @@
   color: var(--muted);
 }
 
-/* The four choices: one row of plain words on the surface tone (two by
-   two on a phone); the chosen one turns ink. The same control as the
-   Register page's kind of organisation. */
+/* The five choices: one row of plain words on the surface tone; the
+   chosen one turns ink. The same control as the Register page's kind of
+   organisation. Where five do not fit side by side (a laptop just over
+   1100 px wide: three above, two below; a phone: two by two, the last one
+   across), every row is still filled (the blocks further down). */
 .ct-role-row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 4px;
   padding: 4px;
   background: var(--surface);
@@ -1388,11 +1437,28 @@ a.dm-door:active .dm-door-label {
   }
 }
 
+/* Just over 1100 px the choice's half of the form is too narrow for five
+   words side by side: three above and two below, on a grid of six (the
+   first three take two columns each, the last two three each). */
+@media (min-width: 1101px) and (max-width: 1240px) {
+  .ct-role-row {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .ct-role {
+    grid-column: span 2;
+  }
+
+  .ct-role:nth-child(n + 4) {
+    grid-column: span 3;
+  }
+}
+
 /* A short laptop screen (1366 x 768, 1280 x 800): the contact form a
    little closer under its title, so Send is still on the first screen. */
 @media (min-width: 1101px) and (max-height: 820px) {
   .pg-sec.ct {
-    padding-top: 48px;
+    padding-top: 24px;
   }
 
   .ct-body {
@@ -1569,7 +1635,8 @@ a.dm-door:active .dm-door-label {
   }
 
   /* The chapters' own 10 px sides keep the words 20 px apart. */
-  .pg .wk-chapters {
+  .pg .wk-chapters,
+  .pg .film-chapters {
     gap: 2px 0;
   }
 
@@ -1586,10 +1653,15 @@ a.dm-door:active .dm-door-label {
     padding: 18px;
   }
 
-  /* The four choices two by two, and the form a little closer, so the
-     message box starts on the first screen. */
+  /* The five choices two by two, the last one ("Something else") across
+     the whole row, and the form a little closer, so the message box starts
+     on the first screen. */
   .ct-role-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ct-role:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
   }
 
   .ct-body {
@@ -1657,6 +1729,7 @@ a.dm-door:active .dm-door-label {
   .pg-btn,
   .pg-textbtn,
   .pg .wk-chapter,
+  .pg .film-chapter,
   .gl-modes button,
   .dm-door-label,
   .dm-door-pics img,

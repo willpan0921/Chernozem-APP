@@ -1,0 +1,261 @@
+{
+ "_about": "The narration of the two walkthrough films: one line per step of each film (the steps are the films' own burnt-in captions, from the recorder's events.json, plus the opening and closing cards). 'text' is what the captions file shows; 'say' (when given) is how the voice should say it; 'rate' is the voice's speed (0.5 normal); 'lead' is how long after the step begins the voice starts (default 0.3 s). 'check' is the start of the film's own caption for that step, so a line can never land on the wrong step. 'until' and 'gap' (closing cards only): the card has faded out by 'until' (from the recorder's frames: Field 170.46 s, Atlas 167.80 s) and nothing follows it, so the line may end right there.",
+ "field": {
+  "video": "../orig/field-walkthrough.mp4",
+  "events": "field-events.json",
+  "key": "D",
+  "lines": [
+   {
+    "check": "[card]",
+    "lead": 0.45,
+    "text": "Chernozem Field, on a farm in Ukraine."
+   },
+   {
+    "check": "The overview: the latest",
+    "text": "The overview shows the latest pass, what needs doing, and your fields."
+   },
+   {
+    "check": "Every clear Sentinel-2",
+    "text": "Every clear Sentinel-2 pass is read, and the latest date is at the top."
+   },
+   {
+    "check": "Press a tile",
+    "text": "Press a tile to pick out those fields in the list on the right."
+   },
+   {
+    "check": "The weather for the farm",
+    "lead": 0.25,
+    "text": "The farm's weather, and whether rain is coming."
+   },
+   {
+    "check": "Fields: every field",
+    "text": "Fields shows every field on the satellite map, tinted by its condition. Pick one, or step through them with the arrows."
+   },
+   {
+    "check": "A field's readings",
+    "text": "Its water, plant health, stress and harvest readiness.",
+    "lead": 0.25
+   },
+   {
+    "check": "Plant health this season",
+    "lead": 0.25,
+    "text": "This season's plant health against normal years."
+   },
+   {
+    "check": "Data: the field's record",
+    "text": "Data shows the field's record since 2019, against the farm and normal years. The red line marks the full-scale invasion."
+   },
+   {
+    "check": "Hover or use the arrow",
+    "text": "Hover, or use the arrow keys, to read any month's numbers."
+   },
+   {
+    "check": "Plant health or water",
+    "lead": 0.2,
+    "text": "Switch between plant health and water."
+   },
+   {
+    "check": "Downloads:",
+    "text": "Download the outlines, passes and history, or the season report."
+   },
+   {
+    "check": "Tell us what happened:",
+    "text": "Back on the overview, tell us what happened: choose what it was and which field, write what you saw and when, and add a photo."
+   },
+   {
+    "check": "Send: the words",
+    "text": "Press Send. Your words stay on screen while the report is saved."
+   },
+   {
+    "check": "The report opens",
+    "text": "The report opens the assistant, with the field and the photo."
+   },
+   {
+    "check": "It stays with the chat",
+    "text": "It stays with the chat, beside the farm's readings."
+   },
+   {
+    "check": "The assistant answers",
+    "text": "The assistant answers from the farm's own readings, its history, and the weather."
+   },
+   {
+    "check": "A saved conversation",
+    "text": "Here is a saved conversation: how a field did this season, and what to watch."
+   },
+   {
+    "check": "Settings: the farm's",
+    "text": "Settings holds the farm's name and place, its fields, and their crops."
+   },
+   {
+    "check": "Set a crop",
+    "text": "Set a crop by picking what you sowed. Until then, the detected crop is used."
+   },
+   {
+    "check": "Add a field",
+    "text": "To add a field, press Add a field, then click its corners on the satellite map."
+   },
+   {
+    "check": "The new field is saved",
+    "text": "The new field is saved, and analysed at once."
+   },
+   {
+    "check": "Remove a field",
+    "text": "To remove a field, press its bin and confirm. Its readings go with it."
+   },
+   {
+    "check": "Units:",
+    "text": "Choose hectares, acres or mu, and the whole app uses them.",
+    "say": "Choose hectares, acres, or moo, and the whole app uses them."
+   },
+   {
+    "check": "Change farm: search",
+    "text": "Change farm is how you find your land: search for a village, paste coordinates, or draw it on the map."
+   },
+   {
+    "check": "The map flies there",
+    "text": "The map flies there, and the fields around the pin are found."
+   },
+   {
+    "check": "Pick the fields",
+    "text": "Pick the fields that are yours, or select them all, then save."
+   },
+   {
+    "check": "The farm is saved",
+    "lead": 0.25,
+    "text": "Come back after each satellite pass."
+   },
+   {
+    "check": "[card]",
+    "text": "Register at chernozem.app and read your own fields.",
+    "say": "Register at chernozem dot app and read your own fields.",
+    "until": 170.46,
+    "lead": 0.15,
+    "gap": 0.0
+   }
+  ]
+ },
+ "atlas": {
+  "video": "../orig/atlas-walkthrough.mp4",
+  "events": "atlas-events.json",
+  "key": "F",
+  "lines": [
+   {
+    "check": "[card]",
+    "lead": 0.45,
+    "text": "Chernozem Atlas: how an office uses it."
+   },
+   {
+    "check": "The overview: cropland",
+    "text": "The totals for cropland, black soil, damage and people."
+   },
+   {
+    "check": "Where to start",
+    "text": "Where to start: the map, coloured by priority, and the top areas below."
+   },
+   {
+    "check": "Any analysed month",
+    "text": "Pick any analysed month. The Atlas runs again every month, by itself."
+   },
+   {
+    "check": "Near term or post-crisis",
+    "text": "Switch between near term and post-crisis: two ways to rank the same land."
+   },
+   {
+    "check": "Next steps",
+    "text": "Next steps are worked out from the data. Tick them off as your team goes."
+   },
+   {
+    "check": "A budget",
+    "lead": 0.25,
+    "text": "Type a budget to see what it covers."
+   },
+   {
+    "check": "The map: priority",
+    "text": "The map shows priority square by square, with each state's name and border. The darker the green, the higher the priority."
+   },
+   {
+    "check": "Colour the map",
+    "text": "Colour the map by value, by damage, by feasibility, or all three together."
+   },
+   {
+    "check": "Macro: whole states",
+    "text": "Macro ranks whole states. Micro shows every square."
+   },
+   {
+    "check": "Satellite only",
+    "text": "Satellite only shows the land itself, under the squares."
+   },
+   {
+    "check": "Move the weights",
+    "text": "Move the weights, and the map and the top areas change at once."
+   },
+   {
+    "check": "The feasibility cutoff",
+    "text": "The feasibility cutoff leaves out the hardest land to reach, for now, with a soft edge."
+   },
+   {
+    "check": "A place's details",
+    "lead": 0.25,
+    "text": "A place's scores, soil, and cost."
+   },
+   {
+    "check": "Data: every analysed",
+    "text": "Data shows every analysed month. Hover over a bar for its numbers."
+   },
+   {
+    "check": "Heavily damaged land",
+    "text": "Switch between heavily damaged land, new damage, and people, month by month."
+   },
+   {
+    "check": "Compare two months",
+    "text": "Compare two months: what changed, and the squares that changed most."
+   },
+   {
+    "check": "The report: the totals",
+    "text": "The report puts it on one page: the totals, the top ten places, the settings, and this month's alerts."
+   },
+   {
+    "check": "Save as PDF",
+    "lead": 0.25,
+    "text": "Save it as a PDF for donors."
+   },
+   {
+    "check": "The assistant: ask",
+    "text": "Ask the assistant about any place. It answers from the same numbers as the map."
+   },
+   {
+    "check": "A saved conversation",
+    "text": "Here is a saved conversation about one of the top areas."
+   },
+   {
+    "check": "Settings: the areas",
+    "text": "Settings holds the areas, the crisis, the data, and the team."
+   },
+   {
+    "check": "A new area",
+    "text": "To add a new area, choose a country or region, type GPS coordinates, or draw a shape. Here, Moldova."
+   },
+   {
+    "check": "The last twelve months",
+    "text": "The last twelve months are analysed, and the area joins the list and the map."
+   },
+   {
+    "check": "The team:",
+    "text": "The team: who can see this area, and who can change it."
+   },
+   {
+    "check": "The crisis:",
+    "lead": 0.25,
+    "text": "And the crisis, if there is one."
+   },
+   {
+    "check": "[card]",
+    "text": "Register at chernozem.app and rank your own region.",
+    "say": "Register at chernozem dot app and rank your own region.",
+    "until": 167.8,
+    "lead": 0.15,
+    "gap": 0.0
+   }
+  ]
+ }
+}

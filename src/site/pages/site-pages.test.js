@@ -13,11 +13,16 @@
 //   - the Demo page is the two doors (which switch the tab to the demo)
 //     and the Register line, with no code anywhere; the doors' pictures are
 //     the half-size copies;
-//   - the Contact page says where messages go (chernozem.app@gmail.com),
-//     keeps the robot trap, offers who-you-are as four plain words (no
-//     pictures in the choice), says after sending that the message was
-//     received (not that it is on its way) and moves the keyboard there,
-//     and has lost "What to write about" and "Elsewhere";
+//   - the Contact page says where messages go (chernozem.app@gmail.com) and
+//     that visitors may write there directly, in the owner's words; keeps
+//     the robot trap; offers who-you-are as five plain words, Corporation
+//     among them (no pictures in the choice, every row of them filled at
+//     every width); says after sending that the message was received (not
+//     that it is on its way) and moves the keyboard there; and has lost
+//     "What to write about" and "Elsewhere";
+//   - the Register page offers Corporation among the kinds of organisation,
+//     the five laid out three above two (register.css), and no page says
+//     "Register for Field" (it is "Register for Chernozem" now);
 //   - the Owner page is unlisted (noindex), signs in with the Chernozem
 //     Google account (no code field), lets the server decide who the owner
 //     is, and refuses any other account in plain words;
@@ -26,11 +31,19 @@
 //     a search of the code finds only the About page),
 //     and none prints the demo farm's number of fields;
 //   - every picture the pages name exists in public/;
-//   - the Methodology page is two parts, Field and Atlas, each with its
-//     walkthrough film (Walkthrough.jsx) and the owner's descriptions, a
-//     short "Behind it", no row of in-page links and no sub-sub-headings;
-//     it keeps the ids the old addresses jump to, says contact messages
-//     are kept on the server, and prints no stale test count;
+//   - the Methodology page is two parts, Field and Atlas, each opening with
+//     one plain sentence of what it is (Atlas's names governments, NGOs and
+//     corporations, and keeps Ukraine as the demo, where Chernozem
+//     started) and its walkthrough film (Walkthrough.jsx); a short "Behind
+//     it"; then the three-minute film (Film.jsx, its five chapters, moved
+//     from the About page); the close says "Register for Chernozem"; no
+//     row of in-page links and no sub-sub-headings; it keeps the ids the
+//     old addresses jump to, says contact messages are kept on the server,
+//     and prints no stale test count;
+//   - the three-minute film: its two copies (the phone's smaller) and its
+//     poster exist, both copies keep their sound track, it downloads only
+//     on play, and its chapters are marked like the walkthroughs' (the
+//     same rule and the same look); the page plays one film at a time;
 //   - the two walkthrough films exist with their posters and chapter list
 //     (public/site/film/walkthroughs.json), each two to three minutes and
 //     under 25 MB, and Walkthrough.jsx only downloads a film on play;
@@ -55,7 +68,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
@@ -233,7 +246,9 @@ test("the doors use the half-size computer screens, and a phone never downloads 
 test("the Contact page says where messages go and keeps only the form", () => {
   const text = words("ContactPage.jsx");
   assert.equal(CONTACT_EMAIL, "chernozem.app@gmail.com");
-  assert.match(text, /Messages go to <a href=\{`mailto:\$\{CONTACT_EMAIL\}`\}>\{CONTACT_EMAIL\}<\/a>/);
+  // The owner's sentence, the address a mailto link: "Messages go to
+  // chernozem.app@gmail.com. Feel free to email us directly as well."
+  assert.match(text, /Messages go to <a href=\{`mailto:\$\{CONTACT_EMAIL\}`\}>\{CONTACT_EMAIL\}<\/a>\. Feel free to email us directly as well\.\s*<\/p>/);
   for (const gone of ["What to write about", "Elsewhere", "Saved privately", "No mailing list", "LINKS.github", "demo code"]) {
     assert.ok(!text.includes(gone), `the Contact page no longer has "${gone}"`);
   }
@@ -247,25 +262,35 @@ test("the Contact page says where messages go and keeps only the form", () => {
   // The role travels as its own field (server/messages.js takes "role"),
   // so the message is sent as typed.
   assert.match(text, /sendContact\(\{ \.\.\.form, role, message: form\.message\.trim\(\) \}\)/);
-  for (const role of ["Farmer", "Government or NGO", "Researcher", "Something else"]) {
+  for (const role of ["Farmer", "Government or NGO", "Corporation", "Researcher", "Something else"]) {
     assert.ok(text.includes(`value: "${role}"`), `"${role}" is one of the choices`);
     assert.ok(role.length <= 60, "a role fits the server's 60 characters");
   }
+  // A corporation gets a prompt of its own, like every other choice.
+  assert.match(text, /\{ value: "Corporation", prompt: "[^"]{20,}\?" \}/);
 });
 
-test("who you are is four plain words, not pictures", () => {
+test("who you are is five plain words, not pictures, and every row of them is filled", () => {
   const text = words("ContactPage.jsx");
   const roles = between(text, "const ROLES = [", "];");
-  assert.equal((roles.match(/\{ value: "/g) || []).length, 4, "four choices");
+  assert.equal((roles.match(/\{ value: "/g) || []).length, 5, "five choices");
   assert.doesNotMatch(roles, /src:|width:|height:|position:|zoom:/, "the choices carry no picture");
   assert.doesNotMatch(text, /ct-role-pic|ct-role-frame/);
   // Each choice is the word's own label around a real radio button.
   assert.match(text, /<label key=\{item\.value\} className="ct-role"[^>]*>\s*<input className="ct-role-input" type="radio" name="role"/);
   const css = read("pages.css");
-  assert.match(css, /\.ct-role-row \{[^}]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/, "one row of four");
+  assert.match(css, /\.ct-role-row \{[^}]*grid-template-columns: repeat\(5, minmax\(0, 1fr\)\);/, "one row of five");
   assert.match(css, /\.ct-role \{[^}]*min-height: 48px;/, "48 px tall");
+  // Just over 1100 px the half of the form is too narrow for five: three
+  // above, two below, on a grid of six (2 + 2 + 2, then 3 + 3).
+  const narrow = between(css, "@media (min-width: 1101px) and (max-width: 1240px) {", "\n}\n");
+  assert.match(narrow, /\.ct-role-row \{\s*grid-template-columns: repeat\(6, minmax\(0, 1fr\)\);/);
+  assert.match(narrow, /\.ct-role \{\s*grid-column: span 2;/);
+  assert.match(narrow, /\.ct-role:nth-child\(n \+ 4\) \{\s*grid-column: span 3;/);
+  // A phone: two by two, and the fifth across the whole row.
   const phone = css.slice(css.indexOf("@media (max-width: 700px)"));
   assert.match(phone, /\.ct-role-row \{\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/, "two by two on a phone");
+  assert.match(phone, /\.ct-role:last-child:nth-child\(odd\) \{\s*grid-column: 1 \/ -1;/, "the odd one out takes the whole row");
   // The product's phone screens stand beside the form on wide screens only,
   // and are never fetched where they are hidden.
   assert.match(text, /className="ct-phone"[^>]*loading="lazy"/);
@@ -363,12 +388,12 @@ test("every picture the pages name exists in public/", () => {
   }
 });
 
-test("the Methodology page is two parts, Field and Atlas, each with its film, and a short close", () => {
+test("the Methodology page is two parts, Field and Atlas, each with its film, then Behind it, the three-minute film and a short close", () => {
   const source = read("MethodPage.jsx");
   const list = headings("MethodPage.jsx");
   assert.deepEqual(
     list.map((h) => h.text),
-    ["How Chernozem works", "Field", "Atlas", "Behind it", "Run it on your own land"],
+    ["How Chernozem works", "Field", "Atlas", "Behind it", "Chernozem in three minutes", "Run it on your own land"],
   );
   assert.equal(list[0].tag, "h1");
   assert.equal((source.match(/<h3\b/g) || []).length, 0, "no sub-sub-headings");
@@ -389,13 +414,38 @@ test("the Methodology page is two parts, Field and Atlas, each with its film, an
     assert.match(head, /\bid\b/, `${name} takes an id`);
     assert.match(body, /<Tag\s+id=\{id\}/, `${name} puts the id on its element`);
   }
-  // One walkthrough film per product, right after its two sentences.
+  // One walkthrough film per product, right after the sentence that says
+  // what the product is.
   assert.match(source, /import Walkthrough from "\.\.\/components\/Walkthrough\.jsx"/);
   const field = between(source, 'id="product"', 'id="atlas"');
   const atlas = between(source, 'id="atlas"', 'id="technology"');
-  const behind = between(source, 'id="technology"', 'id="meth-close"');
+  const behind = between(source, 'id="technology"', 'id="film"');
+  const film = between(source, 'id="film"', 'id="meth-close"');
   assert.match(field, /className="pg-lead meth-what"[\s\S]*<Walkthrough product="field"[\s\S]*FIELD_STEPS\.map[\s\S]*What it reads\./);
   assert.match(atlas, /className="pg-lead meth-what"[\s\S]*<Walkthrough product="atlas"/);
+  // Next to each name, what it is, plainly (the owner: "describe what it
+  // is clearly", no paragraph of features). Atlas names whom it is for and
+  // keeps Ukraine as the demo, where Chernozem started.
+  const what = (part) => part.match(/<p className="pg-lead meth-what">([^<]+)<\/p>/)[1];
+  assert.equal(what(field), "Field is Chernozem for one farm: you mark your fields once, and after every clear satellite pass it tells you how each one is doing and what needs doing.");
+  assert.equal(what(atlas), "Atlas is Chernozem for a whole region, for governments, NGOs and corporations: it scores every square of farmland and ranks where recovery should start. Ukraine is the demo because that is where Chernozem started.");
+  for (const part of [field, atlas]) {
+    const sentence = what(part);
+    assert.ok(sentence.split(/(?<=\.)\s+/).length <= 2, `"${sentence.slice(0, 30)}…" is one or two sentences`);
+    assert.ok(sentence.split(/\s+/).length <= 40, `"${sentence.slice(0, 30)}…" stays short`);
+  }
+  assert.doesNotMatch(source, /communism/i);
+  // After "Behind it", the three-minute film (Film.jsx) under its own
+  // heading, with the film's own five chapters; it is no longer the About page's.
+  assert.match(source, /import Film from "\.\.\/components\/Film\.jsx"/);
+  assert.match(source, /<section className="pg-sec pg-sec-surface" id="film" aria-labelledby="meth-film-title">/);
+  assert.match(film, /<h2 className="pg-h2" id="meth-film-title">\s*Chernozem in three minutes\s*<\/h2>[\s\S]*<div className="meth-film">\s*<Film \/>\s*<\/div>/);
+  assert.ok(source.indexOf("<Film />") > source.indexOf('id="meth-behind"'), "the film comes after Behind it");
+  assert.ok(source.indexOf("<Film />") < source.indexOf('id="meth-close"'), "and before the close");
+  assert.equal((source.match(/<Film\b/g) || []).length, 1, "the film once");
+  // The close: "Register for Chernozem" (never "Register for Field" or "for Field or Atlas").
+  assert.match(words("MethodPage.jsx"), /Register for Chernozem and read the first pass yourself\./);
+  assert.doesNotMatch(words("MethodPage.jsx"), /Register for (Field|Atlas)/);
   // The owner's favourite parts stay: the scores, the gate with its
   // sliders and the two time frames, the ranking as the app shows it
   // (untouched, a piece of the product), the checks and the limits.
@@ -446,8 +496,8 @@ test("the walkthrough films: one per product, with a poster and chapters, two to
     }
   }
   // The component's own paths match the files on disk.
-  assert.ok(source.includes('src: "/site/film/field-walkthrough.mp4"'));
-  assert.ok(source.includes('src: "/site/film/atlas-walkthrough.mp4"'));
+  assert.ok(source.includes('src: "/site/film/field-walkthrough.mp4?v=narrated"'));
+  assert.ok(source.includes('src: "/site/film/atlas-walkthrough.mp4?v=narrated"'));
 });
 
 // The film's own caption sits where the player's controls cover it (paused,
@@ -466,10 +516,15 @@ test("under each film the chapter playing now is marked: aria-current and an ink
   const jump = source.slice(source.indexOf("const jump = (t, index) =>"));
   assert.match(jump.slice(0, jump.indexOf("video.currentTime = t;")), /pressed\.current = t;\s*setCurrent\(index\);/);
   const css = read("pages.css");
-  assert.match(css, /\.pg \.wk-chapter\[aria-current="true"\] \{\s*background: var\(--ink\);\s*color: var\(--bg\);\s*\}/);
+  // One look for the chapters under all three films on the page (the walkthroughs' and Film.jsx's).
+  assert.match(css, /\.pg \.wk-chapter\[aria-current="true"\],\s*\.pg \.film-chapter\[aria-current="true"\] \{\s*background: var\(--ink\);\s*color: var\(--bg\);\s*\}/);
   // Pointing at a chapter only underlines it, so it never looks like the one playing.
-  const looks = [...css.matchAll(/([^{}]*\.wk-chapter(?::hover|\[data-near\])[^{}]*)\{([^}]*)\}/g)];
+  const looks = [...css.matchAll(/([^{}]*\.(?:wk|film)-chapter(?::hover|\[data-near\])[^{}]*)\{([^}]*)\}/g)];
   assert.ok(looks.length >= 2, "a hover look and a pin-near look");
+  for (const kind of ["wk", "film"]) {
+    assert.ok(looks.some(([, selector]) => selector.includes(`.${kind}-chapter:hover`)), `.${kind}-chapter has a hover look`);
+    assert.ok(looks.some(([, selector]) => selector.includes(`.${kind}-chapter[data-near]`)), `.${kind}-chapter has a pin-near look`);
+  }
   for (const [, selector, body] of looks) {
     assert.match(body, /text-decoration-color: currentColor;/, `${selector.trim()} underlines`);
     assert.doesNotMatch(body, /background/, `${selector.trim()} does not fill`);
@@ -501,6 +556,139 @@ test("the chapter playing at a time: the last one started, none before the first
     assert.equal(chapterAt(chapters, chapters[i].t - 0.2, true), i, `${product}: a quarter of a second early counts`);
     assert.equal(chapterAt(chapters, chapters[i].t - 1, true), i - 1, `${product}: paused just before it, the part before stays marked`);
     assert.equal(chapterAt(chapters, seconds, true), chapters.length - 1, `${product}: at the end, the last chapter`);
+  }
+});
+
+// The "moov" box of an MP4 file: where its tracks are described (read box
+// by box from the top of the file, so a 36 MB film is not read whole).
+function mp4Moov(file) {
+  const fd = openSync(file, "r");
+  try {
+    const size = fstatSync(fd).size;
+    const head = Buffer.alloc(16);
+    let at = 0;
+    while (at + 8 <= size) {
+      readSync(fd, head, 0, 16, at);
+      let boxSize = head.readUInt32BE(0);
+      let headerSize = 8;
+      if (boxSize === 1) {
+        boxSize = Number(head.readBigUInt64BE(8));
+        headerSize = 16;
+      } else if (boxSize === 0) boxSize = size - at;
+      if (head.toString("latin1", 4, 8) === "moov") {
+        const body = Buffer.alloc(boxSize - headerSize);
+        readSync(fd, body, 0, body.length, at + headerSize);
+        return body;
+      }
+      if (boxSize < 8) break;
+      at += boxSize;
+    }
+    return null;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// A film's length in seconds, from its "mvhd" box (version 0 or 1).
+function mp4Seconds(moov) {
+  const at = moov.indexOf("mvhd");
+  const v1 = moov[at + 4] === 1;
+  const timescale = moov.readUInt32BE(at + (v1 ? 24 : 16));
+  const duration = v1 ? Number(moov.readBigUInt64BE(at + 28)) : moov.readUInt32BE(at + 20);
+  return duration / timescale;
+}
+
+test("the three-minute film: two copies with their sound, a poster, its five chapters inside it, and only downloaded on play", () => {
+  const source = readFileSync(join(here, "..", "components", "Film.jsx"), "utf8");
+  assert.ok(source.startsWith("// WHAT THIS FILE DOES"), "Film.jsx carries the file header");
+  assert.ok(source.includes("// WHO EDITS IT"));
+  assert.match(source, /on the Methodology page/);
+  assert.doesNotMatch(source, /used on the About page/);
+  // Nothing downloads until play; the poster waits until the film is near;
+  // a phone gets the smaller copy.
+  assert.match(source, /preload="none"/);
+  assert.match(source, /playsInline/);
+  assert.match(source, /<video[^>]* controls[^>]*>/);
+  assert.match(source, /poster=\{near \? POSTER_SRC : undefined\}/);
+  assert.match(source, /window\.matchMedia\("\(max-width: 700px\)"\)\.matches \? FILM_SMALL_SRC : FILM_SRC/);
+  // The files, and both copies keep their picture and their sound.
+  const film = join(root, "public", "site", "film");
+  const big = join(film, "chernozem-2026.mp4");
+  const small = join(film, "chernozem-2026-small.mp4");
+  assert.ok(existsSync(join(film, "chernozem-2026-poster.jpg")), "the poster exists");
+  assert.ok(statSync(small).size < statSync(big).size, "the phone's copy is the smaller one");
+  let seconds = 0;
+  for (const file of [big, small]) {
+    const moov = mp4Moov(file);
+    assert.ok(moov, `${file}: the film describes its tracks`);
+    assert.ok(moov.includes("vide"), `${file}: a picture track`);
+    assert.ok(moov.includes("soun") && moov.includes("mp4a"), `${file}: a sound track (AAC)`);
+    seconds = mp4Seconds(moov);
+    assert.ok(seconds > 170 && seconds < 190, `${file}: about three minutes (${seconds.toFixed(1)} s)`);
+  }
+  // Its own five chapters, at the times checked frame by frame, inside the film.
+  const block = between(source, "export const FILM_CHAPTERS = [", "];");
+  const chapters = [...block.matchAll(/\{ label: "([^"]+)", t: (\d+) \}/g)].map((m) => [m[1], Number(m[2])]);
+  assert.deepEqual(chapters, [
+    ["Northeastern China", 4],
+    ["Ukraine", 17],
+    ["How it reads the land", 34],
+    ["Field", 71],
+    ["Atlas", 108],
+  ]);
+  for (const [label, t] of chapters) assert.ok(t < seconds, `"${label}" at ${t} s is inside the film`);
+  assert.match(source, /chapters = FILM_CHAPTERS/, "the film's own chapters unless others are given");
+});
+
+test("the three-minute film's chapters are marked like the walkthroughs': the same rule, at once when pressed, aria-current only", () => {
+  const source = readFileSync(join(here, "..", "components", "Film.jsx"), "utf8");
+  // The walkthroughs' rule for "the chapter playing now".
+  assert.match(source, /import \{ chapterAt \} from "\.\/Walkthrough\.jsx";/);
+  assert.match(source, /setCurrent\(chapterAt\(chapters, video\.currentTime, video\.paused\)\)/);
+  assert.match(source, /<button type="button" className="film-chapter" aria-current=\{i === current \? "true" : undefined\} onClick=\{\(\) => jump\(c\.t, i\)\}>/);
+  assert.doesNotMatch(source, /is-on/, "one state for the eye and for screen readers");
+  assert.match(source, /onTimeUpdate=\{follow\}/);
+  assert.match(source, /onSeeked=\{settled\}/);
+  assert.match(source, /onPlay=\{follow\}/);
+  const jump = source.slice(source.indexOf("const jump = (t, index) =>"));
+  assert.match(jump.slice(0, jump.indexOf("video.currentTime = t;")), /pressed\.current = t;\s*setCurrent\(index\);/);
+  // Its list is named for screen readers, apart from the walkthroughs' two.
+  assert.match(source, /aria-label=\{`Chapters of \$\{title\}`\}/);
+  assert.match(source, /title = "Chernozem in three minutes"/);
+});
+
+test("the Methodology page plays one film at a time: starting one pauses any other", () => {
+  const source = words("MethodPage.jsx");
+  assert.match(source, /function useOneFilmAtATime\(\)/);
+  // "play" does not bubble, so the page listens on the way down (capture), and stops when it goes.
+  assert.match(source, /document\.addEventListener\("play", onPlay, true\);/);
+  assert.match(source, /return \(\) => document\.removeEventListener\("play", onPlay, true\);/);
+  assert.match(source, /for \(const video of document\.querySelectorAll\("\.pg video"\)\) \{\s*if \(video !== started && !video\.paused\) video\.pause\(\);/);
+  const body = source.slice(source.indexOf("export default function MethodPage"));
+  assert.match(body.slice(0, body.indexOf("return (")), /useOneFilmAtATime\(\);/, "the page calls it");
+});
+
+test("the Register page offers Corporation among the kinds of organisation, three above two", () => {
+  const source = read("RegisterPage.jsx");
+  assert.match(source, /ORG_KINDS\.map\(\(item\) => \(/, "the kinds come from registration.js ORG_KINDS");
+  const lib = readFileSync(join(root, "src", "lib", "registration.js"), "utf8");
+  assert.match(lib, /\{ role: "corporation", label: "Corporation" \}/);
+  const css = readFileSync(join(here, "register.css"), "utf8");
+  // A grid of six: the first three kinds take two columns each, the last two three each.
+  assert.match(css, /\.site \.reg-kind-row \{\s*grid-template-columns: repeat\(6, minmax\(0, 1fr\)\);\s*\}/);
+  assert.match(css, /\.site \.reg-kind \{\s*grid-column: span 2;\s*\}/);
+  assert.match(css, /\.site \.reg-kind:nth-child\(n \+ 4\) \{\s*grid-column: span 3;\s*\}/);
+  assert.doesNotMatch(css, /\.reg-kind-row \{\s*grid-template-columns: repeat\(4,/, "no longer a row of four");
+  // On a phone two by two, the fifth across the whole row (three would not hold "Government" at 360 px).
+  const phone = css.slice(css.indexOf("@media (max-width: 640px)"), css.indexOf("@media (prefers-reduced-motion"));
+  assert.match(phone, /\.site \.reg-kind-row \{\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
+  assert.match(phone, /\.site \.reg-kind,\s*\.site \.reg-kind:nth-child\(n \+ 4\) \{\s*grid-column: auto;/);
+  assert.match(phone, /\.site \.reg-kind:last-child:nth-child\(odd\) \{\s*grid-column: 1 \/ -1;/);
+});
+
+test("no page says Register for Field (or Atlas): it is Register for Chernozem", () => {
+  for (const name of [...PAGES, "RegisterPage.jsx", "SignInPage.jsx"]) {
+    assert.doesNotMatch(words(name), /Register for (Field|Atlas)/, `${name} says Register for Chernozem`);
   }
 });
 
@@ -620,8 +808,8 @@ test("pages.css gives back the spacings site.css's element resets would cancel",
   assert.match(css, /\.pg \.meth-use ol \{[^}]*margin: 14px 0 0;/);
   // The chapters keep 10 px at their sides for the fill of the one playing
   // now; the row is pulled back by as much, so the words start on the film's edge.
-  assert.match(css, /\.pg \.wk-chapters \{[^}]*margin: 16px 0 0 -10px;/);
-  assert.match(css, /\.pg \.wk-chapter \{[^}]*padding: 0 10px;/);
+  assert.match(css, /\.pg \.wk-chapters,\s*\.pg \.film-chapters \{[^}]*margin: 16px 0 0 -10px;/);
+  assert.match(css, /\.pg \.wk-chapter,\s*\.pg \.film-chapter \{[^}]*padding: 0 10px;/);
   assert.match(css, /\.pg \.gl-note \{[^}]*margin-bottom: 18px;/);
   assert.match(css, /\.pg \.demo-tab \{\s*padding: 10px 18px;/);
   assert.match(css, /\.pg \.demo-foot \{\s*margin-top: 12px;/);
@@ -654,6 +842,19 @@ test("near term: zero below the cutoff, open above the ramp, in step with the we
   assert.ok(Math.abs(half - open / 2) < 1e-9, "halfway up the ramp the gate is half open");
   const expected = ((30 / 70) * Math.sqrt(0.72) + (40 / 70) * Math.sqrt(0.81)) ** 2;
   assert.ok(Math.abs(open - expected) < 1e-9, "the open score is the squared weighted sum of square roots");
+});
+
+test("the gate lab's formulas stay numbers when the visitor slides every weight to 0", () => {
+  const { near, post } = formulas();
+  const openNear = near(0.72, 0.81, 0.6, 0.3, 0.2, 0, 0);
+  assert.ok(Number.isFinite(openNear), "near term with value and damage both at 0");
+  const half = ((Math.sqrt(0.72) + Math.sqrt(0.81)) / 2) ** 2;
+  assert.ok(Math.abs(openNear - half) < 1e-9, "value and damage then count half each, as in the app");
+  assert.equal(near(0.72, 0.81, 0.1, 0.3, 0.2, 0, 0), 0, "still left out below the cutoff");
+  const blend = post(0.72, 0.81, 0.35, 0, 0, 0);
+  assert.ok(Number.isFinite(blend), "post-crisis with all three at 0");
+  const third = ((Math.sqrt(0.72) + Math.sqrt(0.81) + Math.sqrt(0.35)) / 3) ** 2;
+  assert.ok(Math.abs(blend - third) < 1e-9, "the three then count equally");
 });
 
 test("post-crisis: equal inputs give that value, and the default weights blend all three", () => {

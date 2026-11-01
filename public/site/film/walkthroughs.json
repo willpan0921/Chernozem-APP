@@ -8,11 +8,11 @@
   "chapters": [
    {
     "label": "The farm",
-    "t": 5.3
+    "t": 3.4
    },
    {
     "label": "Weather",
-    "t": 18.6
+    "t": 17.6
    },
    {
     "label": "Fields",
@@ -28,7 +28,7 @@
    },
    {
     "label": "The assistant",
-    "t": 86.1
+    "t": 85.0
    },
    {
     "label": "Settings",
@@ -36,7 +36,7 @@
    },
    {
     "label": "Change farm",
-    "t": 139.2
+    "t": 138.1
    }
   ]
  },
@@ -49,7 +49,7 @@
   "chapters": [
    {
     "label": "The overview",
-    "t": 5.3
+    "t": 3.4
    },
    {
     "label": "The map",
@@ -65,7 +65,7 @@
    },
    {
     "label": "Data",
-    "t": 81.9
+    "t": 80.0
    },
    {
     "label": "The report",

@@ -1,0 +1,17 @@
+[
+  {
+    "files": [
+      "karasivka-wheat-600.webp",
+      "karasivka-wheat-768.webp"
+    ],
+    "title": "Burning field near Karasivka, 2024-07-01 (11)",
+    "what": "Fire on a wheat field near the village Karasivka (Kharkiv region of Ukraine) after Russian shelling on 1 July 2024: a strip of unburnt wheat runs through the blackened field to two firefighters spraying water on the flames.",
+    "author": "Kharkiv Regional State Administration (kharkivoda.gov.ua)",
+    "licence": "CC BY 4.0",
+    "licenceUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "source": "https://commons.wikimedia.org/wiki/File:Burning_field_near_Karasivka,_2024-07-01_(11).jpg",
+    "original": "https://kharkivoda.gov.ua/news/127354",
+    "changes": "Cropped to 768 x 960 from 200 px in on the 1280 x 960 original (the 600 copy is that crop made smaller); converted to WebP.",
+    "use": "About, Why Chernozem (HomePage.jsx), credited under the picture"
+  }
+]

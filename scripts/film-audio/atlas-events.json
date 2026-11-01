@@ -1,0 +1,182 @@
+{
+ "t0": 1793490472286,
+ "last": 1793490640083,
+ "frames": 2595,
+ "events": [
+  {
+   "t": 1793490472297,
+   "chapter": "",
+   "text": "",
+   "card": true
+  },
+  {
+   "t": 1793490475626,
+   "chapter": "The overview",
+   "text": "The overview: cropland analysed, black soil, heavy damage, people on damaged land"
+  },
+  {
+   "t": 1793490479743,
+   "chapter": "The overview",
+   "text": "Where to start: the map coloured by priority, and the top areas"
+  },
+  {
+   "t": 1793490485186,
+   "chapter": "The overview",
+   "text": "Any analysed month: the Atlas runs every month by itself"
+  },
+  {
+   "t": 1793490491412,
+   "chapter": "The overview",
+   "text": "Near term or post-crisis: two ways to rank the same land"
+  },
+  {
+   "t": 1793490497393,
+   "chapter": "The overview",
+   "text": "Next steps, worked out from the data: tick them off for the team"
+  },
+  {
+   "t": 1793490503048,
+   "chapter": "The overview",
+   "text": "A budget: the hectares it covers are worked out again"
+  },
+  {
+   "t": 1793490505451,
+   "chapter": "The map",
+   "text": "The map: priority square by square, with the states' names and borders"
+  },
+  {
+   "t": 1793490514199,
+   "chapter": "The map",
+   "text": "Colour the map by value, by damage, by feasibility, or all together"
+  },
+  {
+   "t": 1793490522544,
+   "chapter": "The map",
+   "text": "Macro: whole states ranked; Micro: every square"
+  },
+  {
+   "t": 1793490529656,
+   "chapter": "The map",
+   "text": "Satellite only: the land itself under the squares"
+  },
+  {
+   "t": 1793490536373,
+   "chapter": "Weights and the cutoff",
+   "text": "Move the weights: the map recolours and the top areas move at once"
+  },
+  {
+   "t": 1793490541598,
+   "chapter": "Weights and the cutoff",
+   "text": "The feasibility cutoff leaves out the least reachable land for now, with a soft edge"
+  },
+  {
+   "t": 1793490549021,
+   "chapter": "A place's details",
+   "text": "A place's details: its scores, soil types, hectares, people and recovery cost"
+  },
+  {
+   "t": 1793490552224,
+   "chapter": "Data",
+   "text": "Data: every analysed month; hover a bar for its numbers"
+  },
+  {
+   "t": 1793490560507,
+   "chapter": "Data",
+   "text": "Heavily damaged land, new damage or people, month by month"
+  },
+  {
+   "t": 1793490566361,
+   "chapter": "Data",
+   "text": "Compare two months: what changed, and the squares that changed most"
+  },
+  {
+   "t": 1793490570851,
+   "chapter": "The report",
+   "text": "The report: the totals, the top ten places, the settings and this month's alerts"
+  },
+  {
+   "t": 1793490584038,
+   "chapter": "The report",
+   "text": "Save as PDF for donors, or download every square as a spreadsheet"
+  },
+  {
+   "t": 1793490586605,
+   "chapter": "The assistant",
+   "text": "The assistant: ask about any place; it answers from the same numbers as the map"
+  },
+  {
+   "t": 1793490594757,
+   "chapter": "The assistant",
+   "text": "A saved conversation about one top area"
+  },
+  {
+   "t": 1793490599578,
+   "chapter": "Choose an area",
+   "text": "Settings: the areas, the crisis, the data and the team"
+  },
+  {
+   "t": 1793490607205,
+   "chapter": "Choose an area",
+   "text": "A new area: a country or region, GPS coordinates, or a drawn shape"
+  },
+  {
+   "t": 1793490619438,
+   "chapter": "Choose an area",
+   "text": "The last twelve months are analysed; the area joins the list and the map"
+  },
+  {
+   "t": 1793490629392,
+   "chapter": "Team and crisis",
+   "text": "The team: who can see this area and who can change it"
+  },
+  {
+   "t": 1793490633688,
+   "chapter": "Team and crisis",
+   "text": "The crisis: the app's list of wars, a date your team sets, a natural disaster, or none"
+  },
+  {
+   "t": 1793490636575,
+   "chapter": "",
+   "text": "",
+   "card": true
+  }
+ ],
+ "chapters": [
+  {
+   "label": "The overview",
+   "t": 1793490475626
+  },
+  {
+   "label": "The map",
+   "t": 1793490505451
+  },
+  {
+   "label": "Weights and the cutoff",
+   "t": 1793490533694
+  },
+  {
+   "label": "A place's details",
+   "t": 1793490546430
+  },
+  {
+   "label": "Data",
+   "t": 1793490552224
+  },
+  {
+   "label": "The report",
+   "t": 1793490570851
+  },
+  {
+   "label": "The assistant",
+   "t": 1793490586605
+  },
+  {
+   "label": "Choose an area",
+   "t": 1793490599578
+  },
+  {
+   "label": "Team and crisis",
+   "t": 1793490624824
+  }
+ ]
+}

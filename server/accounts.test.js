@@ -3,8 +3,9 @@
 // and server/app.js) on a real local port with a temporary data folder:
 // a Firebase sign-in makes the account's own folder and cookie; a wrong
 // token is refused; the sign-in is "off" when the server cannot check
-// tokens; the profile is checked field by field; an account may only use
-// the product it chose (403 wrong_product) and never reads the website's
+// tokens; the profile is checked field by field; a corporation is one of
+// the roles (an Atlas account, like a government or an NGO); an account
+// may only use the product it chose (403 wrong_product) and never reads the website's
 // messages (403 owner_only); two accounts and the demo never see each
 // other's areas, farm, jobs or settings; with visitors seeing the demo
 // (ATLAS_ACCESS_CODE set), an account still works and the owner's Google
@@ -302,6 +303,26 @@ test("the profile: read, checked field by field (400 with a plain sentence), sav
 
   assert.equal((await call("DELETE", "/api/account", { cookie })).status, 405);
   assert.equal((await call("GET", "/api/account/more", { cookie })).status, 404);
+});
+
+test("a corporation is one of the roles: an Atlas account saved as a corporation keeps it and gets its own, empty Atlas", async () => {
+  // Field's two roles, then Atlas's five (the register page's kinds of organisation).
+  assert.deepEqual(accounts.ROLES, ["farmer", "landowner", "government", "ngo", "corporation", "research", "other"]);
+  const cookie = await signIn("CorpUID00001");
+  const saved = await call("PUT", "/api/account", { cookie, body: { name: "Mira", role: "corporation", product: "atlas", organization: "Black Soil Foods" } });
+  assert.equal(saved.status, 200, JSON.stringify(saved.json));
+  assert.equal(saved.json.profile.role, "corporation");
+  assert.equal(saved.json.profile.organization, "Black Soil Foods");
+  assert.deepEqual(saved.json.account, { uid: "CorpUID00001", email: "corpuid00001@example.com", name: "Mira", product: "atlas", profileComplete: true });
+  const onDisk = JSON.parse(fs.readFileSync(path.join(folderOf("CorpUID00001"), "profile.json"), "utf8"));
+  assert.equal(onDisk.role, "corporation", "kept in the account's own profile.json");
+  // Its own Atlas, empty, and Field stays closed to it, like any Atlas account.
+  assert.deepEqual((await call("GET", "/api/areas", { cookie })).json, { areas: [] });
+  assert.equal((await call("GET", "/api/farm", { cookie })).json.error.code, "wrong_product");
+  // A word the page never sends is refused, and the refusal lists corporation among the choices.
+  const wrong = await call("PUT", "/api/account", { cookie, body: { name: "Mira", role: "company", product: "atlas" } });
+  assert.equal(wrong.status, 400);
+  assert.match(wrong.json.error.message, /Choose who you are: .*\bcorporation\b/);
 });
 
 test("an account uses the product it chose: 403 wrong_product on the other one, 403 owner_only on the website's messages; the demo uses both", async () => {

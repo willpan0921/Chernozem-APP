@@ -1,57 +1,65 @@
 /*
   WHAT THIS FILE DOES
   The layout of the About page (HomePage.jsx) and of the parts only it
-  uses: the hero (one dark field the globe fills; the globe's own layout
-  is in components/globe.css), the two introductions ("What is Chernozem"
-  beside one window onto the Fields page; "Why Chernozem", eight claims in
-  two columns beside the Atlas weights panel), the showcase row and its
-  three state buttons, the stage slider, the proof table's heading, the
-  features (an index beside one window on a wide screen, modules on a
-  narrow one), the demo on its sage stage, the film, the founder's letter,
-  the action tile with its satellite view and the small print. Every
-  colour and size is a token from src/site/site.css.
+  uses: the hero (the words on the left, the Earth on the right; the
+  Earth's own look is in components/earth.css), "Why Chernozem" (eight
+  claims in two columns beside the photograph and its credit), the field
+  row and its three state buttons, the proof table's heading, the demo on
+  its sage stage, the action tile with its satellite view and the small
+  print. The two sideways stories have their own file,
+  components/scrollstory.css. Every colour and size is a token from
+  src/site/site.css.
 
-  The page's title is its largest heading at every width: it is sized to
-  the width of the words' column (each line of "seen from space" is about
-  7.6 times the type size wide), and the two display headings below it
-  ("First, the satellites pass", "Checked against the record") stay a
-  step smaller. Text starts on two lines of the page's grid: the left
-  edge, or three columns in.
+  The page's title, the slogan, is its largest heading at every width
+  ("know your land." is about 8 times the type size wide, so it is sized
+  to the words' column), and the display heading below it ("Checked
+  against the record") stays a step smaller. Text starts on two lines of
+  the page's grid: the left edge, or three columns in.
 
   WHO EDITS IT
   Whoever works on the About page.
 */
 
-/* ---- 1. The hero: one dark field, the Earth fills it ---- */
+/* ---- 1. The hero: the words in the left half, the Earth in the right,
+   on the light ground, as tall as the first screen on a wide one ---- */
 .site .hero {
-  position: relative;
-  z-index: 0;
-  height: max(520px, calc(100svh - var(--nav-h)));
-  overflow: clip;
-  background: var(--field-dark);
+  padding-block: clamp(2rem, 4svh, 3rem) clamp(3rem, 7svh, 5rem);
 }
 
-/* Two set lines, the largest type on the page, as large as the words'
-   column allows ("seen from space" is about 7.6 times the type size wide;
-   the column is min(600px, 46vw) on a wide screen, the full width less the
-   margins on a tall one). */
+.site .hero-grid {
+  align-items: center;
+  row-gap: 2.5rem;
+}
+
+@media (min-width: 901px) {
+  .site .hero-grid {
+    min-height: calc(100svh - var(--nav-h) - clamp(5rem, 11svh, 8rem));
+  }
+}
+
+.site .hero-words {
+  grid-column: 1 / 7;
+  min-width: 0;
+}
+
+.site .hero-earth {
+  grid-column: 7 / 13;
+  min-width: 0;
+}
+
+/* The slogan in two set lines, bold, the largest type on the page. */
 .site .hero-title {
-  font-size: clamp(2.5rem, 5.9vw, 4.8rem);
+  font-size: clamp(2.5rem, 5.4vw, 4.8rem);
   font-weight: 800;
   letter-spacing: -0.04em;
-  line-height: 0.92;
-}
-
-.site .globe.is-portrait .hero-title {
-  font-size: clamp(2.25rem, calc((100vw - 2 * var(--margin)) / 7.8), 4.8rem);
+  line-height: 0.95;
 }
 
 .site .hero-lead {
   margin-top: 32px;
-  font-size: var(--step-body);
+  font-size: clamp(1.125rem, 0.95rem + 0.55vw, 1.375rem);
   line-height: 1.45;
-  max-width: 44ch;
-  color: var(--field-dark-ink);
+  max-width: 42ch;
 }
 
 .site .hero-actions {
@@ -62,101 +70,33 @@
   margin-top: 32px;
 }
 
-/* ---- 2. What is Chernozem: the words in the left half, one window onto
-   the Fields page in the right half (at most 720 x 520; the picture, 864
-   x 520 at its true size, shows its middle, and is wide enough to fill
-   the window up to a 900 px screen), the caption under it ---- */
-.site .what-words {
-  grid-column: 1 / 7;
+/* A narrower screen: the words first, the Earth under them, each the full
+   width; the slogan as large as the width allows (about 8.2 times its
+   size for "know your land."). */
+@media (max-width: 900px) {
+  .site .hero-words,
+  .site .hero-earth {
+    grid-column: 1 / 13;
+  }
+
+  .site .hero-title {
+    font-size: min(4.8rem, calc((100vw - 2 * var(--margin)) / 8.2));
+  }
 }
 
-.site .what-lead {
-  margin-top: 1.5rem;
-  max-width: 36ch;
-}
-
-.site .what-link {
-  margin-top: 1.75rem;
-}
-
-/* "How it started" stands on its own line, so its target is taller than
-   its words (48 px on a wide screen, 45 on a phone) without looking like
-   a button: the padding moves nothing (the margin gives the sideways part
-   back), and the focus ring keeps to the words as on the other links. */
-.site .what-link .link {
-  padding: 12px;
-  margin-inline: -12px;
-}
-
-.site .what-link .link:focus-visible {
-  outline-offset: -9px;
-}
-
-.site .what-side {
-  grid-column: 7 / 13;
-  justify-self: end;
-  width: 100%;
-  max-width: 720px;
-}
-
-.site .what-window {
-  height: 520px;
-  margin: 0;
-  overflow: clip;
-  background: var(--surface);
-}
-
-.site .what-window img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  max-width: none;
-  object-fit: none;
-  object-position: 50% 50%;
-}
-
-/* The line under each of the two windows: what the picture is, and the
-   link into the demo. */
-.site .window-caption {
-  margin-top: 1rem;
-  font-size: 15px;
-  line-height: 1.45;
-  max-width: none;
-}
-
-/* The link never breaks over two lines: it moves to the next line whole. */
-.site .window-caption .link {
-  color: var(--ink);
-  white-space: nowrap;
-}
-
-/* The page's underlined text links on its light grounds (the two
-   introductions, the features, the small print) answer the pointer, and
-   the pin nearby (cursorAssist.js), as the other pages' text links do:
-   they turn the accent green. They keep their underline under the pointer
-   (site.css's ".site a:hover" reset would otherwise take it away). */
+/* The page's underlined text links on its light grounds (the hero, the
+   photograph's credit, the small print) answer the pointer, and the pin
+   nearby (cursorAssist.js), as the other pages' text links do: they turn
+   the accent green and keep their underline (site.css's ".site a:hover"
+   reset would otherwise take it away). */
 @media (hover: hover) and (pointer: fine) {
-  .site :is(.what, .why, .features, .small-print) .link-under:hover {
+  .site :is(.hero, .why, .small-print) .link-under:hover {
     color: var(--accent);
     text-decoration-line: underline;
     text-decoration-thickness: 0.07em;
   }
-}
 
-.site :is(.what, .why, .features, .small-print) .link-under[data-near] {
-  color: var(--accent);
-}
-
-/* On the dark field and the green tile the words keep their colour and
-   the underline answers instead, as on the other pages' dark sections:
-   the hero's "Try the demo" thickens its underline, the close's shows it,
-   under the pointer as with the pin near. */
-@media (hover: hover) and (pointer: fine) {
-  .site .hero-actions .link-under:hover {
-    text-decoration-line: underline;
-    text-decoration-thickness: 0.14em;
-  }
-
+  /* On the green tile the words keep their colour and the underline shows. */
   .site .close-actions .link:hover {
     text-decoration-line: underline;
     text-decoration-color: currentColor;
@@ -164,63 +104,32 @@
   }
 }
 
-.site .hero-actions .link-under[data-near] {
-  text-decoration-thickness: 0.14em;
+.site :is(.hero, .why, .small-print) .link-under[data-near] {
+  color: var(--accent);
 }
 
-@media (max-width: 900px) {
-  .site .what-words,
-  .site .what-side {
-    grid-column: 1 / 13;
-  }
-
-  .site .what-side {
-    max-width: none;
-    margin-top: 2.5rem;
-  }
-
-  .site .what-window {
-    height: 400px;
-  }
-}
-
-/* Where a narrower window looks at the picture, so no field's name is cut
-   at its edge: beside the words on a 901 to 1199 px screen, the farm's
-   right part (eight fields); on a phone, its left part, with Field 11
-   (picked in the app) and its neighbours. */
-@media (min-width: 901px) and (max-width: 1199px) {
-  .site .what-window img {
-    object-position: 80% 50%;
-  }
-}
-
-@media (max-width: 440px) {
-  .site .what-window img {
-    object-position: 24.5% 50%;
-  }
-}
-
-/* ---- 3. Why Chernozem, on the surface tone: the heading and the eight
-   claims in two columns (columns 1 to 8), and the Atlas weights panel
-   beside them (columns 9 to 12) at its true size. The picture is the
-   panel alone, 374 x 654, at every width: under the list on a narrower
-   screen, and scaled to the column on a phone (never cut at its side),
-   where it shows the panel down to the cutoff's line. ---- */
+/* ---- 2. Why Chernozem, on the surface tone: the heading and the eight
+   claims in two columns (columns 1 to 7), the photograph beside them
+   (columns 8 to 12, 4:5, from the top) with its credit under it. Below
+   1200 px the photograph comes right after the heading: on a phone it is
+   the first thing of the section, at the full width. ---- */
 .site .why.section {
   background: var(--surface);
 }
 
 .site .why-head {
-  grid-column: 1 / 9;
+  grid-column: 1 / 8;
   margin-bottom: 56px;
 }
 
 .site .why-list {
-  grid-column: 1 / 9;
+  grid-column: 1 / 8;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 2.75rem var(--gutter);
   align-content: start;
+  /* Air between the claims and the photograph beside them. */
+  padding-right: calc(2 * var(--gutter));
 }
 
 .site .why-claim {
@@ -237,28 +146,40 @@
   max-width: 34ch;
 }
 
-.site .why-side {
-  grid-column: 9 / 13;
+.site .why-photo {
+  grid-column: 8 / 13;
   grid-row: 1 / 3;
-  justify-self: end;
-  width: 100%;
-  max-width: 374px;
-}
-
-/* min-height: 0 lets the phone's shorter ratio clip the picture (a box
-   with overflow: clip would otherwise grow to the picture's height). */
-.site .why-window {
-  aspect-ratio: 374 / 654;
-  min-height: 0;
+  align-self: start;
   margin: 0;
-  overflow: clip;
-  background: #ffffff;
+  min-width: 0;
 }
 
-.site .why-window img {
+.site .why-photo-frame {
+  aspect-ratio: 4 / 5;
+  overflow: clip;
+  background: var(--bg);
+}
+
+.site .why-photo-frame img {
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
+  max-width: none;
+  object-fit: cover;
+}
+
+/* The line under a picture: what it is and whose it is. */
+.site .window-caption {
+  margin-top: 1rem;
+  font-size: 15px;
+  line-height: 1.45;
+  max-width: none;
+}
+
+/* A link in it never breaks over two lines: it moves to the next line whole. */
+.site .window-caption .link {
+  color: var(--ink);
+  white-space: nowrap;
 }
 
 @media (max-width: 1199px) {
@@ -267,31 +188,34 @@
     grid-column: 1 / 13;
   }
 
-  .site .why-side {
+  .site .why-photo {
     grid-column: 1 / 13;
-    grid-row: auto;
-    justify-self: start;
-    margin-top: 3rem;
+    grid-row: 2;
+    margin-bottom: 3.5rem;
+  }
+
+  .site .why-list {
+    grid-row: 3;
+    padding-right: 0;
   }
 }
 
-/* Under the list, on a screen 701 to 1199 px wide: the panel at its true
-   size with its caption docked at its foot, beside it, so the width next
-   to the panel is not left as bare ground. */
+/* A screen 701 to 1199 px wide: the photograph 420 px wide with its credit
+   docked at its foot beside it, so the width beside it is not bare. */
 @media (min-width: 701px) and (max-width: 1199px) {
-  .site .why-side {
+  .site .why-photo {
     display: flex;
     align-items: flex-end;
     gap: 1.5rem;
-    max-width: none;
   }
 
-  .site .why-window {
-    flex: 0 0 374px;
+  .site .why-photo-frame {
+    flex: 0 0 420px;
   }
 
-  .site .why-side .window-caption {
+  .site .why-photo .window-caption {
     margin-top: 0;
+    max-width: 32ch;
   }
 }
 
@@ -301,20 +225,19 @@
   }
 }
 
-/* A phone: the claims in one column, and the panel shown down to the
-   cutoff's line (512 of its 654 px), not the Detail switch under it. */
+/* A phone: the photograph across the column, the claims in one column. */
 @media (max-width: 700px) {
+  .site .why-photo {
+    margin-bottom: 2.75rem;
+  }
+
   .site .why-list {
     grid-template-columns: 1fr;
     gap: 2rem;
   }
-
-  .site .why-window {
-    aspect-ratio: 374 / 512;
-  }
 }
 
-/* ---- 4. The showcase: the heading at the left edge, the three states
+/* ---- 5. The field row: the heading at the left edge, the three states
    under it, and the row enlarged across columns 4 to 12 ---- */
 .site .showcase-head {
   grid-column: 1 / 13;
@@ -537,284 +460,14 @@
   }
 }
 
-/* ---- 5. How it works: two fields and one slider ---- */
-.site .stages {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  min-height: 88svh;
-}
-
-.site .stages-fields {
-  flex: 1 1 auto;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-}
-
-/* Inside the page's frame (.wrap): the clause starts at the left edge. */
-.site .stages-clause {
-  padding: clamp(2.5rem, 6vw, 5rem) var(--gutter) 2rem 0;
-  background: var(--bg);
-}
-
-/* The two display headings of the page stay a step under its title. */
-.site .display.stages-head,
+/* ---- 6. The proof: a stepped heading, then the table. Its second line
+   starts three columns in, on the page's grid (the heading spans the
+   frame, so 100% is the grid's width). The page's display heading stays a
+   step under its title. ---- */
 .site .display.proof-head {
   font-size: clamp(2rem, 0.5rem + 4.4vw, 4.5rem);
 }
 
-.site .stages-head {
-  max-width: 12ch;
-}
-
-.site .stages-line {
-  display: block;
-}
-
-.site .stages-text {
-  margin-top: 1.5rem;
-  font-size: var(--step-body);
-  max-width: 44ch;
-}
-
-.site .stages-picture {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2rem var(--margin);
-  background: var(--surface);
-}
-
-.site .stages-frame {
-  position: relative;
-  width: var(--frame-w);
-  height: var(--frame-h);
-  max-width: 100%;
-  overflow: clip;
-}
-
-/* The one picture on the page: the crop at its true size, from the top
-   left (a phone's frame shows its top-left part). */
-.site .stages-shot {
-  position: absolute;
-  inset: 0;
-  margin: 0;
-}
-
-.site .stages-shot img {
-  display: block;
-  width: 440px;
-  height: 560px;
-  max-width: none;
-}
-
-/* The whole picture is a tap target that moves on to the next stage. */
-.site .stages-next {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  width: 100%;
-  height: 100%;
-}
-
-/* The control along the bottom: the track under a transparent range input. */
-.site .stages-control {
-  position: relative;
-  padding: 0 0 28px;
-  background: var(--bg);
-}
-
-.site .stages-track {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 12px;
-  height: 8px;
-  background: #d9d6cf;
-}
-
-.site .stages-fill {
-  display: block;
-  height: 100%;
-  width: calc(16px + var(--passed, 0) * (100% - 32px));
-  background: var(--ink);
-  transition: width 200ms var(--ease-out);
-}
-
-.site .stages-range {
-  position: relative;
-  display: block;
-  width: 100%;
-  height: 32px;
-  margin: 0;
-  padding: 0;
-  background: none;
-  -webkit-appearance: none;
-  appearance: none;
-}
-
-.site .stages-range::-webkit-slider-runnable-track {
-  height: 32px;
-  background: transparent;
-}
-
-.site .stages-range::-moz-range-track {
-  height: 32px;
-  background: transparent;
-}
-
-.site .stages-range::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 32px;
-  height: 32px;
-  border: 0;
-  border-radius: 0;
-  background: var(--accent);
-  transition: transform var(--t-press) var(--ease-out);
-}
-
-.site .stages-range::-moz-range-thumb {
-  width: 32px;
-  height: 32px;
-  border: 0;
-  border-radius: 0;
-  background: var(--accent);
-}
-
-.site .stages-range:active::-webkit-slider-thumb {
-  transform: scale(0.94);
-}
-
-.site .stages-range:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 4px;
-}
-
-.site .stages-names {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 10px;
-}
-
-.site .stages-name {
-  font-size: var(--step-body);
-  font-weight: 600;
-  color: var(--muted);
-  min-height: 32px;
-  transition: color var(--t-hover) ease;
-}
-
-.site .stages-name.is-on {
-  color: var(--ink);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .site .stages-name:hover {
-    color: var(--ink);
-  }
-}
-
-.site .stages-name[data-near] {
-  color: var(--ink);
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .js .site .stages-line,
-  .js .site .stages-text {
-    animation: site-stage-in 200ms var(--ease-out) both;
-  }
-
-  .js .site .stages-shot {
-    animation: site-stage-fade 200ms ease both;
-  }
-}
-
-@keyframes site-stage-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-}
-
-@keyframes site-stage-fade {
-  from {
-    opacity: 0;
-  }
-}
-
-@media (max-width: 900px) {
-  .site .stages {
-    min-height: 0;
-  }
-
-  .site .stages-fields {
-    grid-template-columns: 1fr;
-  }
-
-  .site .stages-picture {
-    order: 1;
-    min-height: 46svh;
-    padding: 0;
-  }
-
-  .site .stages-frame {
-    width: 100%;
-    height: 46svh;
-  }
-
-  .site .stages-control {
-    order: 2;
-    padding-top: 10px;
-  }
-
-  .site .stages-track {
-    top: 22px;
-  }
-
-  .site .stages-range {
-    height: 40px;
-  }
-
-  .site .stages-range::-webkit-slider-runnable-track,
-  .site .stages-range::-moz-range-track {
-    height: 40px;
-  }
-
-  .site .stages-range::-webkit-slider-thumb,
-  .site .stages-range::-moz-range-thumb {
-    width: 40px;
-    height: 40px;
-  }
-
-  .site .stages-fill {
-    width: calc(20px + var(--passed, 0) * (100% - 40px));
-  }
-
-  .site .stages-clause {
-    order: 3;
-    padding: 1.5rem 0 3rem;
-  }
-
-  .site .stages-head {
-    max-width: none;
-  }
-
-  .site .stages-names {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 4px 1rem;
-    justify-items: start;
-  }
-
-  .site .stages-name {
-    font-size: 15px;
-  }
-}
-
-/* ---- 6. The proof: a stepped heading, then the table. Its second line
-   starts three columns in, on the page's grid (the heading spans the
-   frame, so 100% is the grid's width). ---- */
 .site .proof-head-step {
   padding-left: calc((100% - 11 * var(--gutter)) / 12 * 3 + 3 * var(--gutter));
 }
@@ -833,225 +486,7 @@
   }
 }
 
-/* ---- 7. The features: a narrow module on the text margin, on a field one
-   tone from the ground; each panel steps back to the ground tone. ---- */
-.site .features.section {
-  background: var(--surface);
-  padding-top: clamp(4rem, 8vw, 7.5rem);
-}
-
-.site .features-col {
-  grid-column: 4 / 13;
-  max-width: 640px;
-}
-
-.site .features-head {
-  margin-bottom: 64px;
-}
-
-.site .features-group + .features-group {
-  margin-top: 120px;
-}
-
-.site .feature {
-  display: flex;
-  align-items: flex-start;
-  gap: 20px;
-}
-
-.site .features-item + .features-item {
-  margin-top: 96px;
-}
-
-.site .feature-panel {
-  flex: 0 0 360px;
-  width: 360px;
-  min-height: 200px;
-  background: var(--bg);
-  overflow: clip;
-}
-
-.site .feature-text {
-  flex: 1 1 auto;
-  width: 250px;
-  max-width: 250px;
-}
-
-.site .feature-title {
-  font-size: var(--step-body);
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 1.3;
-}
-
-.site .feature-line,
-.site .feature-text .feature-line {
-  margin-top: 0.6em;
-  /* Running text: readable size, the full ink (the blueprint's 15px grey read thin). */
-  font-size: 16px;
-  line-height: 1.5;
-  max-width: none;
-  color: var(--ink);
-}
-
-.site .feature-line + .feature-line {
-  margin-top: 0.6em;
-}
-
-.site .feature-links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1.5rem;
-  margin-top: 0.9em;
-}
-
-.site .feature-link {
-  display: inline-block;
-  font-size: 16px;
-}
-
-/* Wide: each group is an index (columns 1 to 5) beside one window onto
-   the app at true size (columns 6 to 12). The open item shows its lines
-   and its links; the window shows its part of the app. */
-.site .findex {
-  align-items: start;
-}
-
-.site .findex-list {
-  grid-column: 1 / 6;
-}
-
-.site .findex .features-head {
-  margin-bottom: 40px;
-}
-
-.site .findex-item + .findex-item {
-  margin-top: 6px;
-}
-
-.site .findex-title {
-  font-size: var(--step-lead);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  line-height: 1.15;
-}
-
-.site .findex-title button {
-  display: block;
-  width: 100%;
-  min-height: 48px;
-  padding: 10px 0;
-  text-align: left;
-  color: var(--muted);
-  transition: color var(--t-hover) ease;
-}
-
-.site .findex-item.is-open .findex-title button {
-  color: var(--ink);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .site .findex-title button:hover {
-    color: var(--ink);
-  }
-}
-
-.site .findex-title button[data-near] {
-  color: var(--ink);
-}
-
-.site .findex-body {
-  max-width: 48ch;
-  padding-bottom: 14px;
-}
-
-.site .findex-body .feature-line:first-child {
-  margin-top: 0;
-}
-
-.site .findex-window {
-  grid-column: 6 / 13;
-  justify-self: end;
-  position: relative;
-  width: 100%;
-  max-width: 720px;
-  height: 450px;
-  overflow: clip;
-  background: var(--bg);
-}
-
-.site .findex-shot {
-  position: absolute;
-  inset: 0;
-  margin: 0;
-  opacity: 0;
-  transition: opacity 200ms ease;
-}
-
-.site .findex-shot.is-on {
-  opacity: 1;
-}
-
-/* Each picture is the window's size; the app shows through at its true
-   size (object-fit: none), today's crop in the middle. */
-.site .findex-shot img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  max-width: none;
-  object-fit: none;
-}
-
-@media (max-width: 1100px) {
-  .site .features-col {
-    grid-column: 2 / 13;
-  }
-}
-
-@media (max-width: 860px) {
-  .site .features-col {
-    grid-column: 1 / 13;
-  }
-
-  .site .features-head {
-    margin-bottom: 40px;
-  }
-
-  /* Wide enough that the last item's link reads as closing it, not as a
-     label over the next group's heading. */
-  .site .features-group + .features-group {
-    margin-top: 112px;
-  }
-
-  .site .feature {
-    flex-direction: column;
-    gap: 16px;
-  }
-
-  .site .features-item + .features-item {
-    margin-top: 64px;
-  }
-
-  .site .feature-panel {
-    flex: 0 0 auto;
-    width: 100%;
-  }
-
-  .site .feature-panel .shot-crop {
-    width: 100%;
-  }
-
-  .site .feature-text {
-    width: 100%;
-    max-width: none;
-  }
-
-  .site .feature-line {
-    max-width: 48ch;
-  }
-}
-
-/* ---- 8. The demo on its sage stage: the copy beside the fragment ----
+/* ---- 7. The demo on its sage stage: the copy beside the fragment ----
    The fragment takes eight columns rather than seven: its ranked list
    (DemoRanking, which is not edited) needs the room for the oblast names. */
 .site .demo-copy {
@@ -1068,11 +503,17 @@
   grid-column: 5 / 13;
 }
 
-/* Until the demo is built (it is, once the visitor comes within 800 px),
-   its place is kept at its height (measured: 699 px at 1024 wide, 657 at
-   1440, 621 from 1760 on; 991 on a 390 px phone, 1122 at 768), so nothing
-   below moves. */
-.site .demo-stage.is-waiting {
+/* Until the demo is built (it is, once the visitor comes within 2,400 px of
+   the field row or of the close), while its code arrives (the stage is
+   empty) and while it fetches its data (DemoRanking.jsx first shows a
+   short loading frame), its place is kept at its height, so nothing below
+   moves: a visitor who comes back with Back to the end of the page stays
+   there, rather than the close sliding down the screen. Measured (the
+   demo's own layout narrows at 860 px, demo.css): 699 px at 1024 wide, 657
+   at 1440, 621 from 1760 on; 657 to 677 from 861 to 900; 1051 on a 320 px
+   phone, 1033 at 360, 991 at 390, 1004 at 430, 1122 at 768. (:is() so a
+   browser without :has() keeps the other two.) */
+.site .demo-stage:is(.is-waiting, :empty, :has(> .demo.is-loading)) {
   min-height: max(621px, calc(802px - 10.1vw));
 }
 
@@ -1086,95 +527,18 @@
     margin-top: 2.5rem;
   }
 
-  .site .demo-stage.is-waiting {
-    min-height: calc(856px + 34.66vw);
+  .site .demo-stage:is(.is-waiting, :empty, :has(> .demo.is-loading)) {
+    min-height: 677px;
   }
-}
-
-/* ---- 9. The film on the dark field (the film itself: site.css, .film) ---- */
-.site .film-head {
-  margin-bottom: 2.5rem;
-}
-
-/* ---- 10. The founder's letter, on the grid: the heading across the top
-   at the left edge, the letter three columns in ---- */
-.site .letter {
-  row-gap: 3rem;
-  align-items: start;
-}
-
-.site .letter-head {
-  grid-column: 1 / 13;
-}
-
-.site .letter-text {
-  grid-column: 4 / 11;
-  max-width: 40rem;
-}
-
-.site .letter-mark {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background: var(--surface);
-  margin-bottom: 28px;
-}
-
-.site .letter-mark img {
-  width: 26px;
-  height: 26px;
-}
-
-.site .letter-body p {
-  font-size: var(--step-body);
-  line-height: 1.55;
-  max-width: none;
-}
-
-.site .letter-body p + p {
-  margin-top: 1em;
-}
-
-.site .letter-sign {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: 2rem;
-  max-width: none;
-}
-
-.site .letter-name {
-  font-size: 22px;
-  font-style: italic;
-  font-weight: 400;
-  letter-spacing: -0.02em;
-}
-
-.site .letter-role {
-  font-size: 15px;
 }
 
 @media (max-width: 860px) {
-  .site .letter-text {
-    grid-column: 1 / 13;
+  .site .demo-stage:is(.is-waiting, :empty, :has(> .demo.is-loading)) {
+    min-height: max(calc(1325px - 85.7vw), calc(856px + 34.66vw));
   }
 }
 
-@media (max-width: 760px) {
-  .site .letter {
-    row-gap: 2rem;
-  }
-
-  .site .letter-mark {
-    width: 40px;
-    height: 40px;
-  }
-}
-
-/* ---- 11. The close: the action tile (its words on the page's frame,
+/* ---- 8. The close: the action tile (its words on the page's frame,
    site.css .frame) and the satellite view, from edge to edge ---- */
 .site .close {
   padding-block: 0;
@@ -1247,7 +611,7 @@
   }
 }
 
-/* ---- The small print: where the globe's pictures and data come from ---- */
+/* ---- The small print: where the maps in the pictures come from ---- */
 .site .small-print-wrap {
   margin-top: 40px;
 }

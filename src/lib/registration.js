@@ -16,8 +16,9 @@
 //   productFromParam(value)        ?product=field|atlas in the address ->
 //                                  "field" | "atlas" (Field when missing)
 //   ORG_KINDS                      the kinds of organisation an Atlas account
-//                                  can be: Government, NGO, Research, Other.
-//                                  None is chosen until the person picks one.
+//                                  can be: Government, NGO, Corporation,
+//                                  Research, Other. None is chosen until the
+//                                  person picks one.
 //   productForRole(role)           a role the server keeps -> "field" |
 //                                  "atlas" | null
 //   roleForSave(product, kind)     the role PUT /api/account gets: Field ->
@@ -81,10 +82,12 @@ export function productFromParam(value) {
 }
 
 // The kinds of organisation an Atlas account can be (server/accounts.js
-// ROLES, the four that belong to Atlas). The page starts with none chosen.
+// ROLES, the five that belong to Atlas; Atlas is for governments, NGOs and
+// corporations). The page starts with none chosen.
 export const ORG_KINDS = [
   { role: "government", label: "Government" },
   { role: "ngo", label: "NGO" },
+  { role: "corporation", label: "Corporation" },
   { role: "research", label: "Research" },
   { role: "other", label: "Other" },
 ];

@@ -1,11 +1,19 @@
 // WHAT THIS FILE DOES
 // A walkthrough film on the website's Methodology page: the Field or the
 // Atlas app recorded from the real product, with a caption for every step
-// and no narration. A plain <video> with its poster frame, which only
-// downloads when the visitor presses play (preload="none"), and under it
-// the chapter buttons: each one jumps to its part of the film and plays
-// it. Nothing else is written under the film: the chapters say what is in
-// it.
+// in the picture. The films have sound: a narrated voice (the Siri voice
+// "Nora") walks through every step, over quiet original music that is
+// turned down while the voice speaks. A plain <video> with its poster
+// frame, which only downloads when the visitor presses play
+// (preload="none"), and under it the chapter buttons: each one jumps to
+// its part of the film and plays it. Nothing else is written under the
+// film: the chapters say what is in it.
+//
+// The narration is also each film's English captions (a WebVTT file, one
+// <track>): off until the visitor turns them on in the player's own
+// captions menu, and set at the top of the picture, so they never cover
+// the film's caption bar at its foot. The captions file lists every line
+// of the narration with its time, so it doubles as the narration script.
 //
 // The chapter playing now is marked (aria-current, filled in ink by
 // pages.css): it follows the film as it plays or is moved on its own
@@ -18,8 +26,8 @@
 // The films and their chapter lists are made together by the recording
 // script (the chapter times come from the recording itself), and live in
 // public/site/film/: field-walkthrough.mp4, atlas-walkthrough.mp4, their
-// -poster.jpg, and walkthroughs.json, which this component fetches once
-// the film is within about a screen of the visitor:
+// -poster.jpg and .vtt (the captions), and walkthroughs.json, which this
+// component fetches once the film is within about a screen of the visitor:
 //
 //   { "field": { "src", "poster", "width", "height", "seconds",
 //                "chapters": [{ "label": "Fields", "t": 21.4 }, ...] },
@@ -32,7 +40,8 @@
 // WHO EDITS IT
 // Whoever re-records a film: run the recording script again, which writes
 // the new films, posters and walkthroughs.json together, so the chapters
-// always match the film.
+// always match the film. Then make its sound and captions again: the
+// narration is timed to each step of the film it was made for.
 
 import { useEffect, useRef, useState } from "react";
 import { useReveal } from "../hooks.js";
@@ -40,10 +49,13 @@ import { useReveal } from "../hooks.js";
 export const WALKTHROUGHS_URL = "/site/film/walkthroughs.json";
 
 // The films' addresses, so the page works (poster and all) before the
-// chapter list has arrived.
+// chapter list has arrived; "captions" is the narration as captions.
+// The films' addresses carry a version (?v=...): the server and the CDN keep
+// /site/film/ for a week, so a film that changes gets a new version here,
+// and every visitor fetches the new copy at once (the server ignores it).
 export const WALKTHROUGH_FILES = {
-  field: { src: "/site/film/field-walkthrough.mp4", poster: "/site/film/field-walkthrough-poster.jpg" },
-  atlas: { src: "/site/film/atlas-walkthrough.mp4", poster: "/site/film/atlas-walkthrough-poster.jpg" },
+  field: { src: "/site/film/field-walkthrough.mp4?v=narrated", poster: "/site/film/field-walkthrough-poster.jpg", captions: "/site/film/field-walkthrough.vtt" },
+  atlas: { src: "/site/film/atlas-walkthrough.mp4?v=narrated", poster: "/site/film/atlas-walkthrough-poster.jpg", captions: "/site/film/atlas-walkthrough.vtt" },
 };
 
 // One fetch of the chapter list for the whole page (both films share it).
@@ -171,6 +183,9 @@ export default function Walkthrough({ product, title, className = "" }) {
     <figure className={`wk ${className}`.trim()} ref={reveal} aria-label={title}>
       <div className="wk-frame" data-open ref={frameRef}>
         <video ref={videoRef} src={files.src} className="wk-video" poster={near ? files.poster : undefined} preload="none" controls playsInline width="1440" height="900" onTimeUpdate={follow} onSeeked={settled} onPlay={follow}>
+          {/* The narration as captions: not "default", so they stay off
+              (and unfetched) until the visitor turns them on. */}
+          <track kind="captions" src={files.captions} srcLang="en" label="English" />
           <a href={files.src}>Download the film (MP4)</a>
         </video>
       </div>

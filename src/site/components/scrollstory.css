@@ -1,0 +1,266 @@
+/*
+  WHAT THIS FILE DOES
+  The look of the About page's two held, sideways stories (Field, then
+  Atlas; components/ScrollStory.jsx).
+
+  Two layouts:
+  - the plain list (the starting point): the heading, then the steps one
+    under the other, each step's words beside its picture (the picture
+    above the words on a narrow screen). This is what visitors who asked
+    for reduced motion get, and a screen too short to hold a step;
+  - held (.is-held, added by ScrollStory.jsx): the section is as tall as
+    the screen plus 0.6 of a screen per step (--story-steps); its stage
+    sticks to the top of the screen while the section passes, and the row
+    of steps slides sideways to the current step (--story-at), one whole
+    step at a time. The browser's scroll anchoring leaves the stage's
+    parts alone (they stay still while the page moves), so a resize never
+    throws the visitor elsewhere; ScrollStory.jsx keeps the step.
+
+  Each picture is the app at its true size (one picture pixel per CSS px,
+  object-fit: none): a window the width of the step's column, at most
+  800 x 500 (held, never under 170 px tall, so a short window still shows
+  a usable part of it); on a narrower window the part named by --tx (a window a
+  little narrower than the picture: from the top, where the app's screens
+  have their titles) or by --fx and --fy (a phone's) shows (set per step
+  in HomePage.jsx). Every colour and size is a token from
+  src/site/site.css.
+
+  WHO EDITS IT
+  Whoever works on the About page.
+*/
+
+/* ---- The plain list ---- */
+.site .story {
+  position: relative;
+  padding-block: clamp(4.5rem, 10vw, 11rem);
+}
+
+/* The second story on the surface tone: a hard cut, a new chapter. */
+.site .story.is-surface {
+  background: var(--surface);
+}
+
+.site .story-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.75rem var(--gutter);
+}
+
+.site .story-side {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1.75rem;
+}
+
+/* "2 of 5": a plain count in the body face. */
+.site .story-count {
+  font-size: var(--step-body);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.site .story-link {
+  font-size: var(--step-body);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .site .story-link:hover {
+    color: var(--accent);
+    text-decoration-line: underline;
+    text-decoration-thickness: 0.07em;
+  }
+}
+
+.site .story-link[data-near] {
+  color: var(--accent);
+}
+
+.site .story-track {
+  display: grid;
+  gap: clamp(4rem, 8vw, 7.5rem);
+  margin-top: clamp(3rem, 5vw, 4.5rem);
+}
+
+/* One step: its words on the page's left edge (columns 1 to 4), its
+   picture against the right one (columns 5 to 12). */
+.site .story-panel {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  column-gap: var(--gutter);
+  align-items: center;
+}
+
+.site .story-words {
+  grid-column: 1 / 5;
+  min-width: 0;
+}
+
+.site .story-title {
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+}
+
+.site .story-text {
+  margin-top: 1rem;
+  font-size: var(--step-body);
+  line-height: 1.45;
+  max-width: 36ch;
+}
+
+.site .story-picture {
+  grid-column: 5 / 13;
+  justify-self: end;
+  width: min(100%, 800px);
+  aspect-ratio: 8 / 5;
+  margin: 0;
+  overflow: clip;
+  background: var(--surface);
+}
+
+.site .story-picture img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  object-fit: none;
+  object-position: var(--tx, 50%) 0%;
+}
+
+/* ---- Held: the stage stays, the steps slide ---- */
+.site .story.is-held {
+  height: calc(100svh + var(--story-steps) * 60svh);
+  padding-block: 0;
+}
+
+/* The browser keeps a visitor's place through a change of layout by
+   holding one element still on the screen (scroll anchoring). The held
+   stage's parts stay still while the page moves under them, so they are
+   the wrong ones to hold: it holds the section instead, and
+   ScrollStory.jsx puts the visitor's step back after a resize. */
+.site .story.is-held .story-stage {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: clamp(1.5rem, 4svh, 3rem);
+  height: 100svh;
+  overflow: clip;
+  overflow-anchor: none;
+}
+
+.site .story.is-held .story-track {
+  display: flex;
+  gap: 0;
+  margin-top: 0;
+  transform: translateX(calc(var(--story-at, 0) * -100%));
+  transition: transform 700ms var(--ease-in-out);
+}
+
+.site .story.is-held .story-step {
+  flex: 0 0 100%;
+  min-width: 0;
+}
+
+/* A change made while the section is off the screen: in place at once. */
+.site .story.is-held .story-track.is-jump,
+.site .story.is-held .story-track.is-jump .story-words {
+  transition: none;
+}
+
+/* The step coming in brightens as the one leaving dims (never below 40%). */
+.site .story.is-held .story-words {
+  opacity: 0.4;
+  transition: opacity 500ms ease;
+}
+
+.site .story.is-held .is-current .story-words {
+  opacity: 1;
+}
+
+/* The picture's window keeps to the screen's height (the heading and the
+   space round the stage need the rest). */
+.site .story.is-held .story-picture {
+  aspect-ratio: auto;
+  height: min(500px, calc(100svh - 200px));
+}
+
+/* ---- A narrower screen: the picture above the words ---- */
+@media (max-width: 900px) {
+  .site .story-panel {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 1.25rem;
+  }
+
+  .site .story-picture {
+    grid-column: 1;
+    grid-row: 1;
+    justify-self: stretch;
+    width: 100%;
+  }
+
+  .site .story-words {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .site .story-text {
+    max-width: 52ch;
+  }
+
+  /* Never under 170 px, so a short window (540 to 590 px tall) still shows
+     a usable part of the picture rather than a strip. */
+  .site .story.is-held .story-picture {
+    height: clamp(170px, calc(100svh - 420px), 500px);
+  }
+}
+
+@media (max-width: 600px) {
+  .site .story-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .site .story-title {
+    font-size: 1.625rem;
+  }
+
+  .site .story-text {
+    margin-top: 0.625rem;
+  }
+
+  .site .story-picture {
+    aspect-ratio: 6 / 5;
+  }
+
+  .site .story-picture img {
+    object-position: var(--fx, 50%) var(--fy, 50%);
+  }
+
+  .site .story.is-held .story-stage {
+    gap: 1rem;
+  }
+
+  .site .story.is-held .story-picture {
+    height: clamp(170px, 34svh, 300px);
+  }
+}
+
+/* ---- Reduced motion: the plain list, nothing moving ----
+   The section too: site.css gives every element a transition of a
+   thousandth of a second here, and the section's padding would then arrive
+   a frame after the layout changes, pushing the step the visitor was
+   reading off the screen (ScrollStory.jsx keeps that step in place). */
+@media (prefers-reduced-motion: reduce) {
+  .site .story,
+  .site .story-stage,
+  .site .story-track,
+  .site .story-words {
+    transition: none;
+  }
+}

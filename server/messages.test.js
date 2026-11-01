@@ -1,7 +1,8 @@
 // WHAT THIS FILE DOES
 // Tests the website's contact form and its messages (server/messages.js):
-// a message is kept with only what was typed and listed newest first, the
-// honeypot is ignored, each bad field is refused with a message naming it,
+// a message is kept with only what was typed and listed newest first, every
+// "who you are" choice of the Contact page (Corporation included) is kept
+// as its role, the honeypot is ignored, each bad field is refused with a message naming it,
 // a body over 16 KB is refused, one visitor may send 5 an hour (on a clock
 // the test moves; an IPv6 visitor counted by its /48), all visitors
 // together at most so many an hour and a day and so many waiting for their
@@ -126,6 +127,24 @@ test("the form is cleaned: trimmed, one line for the name, organization and role
   assert.throws(() => messages.cleanContact([]), /\{ name, email, message \}/);
 });
 
+// The Contact page's "who you are" choices (src/site/pages/ContactPage.jsx
+// ROLES), read from its source: the server takes any of them as typed.
+function contactPageRoles() {
+  const page = fs.readFileSync(new URL("../src/site/pages/ContactPage.jsx", import.meta.url), "utf8");
+  const start = page.indexOf("const ROLES = [");
+  assert.ok(start > 0, "ContactPage.jsx lists its choices in ROLES");
+  return [...page.slice(start, page.indexOf("];", start)).matchAll(/\{ value: "([^"]+)"/g)].map((m) => m[1]);
+}
+
+test("every who-you-are choice of the Contact page is kept as its role, Corporation included", () => {
+  const choices = contactPageRoles();
+  assert.deepEqual(choices, ["Farmer", "Government or NGO", "Corporation", "Researcher", "Something else"]);
+  for (const role of choices) {
+    assert.ok(role.length <= messages.CONTACT_LIMITS.role, `"${role}" fits the ${messages.CONTACT_LIMITS.role} characters`);
+    assert.equal(messages.cleanContact({ ...good, role }).role, role, `"${role}" is kept as the page sends it`);
+  }
+});
+
 test("the hidden website field tells a robot", () => {
   assert.equal(messages.isHoneypotFilled(good), false);
   assert.equal(messages.isHoneypotFilled({ ...good, website: "" }), false);
@@ -170,6 +189,15 @@ test("a message is kept with only what was typed, and listed newest first", asyn
   assert.equal(listed[1].id, first.json.id);
   assert.equal(listed[0].receivedAt, "2026-10-27T09:01:00.000Z");
   assert.deepEqual(listed[1], saved, "the list gives the message as it is kept");
+});
+
+test("a message from a corporation is kept with its role, as the Contact page sends it", async () => {
+  const sent = await send({ ...good, organization: "Black Soil Foods", role: "Corporation" });
+  assert.equal(sent.status, 201, JSON.stringify(sent.json));
+  const saved = JSON.parse(fs.readFileSync(messageFile(sent.json.id), "utf8"));
+  assert.equal(saved.role, "Corporation");
+  assert.equal(saved.organization, "Black Soil Foods");
+  assert.equal((await list())[0].role, "Corporation", "the owner's list shows it too");
 });
 
 test("a robot that fills the hidden website field is told thank you and kept nowhere", async () => {

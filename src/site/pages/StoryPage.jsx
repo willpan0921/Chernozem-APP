@@ -240,7 +240,7 @@ export default function StoryPage() {
             <div className="story-ed-text" data-rise="" style={{ "--i": 1 }}>
               <p>This app, at chernozem.app.</p>
               <p>Field reads a farmer’s own fields on every clear Sentinel-2 pass: plant health, water, stress and harvest timing, against 2019 to 2021.</p>
-              <p>Atlas scores any country or region square by square for governments and NGOs, after a war, flood, wildfire or drought.</p>
+              <p>Atlas scores any country or region square by square for governments, NGOs and corporations, after a war, flood, wildfire or drought.</p>
             </div>
             <figure className="pg-fig story-ed3-pic story-ed3-field" data-settle="" style={{ "--i": 2 }}>
               <img className="pg-pic story-crop story-crop-field" src="/site/shots/field-fields-detail.webp" width="1920" height="1369" alt="Field: the demo farm near Kupiansk on satellite imagery, Field 11 selected with its water, plant health, stress and harvest readings" loading="lazy" decoding="async" />

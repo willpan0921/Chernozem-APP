@@ -1,0 +1,188 @@
+{
+ "t0": 1793528035014,
+ "last": 1793528205477,
+ "frames": 2928,
+ "events": [
+  {
+   "t": 1793528035021,
+   "chapter": "",
+   "text": "",
+   "card": true
+  },
+  {
+   "t": 1793528038348,
+   "chapter": "The farm",
+   "text": "The overview: the latest satellite pass, what needs doing, and your fields"
+  },
+  {
+   "t": 1793528042758,
+   "chapter": "The farm",
+   "text": "Every clear Sentinel-2 pass is read; the date of the latest one is at the top"
+  },
+  {
+   "t": 1793528047554,
+   "chapter": "The farm",
+   "text": "Press a tile to pick out those fields in the list on the right"
+  },
+  {
+   "t": 1793528052586,
+   "chapter": "Weather",
+   "text": "The weather for the farm, and whether rain is coming"
+  },
+  {
+   "t": 1793528055467,
+   "chapter": "Fields",
+   "text": "Fields: every field on the satellite map, tinted by its condition"
+  },
+  {
+   "t": 1793528066312,
+   "chapter": "Fields",
+   "text": "A field's readings: water, plant health, stress and harvest readiness"
+  },
+  {
+   "t": 1793528070520,
+   "chapter": "Fields",
+   "text": "Plant health this season against the normal years, 2019 to 2021"
+  },
+  {
+   "t": 1793528073403,
+   "chapter": "Data",
+   "text": "Data: the field's record since 2019, against the farm and the normal years"
+  },
+  {
+   "t": 1793528081853,
+   "chapter": "Data",
+   "text": "Hover or use the arrow keys for a month's numbers"
+  },
+  {
+   "t": 1793528086295,
+   "chapter": "Data",
+   "text": "Plant health or water, month by month"
+  },
+  {
+   "t": 1793528089093,
+   "chapter": "Data",
+   "text": "Downloads: field outlines, satellite passes, monthly history and the season report"
+  },
+  {
+   "t": 1793528094067,
+   "chapter": "Tell us what happened",
+   "text": "Tell us what happened: what it was, which field, when, and a picture"
+  },
+  {
+   "t": 1793528107679,
+   "chapter": "Tell us what happened",
+   "text": "Send: the words stay on screen while it is saved"
+  },
+  {
+   "t": 1793528112967,
+   "chapter": "Tell us what happened",
+   "text": "The report opens the assistant with the field and the photo"
+  },
+  {
+   "t": 1793528116716,
+   "chapter": "Tell us what happened",
+   "text": "It stays with the chat, beside the farm's readings and weather"
+  },
+  {
+   "t": 1793528119967,
+   "chapter": "The assistant",
+   "text": "The assistant answers from the farm's own readings, history and weather"
+  },
+  {
+   "t": 1793528127029,
+   "chapter": "The assistant",
+   "text": "A saved conversation: how a field did this season, and what to watch"
+  },
+  {
+   "t": 1793528133099,
+   "chapter": "Settings",
+   "text": "Settings: the farm's name and place, its fields and their crops"
+  },
+  {
+   "t": 1793528141788,
+   "chapter": "Settings",
+   "text": "Set a crop: pick what you sowed; until then the detected crop is used"
+  },
+  {
+   "t": 1793528147148,
+   "chapter": "Settings",
+   "text": "Add a field: click its corners on the satellite map"
+  },
+  {
+   "t": 1793528156894,
+   "chapter": "Settings",
+   "text": "The new field is saved and analysed at once"
+  },
+  {
+   "t": 1793528161516,
+   "chapter": "Settings",
+   "text": "Remove a field: confirm, and its readings go with it"
+  },
+  {
+   "t": 1793528168330,
+   "chapter": "Settings",
+   "text": "Units: hectares, acres or mu, everywhere in the app"
+  },
+  {
+   "t": 1793528173044,
+   "chapter": "Change farm",
+   "text": "Change farm: search a village, paste coordinates, or draw your land"
+  },
+  {
+   "t": 1793528186219,
+   "chapter": "Change farm",
+   "text": "The map flies there; the fields are found around the pin"
+  },
+  {
+   "t": 1793528191371,
+   "chapter": "Change farm",
+   "text": "Pick the fields that are yours, then save"
+  },
+  {
+   "t": 1793528198898,
+   "chapter": "Change farm",
+   "text": "The farm is saved and analysed; come back after each satellite pass"
+  },
+  {
+   "t": 1793528201966,
+   "chapter": "",
+   "text": "",
+   "card": true
+  }
+ ],
+ "chapters": [
+  {
+   "label": "The farm",
+   "t": 1793528038348
+  },
+  {
+   "label": "Weather",
+   "t": 1793528051636
+  },
+  {
+   "label": "Fields",
+   "t": 1793528055467
+  },
+  {
+   "label": "Data",
+   "t": 1793528073403
+  },
+  {
+   "label": "Tell us what happened",
+   "t": 1793528094067
+  },
+  {
+   "label": "The assistant",
+   "t": 1793528119118
+  },
+  {
+   "label": "Settings",
+   "t": 1793528133099
+  },
+  {
+   "label": "Change farm",
+   "t": 1793528172221
+  }
+ ]
+}

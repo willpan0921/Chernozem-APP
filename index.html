@@ -6,47 +6,27 @@
   The small script adds the class "js" to the page as soon as it runs, so
   the website's entrance animations (src/site/site.css) only hide things
   that a script will reveal; without it everything is simply visible.
-  On the About page (the address "/") it also asks for the still picture
-  of the Earth straight away, at high priority, so the first screen's
-  picture arrives with the words instead of after the page's code: the
-  wide one when the first screen (the window minus the menu bar: 72 px, or
-  60 px up to 860 px wide; at least 520 px tall) is at least 1.1 times
-  wider than tall, the tall one otherwise. That is the same test as
-  globeLayout in src/site/components/globeMath.js, so it is always the
-  picture the page then shows (src/site/components/WorldGlobe.jsx).
 
   WHO EDITS IT
   Nobody, normally. Edit it only to change the browser tab title, the
-  sharing text (og:*) or the fonts loaded from Google Fonts. If the still
-  pictures are renamed, change their names here too.
+  sharing text (og:*) or the fonts loaded from Google Fonts.
 -->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Chernozem, satellite farmland monitoring</title>
-    <meta name="description" content="Chernozem reads free satellite data over farmland and says what changed: Field for a farmer's own fields, Atlas for governments and NGOs ranking whole regions." />
-    <meta name="theme-color" content="#1c1611" />
+    <meta name="description" content="Chernozem reads free satellite data over farmland and says what changed: Field for a farmer's own fields, Atlas for governments, NGOs and corporations ranking whole regions." />
+    <meta name="theme-color" content="#f3f3f0" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Chernozem" />
     <meta property="og:title" content="Chernozem, satellite farmland monitoring" />
-    <meta property="og:description" content="Chernozem reads free satellite data over farmland and says what changed: Field for a farmer's own fields, Atlas for governments and NGOs ranking whole regions." />
+    <meta property="og:description" content="Chernozem reads free satellite data over farmland and says what changed: Field for a farmer's own fields, Atlas for governments, NGOs and corporations ranking whole regions." />
     <meta property="og:url" content="https://chernozem.app/" />
     <meta property="og:image" content="https://chernozem.app/chernozem-logo.png" />
     <meta name="twitter:card" content="summary" />
     <script>
       document.documentElement.classList.add("js");
-      (function () {
-        if (location.pathname !== "/") return;
-        var w = window.innerWidth;
-        var h = Math.max(520, window.innerHeight - (w <= 860 ? 60 : 72));
-        var link = document.createElement("link");
-        link.rel = "preload";
-        link.as = "image";
-        link.href = w / h >= 1.1 ? "/site/world/globe-still-wide.webp" : "/site/world/globe-still-tall.webp";
-        link.setAttribute("fetchpriority", "high");
-        document.head.appendChild(link);
-      })();
     </script>
     <!-- The logo in the browser tab and on phone home screens (public/). -->
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />

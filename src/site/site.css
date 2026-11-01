@@ -13,8 +13,10 @@
   @2x copy), on every part of the website, links and buttons included. It
   clicks at the centre of the pin's round head (11, 10), not at its tip;
   src/site/cursorAssist.js also lets a click with any part of the pin reach
-  the link or button the pin covers, and gives that link or button its
-  hover look ([data-near], next to each :hover rule below).
+  the control the pin covers (a link, a button, a field, a menu, a slider,
+  a film, the demo's map), and gives it its hover look ([data-near], next
+  to each :hover rule below; the Register and Sign in pages' and the
+  demo map's twins are in "The pin near a control" further down).
 
   Motion: an element with data-rise, data-settle, data-slide or data-open
   starts hidden only when the page has the class "js" (set in index.html)
@@ -118,10 +120,13 @@
    The :is() list weighs as much as ".site" plus a class plus an element,
    so it outweighs a page's "cursor: pointer" on a class (".site .pg-btn");
    the frozen Ukraine demo's map and tabs (components/demo.css) are named
-   here too. A page stylesheet should simply not set a pointer cursor. */
-.site :is(a, button, [role="button"], label, summary, select, input[type="range"], input[type="radio"], input[type="checkbox"], input[type="submit"], input[type="button"]),
+   here too. A page stylesheet should simply not set a pointer cursor.
+   (The pointer, as the picture's fallback, is also what tells the click
+   assist that something is clickable.) */
+.site :is(a, button, [role="button"], [role="link"], [role="tab"], [role="switch"], [role="checkbox"], [role="radio"], [role="option"], [role="menuitem"], label, summary, select, input[type="range"], input[type="radio"], input[type="checkbox"], input[type="submit"], input[type="button"], input[type="reset"], input[type="file"], input[type="color"]),
 .site .demo-tab,
-.site .demo-unit path {
+.site .demo-unit path,
+.site .pg .demo-unit path {
   cursor: url(/site/cursor-pin.png) 11 10, pointer;
   cursor: -webkit-image-set(url(/site/cursor-pin.png) 1x, url(/site/cursor-pin@2x.png) 2x) 11 10, pointer;
   cursor: image-set(url(/site/cursor-pin.png) 1x, url(/site/cursor-pin@2x.png) 2x) 11 10, pointer;
@@ -339,15 +344,6 @@ body:has(> #root > .site) {
   --frame-inset: max(var(--margin), calc((100cqi - 1760px) / 2 + var(--margin)));
 }
 
-/* The About page's first screen (its layout: components/globe.css). On a
-   screen wider than the frame its words and its row of toggles keep to the
-   menu's left edge too, like every other section of the page. */
-.site .hero .globe.is-landscape .globe-ui,
-.site .hero .globe.is-portrait .globe-ui {
-  padding-left: max(var(--margin), calc((100% - 1760px) / 2 + var(--margin)));
-  padding-right: max(var(--margin), calc((100% - 1760px) / 2 + var(--margin)));
-}
-
 .site .grid {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
@@ -480,6 +476,37 @@ body:has(> #root > .site) {
 
 .site .link[data-near] {
   text-decoration-color: currentColor;
+}
+
+/* ---- The pin near a control ----
+   The hover looks of two stylesheets that have no [data-near] twin of their
+   own, repeated here for the pin nearby (cursorAssist.js): the Register and
+   Sign in pages' (pages/register.css, its :hover rules, with its own
+   colours) and the frozen Ukraine demo's map (components/demo.css: the
+   region's outline). Change them together with those rules. */
+.site .reg-btn-primary[data-near]:not([disabled]) {
+  background: var(--r-accent-deep, #163a20);
+}
+
+.site .reg-btn-second[data-near]:not([disabled]) {
+  background: var(--r-surface-3, #bebbb5);
+}
+
+.site .reg-choice-item[data-near]:not(:has(input:checked)),
+.site .reg-kind[data-near]:not(:has(input:checked)) {
+  background: var(--r-surface-2, #d9d6cf);
+}
+
+.site .reg-textbtn[data-near],
+.site .reg-show[data-near],
+.site .reg a:not(.reg-btn)[data-near] {
+  text-decoration-thickness: 0.14em;
+}
+
+.site .demo-unit path:first-child[data-near] {
+  stroke: var(--s-ink);
+  stroke-width: 2.4;
+  filter: brightness(1.08);
 }
 
 /* ---- Forms: filled fields, no borders, the focus in the accent ---- */

@@ -235,8 +235,21 @@
   font-weight: 600;
 }
 
+/* The five kinds of organisation (registration.js ORG_KINDS): three
+   above, two below, every row filled (a grid of six: the first three take
+   two columns each, the last two three each). The form is at most 32rem
+   wide, too narrow for words like "Government" and "Corporation" five
+   side by side. (On a phone: two by two, see "Phones" below.) */
 .site .reg-kind-row {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.site .reg-kind {
+  grid-column: span 2;
+}
+
+.site .reg-kind:nth-child(n + 4) {
+  grid-column: span 3;
 }
 
 .site .reg-kinds .reg-error {
@@ -607,8 +620,19 @@
     padding: 0.5rem 0.75rem;
   }
 
+  /* The kinds two by two, the fifth ("Other") across the whole row: three
+     side by side would not hold "Government" on a 360 px phone. */
   .site .reg-kind-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .site .reg-kind,
+  .site .reg-kind:nth-child(n + 4) {
+    grid-column: auto;
+  }
+
+  .site .reg-kind:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
   }
 
   .site .reg-btn {

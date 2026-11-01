@@ -56,7 +56,10 @@
 //   age             a whole number from 13 to 120, or null
 //   organization    up to 120 characters (the register page asks for it
 //                   when Atlas is chosen; here it is not required)
-//   role            farmer | landowner | government | ngo | research | other
+//   role            farmer | landowner (Field) or government | ngo |
+//                   corporation | research | other (Atlas: the register
+//                   page's kinds of organisation, src/lib/registration.js
+//                   ORG_KINDS)
 //   product         field | atlas
 //   country, address   up to 120 characters each
 //   place           { lat, lng, label } the place to watch, or null
@@ -134,7 +137,7 @@ import {
 } from "./auth.js";
 
 export const DEFAULT_PROJECT_ID = "chernozem-danny";
-export const ROLES = ["farmer", "landowner", "government", "ngo", "research", "other"];
+export const ROLES = ["farmer", "landowner", "government", "ngo", "corporation", "research", "other"];
 export const PRODUCTS = ["field", "atlas"];
 export const PROFILE_LIMITS = { name: 80, organization: 120, country: 120, address: 120, placeLabel: 200 };
 export const AGE_RANGE = { min: 13, max: 120 };

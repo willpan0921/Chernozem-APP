@@ -7,9 +7,11 @@
 //                chooses in advance (the website's buttons add it); Field
 //                otherwise. The pictures beside the form show the product
 //                chosen and change with it.
-//   Atlas only   the organisation and its kind (Government, NGO, Research,
-//                Other; none is chosen until the person picks one). Both are
-//                needed whichever way the person signs up.
+//   Atlas only   the organisation and its kind (Government, NGO,
+//                Corporation, Research, Other: Atlas is for governments,
+//                NGOs and corporations; none is chosen until the person
+//                picks one). Both are needed whichever way the person signs
+//                up. The five kinds sit three above two (register.css).
 //   Then         "Continue with Google", the one strong button (the name
 //                comes from Google), or a name, an e-mail and one password
 //                (8 characters or more, with a Show button) and the lighter
@@ -232,9 +234,9 @@ function ProductChoice({ value, onChange }) {
   );
 }
 
-// Atlas's two answers: the organisation, and its kind as four flat
-// choices with none chosen at first. Enter in the organisation moves on
-// to the kind rather than sending the form.
+// Atlas's two answers: the organisation, and its kind as five flat
+// choices (ORG_KINDS) with none chosen at first. Enter in the organisation
+// moves on to the kind rather than sending the form.
 function OrganisationFields({ organization, onOrganization, kind, onKind, errors, delay }) {
   function next(event) {
     if (event.key !== "Enter") return;

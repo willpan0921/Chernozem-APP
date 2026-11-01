@@ -1,122 +1,53 @@
 // WHAT THIS FILE DOES
-// The website's About page, the landing page (chernozem.app/). In order:
-//   1. the hero: a large live Earth filling the first screen (the black
-//      soil glowing, today's armed conflicts and disaster alerts on it,
-//      components/WorldGlobe.jsx), with the title, one sentence and the two
-//      actions over its shaded side
-//   2. "What is Chernozem": three plain sentences a stranger takes in
-//      within five seconds, beside one window onto the Fields page (the
-//      farm's fields outlined on satellite imagery, at true size)
-//   3. "Why Chernozem": the owner's eight reasons, each a claim and one
-//      plain sentence, in two columns, with the real Atlas weights panel
-//      beside them at its true size (the panel alone; a phone shows it
-//      scaled to its width)
-//   4. "One field, one pass": the app's field row, enlarged to fill its
-//      columns, in the state the visitor picks, with its button really
-//      working
-//   5. how it works: one slider through the four stages (tapping the
-//      picture moves on)
+// The website's About page (chernozem.app/), in the order of the owner's
+// list of 1 November 2026:
+//   1. the hero, on the light ground: on the left the slogan "Drop your
+//      pin, know your land." (the page's title), what Chernozem is in
+//      three plain sentences, and the two actions (Register for Chernozem,
+//      Try the demo); on the right the Earth (components/EarthGlobe.jsx,
+//      which fetches its own data and credits its own sources). On a phone
+//      the words come first and the Earth under them
+//   2. "Why Chernozem": the owner's eight reasons, each a claim and one
+//      plain sentence, in two columns, beside a photograph of a wheat field
+//      burnt by shelling in the Kharkiv region (public/site/photos/, its
+//      credit and licence under it; manifest.json there has its source)
+//   3. Field and 4. Atlas: two held, sideways stories (components/
+//      ScrollStory.jsx): the section stays on the screen while the visitor
+//      scrolls and its steps slide in one by one, what it is and then how
+//      it works, each with a picture of the app at true size
+//   5. "One field, one pass, one answer": the app's field row, in the state
+//      the visitor picks, its button really working
 //   6. the proof: the checks against independent records, as a table
-//   7. what a farmer gets, and what governments and NGOs get: on a wide
-//      screen an index beside one large window onto the app; each item
-//      opens its place in the demo
-//   8. the Ukraine demo, live, on the sage stage (built, and its data
-//      fetched, only when the visitor scrolls near it)
-//   9. the film, "Chernozem in three minutes", with chapters that jump to
-//      each part
-//  10. the founder's letter
-//  11. the close: the action tile beside a satellite view, then the small
-//      print (where the globe's pictures and data come from)
-// The words follow the website brief's copy deck and the owner's list of
-// 31 October 2026 (the two introductions). Numbers come from
-// src/site/content/site.js; the two introductions' pictures are cut from
-// the demo at true size, each with a copy twice as sharp for Retina
-// screens that only those screens load (srcSet; public/site/shots/crops/,
-// where manifest.json says from which view and how they were shot).
+//   7. the Ukraine demo, live, on the sage stage (built, and its data
+//      fetched, only when the visitor comes near the end of the page)
+//   8. the close: the action tile beside a satellite view, then the small
+//      print (where the maps in the pictures come from)
+// The three-minute film moved to the Methodology page; the founder's
+// letter, the stage slider and the feature lists are gone.
+// Numbers come from src/site/content/site.js. The pictures of the app are
+// cut at true size, each with a copy twice as sharp for sharp screens that
+// only those screens load (srcSet; public/site/shots/crops/, where
+// manifest.json says from which view and how they were shot).
 // Layout: home.css. Every section keeps to the menu's frame: text starts
 // at the page's left edge, or three columns in (the field row, the second
-// line of "the record", the letter's text).
+// line of "the record").
 //
 // WHO EDITS IT
 // Whoever works on the About page.
 
-import { Suspense, lazy, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useCallback } from "react";
 import { Link } from "react-router-dom";
-import WorldGlobe from "../components/WorldGlobe.jsx";
+import EarthGlobe from "../components/EarthGlobe.jsx";
+import ScrollStory from "../components/ScrollStory.jsx";
 import FieldRowStates from "../components/FieldRowStates.jsx";
-import StageSlider from "../components/StageSlider.jsx";
 import ProofTable from "../components/ProofTable.jsx";
-import Film from "../components/Film.jsx";
-import Letter from "../components/Letter.jsx";
-import Shot from "../components/Shot.jsx";
-import { useWorldData } from "../components/worldData.js";
-import { dayMonthYear } from "../components/globeMath.js";
 import { NUMBERS, SITE, formatInt } from "../content/site.js";
-import { enterDemo } from "../../lib/demoMode.js";
-import { useMediaQuery, useNear, usePageTitle, useReveal } from "../hooks.js";
+import { useNear, usePageTitle, useReveal } from "../hooks.js";
 import "./home.css";
 
 // The Ukraine demo (components/DemoRanking.jsx, not edited) is downloaded
-// with its data only when its section comes near (useNear below).
+// with its data only when the end of the page comes near (useNear below).
 const DemoRanking = lazy(() => import("../components/DemoRanking.jsx"));
-
-// The feature items: a true-size crop of the app beside a short text, and
-// the page of the demo that shows it.
-const FARMER = [
-  {
-    title: "Every field, every clear pass",
-    lines: ["Draw your fields once, or let the app find them. From then on each clear satellite pass is read for you.", "Plant health, water, stress and harvest timing, against the normal years 2019 to 2021."],
-    shot: "field-fields-detail",
-    alt: "The demo farm's fields outlined on satellite imagery, Field 11 selected.",
-    crop: { x: 300, y: 440, w: 360, h: 220 },
-    shotHeight: 1369,
-    demo: "/field/fields",
-  },
-  {
-    title: "The whole season on one chart",
-    lines: ["Every pass since March, in a table you can download. One field against the farm average.", "The day a war or a flood began is marked on the chart."],
-    shot: "field-data",
-    alt: "The season chart of plant health, with the full-scale invasion of 24 February 2022 marked.",
-    crop: { x: 770, y: 530, w: 360, h: 200 },
-    demo: "/field/data",
-  },
-  {
-    title: "Ask in plain words",
-    lines: ["The assistant answers only from your own fields’ data, and says when it does not know.", "Open the app, ask, and the answer names the field and the pass it came from."],
-    shot: "field-ai",
-    alt: "The Field assistant's suggested questions: which field needs me first, when can I harvest.",
-    crop: { x: 1548, y: 290, w: 360, h: 200 },
-    demo: "/field/ai",
-  },
-  {
-    title: "Weather and a report",
-    lines: ["A seven-day forecast beside the fields.", "A report with your photos, to hand to an agronomist or a bank."],
-    shot: "field-overview",
-    alt: "The farm overview's weather tile: 7 degrees, cloudy, no rain coming.",
-    crop: { x: 1540, y: 176, w: 360, h: 160 },
-    demo: "/field",
-  },
-];
-
-const ORGANISATION = [
-  {
-    title: "A whole country, square by square",
-    lines: ["Atlas scores value, damage and feasibility for every square and ranks the regions.", "Where recovery can start now, and where it must wait."],
-    shot: "atlas-map-near-macro",
-    alt: "Atlas ranking Ukraine's states for the near term: Mykolaiv, Kirovohrad, Poltava.",
-    crop: { x: 1510, y: 60, w: 360, h: 220 },
-    demo: "/atlas/map",
-  },
-  {
-    title: "A report donors can read",
-    lines: ["The top ten areas, the method and its limits.", "PDF and CSV in one click."],
-    shot: "atlas-report",
-    alt: "The Atlas donor report for Ukraine, September 2026: the top ten near-term areas with their scores.",
-    crop: { x: 300, y: 566, w: 360, h: 220 },
-    demo: "/atlas/report",
-    link: { to: "/register?product=atlas", label: "Register for Atlas" },
-  },
-];
 
 // Why Chernozem: the owner's eight reasons (his list of 31 October 2026),
 // each a claim and one plain sentence. The wording stays honest: "most
@@ -156,285 +87,180 @@ const WHY = [
   },
 ];
 
-// The film's chapters, checked frame by frame (the film runs 2:58).
-const CHAPTERS = [
-  { label: "Northeastern China", t: 4 },
-  { label: "Ukraine", t: 17 },
-  { label: "How it reads the land", t: 34 },
-  { label: "Field", t: 71 },
-  { label: "Atlas", t: 108 },
+// The two stories. Each step: a short title, one or two plain sentences,
+// a picture of the app (crops/<shot>-800.webp and -1600.webp) with what it
+// shows in words, and the part of the picture a narrow window keeps (fx,
+// fy on a phone; tx, when given, on a window a little narrower than the
+// picture). The first step says what the product is, the rest how it works.
+const FIELD_STEPS = [
+  {
+    title: "Your farm, field by field",
+    text: "Field is Chernozem for one farm: you mark your fields once, and after every clear satellite pass it tells you how each one is doing and what needs doing.",
+    shot: "story-field-map",
+    alt: "The demo farm near Kupiansk on satellite imagery in Field, each field outlined and patterned by its condition, Field 11 picked, after the Sentinel-2 pass of 26 October.",
+    fx: "16%",
+    fy: "86%",
+  },
+  {
+    title: "Drop a pin on your land",
+    text: "Search for a place or paste coordinates, then click the map to move the pin. Field finds the fields around it, and you keep the ones that are yours.",
+    shot: "story-field-pin",
+    alt: "Field’s farm setup: coordinates typed in the search, the place found, “Find my fields”, and the pin on the satellite map inside the dashed circle it will search.",
+    fx: "95%",
+    fy: "70%",
+    tx: "0%",
+  },
+  {
+    title: "Every clear pass, read",
+    text: "Each time Sentinel-2 passes on a clear day, every field gets its plant health, water, stress and harvest timing, each against its usual range.",
+    shot: "story-field-reading",
+    alt: "Field 11 in Field, growing well: its water near normal, its plant health above normal, stress under 1% and the harvest past its peak, beside the field on the map.",
+    fx: "95%",
+    fy: "50%",
+  },
+  {
+    title: "This season against normal",
+    text: "Every pass since 2019 on one chart: a field against the farm and against its normal years, with the day the full-scale invasion began marked.",
+    shot: "story-field-season",
+    alt: "Field’s data page: one field’s plant health since 2019 against the farm average, the normal years 2019 to 2021 shaded, and the full-scale invasion of 24 February 2022 marked.",
+    fx: "45%",
+    fy: "78%",
+    tx: "0%",
+  },
+  {
+    title: "Tell us what happened",
+    text: "Report shelling, fire, flood, hail or pests with your photos, and ask the assistant what to do first. It answers only from your own fields’ data.",
+    shot: "story-field-report",
+    alt: "Field’s overview: what needs doing, then “Tell us what happened” with Shelling, Fire, Flood, Hail, Pests and Other, a note, photos and Send.",
+    fx: "5%",
+    fy: "73%",
+  },
 ];
 
-const WINDOW = { w: 720, h: 450 };
+const ATLAS_STEPS = [
+  // fx 82%: on every phone from 320 to 430 px wide the window shows the
+  // heavily damaged land's card with its figure whole ("1.8M ha" starts 424
+  // px into the picture) and none of the words of the card before it.
+  {
+    title: "A whole region, square by square",
+    text: "Atlas is Chernozem for a whole region, for governments, NGOs and corporations: it scores every square of farmland and ranks where recovery should start.",
+    shot: "story-atlas-overview",
+    alt: "Atlas’s overview of Ukraine for September 2026: the cropland analysed, the black soil, the heavily damaged land and the people on it, above the map of where to start.",
+    fx: "82%",
+    fy: "27%",
+    tx: "0%",
+  },
+  {
+    title: "Pick a country, a region or a box",
+    text: "Search a country or a province, type the corners of a box, or draw it on the map. Atlas then reads the last twelve months there.",
+    shot: "story-atlas-area",
+    alt: "Atlas’s “Choose an area”: a box around the Kharkiv region typed by its north, south, west and east edges, shown on a small map, ready to analyse.",
+    fx: "12%",
+    fy: "73%",
+    tx: "30%",
+  },
+  {
+    title: "Three scores for every square",
+    text: "Value: how good the soil is. Damage: what fire and radar have seen since the crisis began. Feasibility: whether anyone can safely reach it.",
+    shot: "story-atlas-square",
+    alt: "One square in Mykolaiv picked in Atlas: highest priority, its value, damage and feasibility scores, and the soil types under its cropland.",
+    fx: "100%",
+    fy: "27%",
+  },
+  {
+    title: "Your weights, your ranking",
+    text: "Choose how much value and damage count, and how much of the least reachable land to leave out for now. The ranking follows your choice.",
+    shot: "story-atlas-weights",
+    alt: "Atlas’s weights for Ukraine in the near term, value, damage and the share of the least feasible land left out, beside the map of priorities square by square.",
+    fx: "0%",
+    fy: "30%",
+  },
+  {
+    title: "A report donors can read",
+    text: "The top areas to start with, near term or after the crisis, in a report with the method and its limits, saved as a PDF or a table.",
+    shot: "story-atlas-report",
+    alt: "Atlas’s donor report for Ukraine, September 2026, with Download CSV and Save as PDF: the headline figures, then the top ten areas for the near term.",
+    fx: "0%",
+    fy: "30%",
+  },
+];
 
-// The 720x450 window keeps today's crop at its centre, inside the picture.
-function windowOver(item) {
-  const height = item.shotHeight || 1200;
-  const cx = item.crop.x + item.crop.w / 2;
-  const cy = item.crop.y + item.crop.h / 2;
-  return {
-    cx: Math.round(Math.min(Math.max(cx, WINDOW.w / 2), 1920 - WINDOW.w / 2)),
-    top: Math.round(Math.min(Math.max(cy - WINDOW.h / 2, 0), height - WINDOW.h)),
-    height,
-  };
-}
-
-function DemoLink({ item }) {
-  return (
-    <Link to={item.demo} className="link link-under feature-link" onClick={enterDemo}>
-      Open in the demo
-    </Link>
-  );
-}
-
-// A narrow screen: today's modules, one under the other.
-function Feature({ item }) {
-  return (
-    <div className="feature">
-      <div className="feature-panel" data-settle style={{ "--i": 0 }}>
-        <Shot name={item.shot} alt={item.alt} crop={item.crop} height={item.shotHeight} />
-      </div>
-      <div className="feature-text">
-        <h3 className="feature-title" data-rise style={{ "--i": 1 }}>
-          {item.title}
-        </h3>
-        {item.lines.map((line, i) => (
-          <p key={line.slice(0, 20)} className="feature-line" data-rise style={{ "--i": i + 2 }}>
-            {line}
-          </p>
-        ))}
-        <p className="feature-links" data-rise style={{ "--i": 4 }}>
-          <DemoLink item={item} />
-          {item.link && (
-            <Link to={item.link.to} className="link link-under feature-link">
-              {item.link.label}
-            </Link>
-          )}
-        </p>
-      </div>
-    </div>
-  );
-}
-
-// A wide screen: the titles as an index, one large window onto the app
-// beside them. Pointing at a title (after 120 ms), focusing it or clicking
-// it opens it and shows its window.
-function FeatureIndex({ items, headingId, heading }) {
-  const [active, setActive] = useState(0);
-  const timer = useRef(0);
-  useEffect(() => () => clearTimeout(timer.current), []);
-  const soon = (i) => {
-    clearTimeout(timer.current);
-    timer.current = setTimeout(() => setActive(i), 120);
-  };
-  return (
-    <div className="findex grid">
-      <div className="findex-list">
-        <h2 id={headingId} className="head-small features-head" data-rise>
-          {heading}
-        </h2>
-        {items.map((item, i) => {
-          const open = i === active;
-          return (
-            <div className={`findex-item${open ? " is-open" : ""}`} key={item.title} data-rise style={{ "--i": i + 1 }}>
-              <h3 className="findex-title">
-                <button
-                  type="button"
-                  aria-expanded={open}
-                  aria-controls={`${headingId}-${i}`}
-                  onClick={() => {
-                    clearTimeout(timer.current);
-                    setActive(i);
-                  }}
-                  onFocus={() => {
-                    clearTimeout(timer.current);
-                    setActive(i);
-                  }}
-                  onPointerEnter={() => soon(i)}
-                  onPointerLeave={() => clearTimeout(timer.current)}
-                >
-                  {item.title}
-                </button>
-              </h3>
-              <div className="findex-body" id={`${headingId}-${i}`} hidden={!open}>
-                {item.lines.map((line) => (
-                  <p key={line.slice(0, 20)} className="feature-line">
-                    {line}
-                  </p>
-                ))}
-                <p className="feature-links">
-                  <DemoLink item={item} />
-                  {item.link && (
-                    <Link to={item.link.to} className="link link-under feature-link">
-                      {item.link.label}
-                    </Link>
-                  )}
-                </p>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <div className="findex-window" data-settle style={{ "--i": 1 }}>
-        {items.map((item, i) => {
-          const w = windowOver(item);
-          return (
-            <figure className={`findex-shot${i === active ? " is-on" : ""}`} key={item.shot} aria-hidden={i !== active}>
-              <img
-                src={`/site/shots/${item.shot}.webp`}
-                alt={item.alt}
-                width={WINDOW.w}
-                height={WINDOW.h}
-                loading="lazy"
-                decoding="async"
-                style={{ objectPosition: `calc(50% + ${960 - w.cx}px) ${-w.top}px` }}
-              />
-            </figure>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// Where the globe's pictures and data come from, and the closing tile's
-// satellite view, in the page's small print. The Earth's texture is made
-// from OpenLandMap (CC BY-SA 4.0), so it is shared under that licence too.
-function GlobeCredits() {
-  const world = useWorldData();
-  const reviewed = world.status === "ok" && world.reviewed ? dayMonthYear(world.reviewed) : "";
-  // The trade file says which years its rows come from (each country's
-  // latest report); an older file without them just says "the latest year".
-  const years = Array.isArray(world.trade?.years) && world.trade.years.length === 2 ? world.trade.years : null;
-  const span = years ? (years[0] === years[1] ? ` (${years[0]})` : ` (${years[0]}\u2013${years[1]})`) : "";
-  const out = { className: "link link-under", target: "_blank", rel: "noreferrer" };
-  return (
-    <div className="wrap small-print-wrap">
-      <p className="small-print">
-        Black soil:{" "}
-        <a href="https://doi.org/10.5281/zenodo.1476844" {...out}>
-          OpenLandMap USDA great groups
-        </a>{" "}
-        (Hengl and Nauman, 2018),{" "}
-        <a href="https://creativecommons.org/licenses/by-sa/4.0/" {...out}>
-          CC BY-SA 4.0
-        </a>
-        , modified; this Earth texture is shared under{" "}
-        <a href="https://creativecommons.org/licenses/by-sa/4.0/" {...out}>
-          CC BY-SA 4.0
-        </a>
-        . Cropland:{" "}
-        <a href="https://doi.org/10.5281/zenodo.3939050" {...out}>
-          Copernicus Global Land Service, Land Cover 100 m, 2019
-        </a>
-        ,{" "}
-        <a href="https://creativecommons.org/licenses/by/4.0/" {...out}>
-          CC BY 4.0
-        </a>
-        , modified. Coastlines:{" "}
-        <a href="https://www.naturalearthdata.com/" {...out}>
-          Natural Earth
-        </a>
-        . Disaster alerts:{" "}
-        <a href="https://www.gdacs.org/" {...out}>
-          GDACS
-        </a>
-        , live. Armed conflicts: a list reviewed by hand{reviewed ? ` on ${reviewed}` : ""}. Who buys whose food: World Bank{" "}
-        <a href="https://wits.worldbank.org/" {...out}>
-          WITS
-        </a>
-        , the latest year each country reported{span}. The satellite view above: Esri World Imagery (Esri, Maxar, Earthstar Geographics).
-      </p>
-    </div>
-  );
-}
+// The photograph beside "Why Chernozem" and its credit (CC BY 4.0 asks for
+// the author, a link to the licence, and to say it was changed: cropped).
+// The file's licence box on Wikimedia Commons asks for the attribution
+// "Kharkivoda.gov.ua", so the credit names the administration and its site.
+const PHOTO = {
+  small: "/site/photos/karasivka-wheat-600.webp",
+  large: "/site/photos/karasivka-wheat-768.webp",
+  licence: "https://creativecommons.org/licenses/by/4.0/",
+  source: "https://commons.wikimedia.org/wiki/File:Burning_field_near_Karasivka,_2024-07-01_(11).jpg",
+};
 
 export default function HomePage() {
   usePageTitle();
   const reveal = useReveal();
-  const wideFeatures = useMediaQuery("(min-width: 1024px)");
-  const [demoRef, demoNear] = useNear();
-  // The page's last three parts (the film, the letter and the close) play
-  // their entrances together, once the film is within 2,400 px of the
-  // screen, rather than each as it scrolls in: on a phone the page is long,
-  // and a fast scroll, or a tool that scans the page, must never find the
-  // letter's words still waiting to appear. (Without the observer, "near"
-  // is true at once: nothing is ever hidden for good.)
+  // The page's last three parts (the record, the demo and the close) play
+  // their entrances together, and the demo is built, once the field row is
+  // within 2,400 px of the screen, rather than each as it scrolls in: with
+  // the two held stories the page is long (about 16 screens on a phone),
+  // and a fast scroll, or a tool that scans the page, must never find their
+  // words still waiting to appear. The close starts them too: a visitor
+  // who lands at the very end (Back from Register, the End key, a drag of
+  // the scrollbar) is there with the field row more than 2,400 px above
+  // the screen on a phone, and must find the end of the page shown, not
+  // waiting for a scroll back up. (Without the observer, "near" is true at
+  // once: nothing is ever hidden for good.)
   const [tailRef, tailNear] = useNear("2400px 0px");
-  const tail = tailNear ? " is-in" : "";
+  const [closeRef, closeNear] = useNear("2400px 0px");
+  const near = tailNear || closeNear;
+  const tail = near ? " is-in" : "";
+  // The field row's section both reveals itself and starts the tail.
+  const showcaseRef = useCallback(
+    (node) => {
+      reveal(node);
+      tailRef.current = node;
+    },
+    [reveal, tailRef]
+  );
+  const out = { className: "link link-under", target: "_blank", rel: "noreferrer" };
 
   return (
     <>
-      {/* 1. The hero: the Earth fills it; the words sit over its shaded side. */}
-      <section className="hero on-dark" aria-labelledby="hero-title">
-        <WorldGlobe>
+      {/* 1. The hero: the words on the left, the Earth on the right */}
+      <section className="hero" aria-labelledby="hero-title">
+        <div className="wrap grid hero-grid">
           <div className="hero-words">
             <h1 id="hero-title" className="hero-title lines">
               <span className="line">
                 <span data-line style={{ "--i": 0 }}>
-                  Your land,
+                  Drop your pin,
                 </span>
               </span>
               <span className="line">
                 <span data-line style={{ "--i": 1 }}>
-                  seen from space
+                  know your land.
                 </span>
               </span>
             </h1>
             <p className="hero-lead" data-load style={{ "--d": "420ms" }}>
-              Field reads every satellite pass over a farm and says what changed, field by field. Atlas does the same for a whole region.
+              Chernozem reads free satellite data over farmland and puts it into plain words. Field watches a farmer’s own fields; Atlas scores whole regions for governments, NGOs and corporations. The name is the black soil of Ukraine and northeast China, where its story began.
             </p>
             <div className="hero-actions" data-load style={{ "--d": "480ms" }}>
-              <Link to="/register?product=field" className="btn btn-light">
-                Register for Field
+              <Link to={SITE.registerPath} className="btn">
+                Register for Chernozem
               </Link>
               <Link to={SITE.demoPath} className="link link-under">
                 Try the demo
               </Link>
             </div>
           </div>
-        </WorldGlobe>
-      </section>
-
-      {/* 2. What is Chernozem: the words beside one window onto the Fields page */}
-      <section className="what section" aria-labelledby="what-title" ref={reveal}>
-        <div className="wrap grid">
-          <div className="what-words">
-            <h2 id="what-title" className="head" data-rise>
-              What is Chernozem
-            </h2>
-            <p className="lead what-lead" data-rise style={{ "--i": 1 }}>
-              Chernozem is satellite farmland monitoring: free satellite data over farmland, read and put into plain words for people who are not scientists. Field watches a farmer’s own fields; Atlas scores a whole region for governments and NGOs. The name is the black soil of Ukraine and northeast China, where its story began.
-            </p>
-            <p className="what-link" data-rise style={{ "--i": 2 }}>
-              <Link to="/story" className="link link-under">
-                How it started
-              </Link>
-            </p>
-          </div>
-          <div className="what-side" data-settle style={{ "--i": 1 }}>
-            <figure className="what-window">
-              <img
-                src="/site/shots/crops/field-fields-map-864.webp"
-                srcSet="/site/shots/crops/field-fields-map-864.webp 1x, /site/shots/crops/field-fields-map-1728.webp 2x"
-                alt="The Fields page: the farm’s fields outlined on satellite imagery, each tinted by its condition, Field 11 growing well, the harvested ones striped and the fallow ones dotted."
-                width="864"
-                height="520"
-                loading="lazy"
-                decoding="async"
-              />
-            </figure>
-            <p className="window-caption muted">
-              Field: the demo farm near Kupiansk, Ukraine, read from one Sentinel-2 pass.{" "}
-              <Link to="/field/fields" className="link link-under" onClick={enterDemo}>
-                Open in the demo
-              </Link>
-            </p>
+          <div className="hero-earth">
+            <EarthGlobe />
           </div>
         </div>
       </section>
 
-      {/* 3. Why Chernozem: the eight reasons in two columns, the real weights panel beside them */}
+      {/* 2. Why Chernozem: the eight reasons in two columns, the photograph beside them */}
       <section className="why section" aria-labelledby="why-title" ref={reveal}>
         <div className="wrap grid">
           <h2 id="why-title" className="head why-head" data-rise>
@@ -448,47 +274,50 @@ export default function HomePage() {
               </li>
             ))}
           </ul>
-          <div className="why-side" data-settle style={{ "--i": 2 }}>
-            <figure className="why-window">
+          <figure className="why-photo" data-settle style={{ "--i": 2 }}>
+            <div className="why-photo-frame">
               <img
-                src="/site/shots/crops/atlas-weights-374.webp"
-                srcSet="/site/shots/crops/atlas-weights-374.webp 1x, /site/shots/crops/atlas-weights-748.webp 2x"
-                alt="Atlas’s weights panel for Ukraine: Near term chosen, value 76%, damage 24%, and a feasibility cutoff of 36%."
-                width="374"
-                height="654"
+                src={PHOTO.small}
+                srcSet={`${PHOTO.small} 600w, ${PHOTO.large} 768w`}
+                sizes="(min-width: 1200px) 40vw, (min-width: 701px) 420px, 100vw"
+                alt="A strip of unburnt wheat runs through a blackened field near Karasivka, in the Kharkiv region, to two firefighters spraying the flames after shelling on 1 July 2024."
+                width="600"
+                height="750"
                 loading="lazy"
                 decoding="async"
               />
-            </figure>
-            <p className="window-caption muted">
-              Atlas: the weights, as set for the Ukraine demo.{" "}
-              <Link to="/atlas/map" className="link link-under" onClick={enterDemo}>
-                Move them in the demo
-              </Link>
-            </p>
-          </div>
+            </div>
+            <figcaption className="window-caption muted photo-caption">
+              Wheat near Karasivka, Kharkiv region, after shelling on 1 July 2024. Photo: Kharkiv Regional State Administration (kharkivoda.gov.ua),{" "}
+              <a href={PHOTO.licence} {...out}>
+                CC BY 4.0
+              </a>
+              , cropped;{" "}
+              <a href={PHOTO.source} {...out}>
+                Wikimedia Commons
+              </a>
+              .
+            </figcaption>
+          </figure>
         </div>
       </section>
 
-      {/* 4. The showcase */}
-      <section className="showcase section" aria-labelledby="showcase-title" ref={reveal}>
+      {/* 3. Field and 4. Atlas: the held, sideways stories */}
+      <ScrollStory id="field-story" title="Field, for one farm" link={{ to: "/field", label: "Open Field in the demo" }} steps={FIELD_STEPS} />
+      <ScrollStory id="atlas-story" title="Atlas, for a whole region" link={{ to: "/atlas", label: "Open Atlas in the demo" }} steps={ATLAS_STEPS} surface />
+
+      {/* 5. One field, one pass, one answer */}
+      <section className="showcase section" aria-labelledby="showcase-title" ref={showcaseRef}>
         <div className="wrap grid">
           <h2 id="showcase-title" className="head showcase-head" data-rise>
-            One field, one pass
+            One field, one pass, one answer
           </h2>
           <FieldRowStates />
         </div>
       </section>
 
-      {/* 5. How it works, on the page's frame */}
-      <section className="how" aria-label="How it works" ref={reveal}>
-        <div className="wrap">
-          <StageSlider />
-        </div>
-      </section>
-
       {/* 6. The proof */}
-      <section className="proof section" aria-labelledby="proof-title" ref={reveal}>
+      <section className={`proof section${tail}`} aria-labelledby="proof-title">
         <div className="wrap">
           <h2 id="proof-title" className="display proof-head lines">
             <span className="line">
@@ -508,51 +337,8 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* 7. The features */}
-      <section className="features section" aria-labelledby="features-title">
-        {wideFeatures ? (
-          <div className="wrap">
-            <div className="features-group" ref={reveal}>
-              <FeatureIndex items={FARMER} headingId="features-title" heading="What a farmer gets" />
-            </div>
-            <div className="features-group" ref={reveal}>
-              <FeatureIndex items={ORGANISATION} headingId="features-ngo" heading="For governments and NGOs" />
-            </div>
-          </div>
-        ) : (
-          <div className="wrap grid">
-            <div className="features-col">
-              <div className="features-group">
-                <div ref={reveal}>
-                  <h2 id="features-title" className="head-small features-head" data-rise>
-                    What a farmer gets
-                  </h2>
-                </div>
-                {FARMER.map((item) => (
-                  <div className="features-item" key={item.title} ref={reveal}>
-                    <Feature item={item} />
-                  </div>
-                ))}
-              </div>
-              <div className="features-group">
-                <div ref={reveal}>
-                  <h2 className="head-small features-head" data-rise>
-                    For governments and NGOs
-                  </h2>
-                </div>
-                {ORGANISATION.map((item) => (
-                  <div className="features-item" key={item.title} ref={reveal}>
-                    <Feature item={item} />
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-      </section>
-
-      {/* 8. The demo: built when the visitor comes near it */}
-      <section className="demo-section on-sage section" aria-labelledby="demo-title" ref={reveal}>
+      {/* 7. The demo: built when the visitor comes near the end of the page */}
+      <section className={`demo-section on-sage section${tail}`} aria-labelledby="demo-title">
         <div className="wrap grid">
           <div className="demo-copy">
             <h2 id="demo-title" className="head" data-rise>
@@ -567,8 +353,8 @@ export default function HomePage() {
               </Link>
             </div>
           </div>
-          <div className={`demo-stage${demoNear ? "" : " is-waiting"}`} data-ui data-settle style={{ "--i": 2 }} ref={demoRef}>
-            {demoNear && (
+          <div className={`demo-stage${near ? "" : " is-waiting"}`} data-ui data-settle style={{ "--i": 2 }}>
+            {near && (
               <Suspense fallback={null}>
                 <DemoRanking />
               </Suspense>
@@ -577,34 +363,17 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* 9. The film */}
-      <section className={`film-section on-dark section${tail}`} aria-labelledby="film-title" ref={tailRef}>
-        <div className="wrap">
-          <h2 id="film-title" className="head film-head" data-rise>
-            Chernozem in three minutes
-          </h2>
-          <Film chapters={CHAPTERS} />
-        </div>
-      </section>
-
-      {/* 10. The letter */}
-      <section className={`letter-section section${tail}`} id="letter" aria-labelledby="letter-title">
-        <div className="wrap">
-          <Letter />
-        </div>
-      </section>
-
-      {/* 11. The close: the action tile beside a satellite view, then the small print */}
-      <section className={`close${tail}`} aria-labelledby="close-title">
+      {/* 8. The close: the action tile beside a satellite view, then the small print */}
+      <section className={`close${tail}`} aria-labelledby="close-title" ref={closeRef}>
         <div className="close-row frame">
           <div className="close-tile close-tile-main on-accent" data-rise style={{ "--i": 0 }}>
             <h2 id="close-title" className="close-head">
               See your land from space
             </h2>
-            <p className="close-text">Register, draw your fields, and read the first pass in about twenty seconds.</p>
+            <p className="close-text">Register, drop your pin or choose a region, and read what the satellites saw.</p>
             <div className="close-actions">
-              <Link to="/register?product=field" className="btn btn-light">
-                Register for Field
+              <Link to={SITE.registerPath} className="btn btn-light">
+                Register for Chernozem
               </Link>
               <Link to={SITE.demoPath} className="link">
                 Try the demo
@@ -615,7 +384,11 @@ export default function HomePage() {
             <img src="/site/shots/crops/atlas-map-satellite-sea.webp" alt="Satellite view of southern Ukraine, Crimea and the Black Sea, as Atlas shows it." width="730" height="520" loading="lazy" decoding="async" />
           </div>
         </div>
-        <GlobeCredits />
+        <div className="wrap small-print-wrap">
+          <p className="small-print">
+            The maps in the pictures of the app: Esri World Imagery (Esri, Maxar, Earthstar Geographics) and Esri’s light grey canvas (Esri, HERE, Garmin, © OpenStreetMap contributors). The satellite view above: Esri World Imagery.
+          </p>
+        </div>
       </section>
     </>
   );

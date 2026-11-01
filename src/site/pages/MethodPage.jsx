@@ -1,16 +1,26 @@
 // WHAT THIS FILE DOES
 // The website's Methodology page (chernozem.app/method): how Chernozem
-// works, in two parts, one for each product, and a short close.
-//   Field     what it does in two sentences, the walkthrough film (every
-//             feature, recorded from the real app: Walkthrough.jsx), how
-//             to use it in five steps, and what it reads in one line.
-//   Atlas     two sentences, its walkthrough film, the three scores, the
-//             gate with the sliders the reader can move (GateLab.jsx: Near
-//             term against Post-crisis), the Ukraine ranking as the app
-//             shows it (DemoRanking.jsx, untouched) and the checks against
+// works, in two parts, one for each product, then what is behind it, the
+// three-minute film and a short close.
+//   Field     next to its name, what Field is, in one plain sentence; the
+//             walkthrough film (every feature, recorded from the real app:
+//             Walkthrough.jsx), how to use it in five steps, and what it
+//             reads in one line.
+//   Atlas     next to its name, what Atlas is and whom it is for
+//             (governments, NGOs and corporations), and why Ukraine is the
+//             demo; its walkthrough film, the three scores, the gate with
+//             the sliders the reader can move (GateLab.jsx: Near term
+//             against Post-crisis), the Ukraine ranking as the app shows it
+//             (DemoRanking.jsx, untouched) and the checks against
 //             independent records (ProofTable.jsx).
 //   Behind it what it reads, what it is built with, privacy, and where
 //             the data and the code are.
+//   The film  "Chernozem in three minutes" (Film.jsx, with its five
+//             chapters), right after "Behind it"; it moved here from the
+//             About page. /method#film lands on it.
+//   The close Register for Chernozem, or try the demo.
+// One film plays at a time: starting one pauses any other, so two films
+// with sound never play over each other (useOneFilmAtATime below).
 // The old addresses (/product, /guide, /technology, /design) still land
 // on the matching part: those ids stay on the blocks (src/App.jsx).
 //
@@ -19,8 +29,10 @@
 // and the paper; keep them in step. Numbers come from
 // src/site/content/site.js.
 
+import { useEffect } from "react";
 import { Link } from "react-router-dom";
 import DemoRanking from "../components/DemoRanking.jsx";
+import Film from "../components/Film.jsx";
 import GateLab from "../components/GateLab.jsx";
 import ProofTable from "../components/ProofTable.jsx";
 import Walkthrough from "../components/Walkthrough.jsx";
@@ -36,8 +48,28 @@ function listOf(names) {
   return names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
+// One film at a time: the page has three films (the two walkthroughs, with
+// their narration and music, and the three-minute film with its own sound);
+// when one starts, any other that is playing pauses, so two voices never
+// talk over each other. ("play" does not bubble up, so the page listens on
+// its way down: capture.)
+function useOneFilmAtATime() {
+  useEffect(() => {
+    const onPlay = (event) => {
+      const started = event.target;
+      if (!(started instanceof HTMLMediaElement)) return;
+      for (const video of document.querySelectorAll(".pg video")) {
+        if (video !== started && !video.paused) video.pause();
+      }
+    };
+    document.addEventListener("play", onPlay, true);
+    return () => document.removeEventListener("play", onPlay, true);
+  }, []);
+}
+
 export default function MethodPage() {
   usePageTitle("Methodology");
+  useOneFilmAtATime();
   const w = NUMBERS.postWeights;
   // Near term uses value and damage only, their weights re-shared (30/40 -> 0.43/0.57), as the app does.
   const nearShares = { value: (w.value / (w.value + w.damage)).toFixed(2), damage: (w.damage / (w.value + w.damage)).toFixed(2) };
@@ -72,7 +104,7 @@ export default function MethodPage() {
             </h2>
           </Reveal>
           <Reveal className="meth-body" delay={0.08}>
-            <p className="pg-lead meth-what">Draw your fields once, and every clear satellite pass is read for you: plant health, water, stress and harvest timing, against the same weeks of 2019 to 2021. Report what happened, ask the assistant about any field, and download the record.</p>
+            <p className="pg-lead meth-what">Field is Chernozem for one farm: you mark your fields once, and after every clear satellite pass it tells you how each one is doing and what needs doing.</p>
           </Reveal>
           <Reveal className="meth-film" delay={0.1} y={30}>
             <Walkthrough product="field" title="The Field walkthrough" />
@@ -112,7 +144,7 @@ export default function MethodPage() {
             </h2>
           </Reveal>
           <Reveal className="meth-body" delay={0.08}>
-            <p className="pg-lead meth-what">Pick a country, a region or a box, and every square of its farmland gets three scores and a place in the ranking: where to act first, within a budget, with a report donors can read. Ukraine is the demo because that is where Chernozem started; the same app runs anywhere.</p>
+            <p className="pg-lead meth-what">Atlas is Chernozem for a whole region, for governments, NGOs and corporations: it scores every square of farmland and ranks where recovery should start. Ukraine is the demo because that is where Chernozem started.</p>
           </Reveal>
           <Reveal className="meth-film" delay={0.1} y={30}>
             <Walkthrough product="atlas" title="The Atlas walkthrough" />
@@ -228,6 +260,24 @@ export default function MethodPage() {
         </div>
       </section>
 
+      {/* The three-minute film, moved here from the About page: its name
+          across the top, the film across the frame, its chapters under it
+          (Film.jsx brings its own entrance: the frame opens, the chapters
+          rise). On the surface tone: its white title slide would melt into
+          the page's lighter ground, and the dark field is "Behind it"'s. */}
+      <section className="pg-sec pg-sec-surface" id="film" aria-labelledby="meth-film-title">
+        <div className="pg-grid">
+          <Reveal className="meth-film-head">
+            <h2 className="pg-h2" id="meth-film-title">
+              Chernozem in three minutes
+            </h2>
+          </Reveal>
+          <div className="meth-film">
+            <Film />
+          </div>
+        </div>
+      </section>
+
       <section className="pg-sec pg-sec-sage" aria-labelledby="meth-close">
         <div className="pg-grid">
           <Reveal className="meth-close-head">
@@ -236,7 +286,7 @@ export default function MethodPage() {
             </h2>
           </Reveal>
           <Reveal className="meth-close-act" delay={0.1}>
-            <p>Register for Field or Atlas and read the first pass yourself. The demo is open to everyone and read-only.</p>
+            <p>Register for Chernozem and read the first pass yourself. The demo is open to everyone and read-only.</p>
             <div className="pg-actions">
               <Link className="pg-btn" to={SITE_ACTIONS.register.path}>
                 Register

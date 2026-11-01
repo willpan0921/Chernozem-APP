@@ -31,17 +31,23 @@ function clamp01(v) {
 
 // Near term: the gate. A place below the cutoff gets zero; across the ramp
 // (width w) the gate opens; above it, value and damage set the priority.
+// With both weights at 0 (the sliders allow it), value and damage count
+// half each, as in the app (src/lib/atlas/scoring.js), so the chart never
+// breaks.
 export function nearTermScore(v, d, f, tau, w, wv, wd) {
   const gate = clamp01((f - tau) / w);
-  const sv = wv / (wv + wd);
-  const sd = wd / (wv + wd);
+  const total = wv + wd;
+  const sv = total > 0 ? wv / total : 0.5;
+  const sd = total > 0 ? wd / total : 0.5;
   return gate * (sv * Math.sqrt(v) + sd * Math.sqrt(d)) ** 2;
 }
 
-// Post-crisis: the blend. All three scores in a weighted power mean.
+// Post-crisis: the blend. All three scores in a weighted power mean. With
+// every weight at 0 the three count equally (a chart needs a number).
 export function postCrisisScore(v, d, f, wv, wd, wf, r = 0.5) {
   const total = wv + wd + wf;
-  return ((wv / total) * v ** r + (wd / total) * d ** r + (wf / total) * f ** r) ** (1 / r);
+  const [sv, sd, sf] = total > 0 ? [wv / total, wd / total, wf / total] : [1 / 3, 1 / 3, 1 / 3];
+  return (sv * v ** r + sd * d ** r + sf * f ** r) ** (1 / r);
 }
 
 const VALUE = 0.72;

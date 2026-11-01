@@ -174,7 +174,10 @@ export function cleanContact(body) {
   if (email.length < 3 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw bad("That email address does not look right.");
   const organization = oneLine(body.organization);
   if (organization.length > CONTACT_LIMITS.organization) throw bad(`The organization can be ${CONTACT_LIMITS.organization} characters at most.`);
-  // Who the visitor is ("Farmer", "NGO"...), when the page sends it.
+  // Who the visitor is, when the page sends it: one of the Contact page's
+  // choices ("Farmer", "Government or NGO", "Corporation", "Researcher",
+  // "Something else"), kept as sent. Any short text is taken, so a new
+  // choice on the page needs no change here (messages.test.js checks them).
   const role = oneLine(body.role);
   if (role.length > CONTACT_LIMITS.role) throw bad(`The role can be ${CONTACT_LIMITS.role} characters at most.`);
   // The message keeps its lines (Windows line ends made plain).

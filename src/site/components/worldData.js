@@ -1,7 +1,8 @@
 // WHAT THIS FILE DOES
 // One shared load of the three files the About page's globe reads, used by
-// the globe (WorldGlobe.jsx) and by the small print at the foot of the page
-// (HomePage.jsx), so each file is fetched once per visit:
+// the globe (EarthGlobe.jsx) and by anything else on the page that quotes them (the
+// page's small print), so each file is fetched once per visit. The globe's
+// land and black-soil shapes are its own (EarthGlobe.jsx loads them):
 //   GET /api/world/crises           the events: disaster alerts live from
 //                                   GDACS, armed conflicts from a list
 //                                   reviewed by hand (server/world/)

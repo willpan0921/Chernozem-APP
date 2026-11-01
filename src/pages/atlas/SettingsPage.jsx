@@ -1389,6 +1389,7 @@ function MessageRow({ message, delivery, onRemoved }) {
       <div className="aset-message-head">
         <div className="aset-message-who">
           <span className="aset-message-name">{message.name}</span>
+          {message.role && <span className="aset-row-meta">{message.role}</span>}
           {message.organization && <span className="aset-row-meta">{message.organization}</span>}
           <a className="aset-message-email" href={`mailto:${message.email}`}>
             {message.email}

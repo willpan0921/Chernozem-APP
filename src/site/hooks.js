@@ -14,10 +14,12 @@
 //                           for example "(prefers-reduced-motion: reduce)"
 //   useNear(margin)         [ref, near]: near turns true (and stays true)
 //                           once the element comes within `margin` of the
-//                           screen, so a heavy part far down the page is
-//                           only built and downloaded when the visitor
-//                           heads towards it. Without the observer it is
-//                           true at once.
+//                           screen, or is found already above the screen
+//                           (the page came back, with Back or a reload,
+//                           scrolled past it; isNear is the rule), so a
+//                           heavy part far down the page is only built and
+//                           downloaded when the visitor heads towards it.
+//                           Without the observer it is true at once.
 //
 // WHO EDITS IT
 // Nobody, normally.
@@ -126,6 +128,16 @@ export function useReveal() {
   }, []);
 }
 
+// What useNear counts as near, from one report of the observer: the element
+// is within the margin of the screen, or it is already above the screen
+// (its foot above the screen's top). The second matters when the page is
+// opened, or comes back with Back, scrolled past the element: the observer
+// then only ever reports it as outside the margin, and without this rule it
+// would wait until the visitor scrolled back up to it.
+export function isNear(entry) {
+  return Boolean(entry.isIntersecting || entry.boundingClientRect.bottom < 0);
+}
+
 export function useNear(margin = "800px 0px") {
   const ref = useRef(null);
   const [near, setNear] = useState(() => typeof IntersectionObserver === "undefined");
@@ -135,7 +147,7 @@ export function useNear(margin = "800px 0px") {
     if (!el) return undefined;
     const io = new IntersectionObserver(
       (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) {
+        if (entries.some(isNear)) {
           setNear(true);
           io.disconnect();
         }

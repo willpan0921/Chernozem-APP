@@ -1,8 +1,9 @@
 // WHAT THIS FILE DOES
 // How far a mouse wheel, a trackpad scroll or a trackpad pinch zooms the
 // two maps (src/components/field/FieldMap.jsx, src/components/atlas/
-// AtlasMap.jsx) and the About page's globe (src/site/components/
-// WorldGlobe.jsx), and the map handler that makes the zoom continuous.
+// AtlasMap.jsx), and the map handler that makes the zoom continuous. (Its
+// globe helpers served the About page's old WebGL globe, since replaced by
+// src/site/components/EarthGlobe.jsx; globeMath.test.js still uses them.)
 //
 // WHY THE MAPS NEEDED THIS. Leaflet's own wheel zoom animates every step
 // for a quarter of a second and throws away every wheel tick that arrives

@@ -1,99 +1,5 @@
 [
   {
-    "file": "field-data-440.webp",
-    "from": "field-data.webp",
-    "region": {
-      "left": 276,
-      "top": 116,
-      "width": 440,
-      "height": 560
-    },
-    "use": "About, How it works (StageSlider.jsx)"
-  },
-  {
-    "file": "field-data-880.webp",
-    "from": "field-data.webp",
-    "region": {
-      "left": 276,
-      "top": 116,
-      "width": 440,
-      "height": 560
-    },
-    "scale": 2,
-    "use": "the same, for sharp screens"
-  },
-  {
-    "file": "atlas-map-damage-micro-440.webp",
-    "from": "atlas-map-damage-micro.webp",
-    "region": {
-      "left": 940,
-      "top": 330,
-      "width": 440,
-      "height": 560
-    },
-    "use": "About, How it works (StageSlider.jsx)"
-  },
-  {
-    "file": "atlas-map-damage-micro-880.webp",
-    "from": "atlas-map-damage-micro.webp",
-    "region": {
-      "left": 940,
-      "top": 330,
-      "width": 440,
-      "height": 560
-    },
-    "scale": 2,
-    "use": "the same, for sharp screens"
-  },
-  {
-    "file": "atlas-map-picked-440.webp",
-    "from": "atlas-map-picked.webp",
-    "region": {
-      "left": 1495,
-      "top": 66,
-      "width": 425,
-      "height": 560
-    },
-    "paddedRight": 15,
-    "use": "About, How it works (StageSlider.jsx)"
-  },
-  {
-    "file": "atlas-map-picked-880.webp",
-    "from": "atlas-map-picked.webp",
-    "region": {
-      "left": 1495,
-      "top": 66,
-      "width": 425,
-      "height": 560
-    },
-    "scale": 2,
-    "use": "the same, for sharp screens"
-  },
-  {
-    "file": "atlas-map-near-macro-440.webp",
-    "from": "atlas-map-near-macro.webp",
-    "region": {
-      "left": 1495,
-      "top": 24,
-      "width": 425,
-      "height": 560
-    },
-    "paddedRight": 15,
-    "use": "About, How it works (StageSlider.jsx)"
-  },
-  {
-    "file": "atlas-map-near-macro-880.webp",
-    "from": "atlas-map-near-macro.webp",
-    "region": {
-      "left": 1495,
-      "top": 24,
-      "width": 425,
-      "height": 560
-    },
-    "scale": 2,
-    "use": "the same, for sharp screens"
-  },
-  {
     "file": "atlas-map-satellite-sea.webp",
     "from": "atlas-map-satellite.webp",
     "region": {
@@ -105,53 +11,273 @@
     "use": "About, the closing tile: southern Ukraine and the Black Sea on Esri World Imagery, without the app's buttons"
   },
   {
-    "file": "field-fields-map-864.webp",
-    "from": "field-fields.webp",
+    "file": "story-field-map-800.webp",
+    "view": "/field/fields (Field 11 picked)",
+    "window": "1440 x 900",
     "region": {
-      "left": 383,
-      "top": 290,
-      "width": 864,
-      "height": 520
+      "left": 204,
+      "top": 16,
+      "width": 800,
+      "height": 500
     },
-    "shot": "Re-shot on 1 November 2026 from the website's production build: the demo opened from the About page's own link, Field 11 picked on the map, a 1440 x 900 window at pixel ratio 4/3 (this copy) and 8/3 (its sharp copy); the demo's Earth Engine reading of 26 October 2026 (Sentinel-2). The page is the one field-fields.webp shows, but this capture's map is about 10% closer (as the demo opens today), so the region is in the new capture, not in field-fields.webp.",
-    "use": "About, What is Chernozem (HomePage.jsx): the farm's fields outlined on satellite imagery, one picture pixel per CSS px; 864 px wide so the window is filled up to 860 px wide (a 900 px screen), with no field's name cut at 1440"
+    "shot": "Shot on 1 November 2026 from the website's production build serving a copy of the demo's data (the Earth Engine reading of 26 October 2026 for the farm near Kupiansk; Ukraine, September 2026), as a visitor sees the demo; the two setup screens, which the demo cannot show, as a new account. The window named here at pixel ratio 1 (this copy) and 2 (its sharp copy).",
+    "use": "About, the Field and Atlas stories (components/ScrollStory.jsx), one picture pixel per CSS px"
   },
   {
-    "file": "field-fields-map-1728.webp",
-    "from": "field-fields.webp",
+    "file": "story-field-map-1600.webp",
+    "view": "/field/fields (Field 11 picked)",
+    "window": "1440 x 900",
     "region": {
-      "left": 383,
-      "top": 290,
-      "width": 864,
-      "height": 520
+      "left": 204,
+      "top": 16,
+      "width": 800,
+      "height": 500
     },
     "scale": 2,
-    "shot": "Re-shot on 1 November 2026 from the website's production build: the demo opened from the About page's own link, Field 11 picked on the map, a 1440 x 900 window at pixel ratio 4/3 (this copy) and 8/3 (its sharp copy); the demo's Earth Engine reading of 26 October 2026 (Sentinel-2). The page is the one field-fields.webp shows, but this capture's map is about 10% closer (as the demo opens today), so the region is in the new capture, not in field-fields.webp.",
+    "shot": "Shot on 1 November 2026 from the website's production build serving a copy of the demo's data (the Earth Engine reading of 26 October 2026 for the farm near Kupiansk; Ukraine, September 2026), as a visitor sees the demo; the two setup screens, which the demo cannot show, as a new account. The window named here at pixel ratio 1 (this copy) and 2 (its sharp copy).",
     "use": "the same, for sharp screens (srcset 2x)"
   },
   {
-    "file": "atlas-weights-374.webp",
-    "from": "atlas-map-near-micro.webp",
+    "file": "story-field-pin-800.webp",
+    "view": "/field, a new account's \"Set up your farm\" (coordinates 49.7187, 37.5367, the pin moved on the map)",
+    "window": "1440 x 900",
     "region": {
-      "left": 258,
-      "top": 178,
-      "width": 374,
-      "height": 654
+      "left": 200,
+      "top": 16,
+      "width": 800,
+      "height": 500
     },
-    "shot": "Re-shot on 1 November 2026 from the website's production build: the demo opened from the About page's own link, the 1440 x 900 window of atlas-map-near-micro.webp at pixel ratio 4/3 (this copy) and 8/3 (its sharp copy); the Ukraine run of September 2026 (Earth Engine). Cut below the line over 'Weights' and above the line under the Detail switch, 13 px in from the panel's edges.",
-    "use": "About, Why Chernozem (HomePage.jsx): the Atlas weights panel alone, one picture pixel per CSS px (a phone shows it scaled to its width, down to the cutoff's line)"
+    "shot": "Shot on 1 November 2026 from the website's production build serving a copy of the demo's data (the Earth Engine reading of 26 October 2026 for the farm near Kupiansk; Ukraine, September 2026), as a visitor sees the demo; the two setup screens, which the demo cannot show, as a new account. The window named here at pixel ratio 1 (this copy) and 2 (its sharp copy). The map's \"Sample data\" chip, shown only because the capture server ran without Earth Engine, was hidden, as chernozem.app (with Earth Engine) shows the page.",
+    "use": "About, the Field and Atlas stories (components/ScrollStory.jsx), one picture pixel per CSS px"
   },
   {
-    "file": "atlas-weights-748.webp",
-    "from": "atlas-map-near-micro.webp",
+    "file": "story-field-pin-1600.webp",
+    "view": "/field, a new account's \"Set up your farm\" (coordinates 49.7187, 37.5367, the pin moved on the map)",
+    "window": "1440 x 900",
     "region": {
-      "left": 258,
-      "top": 178,
-      "width": 374,
-      "height": 654
+      "left": 200,
+      "top": 16,
+      "width": 800,
+      "height": 500
     },
     "scale": 2,
-    "shot": "Re-shot on 1 November 2026 from the website's production build: the demo opened from the About page's own link, the 1440 x 900 window of atlas-map-near-micro.webp at pixel ratio 4/3 (this copy) and 8/3 (its sharp copy); the Ukraine run of September 2026 (Earth Engine). Cut below the line over 'Weights' and above the line under the Detail switch, 13 px in from the panel's edges.",
+    "shot": "Shot on 1 November 2026 from the website's production build serving a copy of the demo's data (the Earth Engine reading of 26 October 2026 for the farm near Kupiansk; Ukraine, September 2026), as a visitor sees the demo; the two setup screens, which the demo cannot show, as a new account. The window named here at pixel ratio 1 (this copy) and 2 (its sharp copy). The map's \"Sample data\" chip, shown only because the capture server ran without Earth Engine, was hidden, as chernozem.app (with Earth Engine) shows the page.",
+    "use": "the same, for sharp screens (srcset 2x)"
+  },
+  {
+    "file": "story-field-reading-800.webp",
+    "view": "/field/fields (Field 11 picked, the map moved right)",
+    "window": "1440 x 900",
+    "region": {
+      "left": 622,
+      "top": 0,
+      "width": 800,
+      "height": 500
+    },
+    "shot": "Shot on 1 November 2026 from the website's production build serving a copy of the demo's data (the Earth Engine reading of 26 October 2026 for the farm near Kupiansk; Ukraine, September 2026), as a visitor sees the demo; the two setup screens, which the demo cannot show, as a new account. The window named here at pixel ratio 1 (this copy) and 2 (its sharp copy).",
+    "use": "About, the Field and Atlas stories (components/ScrollStory.jsx), one picture pixel per CSS px"
+  },
+  {
+    "file": "story-field-reading-1600.webp",
+    "view": "/field/fields (Field 11 picked, the map moved right)",
+    "window": "1440 x 900",
+    "region": {
+      "left": 622,
+      "top": 0,
+      "width": 800,
+      "height": 500
+    },
+    "scale": 2,
+    "shot": "Shot on 1 November 2026 from the website's production build serving a copy of the demo's data (the Earth Engine reading of 26 October 2026 for the farm near Kupiansk; Ukraine, September 2026), as a visitor sees the demo; the two setup screens, which the demo cannot show, as a new account. The window named here at pixel ratio 1 (this copy) and 2 (its sharp copy).",
+    "use": "the same, for sharp screens (srcset 2x)"
+  },
+  {
+    "file": "story-field-season-800.webp",
+    "view": "/field/data",
+    "window": "1024 x 900",
+    "region": {
+      "left": 208,
+      "top": 222,
+      "width": 800,
+      "height": 500
+    },
+    "shot": "Shot on 1 November 2026 from the website's production build serving a copy of the demo's data (the Earth Engine reading of 26 October 2026 for the farm near Kupiansk; Ukraine, September 2026), as a visitor sees the demo; the two setup screens, which the demo cannot show, as a new account. The window named here at pixel ratio 1 (this copy) and 2 (its sharp copy).",
+    "use": "About, the Field and Atlas stories (components/ScrollStory.jsx), one picture pixel per CSS px"
+  },
+  {
+    "file": "story-field-season-1600.webp",
+    "view": "/field/data",
+    "window": "1024 x 900",
+    "region": {
+      "left": 208,
+      "top": 222,
+      "width": 800,
+      "height": 500
+    },
+    "scale": 2,
+    "shot": "Shot on 1 November 2026 from the website's production build serving a copy of the demo's data (the Earth Engine reading of 26 October 2026 for the farm near Kupiansk; Ukraine, September 2026), as a visitor sees the demo; the two setup screens, which the demo cannot show, as a new account. The window named here at pixel ratio 1 (this copy) and 2 (its sharp copy).",
+    "use": "the same, for sharp screens (srcset 2x)"
+  },
+  {
+    "file": "story-field-report-800.webp",
+    "view": "/field (the overview)",
+    "window": "1024 x 900",
+    "region": {
+      "left": 208,
+      "top": 378,
+      "width": 800,
+      "height": 500
+    },
+    "shot": "Shot on 1 November 2026 from the website's production build serving a copy of the demo's data (the Earth Engine reading of 26 October 2026 for the farm near Kupiansk; Ukraine, September 2026), as a visitor sees the demo; the two setup screens, which the demo cannot show, as a new account. The window named here at pixel ratio 1 (this copy) and 2 (its sharp copy).",
+    "use": "About, the Field and Atlas stories (components/ScrollStory.jsx), one picture pixel per CSS px"
+  },
+  {
+    "file": "story-field-report-1600.webp",
+    "view": "/field (the overview)",
+    "window": "1024 x 900",
+    "region": {
+      "left": 208,
+      "top": 378,
+      "width": 800,
+      "height": 500
+    },
+    "scale": 2,
+    "shot": "Shot on 1 November 2026 from the website's production build serving a copy of the demo's data (the Earth Engine reading of 26 October 2026 for the farm near Kupiansk; Ukraine, September 2026), as a visitor sees the demo; the two setup screens, which the demo cannot show, as a new account. The window named here at pixel ratio 1 (this copy) and 2 (its sharp copy).",
+    "use": "the same, for sharp screens (srcset 2x)"
+  },
+  {
+    "file": "story-atlas-overview-800.webp",
+    "view": "/atlas (September 2026)",
+    "window": "1024 x 900",
+    "region": {
+      "left": 208,
+      "top": 22,
+      "width": 800,
+      "height": 500
+    },
+    "shot": "Shot on 1 November 2026 from the website's production build serving a copy of the demo's data (the Earth Engine reading of 26 October 2026 for the farm near Kupiansk; Ukraine, September 2026), as a visitor sees the demo; the two setup screens, which the demo cannot show, as a new account. The window named here at pixel ratio 1 (this copy) and 2 (its sharp copy).",
+    "use": "About, the Field and Atlas stories (components/ScrollStory.jsx), one picture pixel per CSS px"
+  },
+  {
+    "file": "story-atlas-overview-1600.webp",
+    "view": "/atlas (September 2026)",
+    "window": "1024 x 900",
+    "region": {
+      "left": 208,
+      "top": 22,
+      "width": 800,
+      "height": 500
+    },
+    "scale": 2,
+    "shot": "Shot on 1 November 2026 from the website's production build serving a copy of the demo's data (the Earth Engine reading of 26 October 2026 for the farm near Kupiansk; Ukraine, September 2026), as a visitor sees the demo; the two setup screens, which the demo cannot show, as a new account. The window named here at pixel ratio 1 (this copy) and 2 (its sharp copy).",
+    "use": "the same, for sharp screens (srcset 2x)"
+  },
+  {
+    "file": "story-atlas-area-800.webp",
+    "view": "/atlas, a new account's \"Choose an area\" (Coordinates, Box)",
+    "window": "1440 x 900",
+    "region": {
+      "left": 412,
+      "top": 72,
+      "width": 800,
+      "height": 500
+    },
+    "shot": "Shot on 1 November 2026 from the website's production build serving a copy of the demo's data (the Earth Engine reading of 26 October 2026 for the farm near Kupiansk; Ukraine, September 2026), as a visitor sees the demo; the two setup screens, which the demo cannot show, as a new account. The window named here at pixel ratio 1 (this copy) and 2 (its sharp copy).",
+    "use": "About, the Field and Atlas stories (components/ScrollStory.jsx), one picture pixel per CSS px"
+  },
+  {
+    "file": "story-atlas-area-1600.webp",
+    "view": "/atlas, a new account's \"Choose an area\" (Coordinates, Box)",
+    "window": "1440 x 900",
+    "region": {
+      "left": 412,
+      "top": 72,
+      "width": 800,
+      "height": 500
+    },
+    "scale": 2,
+    "shot": "Shot on 1 November 2026 from the website's production build serving a copy of the demo's data (the Earth Engine reading of 26 October 2026 for the farm near Kupiansk; Ukraine, September 2026), as a visitor sees the demo; the two setup screens, which the demo cannot show, as a new account. The window named here at pixel ratio 1 (this copy) and 2 (its sharp copy).",
+    "use": "the same, for sharp screens (srcset 2x)"
+  },
+  {
+    "file": "story-atlas-square-800.webp",
+    "view": "/atlas/map?focus=r20c36 (one square in Mykolaiv picked)",
+    "window": "1440 x 900",
+    "region": {
+      "left": 640,
+      "top": 0,
+      "width": 800,
+      "height": 500
+    },
+    "shot": "Shot on 1 November 2026 from the website's production build serving a copy of the demo's data (the Earth Engine reading of 26 October 2026 for the farm near Kupiansk; Ukraine, September 2026), as a visitor sees the demo; the two setup screens, which the demo cannot show, as a new account. The window named here at pixel ratio 1 (this copy) and 2 (its sharp copy).",
+    "use": "About, the Field and Atlas stories (components/ScrollStory.jsx), one picture pixel per CSS px"
+  },
+  {
+    "file": "story-atlas-square-1600.webp",
+    "view": "/atlas/map?focus=r20c36 (one square in Mykolaiv picked)",
+    "window": "1440 x 900",
+    "region": {
+      "left": 640,
+      "top": 0,
+      "width": 800,
+      "height": 500
+    },
+    "scale": 2,
+    "shot": "Shot on 1 November 2026 from the website's production build serving a copy of the demo's data (the Earth Engine reading of 26 October 2026 for the farm near Kupiansk; Ukraine, September 2026), as a visitor sees the demo; the two setup screens, which the demo cannot show, as a new account. The window named here at pixel ratio 1 (this copy) and 2 (its sharp copy).",
+    "use": "the same, for sharp screens (srcset 2x)"
+  },
+  {
+    "file": "story-atlas-weights-800.webp",
+    "view": "/atlas/map",
+    "window": "1440 x 900",
+    "region": {
+      "left": 184,
+      "top": 130,
+      "width": 800,
+      "height": 500
+    },
+    "shot": "Shot on 1 November 2026 from the website's production build serving a copy of the demo's data (the Earth Engine reading of 26 October 2026 for the farm near Kupiansk; Ukraine, September 2026), as a visitor sees the demo; the two setup screens, which the demo cannot show, as a new account. The window named here at pixel ratio 1 (this copy) and 2 (its sharp copy).",
+    "use": "About, the Field and Atlas stories (components/ScrollStory.jsx), one picture pixel per CSS px"
+  },
+  {
+    "file": "story-atlas-weights-1600.webp",
+    "view": "/atlas/map",
+    "window": "1440 x 900",
+    "region": {
+      "left": 184,
+      "top": 130,
+      "width": 800,
+      "height": 500
+    },
+    "scale": 2,
+    "shot": "Shot on 1 November 2026 from the website's production build serving a copy of the demo's data (the Earth Engine reading of 26 October 2026 for the farm near Kupiansk; Ukraine, September 2026), as a visitor sees the demo; the two setup screens, which the demo cannot show, as a new account. The window named here at pixel ratio 1 (this copy) and 2 (its sharp copy).",
+    "use": "the same, for sharp screens (srcset 2x)"
+  },
+  {
+    "file": "story-atlas-report-800.webp",
+    "view": "/atlas/report (September 2026)",
+    "window": "1024 x 900",
+    "region": {
+      "left": 208,
+      "top": 22,
+      "width": 800,
+      "height": 500
+    },
+    "shot": "Shot on 1 November 2026 from the website's production build serving a copy of the demo's data (the Earth Engine reading of 26 October 2026 for the farm near Kupiansk; Ukraine, September 2026), as a visitor sees the demo; the two setup screens, which the demo cannot show, as a new account. The window named here at pixel ratio 1 (this copy) and 2 (its sharp copy).",
+    "use": "About, the Field and Atlas stories (components/ScrollStory.jsx), one picture pixel per CSS px"
+  },
+  {
+    "file": "story-atlas-report-1600.webp",
+    "view": "/atlas/report (September 2026)",
+    "window": "1024 x 900",
+    "region": {
+      "left": 208,
+      "top": 22,
+      "width": 800,
+      "height": 500
+    },
+    "scale": 2,
+    "shot": "Shot on 1 November 2026 from the website's production build serving a copy of the demo's data (the Earth Engine reading of 26 October 2026 for the farm near Kupiansk; Ukraine, September 2026), as a visitor sees the demo; the two setup screens, which the demo cannot show, as a new account. The window named here at pixel ratio 1 (this copy) and 2 (its sharp copy).",
     "use": "the same, for sharp screens (srcset 2x)"
   }
 ]

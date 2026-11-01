@@ -27,7 +27,7 @@ export const SITE = {
   name: "Chernozem",
   tagline: "Satellite farmland monitoring.",
   description:
-    "Chernozem reads free satellite data over farmland and says what changed: Field for a farmer's own fields, Atlas for governments and NGOs ranking whole regions.",
+    "Chernozem reads free satellite data over farmland and says what changed: Field for a farmer's own fields, Atlas for governments, NGOs and corporations ranking whole regions.",
   appPath: "/field",
   atlasPath: "/atlas",
   demoPath: "/demo",

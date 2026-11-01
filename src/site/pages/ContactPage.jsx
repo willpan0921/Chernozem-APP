@@ -1,10 +1,13 @@
 // WHAT THIS FILE DOES
 // The website's Contact page (chernozem.app/contact): a short form whose
 // messages go to chernozem.app@gmail.com, and that address as a plain
-// e-mail link for anyone who prefers their own mail program.
+// e-mail link for anyone who prefers their own mail program ("Messages go
+// to chernozem.app@gmail.com. Feel free to email us directly as well.",
+// the owner's words).
 //
-// The form: who you are (one row of four plain choices; the message's
-// prompt follows the choice), name, e-mail, organisation (optional) and
+// The form: who you are (one row of five plain choices: Farmer, Government
+// or NGO, Corporation, Researcher, Something else; the message's prompt
+// follows the choice), name, e-mail, organisation (optional) and
 // the message. It is sent to the server (POST /api/contact,
 // src/api/siteApi.js sendContact), which keeps it and e-mails it to the
 // address above (one that could not be sent yet is tried again later).
@@ -36,10 +39,12 @@ import { CONTACT_EMAIL } from "../content/site.js";
 import { usePageTitle, useReveal } from "../hooks.js";
 import "./pages.css";
 
-// The four choices, and the prompt the message box shows for each.
+// The five choices, and the prompt the message box shows for each. Each
+// travels to the server as typed here (server/messages.js keeps it).
 const ROLES = [
   { value: "Farmer", prompt: "Where is your farm, and what do you grow?" },
   { value: "Government or NGO", prompt: "Which country or region, and what do you need to decide?" },
+  { value: "Corporation", prompt: "Which farmland or supply region, and what do you need to know about it?" },
   { value: "Researcher", prompt: "What are you working on, and what would help?" },
   { value: "Something else", prompt: "What would you like to say?" },
 ];
@@ -126,7 +131,7 @@ export default function ContactPage() {
           <div className="ct-intro">
             <p className="pg-lead pg-fade">Ask a question, propose a pilot on your land, or tell us what is wrong.</p>
             <p className="ct-address pg-fade-2">
-              Messages go to <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>
+              Messages go to <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>. Feel free to email us directly as well.
             </p>
           </div>
         </div>

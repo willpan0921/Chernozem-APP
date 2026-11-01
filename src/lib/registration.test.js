@@ -2,7 +2,8 @@
 // Tests src/lib/registration.js: the rules behind the website's Register
 // and Sign in pages. Registering is one step: the choice at the top gives
 // Field or Atlas; an Atlas account names its organisation and chooses its
-// kind (nothing chosen for it); Google gives the name, the e-mail way asks
+// kind (Government, NGO, Corporation, Research or Other, the same as the
+// server's roles; nothing chosen for it); Google gives the name, the e-mail way asks
 // it; the page never asks for a place (the product's own setup does); every
 // answer has a limit and a plain-words message; the owner is told apart;
 // Firebase's error codes become sentences a person can act on; the pictures
@@ -72,17 +73,32 @@ test("one step: no steps to show, and no place question (the product's setup ask
   assert.equal(LIMITS.country, undefined);
 });
 
-test("the server's six roles each belong to one product; no kind is chosen in advance", () => {
-  // The same six as server/accounts.js ROLES.
+test("the server's seven roles each belong to one product; no kind is chosen in advance", () => {
+  // The same seven as server/accounts.js ROLES.
   for (const role of ["farmer", "landowner"]) assert.equal(productForRole(role), "field", role);
-  for (const role of ["government", "ngo", "research", "other"]) assert.equal(productForRole(role), "atlas", role);
+  for (const role of ["government", "ngo", "corporation", "research", "other"]) assert.equal(productForRole(role), "atlas", role);
   assert.equal(productForRole("investor"), null);
+  assert.equal(productForRole("company"), null, "a corporation is saved as corporation, nothing else");
   assert.equal(productForRole(undefined), null);
   assert.deepEqual(
     ORG_KINDS.map((kind) => kind.label),
-    ["Government", "NGO", "Research", "Other"]
+    ["Government", "NGO", "Corporation", "Research", "Other"]
   );
   assert.equal(registration.DEFAULT_ORG_KIND, undefined, "nothing preselected");
+});
+
+test("the kinds of organisation are exactly the server's Atlas roles (server/accounts.js ROLES)", () => {
+  // Read from the server file's source, so this test needs no server code.
+  const source = readFileSync(new URL("../../server/accounts.js", import.meta.url), "utf8");
+  const line = source.match(/export const ROLES = \[([^\]]*)\];/);
+  assert.ok(line, "server/accounts.js lists its ROLES on one line");
+  const serverRoles = [...line[1].matchAll(/"([a-z]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(serverRoles, ["farmer", "landowner", "government", "ngo", "corporation", "research", "other"]);
+  // Every kind the page offers is one the server accepts, and every role
+  // the server keeps is either Field's or one of the page's kinds.
+  for (const kind of ORG_KINDS) assert.ok(serverRoles.includes(kind.role), `the server accepts "${kind.role}"`);
+  for (const role of serverRoles) assert.ok(productForRole(role), `"${role}" belongs to Field or Atlas`);
+  assert.equal(new Set(ORG_KINDS.map((kind) => kind.role)).size, ORG_KINDS.length, "no kind twice");
 });
 
 test("the role saved: Field is a farmer, Atlas is the kind chosen", () => {
@@ -91,6 +107,8 @@ test("the role saved: Field is a farmer, Atlas is the kind chosen", () => {
   assert.equal(roleForSave("field", "landowner"), "landowner", "an older profile's landowner stays one");
   assert.equal(roleForSave("atlas", "government"), "government");
   assert.equal(roleForSave("atlas", "research"), "research");
+  assert.equal(roleForSave("atlas", "corporation"), "corporation");
+  assert.equal(roleForSave("field", "corporation"), "farmer", "a corporation left over from Atlas does not reach Field");
   assert.equal(roleForSave("atlas"), "", "no kind chosen: nothing is made up");
   assert.equal(roleForSave("atlas", "farmer"), "");
   assert.equal(roleForSave(undefined, "ngo"), "");
@@ -138,6 +156,7 @@ test("Field: the e-mail way needs a name; with Google the name comes from Google
 
 test("Atlas: the organisation and its kind are both needed, whichever way, and nothing is chosen for the person", () => {
   assert.deepEqual(validateProfile(ngo), { ok: true, problems: {} });
+  assert.deepEqual(validateProfile({ ...ngo, kind: "corporation", organization: "Black Soil Foods" }), { ok: true, problems: {} }, "a corporation registers for Atlas");
   const noKind = validateProfile({ ...ngo, kind: undefined });
   assert.equal(noKind.ok, false, "no kind chosen yet: the person must choose");
   assert.equal(noKind.problems.kind, "Choose what kind of organisation.");
@@ -181,6 +200,12 @@ test("what goes to PUT /api/account: trimmed, the organisation only for Atlas, n
     organization: "FAO",
   });
   assert.deepEqual(profileForServer({ product: "atlas", kind: "government", name: "Iryna", organization: "  " }), { name: "Iryna", product: "atlas", role: "government" });
+  assert.deepEqual(profileForServer({ product: "atlas", kind: "corporation", name: "Mira", organization: " Black Soil Foods " }), {
+    name: "Mira",
+    product: "atlas",
+    role: "corporation",
+    organization: "Black Soil Foods",
+  });
   // Never the questions the page does not ask.
   const body = profileForServer({ ...farmer, age: "34", address: "Main street", place: { lat: 49.71, lng: 37.62, label: "Kupiansk" }, country: "Ukraine" });
   assert.deepEqual(Object.keys(body).sort(), ["name", "product", "role"]);
