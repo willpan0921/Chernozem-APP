@@ -1,20 +1,28 @@
 /*
   WHAT THIS FILE DOES
   The layout of the About page (HomePage.jsx) and of the parts only it
-  uses: the hero (the words on the left, the Earth on the right; the
-  Earth's own look is in components/earth.css), "Why Chernozem" (eight
-  claims in two columns beside the photograph and its credit), the field
+  uses: the hero (the words on the left, the problem and the bold line
+  that answers it under the slogan, the Earth on the right; the Earth's
+  own look is in components/earth.css, and the slot beside it, where it
+  opens a dot's card, is the globe's block below), "What is Chernozem"
+  (the words beside one window onto the Fields page, which looks at the
+  picture so that no field's name is ever cut at its edge), "Why
+  Chernozem" (eight bullets, each a bold claim and one line, beside the
+  photograph and its credit, never wider than the picture's own 600 px;
+  on a tablet the bullets first, the photograph after them), the field
   row and its three state buttons, the proof table's heading, the demo on
-  its sage stage, the action tile with its satellite view and the small
-  print. The two sideways stories have their own file,
+  its sage stage, the action tile with its satellite view, the disclaimer
+  and the small print. The two sideways stories have their own file,
   components/scrollstory.css. Every colour and size is a token from
-  src/site/site.css.
+  src/site/site.css, which HomePage.jsx imports before this file, so the
+  rules here win every tie with it however the page is opened.
 
   The page's title, the slogan, is its largest heading at every width
   ("know your land." is about 8 times the type size wide, so it is sized
   to the words' column), and the display heading below it ("Checked
   against the record") stays a step smaller. Text starts on two lines of
-  the page's grid: the left edge, or three columns in.
+  the page's grid: the left edge, or three columns in. Its text links are
+  targets of 32 px or more, their focus rings 2 to 3 px round the words.
 
   WHO EDITS IT
   Whoever works on the About page.
@@ -47,6 +55,64 @@
   min-width: 0;
 }
 
+/* ---- The Earth's card beside it (begin: the globe's block) ----
+   The place where EarthGlobe.jsx opens a dot's card on a wide screen: the
+   words' own cell, over them, centred in it as they are. Empty, it has no
+   height; while it holds a card (EarthGlobe.jsx marks it data-card: an
+   attribute, which Safari looks at again when it changes, as it does not
+   for :empty inside :has) the words step aside (hidden, keeping their
+   room, so nothing on the page moves) and come back when it closes,
+   fading in (at once with reduced motion; the card comes in with its own
+   soft rise, components/earth.css). On a narrower screen the Earth has
+   the page's width and its card opens under it instead. */
+@media (min-width: 901px) {
+  .site .hero-words,
+  .site .hero-side {
+    grid-row: 1;
+  }
+
+  .site .hero-earth {
+    grid-row: 1;
+  }
+}
+
+.site .hero-side {
+  grid-column: 1 / 7;
+  min-width: 0;
+}
+
+.site .hero-grid:has(> .hero-side[data-card]) > .hero-words {
+  visibility: hidden;
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .site .hero-words {
+    transition: opacity var(--t-ui) ease;
+  }
+
+  .site .hero-grid:has(> .hero-side[data-card]) > .hero-words {
+    transition: none;
+  }
+}
+
+/* With reduced motion site.css gives everything a transition of 1 ms on
+   every property, which the browser starts only at its next frame (in
+   Safari a few frames later), so the words would show over the card for
+   a moment: here they have none at all. */
+@media (prefers-reduced-motion: reduce) {
+  .site .hero-words {
+    transition-property: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .site .hero-side {
+    display: none;
+  }
+}
+/* ---- (end: the globe's block) ---- */
+
 /* The slogan in two set lines, bold, the largest type on the page. */
 .site .hero-title {
   font-size: clamp(2.5rem, 5.4vw, 4.8rem);
@@ -62,12 +128,39 @@
   max-width: 42ch;
 }
 
+/* The answer to the problem above it: its own line, a step larger and
+   bold, in full ink. */
+.site .hero-solves {
+  margin-top: 20px;
+  font-size: var(--step-lead);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  max-width: 30ch;
+  text-wrap: balance;
+  color: var(--ink);
+}
+
 .site .hero-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 1rem 1.5rem;
   margin-top: 32px;
+}
+
+/* "Try the demo" beside the button, here and on the close's green tile: a
+   target 33 px tall or more for a finger (its words alone are 23 to 27),
+   5 px of padding all round taken back by the margin, so nothing moves (a
+   flex item keeps its margins on every side), and the focus ring 3 px
+   round the words, as on the site's other links. */
+.site :is(.hero-actions, .close-actions) .link {
+  padding: 5px;
+  margin: -5px;
+}
+
+.site :is(.hero-actions, .close-actions) .link:focus-visible {
+  outline-offset: -2px;
 }
 
 /* A narrower screen: the words first, the Earth under them, each the full
@@ -84,13 +177,14 @@
   }
 }
 
-/* The page's underlined text links on its light grounds (the hero, the
-   photograph's credit, the small print) answer the pointer, and the pin
-   nearby (cursorAssist.js), as the other pages' text links do: they turn
-   the accent green and keep their underline (site.css's ".site a:hover"
-   reset would otherwise take it away). */
+/* The page's underlined text links on its light grounds (the hero, "What
+   is Chernozem" and its window's caption, "Why Chernozem", the small
+   print) answer the pointer, and the pin nearby (cursorAssist.js), as the
+   other pages' text links do: they turn the accent green and keep their
+   underline (site.css's ".site a:hover" reset would otherwise take it
+   away). */
 @media (hover: hover) and (pointer: fine) {
-  .site :is(.hero, .why, .small-print) .link-under:hover {
+  .site :is(.hero, .what, .why, .small-print) .link-under:hover {
     color: var(--accent);
     text-decoration-line: underline;
     text-decoration-thickness: 0.07em;
@@ -104,15 +198,96 @@
   }
 }
 
-.site :is(.hero, .why, .small-print) .link-under[data-near] {
+.site :is(.hero, .what, .why, .small-print) .link-under[data-near] {
   color: var(--accent);
 }
 
-/* ---- 2. Why Chernozem, on the surface tone: the heading and the eight
-   claims in two columns (columns 1 to 7), the photograph beside them
-   (columns 8 to 12, 4:5, from the top) with its credit under it. Below
-   1200 px the photograph comes right after the heading: on a phone it is
-   the first thing of the section, at the full width. ---- */
+/* ---- 2. What is Chernozem: the words in the left half, with two
+   gutters of air on their right (as the Why list keeps), so the heading
+   never runs up to the picture, and set at the picture's middle; in the
+   right half the owner's picture of the two products (the logo above
+   Field and Atlas, 3:4), shown whole and never wider than 560 px, so it
+   stays within a laptop's screen; the caption under it. On a screen of
+   900 px or less the picture comes under the words. On the page's
+   ground, like the hero above it. ---- */
+.site .what-words {
+  grid-column: 1 / 7;
+  padding-right: calc(2 * var(--gutter));
+}
+
+.site .what-lead {
+  margin-top: 1.5rem;
+  max-width: 36ch;
+}
+
+/* "How it started" stands on its own line, so its target is taller than
+   its words (48 px on a wide screen, 45 on a phone) without looking like
+   a button: 12 px of padding, and its line pulled 12 px to the left, so
+   the words keep their place (a negative margin on the link itself would
+   do the same, but Safari ignores it where the link starts its block and
+   draws the focus ring through the H); the ring 3 px round the words, as
+   on the other links. */
+.site .what-link {
+  margin-top: 1.75rem;
+  margin-left: -12px;
+}
+
+.site .what-link .link {
+  padding: 12px;
+}
+
+.site .what-link .link:focus-visible {
+  outline-offset: -9px;
+}
+
+.site .what-side {
+  grid-column: 7 / 13;
+  justify-self: end;
+  width: 100%;
+  max-width: 560px;
+}
+
+.site .what-picture {
+  margin: 0;
+}
+
+.site .what-picture img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+@media (min-width: 901px) {
+  .site .what-words {
+    align-self: center;
+  }
+}
+
+@media (max-width: 900px) {
+  .site .what-words,
+  .site .what-side {
+    grid-column: 1 / 13;
+  }
+
+  .site .what-words {
+    padding-right: 0;
+  }
+
+  .site .what-side {
+    justify-self: start;
+    margin-top: 2.5rem;
+  }
+}
+
+/* ---- 3. Why Chernozem, on the surface tone: the heading, the eight
+   reasons as one bulleted list (a small square of the accent green before
+   each, the claim in bold and its line run on after it), and the
+   photograph (nearly square, 600 x 582, with a copy twice as sharp), never
+   shown wider than its 600 px (max-width on the img, at every width), its
+   credit under it: on a screen wider than 900 px it takes columns 8 to 12
+   beside the list, its top on the heading's; from 701 to 900 px the
+   reasons come first, under the heading, and the photograph after them;
+   on a phone the photograph comes first, across the column. ---- */
 .site .why.section {
   background: var(--surface);
 }
@@ -125,47 +300,52 @@
 .site .why-list {
   grid-column: 1 / 8;
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2.75rem var(--gutter);
+  gap: 1.25rem;
   align-content: start;
-  /* Air between the claims and the photograph beside them. */
+  /* Air between the list and the photograph beside it. */
   padding-right: calc(2 * var(--gutter));
 }
 
-.site .why-claim {
-  font-size: var(--step-lead);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  line-height: 1.15;
-}
-
-.site .why-text {
-  margin-top: 0.5em;
+.site .why-item {
+  position: relative;
+  max-width: 62ch;
+  padding-left: 1.6em;
   font-size: var(--step-body);
   line-height: 1.45;
-  max-width: 34ch;
+  text-wrap: pretty;
+}
+
+/* The bullet: a square of the accent green on the middle of the first
+   line (its box is 1.45em tall). */
+.site .why-item::before {
+  content: "";
+  position: absolute;
+  left: 0.15em;
+  top: 0.46em;
+  width: 0.5em;
+  height: 0.5em;
+  background: var(--accent);
+}
+
+.site .why-claim {
+  font-weight: 600;
 }
 
 .site .why-photo {
   grid-column: 8 / 13;
   grid-row: 1 / 3;
+  justify-self: end;
   align-self: start;
+  width: 100%;
+  max-width: 600px;
   margin: 0;
   min-width: 0;
 }
 
-.site .why-photo-frame {
-  aspect-ratio: 4 / 5;
-  overflow: clip;
-  background: var(--bg);
-}
-
-.site .why-photo-frame img {
-  display: block;
+.site .why-photo img {
   width: 100%;
-  height: 100%;
-  max-width: none;
-  object-fit: cover;
+  max-width: 600px;
+  background: var(--bg);
 }
 
 /* The line under a picture: what it is and whose it is. */
@@ -176,68 +356,63 @@
   max-width: none;
 }
 
-/* A link in it never breaks over two lines: it moves to the next line whole. */
+/* A link in it never breaks over two lines: it moves to the next line
+   whole. Its padding makes it a taller target for a finger (33 px, not
+   19) and moves nothing: an inline box's padding takes no room upward or
+   downward, and the margin gives the sideways part back. The focus ring
+   sits 2 to 3 px round the words. */
 .site .window-caption .link {
   color: var(--ink);
   white-space: nowrap;
+  padding: 7px 6px;
+  margin-inline: -6px;
 }
 
-@media (max-width: 1199px) {
+.site .window-caption .link:focus-visible {
+  outline-offset: -4px;
+}
+
+/* 900 px or less: one column, the heading, then the reasons (they come
+   first on a tablet, where the photograph, 600 px tall, would otherwise
+   fill the screen under the heading), then the photograph at its own
+   width at most, its credit under it. */
+@media (max-width: 900px) {
   .site .why-head,
-  .site .why-list {
+  .site .why-list,
+  .site .why-photo {
     grid-column: 1 / 13;
   }
 
-  .site .why-photo {
-    grid-column: 1 / 13;
+  .site .why-head {
+    margin-bottom: 40px;
+  }
+
+  .site .why-list {
     grid-row: 2;
-    margin-bottom: 3.5rem;
+    padding-right: 0;
+  }
+
+  .site .why-photo {
+    grid-row: 3;
+    justify-self: start;
+    margin-top: 3.5rem;
+  }
+}
+
+/* A phone: the photograph first, across the column, the list under it. */
+@media (max-width: 700px) {
+  .site .why-photo {
+    grid-row: 2;
+    margin: 0 0 2.5rem;
   }
 
   .site .why-list {
     grid-row: 3;
-    padding-right: 0;
+    gap: 1.125rem;
   }
 }
 
-/* A screen 701 to 1199 px wide: the photograph 420 px wide with its credit
-   docked at its foot beside it, so the width beside it is not bare. */
-@media (min-width: 701px) and (max-width: 1199px) {
-  .site .why-photo {
-    display: flex;
-    align-items: flex-end;
-    gap: 1.5rem;
-  }
-
-  .site .why-photo-frame {
-    flex: 0 0 420px;
-  }
-
-  .site .why-photo .window-caption {
-    margin-top: 0;
-    max-width: 32ch;
-  }
-}
-
-@media (max-width: 900px) {
-  .site .why-head {
-    margin-bottom: 40px;
-  }
-}
-
-/* A phone: the photograph across the column, the claims in one column. */
-@media (max-width: 700px) {
-  .site .why-photo {
-    margin-bottom: 2.75rem;
-  }
-
-  .site .why-list {
-    grid-template-columns: 1fr;
-    gap: 2rem;
-  }
-}
-
-/* ---- 5. The field row: the heading at the left edge, the three states
+/* ---- 6. The field row: the heading at the left edge, the three states
    under it, and the row enlarged across columns 4 to 12 ---- */
 .site .showcase-head {
   grid-column: 1 / 13;
@@ -460,7 +635,7 @@
   }
 }
 
-/* ---- 6. The proof: a stepped heading, then the table. Its second line
+/* ---- 7. The proof: a stepped heading, then the table. Its second line
    starts three columns in, on the page's grid (the heading spans the
    frame, so 100% is the grid's width). The page's display heading stays a
    step under its title. ---- */
@@ -486,7 +661,7 @@
   }
 }
 
-/* ---- 7. The demo on its sage stage: the copy beside the fragment ----
+/* ---- 8. The demo on its sage stage: the copy beside the fragment ----
    The fragment takes eight columns rather than seven: its ranked list
    (DemoRanking, which is not edited) needs the room for the oblast names. */
 .site .demo-copy {
@@ -538,7 +713,7 @@
   }
 }
 
-/* ---- 8. The close: the action tile (its words on the page's frame,
+/* ---- 9. The close: the action tile (its words on the page's frame,
    site.css .frame) and the satellite view, from edge to edge ---- */
 .site .close {
   padding-block: 0;
@@ -611,9 +786,27 @@
   }
 }
 
-/* ---- The small print: where the maps in the pictures come from ---- */
+/* ---- Under the close: the disclaimer, then the small print (where the
+   maps in the pictures come from) ---- */
 .site .small-print-wrap {
   margin-top: 40px;
+}
+
+/* What the readings are and are not: at the captions' readable size and
+   in full ink (not the small print's), its first words in bold. Its
+   measure is the small print's own width (60ch of 13 px is 52ch of 15
+   px): about 66 characters a line, and the two share a right edge. (Not
+   called "disclaimer": the app's global stylesheet has a rule by that
+   name, src/styles/components.css, 11 px and muted.) */
+.site .caveat {
+  max-width: 52ch;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.site .caveat + .small-print {
+  margin-top: 16px;
 }
 
 .site .small-print {

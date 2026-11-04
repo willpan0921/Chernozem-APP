@@ -3,9 +3,11 @@
   The layouts of six website pages: Story (/story), Methodology (/method),
   Contact (/contact), the demo page (/demo), the owner's sign-in (/owner)
   and "page not found", plus what the Methodology page shows inside them:
-  the gate laboratory fragment (GateLab.jsx, the sliders) and the films
-  (the walkthroughs, Walkthrough.jsx, and the three-minute film, Film.jsx,
-  whose look moved here from site.css with it). Every colour and size here
+  the gate laboratory fragment (GateLab.jsx, the sliders; Field's condition
+  laboratory, ConditionLab.jsx, wears the same look, with its own parts in
+  components/conditionlab.css) and the films (the walkthroughs,
+  Walkthrough.jsx, and the three-minute film, Film.jsx, whose look moved
+  here from site.css with it). Every colour and size here
   is a token from src/site/site.css (--bg, --ink, --accent, --step-body
   ... ); nothing is invented here.
 
@@ -386,10 +388,17 @@
 
 /* The first screen: the headline rises from behind its baseline, the lead
    fades up after it. Both are plain CSS so the words are on the first
-   frame and settled well within a second. */
+   frame and settled well within a second.
+   The tails of g, p and y hang below a title's tight line (0.88 to 0.92
+   of its size), and a mask ending at the line cut them off ("Forged",
+   "Try the demo"). So the mask reaches a fifth of the largest title size
+   lower and gives that back below itself (nothing after the title moves),
+   and the rise starts as much lower, so the headline still starts out of
+   sight. */
 .pg-mask {
   overflow: hidden;
-  padding-bottom: 0.08em;
+  padding-bottom: calc(var(--step-display) * 0.2 + 0.08em);
+  margin-bottom: calc(var(--step-display) * -0.2);
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -406,7 +415,7 @@
 
 @keyframes pg-rise {
   from {
-    transform: translateY(104%);
+    transform: translateY(calc(104% + 0.2em));
   }
   to {
     transform: none;
@@ -433,40 +442,95 @@
   letter-spacing: -0.015em;
 }
 
+/* ".pg" in front: ".pg p" would otherwise keep "pretty" (a statement of
+   two lines reads calmer with its lines of about equal length). */
 .pg .story-statement {
   max-width: 30em;
+  text-wrap: balance;
 }
 
-/* 1. The meal: the black-soil field. The title and the family story stand
-   side by side on its foot, like a caption under a picture of the soil. */
-.story-meal {
-  display: grid;
+/* 1. The roots: the black-soil field. The title across the top, then the
+   story in five steps, one under the other, each joined to the next by a
+   drawn arrow pointing down. The statements and the arrows share one left
+   edge, so the arrows run down one clear vertical axis, each pointing at
+   the words it leads to. On a wide screen the steps start three columns
+   in, on the page's second line of text (the About page's text starts on
+   the same two lines: the left edge, or three columns in), a clear step
+   under the title, so the band is never half empty beside them (the
+   "Wide screens" block further down); under 1100 px they take the whole
+   width. */
+.story-roots-head {
+  grid-column: 1 / 13;
 }
 
-.story-meal-grid {
-  align-content: end;
+.story-roots-steps {
+  grid-column: 1 / 13;
 }
 
-.story-meal-title {
-  grid-column: 1 / 8;
-  align-self: end;
+/* The description under each statement: a step smaller and a step back,
+   in the band's light grey (8:1 on the black soil), so the statements
+   read first, as the story's spine. A shorter measure than the running
+   text's 62ch (about 65 letters a line), easier to read in grey. */
+.pg .story-roots-tell {
+  margin-top: 14px;
+  max-width: 52ch;
+  color: var(--field-dark-muted);
 }
 
-.story-meal-text {
-  grid-column: 8 / 13;
-  align-self: end;
+.pg .story-roots-tell + .story-roots-tell {
+  margin-top: 0.9em;
 }
 
-/* 2. The meeting: the heading at the left, the two sentences beside it. */
-.story-penn-head {
-  grid-column: 1 / 5;
+/* The arrow: a line and its head in the band's light grey, as wide as a
+   capital, so its line stands under the first letters of the steps. */
+.story-roots-next {
+  display: block;
+  width: 20px;
+  margin: clamp(24px, 2.6vw, 36px) 0;
+  color: var(--field-dark-muted);
 }
 
-.story-penn-text {
-  grid-column: 5 / 13;
+.story-roots-arrow {
+  display: block;
+  width: 20px;
+  height: 88px;
+  overflow: visible;
 }
 
-/* 3-5. The editions. The bar of the three sticks to the top of the screen
+.story-roots-arrow path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.5;
+  vector-effect: non-scaling-stroke;
+}
+
+/* The arrow's entrance: the line grows down from the step above and the
+   head travels with its end (the same distance, 85 of the drawing's
+   units, on the same curve), so the arrow is drawn towards the next step.
+   StoryPage.jsx adds "is-in" (the first screen's parts after the title and
+   the first step); with reduced motion the arrows are simply drawn. */
+@media (prefers-reduced-motion: no-preference) {
+  .story-roots-shaft {
+    transform-box: fill-box;
+    transform-origin: 50% 0;
+  }
+
+  .story-roots-shaft,
+  .story-roots-tip {
+    transition: transform 1100ms var(--ease-out) 120ms, opacity 200ms linear 120ms;
+  }
+
+  .story-roots-next:not(.is-in) .story-roots-shaft {
+    transform: scaleY(0);
+  }
+
+  .story-roots-next:not(.is-in) .story-roots-tip {
+    opacity: 0;
+    transform: translateY(-85px);
+  }
+}
+
+/* 2. The editions. The bar of the three sticks to the top of the screen
    while the editions pass (it lives inside .story-editions, so it leaves
    with the third). Each part is a link on the surface tone; the sage fill
    grows across it as the visitor reads that edition. */
@@ -761,7 +825,9 @@
   margin-top: 40px;
 }
 
-.meth-formula {
+/* A formula, a clear step under the words before it (".pg" in front:
+   ".pg p" would zero its margin). */
+.pg .meth-formula {
   margin-top: 1.2em;
   font-size: var(--step-lead);
   line-height: 1.3;
@@ -821,6 +887,69 @@
 
 .meth-close-act {
   grid-column: 8 / 13;
+}
+
+/* Field's technical part, in the Atlas part's look and on its classes:
+   the intro (.meth-scores-intro), the four readings (.meth-scores with
+   .meth-readings: one under the other on a phone, two by two from a
+   tablet up, so each line stays a calm paragraph's length; four across
+   made 30-letter lines), the condition beside its laboratory
+   (.meth-gate-text, .meth-gate-lab), the three notes on how fields, crop
+   and damage are found (.meth-scores with .meth-how) and what it cannot
+   see (.meth-limits-text). Written phone first, so the page's tablet and
+   phone blocks further down keep their own order. */
+.pg .meth-readings {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* A reading's formula, between its name and its words. */
+.pg .meth-scores .meth-eq {
+  margin-top: 12px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+/* The side of a formula that never breaks inside: a line may only break
+   after its "=" (each is short enough for a phone's line). */
+.meth-whole {
+  white-space: nowrap;
+}
+
+.pg .meth-scores .meth-eq + dd {
+  margin-top: 6px;
+}
+
+/* The notes after the laboratory start a clear step under it; one under
+   the other (tablet, phone), they keep a paragraph's measure. */
+.pg .meth-how {
+  margin-top: 8px;
+}
+
+.pg .meth-how dd {
+  max-width: 62ch;
+}
+
+@media (min-width: 701px) {
+  .pg .meth-readings {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pg .meth-how {
+    margin-top: 24px;
+  }
+}
+
+/* On a wide screen the readings keep the intro's eight columns, so each
+   one is as wide as an Atlas score below (four columns): about 50 letters
+   a line, not 80. */
+@media (min-width: 1101px) {
+  .pg .meth-readings {
+    grid-column: 1 / 9;
+  }
+
+  .pg .meth-how {
+    margin-top: 48px;
+  }
 }
 
 /* ---------- The films: the two walkthroughs (components/Walkthrough.jsx)
@@ -1429,11 +1558,14 @@ a.dm-door:active .dm-door-label {
   letter-spacing: -0.015em;
 }
 
-/* ---------- Wide screens: the Story opens on a tall field of black soil ---------- */
+/* ---------- Wide screens: the Story's steps three columns in ---------- */
 
+/* Under the title, from the page's second line of text to the frame's
+   edge (the steps keep their own measures: 30em, 52ch). */
 @media (min-width: 1101px) {
-  .story-meal {
-    min-height: min(50svh, 500px);
+  .pg .story-roots-steps {
+    grid-column: 4 / 13;
+    margin-top: 40px;
   }
 }
 
@@ -1477,10 +1609,6 @@ a.dm-door:active .dm-door-label {
 /* ---------- Tablet (under 1100px): the compositions loosen ---------- */
 
 @media (max-width: 1100px) {
-  .story-meal-title,
-  .story-meal-text,
-  .story-penn-head,
-  .story-penn-text,
   .story-ed-head,
   .story-ed-text,
   .story-ed1-main,
@@ -1535,6 +1663,11 @@ a.dm-door:active .dm-door-label {
 
   .story-ed2-words {
     margin-top: 18px;
+  }
+
+  /* The steps a clear step under the title. */
+  .pg .story-roots-steps {
+    margin-top: 28px;
   }
 
   /* One column: the steps, the phone, then "What it reads". */
@@ -1600,10 +1733,10 @@ a.dm-door:active .dm-door-label {
     grid-template-columns: 1fr;
   }
 
-  /* The Story's title at the heading size on a phone: at the display size
-     "Where Chernozem comes from" would need three lines. */
-  .story-meal .pg-display {
-    font-size: var(--step-head);
+  /* The Story's arrows a little shorter on a phone, so a step and the
+     next one's first words share the screen (the drawing scales with it). */
+  .story-roots-arrow {
+    height: 72px;
   }
 
   .story-ed1-side,
@@ -1720,6 +1853,16 @@ a.dm-door:active .dm-door-label {
 
   .dm-door-wide {
     display: none;
+  }
+}
+
+/* ---------- Narrow phone (under 360px): the Story's title a size down ---------- */
+
+/* At the display size "Forged in Three" no longer fits a 320 px screen
+   and the title would take three lines; at the heading size it keeps two. */
+@media (max-width: 359px) {
+  .story-roots .pg-display {
+    font-size: var(--step-head);
   }
 }
 

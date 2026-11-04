@@ -75,11 +75,11 @@ export const NUMBERS = {
   falseAlarmPercent: 1.1, // cropland wrongly flagged in the same places in a normal year, worst case
   falseAlarmMeanPercent: 0.33, // the same, on average
   analysesOk: 98, // monthly analyses that completed, of 98 since the fixes
-  // npm test on the website branch, 31 October 2026 (commit 2a51d8f): 1,053
-  // passed. The Methodology page prints it rounded down to the hundred
-  // ("More than 1,000"), so it stays true while tests are added; set the
-  // new count here after a merge.
-  automatedTests: 1113, // npm test on the website branch, 2026-10-31
+  // npm test on the website branch, the last full run (the date beside the
+  // count), every test passing. The Methodology page prints it rounded down
+  // to the hundred ("More than 1,200"), so it stays true while tests are
+  // added; set the new count here after a merge.
+  automatedTests: 1272, // npm test on the website branch, 2026-11-03 (round 6, final): 1,272 of 1,272 passed
   // The research paper (Harvard Dataverse).
   paperOperators: 10, // aggregation operators compared on identical inputs
   paperOblasts: 24, // first-level units ranked
@@ -100,6 +100,54 @@ export const NUMBERS = {
   // The wider need.
   armedConflicts: 130, // armed conflicts in the world, about
   farmsMillions: 570, // farms in the world
+  // The About page's disclaimer.
+  testAccuracyPercent: 90, // the owner's own test (stated 2026-11-03: "roughly 90% accurate")
+};
+
+// Field's method, as the Methodology page quotes it and its condition
+// laboratory works it out (components/ConditionLab.jsx). The rules live in
+// the app's own files, named beside each value. The website does not import
+// them: importing them into a page made the build split the app's code
+// into extra pieces that every page then loads (about 3 kB more, gzipped,
+// on a first visit to any page; npm run build, 3 November 2026). So each
+// value is kept here, and site-pages.test.js checks it against its source:
+// a change to the method fails the tests until it is made here too.
+export const FIELD_METHOD = {
+  // Clouds and the normal years (src/lib/field/method.js).
+  baseline: { from: 2019, to: 2021, label: "2019 to 2021" }, // BASELINE
+  clearPixelScore: 0.6, // CLEAR_PIXEL_SCORE: a pixel is clear at this Cloud Score+ or more
+  minClearShare: 0.5, // MIN_CLEAR_SHARE: a pass counts when this share of the field is clear
+  latestDays: 30, // a reading: the median of the clear pixels of the last 30 days (server/providers/field-gee.js LATEST_DAYS)
+  // Stress (method.js STRESS_RULES, RED_EDGE_RULES and stressLevel).
+  stressNdvi: { belowFieldMedian: 0.1, belowNormal: 0.08 },
+  stressRedEdge: { belowFieldMedian: 0.06, belowNormal: 0.05 },
+  redEdgeLead: "one to two weeks", // how much sooner the red edge (NDRE) shows chlorophyll loss than NDVI (method.js, the readings)
+  stressHighShare: 0.15, // stress is "high" from this share of the field
+  // Harvest timing: ready when NDVI is back down to
+  // bareNdvi + share x (peak - bareNdvi) (method.js harvestStage).
+  bareNdvi: 0.2, // BARE_NDVI
+  readyShare: { cereals: 0.25, rowCrops: 0.35 }, // crops.js CROP_PROFILES: cereals and rapeseed; corn, soybean and sunflower
+  // The condition (method.js CONDITION_WEIGHTS, HEALTH_SPAN, WATER_SPAN,
+  // CONDITION_CLASSES, fieldCondition).
+  weights: { plantHealth: 0.5, water: 0.3, noStress: 0.2 },
+  healthSpan: 0.3, // NDVI this far below normal scores 0
+  waterSpan: 0.25, // NDWI this far below normal scores 0
+  classes: [
+    { id: "poor", label: "Poor", upTo: 0.4 },
+    { id: "fair", label: "Fair", upTo: 0.65 },
+    { id: "good", label: "Good", upTo: 0.85 },
+    { id: "great", label: "Very good", upTo: Infinity },
+  ],
+  stressedMax: 0.84, // STRESSED_CONDITION_MAX: high stress is never "Very good"
+  damagedMax: 0.64, // DAMAGED_CONDITION_MAX: a damaged field is never above "Fair"
+  // Finding the fields (server/providers/field-gee.js detectFields).
+  edgePictures: 6, // the Sentinel-2 composites edges are traced in: early, middle and late thirds of the last two seasons (src/lib/season.js detectionWindows)
+  minFieldHa: 1.5, // the smallest field offered (DETECT.minHa)
+  outlineIou: 0.805, // mean overlap (IoU) of the outlines found with ones drawn by hand, demo farm near Kupiansk, 2026-10-19 (docs/METHODS.md, "Finding the fields")
+  // Damage.
+  radarChangeDb: 3, // RADAR_CHANGE_DB
+  radarSeasons: 2, // the change counts when found in at least this many growing seasons (one, while only one is measured; src/lib/atlas/method.js HEAVY_DAMAGE.persistSeasons; field-gee.js radarChangeImage)
+  damageRadarShare: 0.1, // in a war, radar change on this share of a field is damage on its own (DAMAGE_RULES.radarShare)
 };
 
 // The demo: the owner's own Ukraine workspace, open to everyone and

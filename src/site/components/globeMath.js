@@ -1,13 +1,15 @@
 // WHAT THIS FILE DOES
 // The arithmetic behind the About page's globe, kept apart as plain
 // functions so it can be checked without a browser (globeMath.test.js).
-// The new Earth (EarthGlobe.jsx, with its own earthMath.js) uses buyersOf,
-// tradeYear and aimFor, and the words and small helpers (sinceText,
-// alertWhen, kindWord, panelMeta, measuredSentence, buyerYearNote,
-// isMinorAlert, dayMonthYear, possessive, percent, plainName, clamp,
-// normLng, easeInOutCubic; worldData.js uses plainName too). The camera,
-// tour, zoom and caption-placing parts belonged to the old WebGL globe
-// (removed on 1 November 2026); they are kept, tested, and left out of the
+// The new Earth (EarthGlobe.jsx, with its own earthMath.js) uses buyersOf
+// and tradeYear, and the words and small helpers (sinceText, alertWhen,
+// kindWord, panelMeta, measuredSentence, buyerYearNote, isMinorAlert,
+// dayMonthYear, possessive, percent, plainName, clamp, normLng,
+// easeInOutCubic; worldData.js uses plainName too). The camera, tour, zoom
+// and caption-placing parts belonged to the old WebGL globe (removed on 1
+// November 2026), and aimFor to the new Earth before it could zoom (since
+// 3 November 2026 earthMath fitView frames a picked event and the
+// countries its lines go to); they are kept, tested, and left out of the
 // built page by the bundler since nothing imports them. In full:
 //   globeLayout(W, H)       how large the Earth is drawn in the first screen,
 //                           where its centre sits, and the camera height that

@@ -27,6 +27,8 @@
 // Whoever changes how people sign in. The fields and the pictures are the
 // Register page's (RegisterPage.jsx); the look is in register.css.
 
+// The site's base rules first, so ./register.css below wins every tie with them.
+import "../site.css";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { usePageTitle } from "../hooks.js";

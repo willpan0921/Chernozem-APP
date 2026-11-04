@@ -17,15 +17,20 @@
 //     footer has no middle-dot strings and says "Data and code";
 //   - page changes are quick (a short fade, the next page's code fetched
 //     when its link is pointed at);
-//   - the About page, in the owner's order of 1 November 2026: the slogan
-//     "Drop your pin, know your land." as its bold title beside the new
-//     Earth, Why Chernozem beside a credited photograph, the Field and
-//     Atlas sideways stories, "One field, one pass, one answer", the
-//     record, the Ukraine demo and the close; "Register for Chernozem"
+//   - the About page, in the owner's order: the slogan "Drop your pin,
+//     know your land." as its bold title beside the new Earth (and the
+//     slot where it opens a dot's card), the problem under it and the bold
+//     line that answers it, "What is Chernozem", Why Chernozem as eight
+//     bullets beside a credited photograph, the Field and Atlas sideways
+//     stories, "One field, one pass, one answer", the record, the Ukraine
+//     demo, the close and the disclaimer; "Register for Chernozem"
 //     everywhere (never "Register for Field" or "for Atlas");
-//   - the two stories are held with CSS sticky, slide one whole step at a
-//     time, have 4 to 6 steps each with a picture of the app that exists,
-//     stays small and has a sharp copy, and fall back to a plain list for
+//   - the two stories are held with CSS sticky for one share of scroll per
+//     step, with half a share before the first step and after the last,
+//     and move sideways with the scroll (how they move, their progress
+//     row, hint and settling: components/scrollStory.test.js),
+//     have 4 to 6 steps each with a picture of the app that exists, stays
+//     small and has a sharp copy, and fall back to a plain list for
 //     reduced motion;
 //   - the page keys rest on every step of both stories, in order, both
 //     ways, from the top of the page to its end and back (a simulation of
@@ -36,20 +41,38 @@
 //     the parts of the component and its styles that do it), and a short
 //     window still shows a usable part of each picture;
 //   - Atlas's first picture keeps its figure whole on every phone;
-//   - the photograph exists, stays small, and is credited under it with
-//     its author (as its licence box asks), a link to its licence and a
-//     link to its source;
-//   - what the owner had removed stays removed (the old hero sentence,
-//     "What is Chernozem", the weights picture, the slider, the feature
-//     lists, the film, the founder's letter, the WebGL globe on this page);
+//   - "What is Chernozem" is back right after the hero, as on 1 November
+//     2026 (its first sentence now bold), beside the owner's picture of
+//     Field and Atlas (3 November 2026), whose two copies exist and are in
+//     the shots' manifest; the picture is shown whole, never wider than
+//     560 px, beside the words or under them, and the heading keeps clear
+//     of it (the old window onto the Fields page and its crops are gone);
+//   - the photograph exists in two small copies (1x and 2x), is never
+//     shown wider than its 600 px, beside the reasons (after them on a
+//     tablet, before them on a phone), and is credited under it as the
+//     article that published it prints it, with a link to the article;
+//     the photographs' manifest says where it came from;
+//   - words that belong together never part at a line's end ("Google
+//     Earth Engine", "about 20 seconds", "Camera 51", each reason's last
+//     two words: no-break spaces, written as an escape);
+//   - the page's text links are targets of 32 px or more whose focus
+//     rings sit 2 to 3 px round the words;
+//   - the disclaimer sits under the close, above the small print, at a
+//     readable size and the small print's measure, its figure read from
+//     site.js;
+//   - what the owner had removed stays removed (the old hero sentences,
+//     the weights picture, the slider, the feature lists, the film, the
+//     founder's letter, the WebGL globe on this page, the earlier photos);
 //   - no part of the website names the app challenge (the owner's rule
 //     since 31 October 2026), and no part of the About page mentions a
-//     demo code or prints how many fields the demo farm has;
+//     demo code or prints how many fields the demo farm has (nor do the
+//     public manifests that describe the site's pictures);
 //   - the field row is one live row; the demo is built only when near, and
-//     the record, the demo and the close show at once for a visitor who
-//     lands at the end of the page (Back from Register, a jump to the end),
-//     with the demo's place kept at its height while it loads; useNear
-//     counts an element already above the screen as near.
+//     the field row, the record, the demo and the close show at once for a
+//     visitor who lands at the end of the page (Back from Register, a jump
+//     to the end) or a tool that scans it, with the demo's place kept at
+//     its height while it loads; useNear counts an element already above
+//     the screen as near.
 //
 // The challenge's name (and the old demo wording) is assembled below rather
 // than written out, so a search of src/site for it finds nothing.
@@ -63,7 +86,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { entryTarget, listStepAt, listTarget, nearlyHeld, pageTarget, shareMiddle, stepAt } from "./components/scrollStoryMath.js";
+import { entryTarget, holdFor, listStepAt, listTarget, nearlyHeld, pageTarget, shareMiddle, spanOf, stepAt } from "./components/scrollStoryMath.js";
 import { isNear } from "./hooks.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -79,7 +102,7 @@ test("every CSS variable used by the site's stylesheets is defined in site.css",
   const defined = new Set([...SITE_CSS.matchAll(/(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
   // A few variables are set by the components themselves (the entrance
   // order --i, the load delay --d, the field row's --row-zoom, the
-  // stories' --story-steps and --story-at, a picture's --fx and --fy).
+  // stories' --story-steps, a picture's --fx and --fy).
   for (const dir of ["components", "pages"]) {
     for (const name of readdirSync(join(here, dir)).filter((f) => f.endsWith(".jsx"))) {
       for (const m of read(dir, name).matchAll(/"(--[a-z0-9-]+)":|setProperty\("(--[a-z0-9-]+)"/g)) defined.add(m[1] || m[2]);
@@ -215,34 +238,88 @@ function at(text, part) {
   return index;
 }
 
-test("the About page runs in the owner's order: the slogan and the Earth, why, the two stories, the field row, the record, the demo, the close", () => {
+// The About page's words as a visitor reads them: its no-break spaces
+// (NBSP and EARTH_ENGINE in HomePage.jsx: "Google Earth Engine", "about 20
+// seconds", "Camera 51") as plain ones, its template strings as quoted ones.
+const spoken = (source) => source.replaceAll("${EARTH_ENGINE}", "Google Earth Engine").replaceAll("${NBSP}", " ").replaceAll("{NBSP}", " ").replace(/`/g, '"');
+
+test("the About page runs in the owner's order: the slogan and the Earth, what it is, why, the two stories, the field row, the record, the demo, the close, the disclaimer", () => {
   const home = read("pages", "HomePage.jsx");
   const text = words(home);
-  const order = ['id="hero-title"', 'id="why-title"', 'id="field-story"', 'id="atlas-story"', 'id="showcase-title"', 'id="proof-title"', 'id="demo-title"', 'id="close-title"'];
+  const order = ['id="hero-title"', 'id="what-title"', 'id="why-title"', 'id="field-story"', 'id="atlas-story"', 'id="showcase-title"', 'id="proof-title"', 'id="demo-title"', 'id="close-title"', 'className="caveat"', 'className="small-print"'];
   for (let i = 1; i < order.length; i++) assert.ok(at(text, order[i - 1]) < at(text, order[i]), `${order[i - 1]} comes before ${order[i]}`);
   // The slogan is the page's one title, bold, in two set lines.
   assert.equal((text.match(/<h1\b/g) || []).length, 1, "one h1");
   const h1 = text.slice(at(text, "<h1"), at(text, "</h1>"));
   assert.match(h1, />\s*Drop your pin,\s*</);
   assert.match(h1, />\s*know your land\.\s*</);
-  assert.match(read("pages", "home.css"), /\.site \.hero-title \{[^}]*font-weight: 800/);
-  // Beside it, the Earth (being built in components/EarthGlobe.jsx); on the left what Chernozem is.
+  const css = read("pages", "home.css");
+  assert.match(css, /\.site \.hero-title \{[^}]*font-weight: 800/);
+  // Beside it, the Earth (components/EarthGlobe.jsx), and the slot beside it where the Earth opens a dot's card.
   assert.match(home, /^import EarthGlobe from "\.\.\/components\/EarthGlobe\.jsx";$/m);
   assert.ok(at(text, "<EarthGlobe") > at(text, 'className="hero-words"'), "the Earth sits after (beside) the words");
-  for (const part of ["Chernozem reads free satellite data over farmland and puts it into plain words", "Field watches a farmer’s own fields", "Atlas scores whole regions for governments, NGOs and corporations", "black soil of Ukraine and northeast China"]) {
-    assert.ok(text.includes(part), `the hero says: ${part}`);
-  }
+  assert.match(home, /<div className="hero-side" ref=\{side\} \/>\s*<div className="hero-earth">\s*<EarthGlobe side=\{side\} \/>/);
+  // Under the slogan, the problem; then, in bold, its own line, a step larger, what Chernozem does about it.
+  const hero = text.slice(at(text, 'className="hero-words"'), at(text, 'className="hero-side"')).replace(/\s+/g, " ");
+  assert.match(hero, /<p className="hero-lead"[^>]*> As geopolitical and environmental tensions rise, wars and climate disasters strike more often\. They hit hardest the people noticed least: the farmers who depend on their land to survive\. <\/p>/);
+  assert.match(hero, /<\/p> <p className="hero-solves"[^>]*> Chernozem solves the problem of that harm going unseen\. <\/p> <div className="hero-actions"/);
+  assert.match(css, /\.site \.hero-solves \{[^}]*font-size: var\(--step-lead\);[^}]*font-weight: 600;[^}]*color: var\(--ink\);/);
   // The section names.
-  for (const name of ["Why Chernozem", "One field, one pass, one answer", "The demo is Ukraine", "See your land from space"]) assert.match(text, new RegExp(`>\\s*${name}\\s*<`), name);
+  for (const name of ["What is Chernozem", "Why Chernozem", "One field, one pass, one answer", "The demo is Ukraine", "See your land from space"]) assert.match(text, new RegExp(`>\\s*${name}\\s*<`), name);
   assert.match(text, /title="Field, for one farm"/);
   assert.match(text, /title="Atlas, for a whole region"/);
-  // The owner's eight reasons stay, each a claim with one plain sentence, in honest words.
-  const claims = ["No hardware, only software", "Free satellite data on Google Earth Engine", "It plans recovery, not only health", "For one farm or a whole country", "You choose what matters: the weights", "Drop a pin, see the field", "From satellite images to an answer in a few clicks", "All it needs is a place"];
-  for (const claim of claims) assert.ok(text.includes(`claim: "${claim}"`), `the reason "${claim}"`);
-  assert.equal((text.match(/\bclaim: "/g) || []).length, claims.length, "eight reasons, no more");
+  // The owner's eight reasons, each a short bold claim and one line, in honest words, as a bulleted list.
+  const said = spoken(text);
+  const claims = ["No hardware, only software.", "Free satellite data, read on Google Earth Engine.", "Recovery, not only monitoring.", "For every stakeholder.", "You choose what matters.", "Drop the pin, see the field.", "A few clicks, start to finish.", "All you need is a place."];
+  for (const claim of claims) assert.ok(said.includes(`claim: "${claim}"`), `the reason "${claim}"`);
+  assert.equal((said.match(/\bclaim: "/g) || []).length, claims.length, "eight reasons, no more");
   assert.match(text, /Most tools/);
   assert.doesNotMatch(text, /competitor/i);
+  // Open data, never "the most accessible" (no claim to be the most of anything), and the owner's spelling, "organizations".
+  assert.ok(said.includes('text: "Open data anyone can use: the public Sentinel satellites, read for you on Google Earth Engine."'), "the second reason's line");
+  assert.doesNotMatch(text, /most accessible/i);
+  assert.ok(said.includes('text: "Individuals and organizations alike: Field for a farmer’s own fields, Atlas for governments, NGOs and corporations."'), "the fourth reason's line");
   assert.match(text, /NUMBERS\.tenFieldsSeconds/);
+  assert.match(text, /<ul className="why-list" role="list">\s*\{WHY\.map\(\(item, i\) => \(\s*<li className="why-item"[^>]*>\s*<strong className="why-claim">\{item\.claim\}<\/strong> \{lastTwoTogether\(item\.text\)\}\s*<\/li>/);
+  assert.match(css, /\.site \.why-item::before \{[^}]*content: "";[^}]*width: 0\.5em;[^}]*height: 0\.5em;[^}]*background: var\(--accent\);/, "each bullet marked with a small accent square");
+});
+
+test("What is Chernozem is back right after the hero, as on 1 November 2026: what it is in bold, then Field, Atlas and the name, beside the owner's picture of the two", () => {
+  const home = read("pages", "HomePage.jsx");
+  const text = words(home).replace(/\s+/g, " ");
+  assert.ok(at(text, 'id="what-title"') > at(text, "<EarthGlobe") && at(text, 'id="what-title"') < at(text, 'id="why-title"'), "right after the hero");
+  assert.match(text, /<section className="what section" aria-labelledby="what-title" ref=\{reveal\}>/);
+  assert.match(text, /<h2 id="what-title" className="head" data-rise> What is Chernozem <\/h2>/);
+  assert.ok(
+    text.includes("<strong>Chernozem is satellite farmland monitoring: free satellite data over farmland, read and put into plain words for people who are not scientists.</strong> Field watches a farmer’s own fields; Atlas scores a whole region for governments, NGOs and corporations. The name is the black soil of Ukraine and northeast China, where its story began."),
+    "what it is, in bold, then one phrase each for Field and Atlas, and the name"
+  );
+  assert.match(text, /<Link to="\/story" className="link link-under"> How it started <\/Link>/);
+  // The picture: the owner's (3 November 2026), the logo above Field and Atlas (3:4), with a copy twice as sharp
+  // for sharp screens, both in the shots' manifest as they are.
+  assert.match(text, /<figure className="what-picture"> <img src="\/site\/shots\/what-field-atlas-600\.webp" srcSet="\/site\/shots\/what-field-atlas-600\.webp 1x, \/site\/shots\/what-field-atlas-1200\.webp 2x"/);
+  assert.match(text, /width="600" height="800"/);
+  const shots = join(root, "public", "site", "shots");
+  const manifest = JSON.parse(readFileSync(join(shots, "manifest.json"), "utf8"));
+  for (const [file, size, max] of [["what-field-atlas-600.webp", [600, 800], 80e3], ["what-field-atlas-1200.webp", [1200, 1600], 160e3]]) {
+    const bytes = statSync(join(shots, file)).size;
+    assert.ok(bytes > 10e3 && bytes <= max, `${file} is ${bytes} bytes (at most ${max})`);
+    assert.deepEqual(webpSize(join(shots, file)), size, `${file} is ${size.join(" x ")}`);
+    const entry = manifest.find((e) => e.file === file);
+    assert.ok(entry && entry.width === size[0] && entry.height === size[1] && entry.bytes === bytes && /owner's own picture/.test(entry.made), `${file} is in the shots' manifest, as it is`);
+  }
+  // The old window onto the Fields page is gone, its crops with it.
+  assert.doesNotMatch(home, /field-fields-map|what-window|enterDemo/);
+  for (const file of ["field-fields-map-864.webp", "field-fields-map-1728.webp"]) assert.ok(!existsSync(join(shots, "crops", file)), `${file} is gone`);
+  // Its caption says which is which, and opens the demo's page (both products are in the picture).
+  assert.match(text, /Field, above, on the demo farm near Kupiansk; Atlas, below, across Ukraine\.\{" "\} <Link to=\{SITE\.demoPath\} className="link link-under"> Open the demo <\/Link>/);
+  // The look: the words in the left half, set at the picture's middle; the picture in the right half, whole, never
+  // wider than 560 px (so it stays within a laptop's screen).
+  const css = read("pages", "home.css");
+  assert.match(css, /\.site \.what-words \{\s*grid-column: 1 \/ 7;/);
+  assert.match(css, /\.site \.what-side \{\s*grid-column: 7 \/ 13;[^}]*max-width: 560px;/);
+  assert.match(css, /\.site \.what-picture img \{\s*display: block;\s*width: 100%;\s*height: auto;/);
+  assert.match(css, /@media \(min-width: 901px\) \{\s*\.site \.what-words \{\s*align-self: center;/);
 });
 
 test("every way to register says Register for Chernozem and goes to /register (never Register for Field or for Atlas)", () => {
@@ -258,7 +335,7 @@ test("every way to register says Register for Chernozem and goes to /register (n
   }
 });
 
-test("the two stories hold still and slide one whole step at a time, 4 to 6 steps each, with pictures that exist, stay small and have a sharp copy", () => {
+test("the two stories are held and move sideways with the scroll, 4 to 6 steps each, with pictures that exist, stay small and have a sharp copy", () => {
   const home = read("pages", "HomePage.jsx");
   const story = read("components", "ScrollStory.jsx");
   const css = read("components", "scrollstory.css");
@@ -290,14 +367,17 @@ test("the two stories hold still and slide one whole step at a time, 4 to 6 step
   assert.match(story, /srcSet=\{`\$\{crop\(step\.shot, 800\)\} 1x, \$\{crop\(step\.shot, 1600\)\} 2x`\}/);
   assert.match(css, /\.site \.story-picture img \{[^}]*object-fit: none;[^}]*object-position: var\(--tx, 50%\) 0%/);
   assert.match(css, /@media \(max-width: 600px\) \{[\s\S]*\.site \.story-picture img \{\s*object-position: var\(--fx, 50%\) var\(--fy, 50%\)/);
-  // Held by CSS sticky, the section as tall as its steps need, the row moved a whole step at a time.
-  assert.match(css, /\.site \.story\.is-held \{[^}]*height: calc\(100svh \+ var\(--story-steps\) \* 60svh\)/);
+  // Held by CSS sticky, the section as tall as the screen plus one share per step and half a share before
+  // the first step and after the last, the row moved by the component as the page scrolls (frame by frame,
+  // no slide of its own; components/scrollStory.test.js).
+  assert.match(css, /\.site \.story\.is-held \{[^}]*--story-hold: clamp\(440px, 50svh, 460px\);[^}]*--story-lead: 0\.5;[^}]*height: calc\(100svh \+ \(var\(--story-steps\) \+ 2 \* var\(--story-lead\)\) \* var\(--story-hold\)\)/);
   assert.match(css, /\.site \.story\.is-held \.story-stage \{[^}]*position: sticky;[^}]*top: 0;[^}]*height: 100svh;[^}]*overflow: clip/);
-  assert.match(css, /\.site \.story\.is-held \.story-track \{[^}]*transform: translateX\(calc\(var\(--story-at, 0\) \* -100%\)\);[^}]*transition: transform/);
+  assert.match(css, /\.site \.story\.is-held \.story-track \{[^}]*will-change: transform;/);
+  assert.match(story, /track\.style\.transform = `translate3d\(/);
   assert.match(story, /useScroll\(\{ target: ref, offset: \["start start", "end end"\] \}\)/);
-  assert.match(read("components", "scrollStoryMath.js"), /Math\.floor\(p \* count\)/, "each step an equal share of the hold");
-  assert.match(story, /import \{ entryTarget, listStepAt, listTarget, nearlyHeld, pageTarget, shareMiddle, stepAt \} from "\.\/scrollStoryMath\.js";/);
-  assert.match(story, /\{current \+ 1\} of \{count\}/, "a plain count, step n of m");
+  assert.match(read("components", "scrollStoryMath.js"), /Math\.floor\(p \* spanOf\(count\) - LEAD\)/, "each step an equal share of the hold, after the lead-in");
+  assert.match(story, /import \{ FOLLOW, LEAD, entryTarget, fillAt, followStep, glideAt, glideMs, listStepAt, listTarget, nearlyHeld, pageTarget, rowAt, settleTarget, shareMiddle, spanOf, stepAt \} from "\.\/scrollStoryMath\.js";/);
+  assert.match(story, /\{current \+ 1\} of \{count\}/, "a plain count, step n of m, where the titles do not fit");
   // Reduced motion (and a screen too short to hold a step): the plain list, nothing held or moved.
   assert.match(story, /useMediaQuery\("\(prefers-reduced-motion: reduce\)"\)/);
   assert.match(story, /const held = !reduced && !short;/);
@@ -309,13 +389,15 @@ test("the two stories hold still and slide one whole step at a time, 4 to 6 step
 });
 
 test("a story's arithmetic: each step an equal share of the hold, and a page key moves exactly one step", () => {
-  // Five steps: 0 to 0.2 is the first, 0.8 to 1 (and past it) the last.
-  assert.deepEqual([0, 0.19, 0.2, 0.5, 0.79, 0.8, 1, 1.4, -0.3, NaN].map((p) => stepAt(p, 5)), [0, 0, 1, 2, 3, 4, 4, 4, 0, 0]);
-  // A 1440 x 900 window: the section is 900 + 5 x 540 = 3600 px tall, 2700 px of hold, 540 a step.
-  const story = { top: 2000, height: 3600, screen: 900, count: 5 };
-  assert.equal(pageTarget({ ...story, step: 0, down: true }), 2000 + 810, "Page Down from the first step: the middle of the second's share");
-  assert.equal(pageTarget({ ...story, step: 3, down: true }), 2000 + 2430);
-  assert.equal(pageTarget({ ...story, step: 2, down: false }), 2000 + 810, "Page Up goes back one");
+  // Five steps in a hold of six shares: the lead-in (0 to 1/12) and the first step's share (to 3/12) show
+  // the first, the last step's share and the lead-out (from 9/12, and past it) the last.
+  assert.deepEqual([0, 0.08, 0.24, 0.26, 0.5, 0.74, 0.76, 0.95, 1, 1.4, -0.3, NaN].map((p) => stepAt(p, 5)), [0, 0, 0, 1, 2, 3, 4, 4, 4, 4, 0, 0]);
+  // A 1440 x 900 window: the section is 900 + 6 x 450 = 3,600 px tall, 2,700 px of hold, 450 a step.
+  const story = { top: 2000, height: 900 + spanOf(5) * holdFor(900), screen: 900, count: 5 };
+  assert.equal(story.height, 3600);
+  assert.equal(pageTarget({ ...story, step: 0, down: true }), 2000 + 900, "Page Down from the first step: the middle of the second's share");
+  assert.equal(pageTarget({ ...story, step: 3, down: true }), 2000 + 2250);
+  assert.equal(pageTarget({ ...story, step: 2, down: false }), 2000 + 900, "Page Up goes back one");
   assert.equal(pageTarget({ ...story, step: 4, down: true }), null, "past the last step the page scrolls on as usual");
   assert.equal(pageTarget({ ...story, step: 0, down: false }), null, "and before the first");
   // Every press from anywhere in a step's share lands in the next step's share, never further.
@@ -325,13 +407,23 @@ test("a story's arithmetic: each step an equal share of the hold, and a page key
   }
   assert.equal(pageTarget({ ...story, height: 900, step: 0, down: true }), null, "no hold, nothing to do");
   // The keys are helped while the story holds the screen and on the press that brings it in; never in a
-  // form, on a button, a film, an open dialog or with the phone menu open.
+  // form, a film, an open dialog or with the phone menu open, and Space never on a button (it presses it;
+  // Page Down and Page Up still help on one, such as a step of the progress row just clicked).
   const component = read("components", "ScrollStory.jsx");
   assert.match(component, /\} else if \(box\.top <= 1 && box\.bottom >= screen - 1\) \{\s*from = stepAt\(-box\.top \/ \(box\.height - screen\), count\);\s*top = pageTarget\(\{ \.\.\.story, step: from, down \}\);/);
   assert.match(component, /top = entryTarget\(\{ \.\.\.story, scrollY: window\.scrollY, down \}\);/);
-  assert.match(component, /if \(document\.documentElement\.hasAttribute\("data-menu"\)\) return;/);
-  for (const own of ["input", "textarea", "select", "button", "[contenteditable]", "video", "[role='dialog']"]) assert.ok(component.includes(own), `a key on ${own} does its own work`);
-  assert.doesNotMatch(component, /addEventListener\("wheel"|addEventListener\("touch/, "the wheel and a finger are never captured");
+  assert.match(component, /if \(document\.documentElement\.hasAttribute\("data-menu"\)\) return false;/);
+  for (const own of ["input", "textarea", "select", "[contenteditable]", "video", "[role='dialog']"]) assert.ok(component.match(/const OWN_KEYS = "[^"]*";/)[0].includes(own), `a key on ${own} does its own work`);
+  assert.match(component, /event\.target\.closest\(event\.key === " " \? `\$\{OWN_KEYS\}, \$\{OWN_SPACE\}` : OWN_KEYS\)/, "Space on a button presses it");
+  // The wheel and a finger are listened to (a touch stops the page's own glide at once) but never captured
+  // and never held back: every such listener passive, none capturing, and the one preventDefault the page
+  // keys' own.
+  const handlers = [...component.matchAll(/addEventListener\("(wheel|touch\w*)", (\w+), (\w+)\)/g)];
+  assert.ok(handlers.length >= 4, "the wheel and the touch events are listened to");
+  for (const [line, , , options] of handlers) assert.equal(options, "passive", `${line}: passive`);
+  assert.match(component, /const passive = \{ passive: true \};/);
+  assert.doesNotMatch(component, /passive: false|capture: true|addEventListener\("(wheel|touch\w*)", \w+, true\)/, "nothing captured, nothing that could stop the page scrolling");
+  assert.equal(component.match(/preventDefault\(\)/g).length, 1, "only the page keys' own");
 });
 
 // Page Down (or Space) pressed again and again from the top of the About page to its end, then Page Up
@@ -339,10 +431,11 @@ test("a story's arithmetic: each step an equal share of the hold, and a page key
 // (ScrollStory.jsx: pageTarget while it holds the screen, entryTarget otherwise), the first answer
 // wins; with no answer the browser's own page step, the window's height less 40 px (Chrome's). The
 // stories' places are those of the real page at each window size (the section's top on the page; each
-// is as tall as the screen plus 0.6 of a screen per step). Answers the steps the page comes to rest on.
+// is as tall as the screen plus one share per step and half a share before and after them, spanOf and
+// holdFor, as scrollstory.css makes it). Answers the steps the page comes to rest on.
 function pressThrough({ screen, field, end, entering = true }) {
   const count = 5;
-  const height = screen + count * 0.6 * screen;
+  const height = screen + spanOf(count) * holdFor(screen);
   const stories = [
     { name: "F", top: field },
     { name: "A", top: field + height },
@@ -388,16 +481,17 @@ function pressThrough({ screen, field, end, entering = true }) {
 test("the page keys rest on every step of both stories, in order, from the top of the page to its end and back", () => {
   const ALL_DOWN = "F1,F2,F3,F4,F5,A1,A2,A3,A4,A5";
   const ALL_UP = "A5,A4,A3,A2,A1,F5,F4,F3,F2,F1";
-  // The window sizes the checker pressed through (1 November 2026), with the Field story's top and the
-  // page's end as measured on the built page.
+  // The window sizes the checker pressed through, with the Field story's top and the page's end as
+  // measured on the page (3 November 2026, one share of 440 to 460 px per step and half a share before
+  // and after them; every section's height as the arithmetic says).
   const sizes = [
-    { size: "1440x900", screen: 900, field: 2070, end: 11519 },
-    { size: "1920x1080", screen: 1080, field: 2357, end: 13371 },
-    { size: "1536x864", screen: 864, field: 2028, end: 11274 },
-    { size: "1366x768", screen: 768, field: 2071, end: 10506 },
-    { size: "1280x720", screen: 720, field: 2039, end: 10083 },
-    { size: "768x1024", screen: 1024, field: 2844, end: 13730 },
-    { size: "390x844", screen: 844, field: 3191, end: 12921 },
+    { size: "1440x900", screen: 900, field: 2775, end: 12375 },
+    { size: "1920x1080", screen: 1080, field: 3065, end: 13269 },
+    { size: "1536x864", screen: 864, field: 2787, end: 12281 },
+    { size: "1366x768", screen: 768, field: 2693, end: 11950 },
+    { size: "1280x720", screen: 720, field: 2720, end: 11875 },
+    { size: "768x1024", screen: 1024, field: 4034, end: 14447 },
+    { size: "390x844", screen: 844, field: 3837, end: 14023 },
   ];
   for (const { size, ...page } of sizes) {
     const keys = pressThrough(page);
@@ -406,29 +500,40 @@ test("the page keys rest on every step of both stories, in order, from the top o
     assert.equal(keys.end, page.end, `${size}: the keys reach the end of the page`);
     assert.equal(keys.top, 0, `${size}: and the top again`);
   }
-  // Without the help for the press that brings a story in, the browser's page step skips a step
-  // at these sizes (what the checker found: Atlas's first, Field's last going up).
-  assert.notEqual(pressThrough({ ...sizes[0], entering: false }).down, ALL_DOWN);
-  assert.notEqual(pressThrough({ ...sizes[0], entering: false }).up, ALL_UP);
-  assert.notEqual(pressThrough({ ...sizes[1], entering: false }).down, ALL_DOWN);
+  // Wherever the stories sit on the page (the sections above them change), on any window.
+  for (const screen of [600, 720, 768, 844, 900, 1024, 1080, 1440]) {
+    const height = screen + spanOf(5) * holdFor(screen);
+    for (let field = 900; field < 4200; field += 47) {
+      const keys = pressThrough({ screen, field, end: field + 2 * height + 3000 });
+      assert.ok(keys.down === ALL_DOWN && keys.up === ALL_UP && keys.top === 0, `a ${screen} px window, Field's top at ${field}: ${keys.down} / ${keys.up}`);
+    }
+  }
+  // Without the help for the press that brings a story in, the browser's page step skips steps at some
+  // of these sizes (Field's first going down on the tablet, Atlas's last going up on the phone and at
+  // 1536 x 864), even with the first and last steps' longer stretch.
+  assert.notEqual(pressThrough({ ...sizes[5], entering: false }).down, ALL_DOWN);
+  assert.notEqual(pressThrough({ ...sizes[6], entering: false }).up, ALL_UP);
+  assert.notEqual(pressThrough({ ...sizes[2], entering: false }).up, ALL_UP);
 
-  // entryTarget on its own. A 1440 x 900 window: the section is 3,600 px tall, 2,700 px of hold, 540 a step.
-  const story = { top: 2000, height: 3600, screen: 900, count: 5 };
-  assert.equal(entryTarget({ ...story, scrollY: 1500, down: true }), 2000 + 270, "its top on the screen, going down: the middle of the first step's share");
-  assert.equal(entryTarget({ ...story, scrollY: 1100, down: true }), 2270, "its top at the foot of the screen");
+  // entryTarget on its own. A 1440 x 900 window: the section is 3,600 px tall, 2,700 px of hold, 450 a
+  // step; the first step rests 450 px into the hold (the lead-in and half its share), the last 450 px
+  // before its end.
+  const story = { top: 2000, height: 900 + spanOf(5) * holdFor(900), screen: 900, count: 5 };
+  assert.equal(entryTarget({ ...story, scrollY: 1500, down: true }), 2000 + 450, "its top on the screen, going down: the first step's resting place");
+  assert.equal(entryTarget({ ...story, scrollY: 1100, down: true }), 2450, "its top at the foot of the screen");
   assert.equal(entryTarget({ ...story, scrollY: 1099, down: true }), null, "its top still below the screen: the browser's step cannot pass the first share");
   assert.equal(entryTarget({ ...story, scrollY: 1999, down: true }), null, "within a pixel of holding the screen: pageTarget's press");
-  assert.equal(entryTarget({ ...story, scrollY: 5100, down: false }), 2000 + 2430, "its foot on the screen, going up: the middle of the last step's share");
-  assert.equal(entryTarget({ ...story, scrollY: 5600, down: false }), 4430, "its foot at the top of the screen");
+  assert.equal(entryTarget({ ...story, scrollY: 5120, down: false }), 2000 + 2250, "its foot on the screen, going up: the last step's resting place");
+  assert.equal(entryTarget({ ...story, scrollY: 5600, down: false }), 4250, "its foot at the top of the screen");
   assert.equal(entryTarget({ ...story, scrollY: 5601, down: false }), null, "its foot above the screen");
   assert.equal(entryTarget({ ...story, scrollY: 4701, down: false }), null, "within a pixel of holding the screen");
-  assert.equal(entryTarget({ ...story, scrollY: 5100, down: true }), null, "going down past its foot: the page scrolls on");
+  assert.equal(entryTarget({ ...story, scrollY: 5120, down: true }), null, "going down past its foot: the page scrolls on");
   assert.equal(entryTarget({ ...story, scrollY: 1500, down: false }), null, "going up away from its top: the page scrolls on");
   assert.equal(entryTarget({ ...story, height: 900, scrollY: 1500, down: true }), null, "no hold, nothing to do");
   for (let scrollY = 1100; scrollY < 2000; scrollY += 37) assert.equal(stepAt((entryTarget({ ...story, scrollY, down: true }) - story.top) / 2700, 5), 0, "always the first step");
   for (let scrollY = 4702; scrollY <= 5600; scrollY += 37) assert.equal(stepAt((entryTarget({ ...story, scrollY, down: false }) - story.top) / 2700, 5), 4, "always the last step");
 
-  // Almost holding the screen (a link to #field-story stops it 24 px down): a page key goes on to the next step.
+  // Almost holding the screen (the page put back near it, say): a page key goes on to the next step.
   for (const gap of [2, 24, 120]) {
     assert.equal(nearlyHeld({ ...story, scrollY: 2000 - gap, down: true }), true, `${gap} px below the top, going down`);
     assert.equal(nearlyHeld({ ...story, scrollY: 4700 + gap, down: false }), true, `${gap} px above the foot, going up`);
@@ -440,9 +545,10 @@ test("the page keys rest on every step of both stories, in order, from the top o
 });
 
 test("a story keeps the visitor's step through a resize, a turned phone or reduced motion switched on or off", () => {
-  // Held: a step rests in the middle of its share (where pageTarget sends a key press too).
-  const story = { top: 2000, height: 3600, screen: 900, count: 5 };
-  assert.deepEqual([0, 1, 2, 3, 4].map((step) => shareMiddle({ ...story, step })), [2270, 2810, 3350, 3890, 4430]);
+  // Held: a step rests in the middle of its share (where pageTarget, a click on the progress row and the
+  // settling send the page too), on its plateau.
+  const story = { top: 2000, height: 900 + spanOf(5) * holdFor(900), screen: 900, count: 5 };
+  assert.deepEqual([0, 1, 2, 3, 4].map((step) => shareMiddle({ ...story, step })), [2450, 2900, 3350, 3800, 4250]);
   for (let step = 0; step < 5; step++) assert.equal(stepAt((shareMiddle({ ...story, step }) - story.top) / 2700, 5), step);
   assert.equal(shareMiddle({ ...story, height: 900, step: 0 }), null, "no hold");
   // The plain list: the step at the middle line of the screen, and where the page rests to show one.
@@ -475,8 +581,15 @@ test("a story keeps the visitor's step through a resize, a turned phone or reduc
   const css = read("components", "scrollstory.css");
   assert.match(css, /\.site \.story\.is-held \.story-stage \{[^}]*overflow-anchor: none;/);
   assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.site \.story,\s*\.site \.story-stage,\s*\.site \.story-track,\s*\.site \.story-words \{\s*transition: none;/);
-  // A short window up to 900 px wide (540 to 590 px tall) still shows 170 px of each picture.
-  assert.match(css, /@media \(max-width: 900px\) \{[\s\S]*?\.site \.story\.is-held \.story-picture \{\s*height: clamp\(170px, calc\(100svh - 420px\), 500px\);/);
+  // With the words under the picture, the picture takes the height the tallest step's words leave
+  // (--story-fit, measured as the layout changes), so every step fits whole on a short phone; a short
+  // window up to 900 px wide (540 to 640 px tall) still shows 170 px of each picture, a phone 150.
+  assert.match(css, /@media \(max-width: 900px\) \{[\s\S]*?\.site \.story\.is-held \.story-picture \{\s*height: clamp\(170px, var\(--story-fit, calc\(100svh - 470px\)\), 500px\);/);
+  assert.match(css, /@media \(max-width: 600px\) \{[\s\S]*?\.site \.story\.is-held \.story-picture \{\s*height: clamp\(150px, var\(--story-fit, 34svh\), 300px\);/);
+  assert.match(component, /const room = stage\.clientHeight - head\.offsetHeight - gap - between - tallest - 2 \* FIT_MARGIN;\s*stage\.style\.setProperty\("--story-fit", `\$\{Math\.floor\(room\)\}px`\);/);
+  assert.match(component, /const narrow = window\.matchMedia\("\(max-width: 900px\)"\);/);
+  // Back in the held layout, the row is put at the step at once (no glide).
+  assert.match(component, /if \(held\) \{\s*atRef\.current = step;\s*jumpNext\.current = true;\s*setAt\(step\);/);
 });
 
 test("Atlas's first picture keeps its figure whole on every phone", () => {
@@ -494,48 +607,158 @@ test("Atlas's first picture keeps its figure whole on every phone", () => {
   }
 });
 
-test("the photograph beside Why Chernozem exists, stays small, and is credited under it with its author, licence and source", () => {
+test("the photograph beside Why Chernozem exists in two small copies, is never shown wider than 600 px, and is credited under it as the article that published it prints it", () => {
   const home = read("pages", "HomePage.jsx");
   const text = words(home).replace(/\s+/g, " ");
   const photos = join(root, "public", "site", "photos");
-  for (const [file, size, max] of [["karasivka-wheat-600.webp", [600, 750], 100e3], ["karasivka-wheat-768.webp", [768, 960], 160e3]]) {
+  for (const [file, size, max] of [["shell-casings-field-600.webp", [600, 582], 125e3], ["shell-casings-field-1200.webp", [1200, 1164], 265e3]]) {
     const bytes = statSync(join(photos, file)).size;
     assert.ok(bytes > 10e3 && bytes <= max, `${file} is ${bytes} bytes (at most ${max})`);
     assert.deepEqual(webpSize(join(photos, file)), size, `${file} is ${size.join(" x ")}`);
     assert.ok(home.includes(`/site/photos/${file}`), `the page uses ${file}`);
   }
-  assert.match(home, /srcSet=\{`\$\{PHOTO\.small\} 600w, \$\{PHOTO\.large\} 768w`\}/);
-  assert.match(home, /width="600"\s+height="750"/);
-  // The credit: what it is, the author (with the site its licence box names: "Attribution:
-  // Kharkivoda.gov.ua"), the licence (linked, and that it was cropped), the source (linked).
-  assert.match(text, /<figcaption className="window-caption muted photo-caption"> Wheat near Karasivka, Kharkiv region, after shelling on 1 July 2024\. Photo: Kharkiv Regional State Administration \(kharkivoda\.gov\.ua\),/);
-  assert.match(text, /CC BY 4\.0 <\/a> , cropped;/);
-  assert.match(home, /licence: "https:\/\/creativecommons\.org\/licenses\/by\/4\.0\/"/);
-  assert.match(home, /source: "https:\/\/commons\.wikimedia\.org\/wiki\/File:Burning_field_near_Karasivka,_2024-07-01_\(11\)\.jpg"/);
-  assert.match(home, /<a href=\{PHOTO\.licence\} \{\.\.\.out\}>/);
-  assert.match(home, /<a href=\{PHOTO\.source\} \{\.\.\.out\}>/);
+  // The sharp copy only on sharp screens, the picture laid out at the small copy's size and never wider.
+  assert.match(home, /srcSet=\{`\$\{PHOTO\.small\} 1x, \$\{PHOTO\.large\} 2x`\}/);
+  assert.match(home, /width="600" height="582" loading="lazy"/);
+  const css = read("pages", "home.css");
+  assert.match(css, /\.site \.why-photo img \{[^}]*max-width: 600px;/, "never wider than its 600 px");
+  assert.match(css, /\.site \.why-photo \{[^}]*grid-column: 8 \/ 13;[^}]*grid-row: 1 \/ 3;/, "beside the list on a screen wider than 900 px");
+  // At 900 px or less, one column: on a tablet the reasons come first, under the heading (the photograph, 600 px
+  // tall, would otherwise fill the screen), then the photograph; on a phone the photograph first.
+  assert.match(css, /@media \(max-width: 900px\) \{[^@]*\.site \.why-list \{\s*grid-row: 2;[^@]*\.site \.why-photo \{\s*grid-row: 3;/, "the reasons first on a tablet");
+  assert.match(css, /@media \(max-width: 700px\) \{\s*\.site \.why-photo \{\s*grid-row: 2;[^@]*\.site \.why-list \{\s*grid-row: 3;/, "the photograph first on a phone");
+  assert.doesNotMatch(css, /\.why-photo \.window-caption \{[^}]*flex:/, "the credit is no longer docked beside the photograph's foot");
+  // What it shows, and the credit the article prints, with a link to the article (no place or date: it gives none).
+  assert.match(home, /alt: "Spent artillery shell casings, some rusted, lie in the grass of a field, with dry weeds and trees behind\."/);
+  assert.match(home, /alt=\{PHOTO\.alt\}/);
+  assert.match(text, /<figcaption className="window-caption muted"> Spent artillery shell casings left in a field\. Photo: Jose Hernandez, Camera\{NBSP\}51 \/ Shutterstock\.com, as published in\{" "\} <a href=\{PHOTO\.article\} className="link link-under" target="_blank" rel="noreferrer"> Responsible Statecraft <\/a> \. <\/figcaption>/);
+  assert.match(home, /article: "https:\/\/responsiblestatecraft\.org\/ukraine-soil-contamination\/"/);
+  assert.doesNotMatch(text, /BBC/, "not the BBC picture");
+  // The photographs' manifest: where it came from, who took it, its licence, what was changed.
   const manifest = JSON.parse(readFileSync(join(photos, "manifest.json"), "utf8"));
-  const entry = manifest.find((e) => e.files.includes("karasivka-wheat-600.webp"));
-  assert.ok(entry && entry.licence === "CC BY 4.0" && entry.author && /cropped/i.test(entry.changes) && entry.source.startsWith("https://commons.wikimedia.org/"), "the photographs' manifest records its author, licence, source and change");
-  assert.ok(text.includes(`Photo: ${entry.author},`), "the caption credits the author the manifest names");
+  const entry = manifest.find((e) => e.files.includes("shell-casings-field-600.webp"));
+  assert.ok(entry && entry.files.includes("shell-casings-field-1200.webp"), "both copies in one entry");
+  assert.equal(entry.title, "Spent artillery shell casings in a field");
+  assert.equal(entry.source, "https://responsiblestatecraft.org/ukraine-soil-contamination/");
+  assert.match(entry.original, /^https:\/\/responsiblestatecraft\.org\/media-library\//);
+  assert.match(entry.licence, /Chernozem holds no licence of its own/);
+  assert.match(entry.changes, /converted to WebP/);
+  assert.ok(spoken(text).includes(`Photo: ${entry.author.replace(/ \(.*\)$/, "")}, as published in`), "the caption credits the author the manifest names");
+  // Every file in the folder is one the manifest explains (the earlier pictures are gone).
+  for (const file of readdirSync(photos).filter((f) => f !== "manifest.json")) assert.ok(manifest.some((e) => e.files.includes(file)), `${file} is in the manifest`);
+  for (const e of manifest) for (const file of e.files) assert.ok(existsSync(join(photos, file)), `${file} exists`);
   // It replaces the weights picture beside the reasons.
   assert.doesNotMatch(home, /crops\/atlas-weights-/);
-  assert.match(read("pages", "home.css"), /\.site \.why-photo \{[^}]*grid-column: 8 \/ 13;[^}]*grid-row: 1 \/ 3/);
+});
+
+test("words that belong together never part at a line's end on the About page: Google Earth Engine, about 20 seconds, Camera 51, each reason's last two words", () => {
+  const home = read("pages", "HomePage.jsx");
+  const NB = String.fromCharCode(160);
+  // One no-break space, written as an escape so it shows in the source (never typed in invisibly).
+  assert.match(home, /^const NBSP = "\\u00a0";$/m);
+  assert.ok(!home.includes(NB), "no invisible no-break space typed into the page");
+  assert.match(home, /^const EARTH_ENGINE = `Google\$\{NBSP\}Earth\$\{NBSP\}Engine`;$/m);
+  assert.equal((home.match(/\$\{EARTH_ENGINE\}/g) || []).length, 2, "in the second reason's claim and its line");
+  assert.doesNotMatch(words(home), /Google Earth Engine/, "never with plain spaces");
+  assert.match(home, /read in about\$\{NBSP\}\$\{NUMBERS\.tenFieldsSeconds\}\$\{NBSP\}seconds\./, "a number and its unit, and the about before them");
+  assert.match(home, /Photo: Jose Hernandez, Camera\{NBSP\}51 \//);
+  // A reason's last two words share a line: its last plain space becomes a no-break one (Safari before 26 has no text-wrap: pretty).
+  const rule = home.match(/^const lastTwoTogether = \(text\) => text\.replace\(\/(.+)\/, NBSP\);$/m);
+  assert.ok(rule, "the rule is there");
+  const lastTwo = (s) => s.replace(new RegExp(rule[1]), NB);
+  assert.equal(lastTwo("and often impossible to bring in."), `and often impossible to bring${NB}in.`);
+  assert.equal(lastTwo(`a ten-field farm is read in about${NB}20${NB}seconds.`), `a ten-field farm is read in${NB}about${NB}20${NB}seconds.`, "words already joined count as one");
+  assert.equal(lastTwo("alone"), "alone");
+});
+
+test("the What picture is shown whole, never wider than 560 px, beside the words or under them, and the heading keeps clear of it", () => {
+  const css = read("pages", "home.css");
+  const what = css.slice(css.indexOf("---- 2. What is Chernozem"), css.indexOf("---- 3. Why Chernozem"));
+  assert.ok(what.length > 0, "the What block is where home.css says");
+  // Beside the picture the words keep two gutters of air, as the Why list does (none once the picture is under them).
+  assert.match(what, /\.site \.what-words \{\s*grid-column: 1 \/ 7;\s*padding-right: calc\(2 \* var\(--gutter\)\);/);
+  assert.match(what, /@media \(max-width: 900px\) \{[^@]*\.site \.what-words \{\s*padding-right: 0;/);
+  // On a screen of 900 px or less the picture comes under the words, on their left edge, still at most 560 px wide.
+  assert.match(what, /@media \(max-width: 900px\) \{[^@]*\.site \.what-words,\s*\.site \.what-side \{\s*grid-column: 1 \/ 13;/);
+  assert.match(what, /@media \(max-width: 900px\) \{[^@]*\.site \.what-side \{\s*justify-self: start;\s*margin-top: 2\.5rem;/);
+  // Nothing crops it any more: no window's height, no object-fit, no container rules.
+  assert.doesNotMatch(what, /what-window|container: what-side|@container|object-fit|height: \d+px/);
+});
+
+test("the About page's text links are targets a finger can hit, and their focus rings clear the words", () => {
+  const css = read("pages", "home.css");
+  // Each: its padding (vertical, sideways) and the ring's offset; the ring sits padding + offset px from the words.
+  const rings = [
+    // "Try the demo" beside the hero's and the close's button: 5 px all round, given back by the margin.
+    [/\.site :is\(\.hero-actions, \.close-actions\) \.link \{\s*padding: (\d+)px;\s*margin: -\1px;\s*\}/, /\.site :is\(\.hero-actions, \.close-actions\) \.link:focus-visible \{\s*outline-offset: (-?\d+)px;/],
+    // The captions' links, inline in their sentence: 7 px above and below (an inline box's padding takes no room), 6 px at the sides given back by the margin.
+    [/\.site \.window-caption \.link \{[^}]*padding: (\d+)px (\d+)px;\s*margin-inline: -\2px;/, /\.site \.window-caption \.link:focus-visible \{\s*outline-offset: (-?\d+)px;/],
+    // "How it started": 12 px all round, its line pulled 12 px left rather than a negative margin on the link (Safari ignores that where the link starts its block).
+    [/\.site \.what-link \.link \{\s*padding: (\d+)px;\s*\}/, /\.site \.what-link \.link:focus-visible \{\s*outline-offset: (-?\d+)px;/],
+  ];
+  for (const [box, ring] of rings) {
+    const pad = css.match(box);
+    const offset = css.match(ring);
+    assert.ok(pad && offset, `${box} and its ring are in home.css`);
+    const vertical = Number(pad[1]);
+    const sideways = Number(pad[2] || pad[1]);
+    // A target 32 px tall or more for words about 19 to 27 px tall (Safari rounds a phone's 23.8 px line down to 23).
+    assert.ok(vertical >= 5, `${box}: at least 5 px above and below`);
+    for (const side of [vertical, sideways]) {
+      const gap = side + Number(offset[1]);
+      assert.ok(gap >= 2 && gap <= 3, `${box}: the ring ${gap} px from the words`);
+    }
+  }
+  assert.match(css, /\.site \.what-link \{\s*margin-top: 1\.75rem;\s*margin-left: -12px;\s*\}/, "How it started: its line pulled left by its padding");
+});
+
+test("under the close, the disclaimer: a detection framework, as accurate as the owner's tests found, at a readable size above the small print", () => {
+  const home = read("pages", "HomePage.jsx");
+  const text = words(home).replace(/\s+/g, " ");
+  assert.ok(at(text, 'id="close-title"') < at(text, 'className="caveat"') && at(text, 'className="caveat"') < at(text, 'className="small-print"'), "after the close's tile, before the small print");
+  assert.ok(
+    text.includes(
+      '<p className="caveat"> <strong>A detection framework.</strong> Chernozem reads farmland from space. It cannot take soil samples in a disaster zone, and it has no hardware on the ground to confirm what it sees. In our tests its readings were roughly {NUMBERS.testAccuracyPercent}% accurate: close, for a tool of its kind, but not 100%. Use them as a guide, check on the ground before acting, and know that Chernozem is not responsible for decisions made from them. </p>'
+    ),
+    "the owner's disclaimer, word for word"
+  );
+  // Its figure comes from site.js (the owner's own tests), never typed into the page.
+  assert.match(read("content", "site.js"), /testAccuracyPercent: \d+, \/\/ the owner's own test/);
+  const caveat = text.slice(at(text, '<p className="caveat">'), text.indexOf("</p>", at(text, '<p className="caveat">')));
+  assert.doesNotMatch(caveat.replace("100%", ""), /\d/, "no figure typed into it");
+  // A readable size in full ink, not the small print's 13 px (nor the app's global .disclaimer: 11 px, muted).
+  const rule = read("pages", "home.css").match(/\.site \.caveat \{[^}]*\}/);
+  assert.ok(rule, "the disclaimer has its own rule");
+  const size = Number(rule[0].match(/font-size: (\d+)px/)[1]);
+  assert.ok(size >= 15, "at least 15 px");
+  assert.match(rule[0], /color: var\(--ink\)/);
+  // Its measure is the small print's width under it (the same px, in its own larger ch): about 66 characters a line.
+  const small = read("pages", "home.css").match(/\.site \.small-print \{\s*max-width: (\d+)ch;\s*font-size: (\d+)px;/);
+  assert.ok(small, "the small print keeps its measure");
+  assert.equal(Number(rule[0].match(/max-width: (\d+)ch/)[1]), Math.round((Number(small[1]) * Number(small[2])) / size), "the two share a right edge");
+  assert.doesNotMatch(home, /className="disclaimer"/);
 });
 
 test("what the owner had removed stays removed, and the page prints no demo code and no count of the demo farm's fields", () => {
   const home = read("pages", "HomePage.jsx");
   const text = words(home);
-  for (const gone of ["Field reads every satellite pass", "What is Chernozem", "What a farmer gets", "For governments and NGOs", "A letter from the founder", "Chernozem in three minutes", "Your land,", "seen from space"]) {
+  // ("What is Chernozem", gone in the round of 1 November 2026, came back at the owner's request: its own test is above.)
+  for (const gone of ["Field reads every satellite pass", "Chernozem reads free satellite data over farmland and puts it into plain words", "What a farmer gets", "For governments and NGOs", "A letter from the founder", "Chernozem in three minutes", "Your land,", "seen from space", "Karasivka", "BBC"]) {
     assert.ok(!text.includes(gone), `no "${gone}" on the About page`);
   }
-  for (const part of ["WorldGlobe", "GlobeCredits", "<Film", "<Letter", "StageSlider", "FeatureIndex", "crops/atlas-weights-", "crops/field-fields-map-"]) assert.ok(!home.includes(part), `no ${part} on the About page`);
+  for (const part of ["WorldGlobe", "GlobeCredits", "<Film", "<Letter", "StageSlider", "FeatureIndex", "crops/atlas-weights-", "karasivka", "destroyed-tank"]) assert.ok(!home.includes(part), `no ${part} on the About page`);
   for (const file of ["Letter.jsx", "StageSlider.jsx"]) assert.ok(!existsSync(join(here, "components", file)), `components/${file} is gone`);
+  for (const file of ["karasivka-wheat-600.webp", "karasivka-wheat-768.webp", "destroyed-tank-field-596.webp"]) assert.ok(!existsSync(join(root, "public", "site", "photos", file)), `photos/${file} is gone`);
   const css = read("pages", "home.css");
-  for (const style of ["letter", "stages-", "findex", "what-window", "why-window", "film-head", "feature-"]) assert.ok(!css.includes(`.${style}`), `home.css has no .${style} styles left`);
+  for (const style of ["letter", "stages-", "findex", "why-window", "why-photo-frame", "film-head", "feature-"]) assert.ok(!css.includes(`.${style}`), `home.css has no .${style} styles left`);
   for (const source of [text, words(read("components", "ScrollStory.jsx"))]) {
     assert.doesNotMatch(source, /\b(12|13|twelve|thirteen) fields\b/i, "the farm's field count is never printed");
     assert.doesNotMatch(source, CODE_TALK);
+  }
+  // Nor by the files that describe the site's pictures: they are served with it (/site/shots/manifest.json ...).
+  for (const file of [["shots", "manifest.json"], ["shots", "crops", "manifest.json"], ["photos", "manifest.json"]]) {
+    const raw = readFileSync(join(root, "public", "site", ...file), "utf8");
+    assert.doesNotMatch(raw, /\b(\d+|ten|eleven|twelve|thirteen) fields\b/i, `${file.join("/")} prints no count of the demo farm's fields`);
   }
 });
 
@@ -619,19 +842,20 @@ test("the About page builds the Ukraine demo only near the end of the page, and 
   const home = read("pages", "HomePage.jsx");
   assert.match(home, /lazy\(\(\) => import\("\.\.\/components\/DemoRanking\.jsx"\)\)/);
   assert.doesNotMatch(home, /^import DemoRanking/m);
-  // The page's last three parts reveal together, and the demo is built,
-  // once the field row is near, so a long page never leaves their words
-  // hidden to a fast scroll or a scan; and once the close is near, so a
-  // visitor who lands at the very end (Back from Register, a jump to the
-  // end: the field row is then more than 2,400 px above a phone's screen)
-  // finds them shown.
+  // The page's last four parts (the field row too) reveal together, and the
+  // demo is built, once the field row is near, so a long page never leaves
+  // their words hidden to a fast scroll or a scan (the design inspector's
+  // eleven screens end above the field row on a phone and at 1,024 px);
+  // and once the close is near, so a visitor who lands at the very end
+  // (Back from Register, a jump to the end: the field row is then more
+  // than 2,400 px above a phone's screen) finds them shown.
   assert.match(home, /const \[tailRef, tailNear\] = useNear\("2400px 0px"\);/);
   assert.match(home, /const \[closeRef, closeNear\] = useNear\("2400px 0px"\);\s*const near = tailNear \|\| closeNear;\s*const tail = near \? " is-in" : "";/);
   assert.match(home, /\{near && \(/);
   assert.match(home, /reveal\(node\);\s*tailRef\.current = node;/);
-  assert.match(home, /className="showcase section" aria-labelledby="showcase-title" ref=\{showcaseRef\}/);
+  assert.match(home, /className=\{`showcase section\$\{tail\}`\} aria-labelledby="showcase-title" ref=\{showcaseRef\}/);
   assert.match(home, /<section className=\{`close\$\{tail\}`\} aria-labelledby="close-title" ref=\{closeRef\}>/);
-  for (const part of ["proof section${tail}", "demo-section on-sage section${tail}", "close${tail}"]) assert.ok(home.includes(part), `${part} reveals with the tail`);
+  for (const part of ["showcase section${tail}", "proof section${tail}", "demo-section on-sage section${tail}", "close${tail}"]) assert.ok(home.includes(part), `${part} reveals with the tail`);
   // The demo's place keeps its height while it waits, while its code arrives (the stage empty) and while
   // its data loads, so the end of the page does not move under a visitor who came back to it.
   const css = read("pages", "home.css");
@@ -653,8 +877,8 @@ test("every About section keeps to the menu's frame, and the title is the page's
   assert.match(css, /\.site \.display\.proof-head \{\s*font-size: clamp\(2rem, 0\.5rem \+ 4\.4vw, 4\.5rem\)/);
   assert.match(SITE_CSS, /--step-head: clamp\(2rem, 1\.3rem \+ 3\.2vw, 4rem\)/);
   // The links on the light grounds answer the pointer and the pin with the accent; on the green tile the underline answers.
-  assert.match(css, /\.site :is\(\.hero, \.why, \.small-print\) \.link-under:hover \{[^}]*color: var\(--accent\);[^}]*text-decoration-line: underline/);
-  assert.match(css, /\.site :is\(\.hero, \.why, \.small-print\) \.link-under\[data-near\] \{[^}]*color: var\(--accent\)/);
+  assert.match(css, /\.site :is\(\.hero, \.what, \.why, \.small-print\) \.link-under:hover \{[^}]*color: var\(--accent\);[^}]*text-decoration-line: underline/);
+  assert.match(css, /\.site :is\(\.hero, \.what, \.why, \.small-print\) \.link-under\[data-near\] \{[^}]*color: var\(--accent\)/);
   assert.match(css, /\.site \.close-actions \.link:hover \{[^}]*text-decoration-line: underline/);
   assert.match(css, /\.site \.window-caption \.link \{[^}]*white-space: nowrap/);
 });

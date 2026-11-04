@@ -1,6 +1,8 @@
 // WHAT THIS FILE DOES
 // Small hooks the website's pages share:
-//   usePageTitle("Story")   sets the browser tab's title for this page
+//   usePageTitle("Story")   sets the browser tab's title for this page, and
+//                           the site's own title when it leaves (unless the
+//                           next page has already set its own)
 //   useScrollTop()          scrolls to the top (or to the #part of the
 //                           address) when the address changes; used once,
 //                           in SiteShell
@@ -30,10 +32,14 @@ import { pageTitle } from "./content/site.js";
 
 export function usePageTitle(sub) {
   useEffect(() => {
-    const before = document.title;
-    document.title = pageTitle(sub);
+    const title = pageTitle(sub);
+    document.title = title;
     return () => {
-      document.title = before;
+      // Back to the site's own title, unless the next page has already set
+      // its own: the pages' changes overlap (the next page can arrive before
+      // this one has gone), and putting back the title from before this
+      // page left the tab naming a page the visitor had left.
+      if (document.title === title) document.title = pageTitle();
     };
   }, [sub]);
 }

@@ -5,7 +5,15 @@
 //   Field     next to its name, what Field is, in one plain sentence; the
 //             walkthrough film (every feature, recorded from the real app:
 //             Walkthrough.jsx), how to use it in five steps, and what it
-//             reads in one line.
+//             reads in one line. Then its technical part, in the Atlas
+//             part's look and on its classes, kept as short: the four
+//             readings, two by two (clouds, the 30 days and the normal
+//             years above them; plant health, water, stress and harvest
+//             timing, each a formula and one sentence), the condition with
+//             its formulas (the scores, and the stress rule's thresholds)
+//             beside the sliders the reader can move (ConditionLab.jsx),
+//             how the fields, the crop and damage are found (two sentences
+//             each), and what it cannot see.
 //   Atlas     next to its name, what Atlas is and whom it is for
 //             (governments, NGOs and corporations), and why Ukraine is the
 //             demo; its walkthrough film, the three scores, the gate with
@@ -25,19 +33,30 @@
 // on the matching part: those ids stay on the blocks (src/App.jsx).
 //
 // WHO EDITS IT
-// The founder, for the words. The formulas match src/lib/atlas/scoring.js
-// and the paper; keep them in step. Numbers come from
-// src/site/content/site.js.
+// The founder, for the words. Atlas's formulas match
+// src/lib/atlas/scoring.js and the paper; keep them in step. Field's rules
+// are the app's own (src/lib/field/method.js with crops.js, and
+// src/lib/atlas/method.js); the comments beside each block give the file
+// and line each comes from. Their numbers are FIELD_METHOD in
+// src/site/content/site.js (which says why the page does not import the
+// app's method), and site-pages.test.js checks each against the code. Other
+// numbers come from NUMBERS there.
 
+// site.css first, before the components' sheets and the page's own, so it
+// is always in the page first and their rules win their ties with it,
+// however the page is loaded.
+import "../site.css";
 import { useEffect } from "react";
 import { Link } from "react-router-dom";
+import ConditionLab from "../components/ConditionLab.jsx";
+import { classOf } from "../components/conditionLab.js";
 import DemoRanking from "../components/DemoRanking.jsx";
 import Film from "../components/Film.jsx";
 import GateLab from "../components/GateLab.jsx";
 import ProofTable from "../components/ProofTable.jsx";
 import Walkthrough from "../components/Walkthrough.jsx";
 import { Reveal, Stagger, StaggerItem } from "../components/motion.jsx";
-import { CONTACT_EMAIL, DATASETS, LINKS, NUMBERS, SITE_ACTIONS, STACK, formatInt } from "../content/site.js";
+import { CONTACT_EMAIL, DATASETS, FIELD_METHOD, LINKS, NUMBERS, SITE_ACTIONS, STACK, formatInt } from "../content/site.js";
 import { usePageTitle } from "../hooks.js";
 import "./pages.css";
 
@@ -47,6 +66,50 @@ const FIELD_STEPS = ["Register and choose Field.", "Find your farm: search a vil
 function listOf(names) {
   return names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
+
+// Small whole numbers in words, as the site writes them ("six pictures").
+const WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+function inWords(n) {
+  return Number.isInteger(n) && n >= 0 && n < WORDS.length ? WORDS[n] : formatInt(n);
+}
+
+// A threshold as the method writes it: two decimals (0.10, 0.08).
+const two = (n) => n.toFixed(2);
+
+// A class's name never splits across two lines ("Very / good"): its
+// spaces become no-break spaces.
+const unbroken = (name) => name.replace(/ /g, "\u00a0");
+
+// The class just above the one a score falls in: a field held at 0.84 is
+// "held under Very good" (the condition laboratory says it the same way).
+function classAbove(score) {
+  const at = FIELD_METHOD.classes.indexOf(classOf(score));
+  return unbroken(FIELD_METHOD.classes[at + 1]?.label ?? "");
+}
+
+// What the Field part's technical words say, worked out from FIELD_METHOD
+// (site.js; the rules themselves: src/lib/field/method.js and crops.js,
+// line numbers as of 3 November 2026):
+//   classes        "Poor under 0.40, ..., Very good above" (CONDITION_CLASSES, method.js:100)
+//   stressedUnder  the class a field with high stress is held under
+//                  (STRESSED_CONDITION_MAX 0.84, method.js:296 and :309): Very good
+//   damagedUnder   the same for a damaged field (DAMAGED_CONDITION_MAX 0.64,
+//                  method.js:1076 and conditionForDamage :1078): Good
+//   clearShare     "at least half" (MIN_CLEAR_SHARE 0.5, method.js:42)
+//   normalYears    three (BASELINE 2019 to 2021, method.js:36)
+//   highStress     15 (per cent; stressLevel, method.js:128-133)
+//   damageShare    10 (per cent; DAMAGE_RULES.radarShare, method.js:1009)
+// FM is FIELD_METHOD, short, for the words below.
+const FM = FIELD_METHOD;
+const FIELD_RULES = {
+  classes: FM.classes.map((item) => (Number.isFinite(item.upTo) ? `${unbroken(item.label)} under ${two(item.upTo)}` : `${unbroken(item.label)} above`)).join(", "),
+  stressedUnder: classAbove(FM.stressedMax),
+  damagedUnder: classAbove(FM.damagedMax),
+  clearShare: FM.minClearShare === 0.5 ? "at least half" : `at least ${Math.round(FM.minClearShare * 100)}%`,
+  normalYears: inWords(FM.baseline.to - FM.baseline.from + 1),
+  highStress: Math.round(FM.stressHighShare * 100),
+  damageShare: Math.round(FM.damageRadarShare * 100),
+};
 
 // One film at a time: the page has three films (the two walkthroughs, with
 // their narration and music, and the three-minute film with its own sound);
@@ -133,6 +196,144 @@ export default function MethodPage() {
               </p>
             </Reveal>
           </div>
+
+          {/* Field's technical part, in the Atlas part's look below and as
+              calm: the four readings, the condition beside its laboratory,
+              how the fields, the crop and damage are found, and what it
+              cannot see. Sources (line numbers as of 3 November 2026): a
+              clear pixel, method.js:40, applied in field-gee.js:456-460;
+              a reading's 30 days, the median of every clear pixel in them
+              (field-gee.js:361, :1540-1541 and :2146-2152; the half-clear
+              rule, MIN_CLEAR_SHARE method.js:42, does not filter them: it
+              picks the season's passes, fieldPlan field-gee.js:2232-2254,
+              which harvest timing reads); the normal, BASELINE
+              method.js:36, per pixel the median of the three years
+              (normalOfYears field-gee.js:487-493), the one the scores and
+              both stress rules use (conditionImages :523-544), while the
+              lowest-to-highest range of the three yearly field means
+              (range :2304-2308) gives only the tiles' Below normal, Normal
+              and Above normal (versusNormal :2398-2399; method.js:118-125);
+              the indices, field-gee.js:461-463 (method.js:11-20). */}
+          <Reveal className="meth-scores-intro" id="readings">
+            <p>
+              <strong>Four readings.</strong> Google’s Cloud Score+ removes clouds pixel by pixel (clear at {FM.clearPixelScore} or more). Plant health, water and stress use the median of the last {FM.latestDays} days’ clear pixels, against the same weeks of {FM.baseline.label}: per pixel, the middle of the {FIELD_RULES.normalYears} years (the app’s Below and Above normal use their range). Harvest timing follows the passes {FIELD_RULES.clearShare}&nbsp;clear.
+            </p>
+          </Reveal>
+          {/* Stress: STRESS_RULES method.js:61 and isStressed :80-83,
+              RED_EDGE_RULES :153 and isStressedRedEdge :155-158, either
+              rule (pixelStress :169-173; field-gee.js:539-544); its
+              thresholds are the third formula under the condition.
+              Harvest: the ready level, method.js:692 (BARE_NDVI :547, the
+              shares crops.js:66-74), heat units (crops.js gddEstimate :178)
+              and the radar cut (RADAR_HARVEST method.js:778), which counts
+              only for a tall crop (corn, soybean, sunflower) or one not
+              known, never for cereals or rapeseed (combineHarvestEstimate
+              :919-931). */}
+          <Stagger as="dl" className="meth-scores meth-readings">
+            <StaggerItem>
+              <dt>Plant health</dt>
+              <dd className="meth-eq">
+                NDVI = <span className="meth-whole">(B8 − B4) / (B8 + B4)</span>
+              </dd>
+              <dd>Near-infrared against red: how green the crop&nbsp;is.</dd>
+            </StaggerItem>
+            <StaggerItem>
+              <dt>Water</dt>
+              <dd className="meth-eq">
+                NDWI = <span className="meth-whole">(B8 − B11) / (B8 + B11)</span>
+              </dd>
+              <dd>Near-infrared against short-wave infrared: the water held in the&nbsp;leaves.</dd>
+            </StaggerItem>
+            <StaggerItem>
+              <dt>Stress</dt>
+              <dd className="meth-eq">
+                NDRE = <span className="meth-whole">(B8A − B5) / (B8A + B5)</span>
+              </dd>
+              <dd>The share of the field weaker than the rest and than normal; the red edge reacts {FM.redEdgeLead} before&nbsp;NDVI.</dd>
+            </StaggerItem>
+            <StaggerItem>
+              <dt>Harvest timing</dt>
+              <dd className="meth-eq">
+                ready = <span className="meth-whole">{FM.bareNdvi} + share·(peak − {FM.bareNdvi})</span>
+              </dd>
+              <dd>
+                Ready when NDVI falls back to this level (share {FM.readyShare.cereals} for cereals and rapeseed, {FM.readyShare.rowCrops} for row crops), checked by heat units and, for row crops, radar through&nbsp;cloud.
+              </dd>
+            </StaggerItem>
+          </Stagger>
+
+          {/* The condition: CONDITION_WEIGHTS method.js:52, conditionScore
+              :88-97, the scores healthScore and waterScore :68-77 with
+              HEALTH_SPAN and WATER_SPAN :55-56 (each clamped to 0..1),
+              CONDITION_CLASSES :100-105, the holds in fieldCondition
+              :306-311 (high stress, stressLevel :128-133; damage,
+              :1076-1081), the stress rules as above; applied per field in
+              server/field/analysis.js:451. */}
+          <div className="meth-gate-text" id="condition">
+            <Reveal>
+              <p>
+                <strong>The condition.</strong> One number from 0 to 1 for each field in crop, which colours it on the map: {FIELD_RULES.classes}. High stress ({FIELD_RULES.highStress}% of the field or more) holds it under {FIELD_RULES.stressedUnder}, damage under {FIELD_RULES.damagedUnder}, and a field with no crop has no&nbsp;condition.
+              </p>
+            </Reveal>
+            <Reveal delay={0.12}>
+              <p className="meth-formula">
+                condition = <span className="meth-whole">{FM.weights.plantHealth}·health score</span> <span className="meth-whole">+ {FM.weights.water}·water score</span> <span className="meth-whole">+ {FM.weights.noStress}·(1 − stressed share)</span>
+              </p>
+              <p className="meth-formula">
+                health score = <span className="meth-whole">1 + (NDVI − normal) / {FM.healthSpan}</span>
+                <br />
+                water score = <span className="meth-whole">1 + (NDWI − normal) / {FM.waterSpan}</span>
+                <br />
+                each held between 0 and 1
+              </p>
+              <p className="meth-formula">
+                stressed = <span className="meth-whole">NDVI &lt; field median − {two(FM.stressNdvi.belowFieldMedian)}</span> <span className="meth-whole">and &lt; normal − {two(FM.stressNdvi.belowNormal)},</span> <span className="meth-whole">or NDRE &lt; field median − {two(FM.stressRedEdge.belowFieldMedian)}</span> <span className="meth-whole">and &lt; normal − {two(FM.stressRedEdge.belowNormal)}</span>
+              </p>
+            </Reveal>
+          </div>
+          <Reveal className="meth-gate-lab" delay={0.12} y={36}>
+            <ConditionLab />
+          </Reveal>
+
+          {/* Finding the fields: WorldCover class 40 and the Canny trace,
+              field-gee.js:747-781 (DETECT :244-270), the six windows (the
+              early, middle and late thirds of the last two seasons,
+              src/lib/season.js:300-314), the overlap docs/METHODS.md:156,
+              measured on the demo farm. The crop: classifyCrop
+              crops.js:741 with CROP_RULES :296-308, the radar peak and the
+              red-edge gap :320 and :594; the accuracy, NUMBERS. Damage:
+              RADAR_CHANGE_DB method.js:1005, in at least
+              HEAVY_DAMAGE.persistSeasons war seasons (one, while only one
+              is measured; atlas/method.js:96, field-gee.js:1665-1689),
+              unusual fire counted since the war began, or over the last two
+              years where no war covers the farm (method.js:997-999,
+              atlas/method.js worstFireYear :220), DAMAGE_RULES
+              method.js:1008-1013 and damageDetected :1050-1059. */}
+          <Stagger as="dl" className="meth-scores meth-how">
+            <StaggerItem>
+              <dt>Finding the fields</dt>
+              <dd>
+                Canny edges in {inWords(FM.edgePictures)} Sentinel‑2 pictures of the last two seasons split ESA WorldCover’s cropland into fields from {FM.minFieldHa} ha. On the demo farm they overlap hand‑drawn outlines by {FM.outlineIou} <span className="meth-whole">(shared area ÷ combined&nbsp;area)</span>.
+              </dd>
+            </StaggerItem>
+            <StaggerItem>
+              <dt>The crop</dt>
+              <dd>
+                A phenology classifier, helped by radar and the red‑edge gap; your own choice wins. Against the USDA crop layer it named {NUMBERS.cropHeldOutPercent}% of held‑out fields right, and {NUMBERS.cropLikelyPercent}% when it said&nbsp;“likely”.
+              </dd>
+            </StaggerItem>
+            <StaggerItem>
+              <dt>Damage on a field</dt>
+              <dd>
+                Radar change of {FM.radarChangeDb} dB or more in at least {inWords(FM.radarSeasons)} growing seasons, and unusual fire (NASA FIRMS). In a war, radar change on {FIELD_RULES.damageShare}% of the field is enough; elsewhere, both are&nbsp;needed.
+              </dd>
+            </StaggerItem>
+          </Stagger>
+          <Reveal className="meth-limits-text" delay={0.12}>
+            <p>
+              <strong>What it cannot see.</strong> Which pest or disease is at work; mines and unexploded ordnance (a field with no damage found is not a safe field); a line between look‑alike&nbsp;fields.
+            </p>
+          </Reveal>
         </div>
       </section>
 

@@ -33,6 +33,8 @@
 // src/site/content/site.js; the server side is server/messages.js and
 // server/mail.js.
 
+// The site's base rules first, so ./pages.css below wins every tie with them.
+import "../site.css";
 import { useEffect, useRef, useState } from "react";
 import { sendContact } from "../../api/siteApi.js";
 import { CONTACT_EMAIL } from "../content/site.js";

@@ -20,6 +20,8 @@
 // Whoever changes how the demo is reached. What the demo may do (look, not
 // change) is decided on the server (server/auth.js).
 
+// The site's base rules first, so ./pages.css below wins every tie with them.
+import "../site.css";
 import { Link } from "react-router-dom";
 import { enterDemo } from "../../lib/demoMode.js";
 import { DEMO_DOORS, SITE_ACTIONS } from "../content/site.js";

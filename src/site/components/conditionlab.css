@@ -1,0 +1,233 @@
+/*
+  WHAT THIS FILE DOES
+  The condition laboratory's own parts (ConditionLab.jsx, on the
+  Methodology page's Field part): the bar of the condition's three parts
+  laid end to end on the 0-to-1 scale, the class boundaries under it, the
+  four classes with the field's own marked, and the sum written out right
+  under them. The rest of its look is the gate laboratory's (the ".gl-"
+  rules in src/site/pages/pages.css: the panel, the sliders, the big
+  numbers), so the two laboratories read as one family; here the big
+  numbers are sized to their column, so the class never runs out of it,
+  and the class keeps room for two lines, so the panel never jumps.
+
+  The gate laboratory stands on the page's ground and is a surface-tone
+  panel; the Field part is on the surface tone, so there this one turns
+  round: the panel takes the ground and its empty bar the surface
+  (--cl-panel and --cl-track below).
+
+  Inside a data fragment (data-ui) lines are allowed: the 2 px ticks and
+  the ink mark. Every colour and size is a token from src/site/site.css;
+  nothing moves (the bar follows the sliders at once).
+
+  WHO EDITS IT
+  Whoever changes the condition laboratory.
+*/
+
+.cl {
+  --cl-panel: var(--surface);
+  --cl-track: var(--bg);
+}
+
+.pg-sec-surface .gl.cl {
+  --cl-panel: var(--bg);
+  --cl-track: var(--surface);
+  background: var(--cl-panel);
+}
+
+/* The sliders look as the gate laboratory's, but each is 32 px tall to a
+   finger or the pin instead of 16 (the track stays in its middle). The
+   spaces around them shrink by as much, so the tracks keep the gate
+   laboratory's rhythm, and the keyboard's ring sits right on the slider's
+   edge, clear of the words above it. */
+.cl .gl-control {
+  gap: 0;
+  margin-top: 6px;
+}
+
+.cl .gl-control input[type="range"] {
+  height: 32px;
+}
+
+.pg .cl .gl-control input[type="range"]:focus-visible {
+  outline-offset: 0;
+}
+
+.cl .gl-readout {
+  margin-top: 14px;
+}
+
+/* The large numbers: the gate laboratory's size where their half of the
+   column holds it, and smaller where it does not (from 1100 to about
+   1400 px the column is too narrow, and "Good" ran out of it into the
+   written sum). So they are sized to the column (1cqi is 1% of its
+   width): "Good", the widest answer of one word, is 2.45 times its size
+   wide, and its half of the column is (100cqi - 16px) / 2, so
+   19.5cqi - 4px always leaves it room. "Very good" takes two lines, as
+   the gate's "25% open" does, and the class keeps room for both, so the
+   panel never grows while the reader drags. */
+.cl .gl-controls {
+  container-type: inline-size;
+  --cl-big: min(var(--step-head), calc(19.5cqi - 4px));
+}
+
+.cl .gl-readout {
+  position: relative;
+}
+
+.cl .gl-readout b {
+  font-size: var(--cl-big);
+}
+
+.cl .gl-readout > div + div b {
+  min-height: 2em;
+}
+
+/* Beside the controls: the bar, its scale and the classes, and right
+   under them the sum written out, so nothing floats in the middle. */
+.cl-chart {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 28px;
+}
+
+/* The bar: the three parts end to end, each as long as its weight times
+   its score, so it ends at the condition; a 2 px gap in the track's tone
+   between the parts. */
+.cl-track {
+  position: relative;
+  height: 28px;
+  margin-top: 8px;
+  background: var(--cl-track);
+}
+
+.cl-block {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  border-right: 2px solid var(--cl-track);
+}
+
+/* High stress holds the condition under "Very good": the parts past the
+   hold fade, and the mark stays at the hold. */
+.cl-past {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--cl-panel);
+  opacity: 0.72;
+}
+
+/* The field's condition: an ink mark across the bar. */
+.cl-mark {
+  position: absolute;
+  top: -6px;
+  bottom: -6px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--ink);
+}
+
+/* The class boundaries under the bar: a tick and its number; 0 starts at
+   the bar's start, 1 ends at its end. */
+.cl-scale {
+  position: relative;
+  height: 34px;
+}
+
+.cl-scale i {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 7px;
+  margin-left: -1px;
+  background: var(--muted);
+}
+
+/* (Proportional figures: the site face's tabular point is as wide as a
+   digit, which spaces "0.40" out.) */
+.cl-scale span {
+  position: absolute;
+  top: 10px;
+  transform: translateX(-50%);
+  font-family: var(--font);
+  font-size: var(--step-small);
+  line-height: 1.2;
+  color: var(--muted);
+}
+
+.cl-scale span.cl-start {
+  transform: none;
+}
+
+.cl-scale span.cl-end {
+  transform: translateX(-100%);
+}
+
+/* The four classes in order, the field's own filled in ink (the look of
+   the films' chapter playing now). The row is pulled 10 px to the left,
+   so the first word starts on the bar's edge. (".pg" in front: site.css's
+   "ul { margin: 0 }".) */
+.pg .cl-classes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 4px 0 0 -10px;
+  padding: 0;
+  list-style: none;
+}
+
+.cl-classes li {
+  padding: 5px 10px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.cl-classes li.is-on {
+  background: var(--ink);
+  color: var(--bg);
+}
+
+/* The sum written out: each part's colour, its name, its weight times its
+   score. */
+.pg .cl-parts {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cl-parts li {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.cl-parts i {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-right: 8px;
+  vertical-align: -2px;
+}
+
+.cl-parts b {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Said only when the hold lowers the condition, across both numbers, in
+   the class's second line: a held field is "Good" at most, one word, so
+   that line is free, and the panel keeps its height. */
+.pg .cl-held {
+  position: absolute;
+  top: calc(100% - var(--cl-big) + 6px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  font-weight: 600;
+}

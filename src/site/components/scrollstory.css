@@ -6,24 +6,38 @@
   Two layouts:
   - the plain list (the starting point): the heading, then the steps one
     under the other, each step's words beside its picture (the picture
-    above the words on a narrow screen). This is what visitors who asked
+    above the words on a narrow screen, beside them again on a phone on its
+    side, so a step fits its short screen). This is what visitors who asked
     for reduced motion get, and a screen too short to hold a step;
   - held (.is-held, added by ScrollStory.jsx): the section is as tall as
-    the screen plus 0.6 of a screen per step (--story-steps); its stage
-    sticks to the top of the screen while the section passes, and the row
-    of steps slides sideways to the current step (--story-at), one whole
-    step at a time. The browser's scroll anchoring leaves the stage's
-    parts alone (they stay still while the page moves), so a resize never
-    throws the visitor elsewhere; ScrollStory.jsx keeps the step.
+    the screen plus one share of scroll per step and half a share before
+    the first step and after the last (--story-hold: half the screen, never
+    under 440 px or over 460 px, and --story-lead, the same as
+    scrollStoryMath.js HOLD and LEAD; --story-steps steps); its stage
+    sticks to the top of the screen while the section passes, and
+    ScrollStory.jsx moves the row of steps sideways with the scroll (its
+    transform, frame by frame: no transition here) and dims the words of a
+    step on its way out. A link to the story (#field-story) lands on the
+    first step's resting place, not at the top of the lead-in. Under the
+    heading, the progress row: every step's title with a bar that fills as
+    the visitor scrolls through it (on a screen up to 900 px wide, only the
+    bars, drawn at 3:1 against the ground since they are the buttons there,
+    and "2 of 5"); the current one in full ink; under it, on a line of its
+    own, the hint "Scroll to move along" (the picture gives a short wide
+    screen that line's room while it is there). The browser's scroll
+    anchoring leaves the stage's parts alone (they stay still while the page
+    moves), so a resize never throws the visitor elsewhere; ScrollStory.jsx
+    keeps the step.
 
   Each picture is the app at its true size (one picture pixel per CSS px,
   object-fit: none): a window the width of the step's column, at most
-  800 x 500 (held, never under 170 px tall, so a short window still shows
-  a usable part of it); on a narrower window the part named by --tx (a window a
-  little narrower than the picture: from the top, where the app's screens
-  have their titles) or by --fx and --fy (a phone's) shows (set per step
-  in HomePage.jsx). Every colour and size is a token from
-  src/site/site.css.
+  800 x 500 (held, with the words under it, as tall as the stage leaves
+  room for: --story-fit, never under 170 px, 150 on a phone, so a short
+  window still shows a usable part of it); on a narrower window the part
+  named by --tx (a window a little narrower than the picture: from the
+  top, where the app's screens have their titles) or by --fx and --fy (a
+  phone's) shows (set per step in HomePage.jsx). The link into the demo is
+  at least 32 px tall to tap. Every colour is a token from src/site/site.css.
 
   WHO EDITS IT
   Whoever works on the About page.
@@ -55,15 +69,17 @@
   gap: 0.5rem 1.75rem;
 }
 
-/* "2 of 5": a plain count in the body face. */
-.site .story-count {
+/* A target 32 px tall or more to tap (its line is 23 to 27 px): 5 px all
+   round, given back by the margin so the words stay where they were; its
+   focus ring 3 px from the words. */
+.site .story-link {
+  padding: 5px;
+  margin: -5px;
   font-size: var(--step-body);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
 }
 
-.site .story-link {
-  font-size: var(--step-body);
+.site .story-link:focus-visible {
+  outline-offset: -2px;
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -131,10 +147,15 @@
   object-position: var(--tx, 50%) 0%;
 }
 
-/* ---- Held: the stage stays, the steps slide ---- */
+/* ---- Held: the stage stays, the row moves with the scroll ----
+   A link to the story lands on its first step's resting place: the lead-in
+   and half the first step's share down (scrollStoryMath.js shareMiddle). */
 .site .story.is-held {
-  height: calc(100svh + var(--story-steps) * 60svh);
+  --story-hold: clamp(440px, 50svh, 460px);
+  --story-lead: 0.5;
+  height: calc(100svh + (var(--story-steps) + 2 * var(--story-lead)) * var(--story-hold));
   padding-block: 0;
+  scroll-margin-top: calc(-1 * (var(--story-lead) + 0.5) * var(--story-hold));
 }
 
 /* The browser keeps a visitor's place through a change of layout by
@@ -148,18 +169,18 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: clamp(1.5rem, 4svh, 3rem);
+  gap: clamp(1.25rem, 3.5svh, 2.75rem);
   height: 100svh;
   overflow: clip;
   overflow-anchor: none;
 }
 
+/* The row: ScrollStory.jsx sets its transform as the page scrolls. */
 .site .story.is-held .story-track {
   display: flex;
   gap: 0;
   margin-top: 0;
-  transform: translateX(calc(var(--story-at, 0) * -100%));
-  transition: transform 700ms var(--ease-in-out);
+  will-change: transform;
 }
 
 .site .story.is-held .story-step {
@@ -167,27 +188,130 @@
   min-width: 0;
 }
 
-/* A change made while the section is off the screen: in place at once. */
-.site .story.is-held .story-track.is-jump,
-.site .story.is-held .story-track.is-jump .story-words {
-  transition: none;
-}
-
-/* The step coming in brightens as the one leaving dims (never below 40%). */
-.site .story.is-held .story-words {
-  opacity: 0.4;
-  transition: opacity 500ms ease;
-}
-
-.site .story.is-held .is-current .story-words {
-  opacity: 1;
-}
-
-/* The picture's window keeps to the screen's height (the heading and the
-   space round the stage need the rest). */
+/* The picture's window keeps to the screen's height (the heading, the
+   progress row and the space round the stage need the rest). */
 .site .story.is-held .story-picture {
   aspect-ratio: auto;
-  height: min(500px, calc(100svh - 200px));
+  height: min(500px, calc(100svh - 270px));
+}
+
+/* The hint's line too, while it is there (a narrower screen measures its
+   room instead: --story-fit, below). */
+@media (min-width: 901px) {
+  .site .story.is-held:has(.story-hint) .story-picture {
+    height: min(500px, calc(100svh - 300px));
+  }
+}
+
+/* ---- Held: where the visitor is ----
+   A row under the heading, one button per step: a bar that fills as the
+   visitor scrolls through the step's share, and the step's title. The
+   current step in full ink, the others muted; each glides the page to its
+   step. Under the row, on a line of its own (so the row always spans the
+   page, before and after the hint goes), the hint. */
+.site .story-where {
+  flex: 1 0 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: 0.375rem 1.25rem;
+  margin-top: clamp(0.25rem, 1.2svh, 1rem);
+}
+
+.site .story-progress {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(var(--story-steps), minmax(0, 1fr));
+  column-gap: var(--gutter);
+}
+
+/* (align-items: the browsers' own style for a button would shrink the bar
+   to nothing) */
+.site .story-dot {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.75rem;
+  width: 100%;
+  min-height: 44px;
+  padding: 0.75rem 0 0.25rem;
+  text-align: left;
+  color: var(--muted);
+  transition: color var(--t-hover) ease;
+}
+
+.site .story-bar {
+  position: relative;
+  display: block;
+  height: 3px;
+  overflow: hidden;
+}
+
+/* The bar's track: the button's own colour, faint (a little darker for
+   the current step and under the pointer). */
+.site .story-bar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: currentColor;
+  opacity: 0.24;
+}
+
+.site .story-fill {
+  position: absolute;
+  inset: 0;
+  background: var(--ink);
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+}
+
+.site .story-label {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+.site .story-dot[aria-current] {
+  color: var(--ink);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .site .story-dot:hover {
+    color: var(--ink);
+  }
+}
+
+.site .story-dot[data-near] {
+  color: var(--ink);
+}
+
+/* "2 of 5": shown where the titles are not (up to 900 px wide). */
+.site .story-count {
+  display: none;
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The hint, under the row, until the visitor has moved a step;
+   ScrollStory.jsx fades it as the row moves. */
+.site .story-hint {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+.site .story-hint-arrow {
+  flex: none;
 }
 
 /* ---- A narrower screen: the picture above the words ---- */
@@ -213,17 +337,90 @@
     max-width: 52ch;
   }
 
-  /* Never under 170 px, so a short window (540 to 590 px tall) still shows
-     a usable part of the picture rather than a strip. */
+  /* As tall as the stage allows once the heading, the progress row and the
+     tallest step's words have their room (--story-fit, measured by
+     ScrollStory.jsx; the screen's height less 470 px until it is), never
+     under 170 px, so a short window (540 to 640 px tall) still shows a
+     usable part of the picture rather than a strip. */
   .site .story.is-held .story-picture {
-    height: clamp(170px, calc(100svh - 420px), 500px);
+    height: clamp(170px, var(--story-fit, calc(100svh - 470px)), 500px);
+  }
+
+  /* The progress row: a bar per step (a 32 px target each, the title kept
+     for screen readers), then "2 of 5"; the hint under them. */
+  .site .story-where {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 0.25rem;
+  }
+
+  .site .story-progress {
+    column-gap: 6px;
+  }
+
+  .site .story-dot {
+    justify-content: center;
+    min-height: 32px;
+    padding: 0;
+  }
+
+  /* The bars are the buttons here (their titles hidden): 4 px tall, every
+     track at 3:1 against the ground (on the surface tone too), the steps
+     passed filled in ink, the current one filling. */
+  .site .story-bar {
+    height: 4px;
+  }
+
+  .site .story-bar::before {
+    background: var(--muted);
+    opacity: 0.7;
+  }
+
+  .site .story-label {
+    position: absolute;
+    width: 1px;
+    height: 1px; /* taste-skill-ignore: a title hidden from sight but kept for screen readers, not a line */
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+
+  .site .story-count {
+    display: block;
+  }
+}
+
+/* A phone on its side (the plain list, under 540 px tall): each step's
+   words beside its picture again, so a whole step fits the short screen. */
+@media (min-width: 600px) and (max-width: 900px) and (max-height: 539px) {
+  .site .story-panel {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+  }
+
+  .site .story-words {
+    grid-column: 1 / 6;
+    grid-row: 1;
+  }
+
+  .site .story-picture {
+    grid-column: 6 / 13;
+    grid-row: 1;
+    justify-self: end;
   }
 }
 
 @media (max-width: 600px) {
+  /* One column, never wrapped into a second one. */
   .site .story-head {
     align-items: flex-start;
     flex-direction: column;
+    flex-wrap: nowrap;
+  }
+
+  .site .story-where {
+    align-self: stretch;
+    flex: none;
+    margin-top: 0;
   }
 
   .site .story-title {
@@ -246,8 +443,10 @@
     gap: 1rem;
   }
 
+  /* A phone: at most 300 px, and as little as 150 px on a short one so the
+     tallest step still fits whole (--story-fit, as above). */
   .site .story.is-held .story-picture {
-    height: clamp(170px, 34svh, 300px);
+    height: clamp(150px, var(--story-fit, 34svh), 300px);
   }
 }
 

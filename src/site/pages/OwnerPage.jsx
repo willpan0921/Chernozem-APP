@@ -33,6 +33,8 @@
 // The owner, rarely. Nothing on the website links here on purpose. Who
 // counts as the owner is set on the server (OWNER_EMAILS on Render).
 
+// The site's base rules first, so ./pages.css below wins every tie with them.
+import "../site.css";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { getStatus, logoutEverywhere, postFirebaseToken } from "../../api/accountApi.js";

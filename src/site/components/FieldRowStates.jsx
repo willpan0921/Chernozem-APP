@@ -111,16 +111,27 @@ export default function FieldRowStates() {
   useEffect(() => () => clearTimeout(readTimer.current), []);
 
   // How much the row is enlarged: the width its columns give it, over its
-  // true width, between 1 and 2 (home.css keeps it at 1 on a phone).
+  // true width, between 1 and 2 (home.css keeps it at 1 on a phone). Set on
+  // the next frame: set at once, the taller row would be a change of size
+  // the observer has to report again in the same frame, which Safari (with
+  // reduced motion, where nothing eases it) reports as an error
+  // ("ResizeObserver loop completed with undelivered notifications").
   useEffect(() => {
     const el = rowRef.current;
     if (!el || typeof ResizeObserver === "undefined") return undefined;
+    let frame = 0;
     const ro = new ResizeObserver(([entry]) => {
-      const zoom = Math.min(2, Math.max(1, entry.contentRect.width / ROW_WIDTH));
-      el.style.setProperty("--row-zoom", zoom.toFixed(3));
+      const zoom = Math.min(2, Math.max(1, entry.contentRect.width / ROW_WIDTH)).toFixed(3);
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        if (el.style.getPropertyValue("--row-zoom") !== zoom) el.style.setProperty("--row-zoom", zoom);
+      });
     });
     ro.observe(el);
-    return () => ro.disconnect();
+    return () => {
+      ro.disconnect();
+      window.cancelAnimationFrame(frame);
+    };
   }, []);
 
   const choose = (id) => {

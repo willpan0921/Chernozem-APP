@@ -49,6 +49,8 @@
 // Whoever changes how people register. The words of the checks and the
 // list of pictures live in src/lib/registration.js; the look in register.css.
 
+// The site's base rules first, so ./register.css below wins every tie with them.
+import "../site.css";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { usePageTitle } from "../hooks.js";

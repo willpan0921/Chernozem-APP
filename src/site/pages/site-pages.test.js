@@ -4,12 +4,30 @@
 // source files (no browser needed):
 //   - each page starts with the plain-English header every file carries,
 //     sets its browser-tab title, and has exactly one h1;
+//   - every page module in this folder, the About page and the register
+//     pages included, loads site.css before its own stylesheet (and the
+//     frame, SiteShell.jsx, loads it before the menu's and the footer's),
+//     so the page's rules win their ties with site.css however it is opened;
 //   - none imports the components the second website removed;
-//   - the Story is the five parts the owner asked for, in his order, and
-//     nothing else (no film, no "Who makes it", no closing sign-up); it
-//     counts ACLED's events as events, links the Dataverse deposit (the
-//     Recovery Atlas's package) under the Second edition, and credits the
-//     old maps' base maps;
+//   - the Story is what the owner asked for, in his order, and nothing
+//     else (no film, no "Who makes it", no closing sign-up): its title
+//     "Forged in Three Generations", then five steps on the dark band (the
+//     table, the visit, Ukraine, building it, Penn: At Penn is a step now,
+//     not a section) joined by four drawn arrows hidden from screen
+//     readers, then the three editions; "ten ways" comes from site.js as
+//     a word; "Dr. Bo", "black‑soil" and "great‑grandparents" never break
+//     across lines; the steps rise and the arrows draw only for visitors
+//     who did not ask for reduced motion, and a fast scroll never leaves
+//     one unfinished; the title stands above the steps, which start three
+//     columns in on a wide screen (no sticky title beside an empty half);
+//     no class of the page is one the About page's sideways stories style
+//     (their ".story" once padded this page); it counts ACLED's events as
+//     events, links the Dataverse deposit (the Recovery Atlas's package)
+//     under the Second edition, which says it was the first Chernozem
+//     Atlas, for Ukraine only and before Field (the owner's answer),
+//     credits the old maps' base maps, and its
+//     Third edition sets harvest timing apart from what is compared with
+//     2019 to 2021;
 //   - the Demo page is the two doors (which switch the tab to the demo)
 //     and the Register line, with no code anywhere; the doors' pictures are
 //     the half-size copies;
@@ -27,9 +45,12 @@
 //     Google account (no code field), lets the server decide who the owner
 //     is, and refuses any other account in plain words;
 //   - no page mentions an access code or the challenge the app was made for
-//     (the About page names it once; the words are built from pieces here so
-//     a search of the code finds only the About page),
+//     (it is named nowhere, and site.js has no link to it; its name is built
+//     from pieces here, so a search of the code never finds it),
 //     and none prints the demo farm's number of fields;
+//   - every page title's mask leaves room for the tails of g, p and y (a
+//     title's line is tighter than its letters) and gives it back, so
+//     nothing after the title moves;
 //   - every picture the pages name exists in public/;
 //   - the Methodology page is two parts, Field and Atlas, each opening with
 //     one plain sentence of what it is (Atlas's names governments, NGOs and
@@ -55,6 +76,22 @@
 //     score ends on one lone word; nothing on the page is under 14 px; the
 //     gate chart is drawn at its real width, its axis's name on a line of
 //     its own under the numbers;
+//   - then Field's technical part, in the Atlas part's look and as calm:
+//     the four readings with a formula and one sentence under each name
+//     (two by two from a tablet up, never four across; one under the other
+//     on a phone), an intro that says what the code does (the 30 days'
+//     median, the per-pixel middle of the normal years, the range only for
+//     the app's Below and Above normal, the half-clear rule only for the
+//     passes harvest timing reads), the condition with its three formulas
+//     (the health score and water score, held between 0 and 1, and the
+//     stress rule's thresholds) beside its laboratory (ConditionLab.jsx;
+//     its arithmetic is checked in components/conditionLab.test.js), the
+//     notes on how fields, crop and damage are found (about two sentences
+//     each), and what it cannot see; every number it quotes comes from
+//     site.js (FIELD_METHOD, NUMBERS), each FIELD_METHOD value equals the
+//     app's own rule (src/lib/field/method.js, crops.js, the server's Earth
+//     Engine code, the docs), and the page does not load the app's method
+//     (it would add to every page's first load);
 //   - pages.css uses only the tokens defined by src/site/site.css and none
 //     of the things the website brief bans (shadows, gradients, monospace),
 //     sets no cursor of its own (the site's pin stays), keeps the menu bar's
@@ -72,7 +109,33 @@ import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, sta
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
+// Every page module in this folder (the stylesheet-order check).
+import { readdirSync } from "node:fs";
 import { CONTACT_EMAIL, DEMO_DOORS, LINKS, NUMBERS, SITE } from "../content/site.js";
+// The Field part's numbers (site.js FIELD_METHOD) and the app's rules they
+// must match, so what the Methodology page says is checked against the app.
+import { FIELD_METHOD } from "../content/site.js";
+import { HEAVY_DAMAGE } from "../../lib/atlas/method.js";
+import {
+  BARE_NDVI,
+  BASELINE,
+  CLEAR_PIXEL_SCORE,
+  CONDITION_CLASSES,
+  CONDITION_WEIGHTS,
+  CROP_PROFILES,
+  DAMAGED_CONDITION_MAX,
+  DAMAGE_RULES,
+  HEALTH_SPAN,
+  MIN_CLEAR_SHARE,
+  RADAR_CHANGE_DB,
+  RED_EDGE_RULES,
+  STRESSED_CONDITION_MAX,
+  STRESS_RULES,
+  WATER_SPAN,
+  conditionClass,
+  stressLevel,
+} from "../../lib/field/method.js";
+import { detectionWindows } from "../../lib/season.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..", "..");
@@ -123,6 +186,42 @@ test("every page carries the file header, a tab title and one h1", () => {
   }
 });
 
+test("a page that leaves puts the site's title back only if the next page has not set its own", () => {
+  // The pages' changes overlap: the next page can set its title before this
+  // one has gone, and putting back the title from before this page left the
+  // tab naming a page the visitor had left (19 of 40 moves through the menu).
+  const hooks = readFileSync(join(here, "..", "hooks.js"), "utf8");
+  const hook = between(hooks, "export function usePageTitle", "\n}\n");
+  assert.match(hook, /const title = pageTitle\(sub\);\s*document\.title = title;/);
+  assert.match(hook, /if \(document\.title === title\) document\.title = pageTitle\(\);/);
+  assert.doesNotMatch(hook, /const before = document\.title/);
+});
+
+// Each page's stylesheet beats site.css's rules of the same weight only
+// when it comes after it in the page. Which page's code runs first depends
+// on how the page was opened (fresh, through the menu, fetched ahead), so
+// every page module loads site.css itself, before its own sheet: the
+// module runs once, and site.css is always in the page first (the review
+// of 3 November 2026 found pages.css before site.css on every fresh /story
+// on the dev server, and the Story's links without their underline).
+test("every page module loads site.css before its own stylesheet", () => {
+  const modules = readdirSync(here).filter((name) => name.endsWith(".jsx"));
+  for (const page of ["HomePage.jsx", "StoryPage.jsx", "MethodPage.jsx", "ContactPage.jsx", "DemoPage.jsx", "OwnerPage.jsx", "NotFoundPage.jsx", "RegisterPage.jsx", "SignInPage.jsx"]) {
+    assert.ok(modules.includes(page), `${page} is one of them`);
+  }
+  for (const name of modules) {
+    const sheets = [...read(name).matchAll(/^import "([^"]+\.css)";/gm)].map((m) => m[1]);
+    const own = sheets.find((sheet) => sheet.startsWith("./"));
+    assert.ok(own, `${name} has a stylesheet of its own`);
+    assert.equal(sheets[0], "../site.css", `${name} loads ../site.css first (its sheets: ${sheets.join(", ")})`);
+    assert.ok(sheets.indexOf("../site.css") < sheets.indexOf(own), `${name} loads site.css before ${own}`);
+  }
+  // The frame too: site.css is its first import, before the menu and the footer bring their sheets, so on a
+  // fresh About or Methodology page (whose code may run after the frame's) site.css still comes first.
+  const shell = readFileSync(join(here, "..", "SiteShell.jsx"), "utf8");
+  assert.match(shell.match(/^import [^\n]+$/m)[0], /^import "\.\/site\.css";$/, "SiteShell.jsx imports site.css first");
+});
+
 test("no page imports a component the second website removed", () => {
   for (const name of PAGES) {
     const source = read(name);
@@ -130,23 +229,158 @@ test("no page imports a component the second website removed", () => {
   }
 });
 
-test("the Story is the meal, the meeting and the three editions, in that order, and nothing else", () => {
+// The class names a page's JSX gives its elements ("pg story-page", and
+// each quoted name inside className={...}).
+function classNames(name) {
+  const text = words(name);
+  const lists = [...text.matchAll(/className="([^"]+)"/g)].map((m) => m[1]);
+  for (const m of text.matchAll(/className=\{([^}]+)\}/g)) lists.push(...[...m[1].matchAll(/"([^"]+)"/g)].map((q) => q[1]));
+  return new Set(lists.flatMap((list) => list.split(/\s+/)).filter(Boolean));
+}
+
+test("the Story is its title, the five steps of the roots and the three editions, in that order, and nothing else", () => {
   const list = headings("StoryPage.jsx");
   assert.deepEqual(
     list.map((h) => h.text),
-    ["Where Chernozem comes from", "At Penn", "First edition", "Second edition", "Third edition"],
+    ["Forged in Three Generations", "First edition", "Second edition", "Third edition"],
   );
   assert.equal(list[0].tag, "h1");
+  // The browser tab still says Story.
+  assert.match(read("StoryPage.jsx"), /usePageTitle\("Story"\)/);
   const text = words("StoryPage.jsx");
-  // The meal is on the first screen, under the title.
-  assert.match(text, /family table/);
-  assert.match(text, /northeastern China/);
-  assert.match(text, /University of Pennsylvania/);
+  // The five steps, in the owner's order: the table, the visit, Ukraine,
+  // building it, Penn (the last step now; no "At Penn" section).
+  assert.deepEqual(
+    [...text.matchAll(/say: "([^"]+)"/g)].map((m) => m[1]),
+    [
+      "For three generations, one story was told at William’s family table.",
+      "The summer after his freshman year, William went to see that land.",
+      "Then he saw the same story on the same black soil, in Ukraine.",
+      "He built it for Ukraine, then for everyone.",
+      "William took that story with him to a business program at the University of Pennsylvania.",
+    ],
+  );
+  assert.doesNotMatch(text, /At Penn|story-penn|story-meal|Where Chernozem comes from/);
+  // The facts the owner gave this round, as he gave them (with the
+  // characters that keep a line from breaking in the wrong place: U+2011,
+  // the non-breaking hyphen, and U+00A0, the no-break space after "Dr.").
+  const NBSP = String.fromCharCode(0xa0);
+  for (const fact of [
+    "After the Sino-Japanese War, his great‑grandparents were starving",
+    "He visited his relatives in northeastern China and walked the black‑soil plains his family once farmed.",
+    "He wanted to build a tool for them.",
+    "He chose to build for its farmers first, so they would not go through what his great‑grandparents did.",
+    `He spent a year researching chernozem rehabilitation with Dr.${NBSP}Bo Zhao of the University of Washington`,
+    "designed gated aggregation and built the first Chernozem Atlas",
+    "an internship at ZBDL Land and Resources in Beijing, where he worked on recovering land after disasters",
+    "There he met some of his current partners.",
+    "with support from people at Penn and in the industry",
+  ]) {
+    assert.ok(text.includes(fact), `the Story tells "${fact}"`);
+  }
+  // Never the plain characters there: "Dr." alone at a line's end, or
+  // "black-" and "great-" broken from the rest of their word.
+  assert.doesNotMatch(text, /Dr\. Bo|great-grandparents|black-soil/, "no line breaks inside a name or a compound");
+  // "ten ways" is NUMBERS.paperOperators, written as a word, never typed.
+  assert.equal(NUMBERS.paperOperators, 10);
+  assert.match(text, /he compared \$\{inWords\(NUMBERS\.paperOperators\)\} ways to rank damaged land/);
+  assert.doesNotMatch(text, /compared (ten|10) ways/);
   // What the owner asked to take out.
   for (const gone of ["Who makes it", "What it stands for", "Try it on your own land", "The soil", "Film", "Register", "Polytechnic", "Pasadena"]) {
     assert.ok(!text.includes(gone), `the Story no longer has "${gone}"`);
   }
   assert.ok(!/import Film/.test(read("StoryPage.jsx")), "the Story does not load the film");
+});
+
+test("the Story's five steps are an ordered list on the dark band, joined by four drawn arrows that screen readers skip", () => {
+  const text = words("StoryPage.jsx");
+  // Everything up to the editions is inside the dark band.
+  const band = between(text, 'className="pg-sec pg-sec-dark story-roots"', 'className="story-editions"');
+  assert.match(band, /<h1 className="pg-h1 pg-display" id="story-title">/);
+  // role="list": Safari's screen reader stops calling a list a list once site.css styles its markers away.
+  assert.match(band, /<ol className="story-roots-steps" role="list">\s*\{ROOTS\.map\(/);
+  assert.equal([...text.matchAll(/^\s*say: "/gm)].length, 5, "five steps");
+  // Each step: the statement set large, then its smaller description.
+  assert.match(band, /"story-statement pg-fade" : "story-statement"/);
+  assert.match(band, /"story-roots-tell pg-fade-2" : "story-roots-tell"/);
+  // A description's last two words share a line (Safari before 26 has no
+  // text-wrap: pretty; a phone left "it." alone), as on the About page.
+  assert.match(band, /\{lastTwoTogether\(text\)\}/);
+  const join = vm.runInNewContext(text.match(/const lastTwoTogether = (\(text\) => [^\n]+);\n/)[1]);
+  assert.equal(join("and have gradually scaled it."), `and have gradually scaled${String.fromCharCode(0xa0)}it.`);
+  // An arrow after every step but the last: four, pointing down.
+  assert.match(band, /\{n < ROOTS\.length - 1 \? <DownArrow reveal=\{rootsReveal\} \/> : null\}/);
+  const arrow = between(text, "function DownArrow", "\n}\n");
+  assert.match(arrow, /<span className="story-roots-next" aria-hidden="true"/);
+  assert.match(arrow, /<svg className="story-roots-arrow" viewBox="0 0 20 88" focusable="false">/);
+  assert.match(arrow, /className="story-roots-shaft" d="M10 1V86"/);
+  assert.match(arrow, /className="story-roots-tip" d="M2 78l8 8 8-8"/);
+  // Light on the dark band.
+  const css = read("pages.css");
+  assert.match(css, /\.story-roots-next \{[^}]*color: var\(--field-dark-muted\);/);
+  assert.match(css, /\.story-roots-arrow path \{[^}]*fill: none;[^}]*stroke: currentColor;/);
+});
+
+test("the Story's steps rise and its arrows draw only when motion is welcome, and a fast scroll never leaves one unfinished", () => {
+  const text = words("StoryPage.jsx");
+  const hook = between(text, "function useRootsReveal", "function DownArrow");
+  // Without an observer everything is simply there.
+  assert.match(hook, /typeof IntersectionObserver === "undefined"\) \{\s*node\.classList\.add\("is-in"\);/);
+  // A part above the screen is finished at once, and whatever starts
+  // finishes every part above it with it (a fling, a jump to an edition).
+  assert.match(hook, /if \(entry\.boundingClientRect\.bottom < 0\) \{\s*finish\(target\);/);
+  assert.match(hook, /parts\.slice\(0, parts\.indexOf\(target\) \+ 1\)/);
+  // The first screen's parts come after the title and the first step, in
+  // reading order; the first step itself is plain CSS on the first frame.
+  assert.match(text, /const OPENING_MS = \d+;\s*const STAGGER_MS = \d+;/);
+  assert.match(hook, /OPENING_MS \+ STAGGER_MS \* queued\+\+/);
+  assert.match(text, /data-rise=\{first \? undefined : ""\}/);
+  // pages.css hides the arrows only for visitors who did not ask for
+  // reduced motion (data-rise is site.css's, under the same condition).
+  const css = read("pages.css");
+  const motion = css.match(/@media \(prefers-reduced-motion: no-preference\) \{\s*\.story-roots-shaft \{[\s\S]*?\n\}\n/);
+  assert.ok(motion, "the arrows' entrance sits in a no-preference block");
+  assert.match(motion[0], /\.story-roots-next:not\(\.is-in\) \.story-roots-shaft \{\s*transform: scaleY\(0\);/);
+  // The head starts where the line starts: its travel is the line's length
+  // (the line runs from 1 to 86, the head's point is at 86).
+  assert.match(motion[0], /\.story-roots-next:not\(\.is-in\) \.story-roots-tip \{\s*opacity: 0;\s*transform: translateY\(-85px\);/);
+  assert.match(text, /d="M10 1V86" \/>\s*<path className="story-roots-tip" d="M2 78l8 8 8-8"/);
+  assert.doesNotMatch(css.replace(motion[0], ""), /story-roots[^{}]*:not\(\.is-in\)/, "nothing of the roots is hidden outside it");
+  const site = readFileSync(join(here, "..", "site.css"), "utf8");
+  assert.match(site, /@media \(prefers-reduced-motion: no-preference\) \{\s*\.js \.site \[data-rise\] \{\s*opacity: 0;/);
+});
+
+test("pages.css: the Story's title stands above its steps, which start three columns in on a wide screen", () => {
+  const css = read("pages.css");
+  assert.match(css, /\.story-roots-head \{\s*grid-column: 1 \/ 13;\s*\}/);
+  assert.match(css, /\.story-roots-steps \{\s*grid-column: 1 \/ 13;\s*\}/);
+  // Wide: the steps from the page's second line of text (three columns
+  // in, as on the About page), a clear step under the title; no sticky
+  // title beside a half of the band left empty (the review, 3 November 2026).
+  const wide = css.match(/@media \(min-width: 1101px\) \{\s*\.pg \.story-roots-steps \{\s*grid-column: 4 \/ 13;\s*margin-top: (\d+)px;/);
+  assert.ok(wide, "the steps three columns in on a wide screen");
+  assert.ok(Number(wide[1]) >= 32, "a clear step under the title");
+  assert.doesNotMatch(css, /\.story-roots-head \{[^}]*position: sticky/);
+  // Below 1100 px the steps take the whole width, a step under the title.
+  assert.match(css, /@media \(max-width: 1100px\) \{[\s\S]*?\.pg \.story-roots-steps \{\s*margin-top: 28px;/);
+  // The arrows and the statements share one left edge: one axis.
+  assert.match(css, /\.story-roots-next \{\s*display: block;\s*width: 20px;/);
+  // Two lines at most for the title, on the narrowest phones too.
+  assert.match(css, /@media \(max-width: 359px\) \{\s*\.story-roots \.pg-display \{\s*font-size: var\(--step-head\);/);
+  // The old meal and Penn rules are gone with their section.
+  assert.doesNotMatch(css, /story-meal|story-penn/);
+});
+
+test("no class of the Story page is one the About page's sideways stories style", () => {
+  // scrollstory.css styles ".site .story" and its parts; once the About
+  // page has been opened its rules stay in the browser, and ".story" on
+  // this page's outer box added a light band above the black soil.
+  const used = classNames("StoryPage.jsx");
+  assert.ok(used.has("story-page") && !used.has("story"), "the page's outer box is story-page");
+  const scroll = readFileSync(join(here, "..", "components", "scrollstory.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const styled = new Set([...scroll.matchAll(/\.(story[a-z0-9-]*)/g)].map((m) => m[1]));
+  assert.ok(styled.has("story"), "scrollstory.css still styles .story (the reason for this check)");
+  for (const name of used) assert.ok(!styled.has(name), `scrollstory.css does not style .${name}`);
 });
 
 test("the Story's edition bar links to each edition, and each edition has its pictures", () => {
@@ -181,6 +415,41 @@ test("the Story counts ACLED's events as events, and links the Dataverse deposit
   assert.equal(LINKS.paper, "https://doi.org/10.7910/DVN/IYXPVS");
 });
 
+test("the Story's Second edition is the first Chernozem Atlas the fourth step names: for Ukraine only, before Field", () => {
+  // The owner (2026-11-03): when he made the second edition he had only a
+  // Chernozem Atlas, for Ukraine alone, and no Field; Field came with the
+  // third. The fourth step keeps his "built the first Chernozem Atlas".
+  const source = words("StoryPage.jsx");
+  const first = between(source, 'id="first-edition"', 'id="second-edition"');
+  const second = between(source, 'id="second-edition"', 'id="third-edition"');
+  const third = between(source, 'id="third-edition"', "</section>");
+  assert.ok(source.includes("designed gated aggregation and built the first Chernozem Atlas"));
+  assert.match(second, /<p>The Chernozem Recovery Atlas, a web page run on a laptop\. It was the first Chernozem Atlas, for Ukraine only\. There was no Field&nbsp;yet\.<\/p>/);
+  assert.doesNotMatch(first, /\bField\b/, "the First edition had no Field");
+  assert.match(third, /<p>Field reads a farmer’s own fields/, "Field arrives with the Third edition");
+});
+
+test("a page title's mask leaves room for the tails of g, p and y, and nothing after the title moves", () => {
+  // A title's line is 0.88 to 0.92 of its size, so the tails of "Forged"
+  // and "Try the demo" hung below a mask that ended at the line, and were
+  // cut off. The mask reaches a fifth of the largest title size lower and
+  // gives that back below itself; the rise starts as much lower, so the
+  // title still starts out of sight.
+  const css = read("pages.css");
+  const mask = css.match(/\n\.pg-mask \{([^}]*)\}/)[1];
+  assert.match(mask, /overflow: hidden;/);
+  assert.match(mask, /padding-bottom: calc\(var\(--step-display\) \* 0\.2 \+ 0\.08em\);/);
+  assert.match(mask, /margin-bottom: calc\(var\(--step-display\) \* -0\.2\);/);
+  assert.match(css, /@keyframes pg-rise \{\s*from \{\s*transform: translateY\(calc\(104% \+ 0\.2em\)\);/);
+  // Each page's one mask holds its title, no larger than the display size.
+  for (const page of PAGES) {
+    const masks = [...words(page).matchAll(/<div className="pg-mask">\s*<(\w+) className="([^"]+)"/g)];
+    assert.equal(masks.length, 1, `${page} has one title mask`);
+    assert.equal(masks[0][1], "h1", `${page}: the mask holds the title`);
+    assert.match(masks[0][2], /^pg-h1( pg-display)?$/, `${page}: the title is heading or display size`);
+  }
+});
+
 test("the Story credits the base maps its old maps were drawn on", () => {
   const source = words("StoryPage.jsx");
   const first = between(source, 'id="first-edition"', 'id="second-edition"');
@@ -196,6 +465,15 @@ test("the Story credits the base maps its old maps were drawn on", () => {
   assert.match(second, /https:\/\/openfreemap\.org\//);
   assert.match(second, /OpenMapTiles/);
   assert.match(second, /OpenStreetMap/);
+});
+
+test("the Story's Third edition sets plant health, water and stress against 2019 to 2021, and harvest timing apart, as the other pages do", () => {
+  // Harvest timing is read from this season's curve, heat units and radar,
+  // never from the normal years (src/lib/field/method.js harvestStage and
+  // combineHarvestEstimate); the About page and the Methodology say so too.
+  const third = between(words("StoryPage.jsx"), 'id="third-edition"', "</section>");
+  assert.match(third, /<p>Field reads a farmer’s own fields on every clear Sentinel-2 pass: plant health, water and stress against 2019 to 2021, and harvest timing\.<\/p>/);
+  assert.doesNotMatch(third, /harvest timing, against/);
 });
 
 test("the Demo page is the two doors and the Register line, and nothing about a code", () => {
@@ -374,7 +652,7 @@ test("no page mentions an access code, the app challenge or a field count", () =
     assert.doesNotMatch(text, new RegExp(`${CHALLENGE}|LINKS\\.cac`), `${name} does not name the app challenge`);
     assert.doesNotMatch(text, /\b1[23] fields\b|twelve fields|DEMO\.fields/i, `${name} prints no field count`);
   }
-  // The About page still has the link it uses.
+  // No link to it either.
   assert.equal(LINKS.cac, undefined, "the app challenge is named nowhere, so there is no link to it");
   const content = readFileSync(join(here, "..", "content", "site.js"), "utf8");
   assert.doesNotMatch(content, /access code/i, "site.js no longer talks about an access code");
@@ -711,6 +989,165 @@ test("Field: 'What it reads' follows the steps closely, the phone beside both on
   assert.match(tablet, /\.meth-use,\s*\.meth-reads \{\s*grid-row: auto;/);
 });
 
+test("Field's technical part: the four readings, the condition beside its laboratory, how fields, crop and damage are found, and what it cannot see", () => {
+  const source = read("MethodPage.jsx");
+  const field = between(source, 'id="product"', 'id="atlas"');
+  // After "What it reads", in reading order, on the Atlas part's classes
+  // (the owner: "have the descriptions ... of the algorithms behind Field, as well").
+  const order = ['<div className="meth-use-row">', 'className="meth-scores-intro" id="readings"', 'className="meth-scores meth-readings"', 'className="meth-gate-text" id="condition"', 'className="meth-gate-lab"', "<ConditionLab />", 'className="meth-scores meth-how"', 'className="meth-limits-text"', "What it cannot see."];
+  let last = -1;
+  for (const part of order) {
+    const at = field.indexOf(part);
+    assert.ok(at > last, `${part} comes next in the Field part`);
+    last = at;
+  }
+  assert.match(source, /import ConditionLab from "\.\.\/components\/ConditionLab\.jsx";/);
+  // The four readings, a formula and one sentence under each name.
+  const readings = between(field, 'className="meth-scores meth-readings"', "</Stagger>");
+  assert.deepEqual([...readings.matchAll(/<dt>([^<]+)<\/dt>/g)].map((m) => m[1]), ["Plant health", "Water", "Stress", "Harvest timing"]);
+  assert.equal((readings.match(/<dd className="meth-eq">/g) || []).length, 4, "a formula under each name");
+  for (const formula of ["NDVI = <span className=\"meth-whole\">(B8 − B4) / (B8 + B4)</span>", "NDWI = <span className=\"meth-whole\">(B8 − B11) / (B8 + B11)</span>", "NDRE = <span className=\"meth-whole\">(B8A − B5) / (B8A + B5)</span>", "ready = <span className=\"meth-whole\">{FM.bareNdvi} + share·(peak − {FM.bareNdvi})</span>"]) {
+    assert.ok(readings.includes(formula), `the readings show ${formula}`);
+  }
+  // As calm as Atlas's scores: one sentence a reading (the review, 3
+  // November 2026: Field's part was 3.6 times Atlas's words).
+  const sentences = [...readings.matchAll(/<dd>\s*([\s\S]*?)\s*<\/dd>/g)].map((m) => m[1].replace(/\s+/g, " "));
+  assert.equal(sentences.length, 4);
+  for (const sentence of sentences) assert.equal(sentence.split(/[.;:]\s+(?=[A-Z])/).length, 1, `one sentence: "${sentence.slice(0, 40)}…"`);
+  // Its last two words share a line (Safari before 26 has no text-wrap:
+  // pretty, which keeps a last word from standing alone elsewhere), as on
+  // the About page.
+  for (const sentence of sentences) assert.match(sentence, /&nbsp;\S+$/, `"…${sentence.slice(-24)}" keeps its last two words together`);
+  assert.match(readings, /\{FM\.redEdgeLead\} before&nbsp;NDVI/);
+  assert.match(readings, /\(share \{FM\.readyShare\.cereals\} for cereals and rapeseed, \{FM\.readyShare\.rowCrops\} for row crops\)/);
+  // The radar cut counts only for row crops (corn, soybean, sunflower; never cereals or rapeseed).
+  assert.match(readings, /checked by heat units and, for row crops, radar through&nbsp;cloud\./);
+  // The clouds, the 30 days and the normal years, as the code works them
+  // out: the readings are the median of every clear pixel of the last 30
+  // days; the scores and both stress rules use, per pixel, the middle of
+  // the three years, and the lowest-to-highest range gives only the tiles'
+  // Below and Above normal; the half-clear rule only picks the season's
+  // passes, which harvest timing reads.
+  const intro = between(field, 'id="readings"', "</Reveal>");
+  assert.match(intro, /Cloud Score\+ removes clouds pixel by pixel \(clear at \{FM\.clearPixelScore\} or more\)/);
+  assert.match(intro, /Plant health, water and stress use the median of the last \{FM\.latestDays\} days’ clear pixels, against the same weeks of \{FM\.baseline\.label\}: per pixel, the middle of the \{FIELD_RULES\.normalYears\} years \(the app’s Below and Above normal use their range\)\./);
+  assert.match(intro, /Harvest timing follows the passes \{FIELD_RULES\.clearShare\}&nbsp;clear\./);
+  assert.doesNotMatch(intro, /the normal is a range|a pass counts|from every clear pass/, "no rule wider than the code's");
+  // The condition: three formulas (the scores, held between 0 and 1, have
+  // their own names; the stress rule's thresholds have a line of their
+  // own); the weights, spans, thresholds, classes and holds all from
+  // site.js's FIELD_METHOD.
+  const condition = between(field, 'id="condition"', "<ConditionLab />");
+  assert.equal((condition.match(/className="meth-formula"/g) || []).length, 3);
+  assert.match(condition, /condition = <span className="meth-whole">\{FM\.weights\.plantHealth\}·health score<\/span> <span className="meth-whole">\+ \{FM\.weights\.water\}·water score<\/span> <span className="meth-whole">\+ \{FM\.weights\.noStress\}·\(1 − stressed share\)<\/span>/);
+  assert.match(condition, /health score = <span className="meth-whole">1 \+ \(NDVI − normal\) \/ \{FM\.healthSpan\}<\/span>\s*<br \/>\s*water score = <span className="meth-whole">1 \+ \(NDWI − normal\) \/ \{FM\.waterSpan\}<\/span>\s*<br \/>\s*each held between 0 and 1/);
+  assert.match(condition, /stressed = <span className="meth-whole">NDVI &lt; field median − \{two\(FM\.stressNdvi\.belowFieldMedian\)\}<\/span> <span className="meth-whole">and &lt; normal − \{two\(FM\.stressNdvi\.belowNormal\)\},<\/span> <span className="meth-whole">or NDRE &lt; field median − \{two\(FM\.stressRedEdge\.belowFieldMedian\)\}<\/span> <span className="meth-whole">and &lt; normal − \{two\(FM\.stressRedEdge\.belowNormal\)\}<\/span>/);
+  assert.doesNotMatch(condition, /plant health =|·plant health|·water \+|kept between/, "one name for the 0-to-1 parts");
+  assert.match(condition, /which colours it on the map: \{FIELD_RULES\.classes\}\./);
+  assert.match(condition, /High stress \(\{FIELD_RULES\.highStress\}% of the field or more\) holds it under \{FIELD_RULES\.stressedUnder\}, damage under \{FIELD_RULES\.damagedUnder\}, and a field with no crop has no&nbsp;condition\./);
+  // How fields, crop and damage are found, two sentences each; what it cannot see.
+  const how = between(field, 'className="meth-scores meth-how"', "</Stagger>");
+  assert.deepEqual([...how.matchAll(/<dt>([^<]+)<\/dt>/g)].map((m) => m[1]), ["Finding the fields", "The crop", "Damage on a field"]);
+  for (const [, note] of how.matchAll(/<dd>\s*([\s\S]*?)\s*<\/dd>/g)) {
+    assert.ok(note.replace(/\s+/g, " ").split(/(?<=[.;”])\s+(?=[A-Z])/).length <= 2, `about two sentences: "${note.trim().slice(0, 40)}…"`);
+    assert.match(note.trim(), /&nbsp;\S+$/, `"…${note.trim().slice(-24)}" keeps its last two words together`);
+  }
+  for (const quoted of ["{inWords(FM.edgePictures)} Sentinel‑2 pictures", "{FM.minFieldHa} ha", "{FM.outlineIou}", "{NUMBERS.cropHeldOutPercent}%", "{NUMBERS.cropLikelyPercent}%", "{FM.radarChangeDb} dB", "in at least {inWords(FM.radarSeasons)} growing seasons", "{FIELD_RULES.damageShare}%"]) {
+    assert.ok(how.includes(quoted), `the notes quote ${quoted}`);
+  }
+  // Fire is "unusual" against a normal year; the note no longer ties it to
+  // a war's start, since it also covers fields far from one.
+  assert.doesNotMatch(how, /worst year since the war began|lasts over/);
+  const limits = between(field, 'className="meth-limits-text"', "</Reveal>");
+  assert.match(limits, /Which pest or disease is at work/);
+  assert.match(limits, /a field with no damage found is not a safe field/);
+  // Compounds that read oddly split at a line's end keep their hyphen whole
+  // (U+2011, the non-breaking hyphen, as in "Sentinel‑2").
+  for (const word of ["hand‑drawn", "held‑out", "red‑edge"]) assert.ok(how.includes(word), `the notes write "${word}" with a non-breaking hyphen`);
+  assert.ok(limits.includes("look‑alike"), "and the limits \"look‑alike\"");
+  // No number typed into the words where the method or site.js has it.
+  const text = between(field, 'id="readings"', "What it cannot see.").replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+  assert.doesNotMatch(text, /0\.[532]·|\b0\.40\b|\b0\.65\b|\b0\.85\b|\b0\.805\b|\b0\.0[568]\b|\b0\.10\b|\b1\.5 ha\b|\b30 days\b|\b15%|\b3 dB\b|\b71\.8\b|\b93\.5\b/, "the rules and numbers come from the code or site.js");
+  // The look: the readings one under the other on a phone, two by two from
+  // 701 px, and still two by two on a wide screen, on the intro's eight
+  // columns (four across made lines of 30 letters); a formula's side never
+  // breaks inside; the notes keep a paragraph's measure.
+  const css = read("pages.css");
+  assert.match(css, /\.pg \.meth-readings \{\s*grid-template-columns: minmax\(0, 1fr\);/);
+  assert.match(css, /@media \(min-width: 701px\) \{\s*\.pg \.meth-readings \{\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
+  assert.match(css, /@media \(min-width: 1101px\) \{\s*\.pg \.meth-readings \{\s*grid-column: 1 \/ 9;\s*\}/);
+  assert.doesNotMatch(css, /\.meth-readings \{[^}]*repeat\([34],/, "never three or four across");
+  assert.match(css, /\.meth-whole \{\s*white-space: nowrap;/);
+  assert.match(css, /\.pg \.meth-how dd \{\s*max-width: 62ch;/);
+  // A formula keeps its own margin (".pg p" would zero it).
+  assert.match(css, /\.pg \.meth-formula \{\s*margin-top: 1\.2em;/);
+});
+
+test("the Field part's numbers in site.js are the app's own rules, and the page does not load the app's method", () => {
+  const FM = FIELD_METHOD;
+  // The website keeps the numbers instead of importing the method: an
+  // import made the build split the app's code into extra pieces every page
+  // loads (site.js, FIELD_METHOD's note).
+  for (const name of ["MethodPage.jsx", "../components/ConditionLab.jsx", "../components/conditionLab.js"]) {
+    const code = read(name).replace(/^\s*\/\/.*$/gm, "");
+    assert.doesNotMatch(code, /from "(\.\.\/)+lib\//, `${name} does not import the app's code`);
+  }
+  assert.match(read("MethodPage.jsx"), /import \{[^}]*\bFIELD_METHOD\b[^}]*\} from "\.\.\/content\/site\.js";/);
+  // Clouds, the normal years, a reading's window (method.js; field-gee.js).
+  assert.deepEqual([FM.baseline.from, FM.baseline.to, FM.baseline.label], [BASELINE.from, BASELINE.to, BASELINE.label]);
+  assert.equal(FM.clearPixelScore, CLEAR_PIXEL_SCORE);
+  assert.equal(FM.minClearShare, MIN_CLEAR_SHARE);
+  const gee = readFileSync(join(root, "server", "providers", "field-gee.js"), "utf8");
+  assert.equal(Number(gee.match(/export const LATEST_DAYS = (\d+);/)[1]), FM.latestDays);
+  // Stress: the two rules, and where "high" starts.
+  assert.deepEqual(FM.stressNdvi, STRESS_RULES);
+  assert.deepEqual(FM.stressRedEdge, RED_EDGE_RULES);
+  assert.equal(stressLevel(FM.stressHighShare), "high");
+  assert.notEqual(stressLevel(FM.stressHighShare - 0.001), "high");
+  const method = readFileSync(join(root, "src", "lib", "field", "method.js"), "utf8");
+  assert.match(method, /1 to 2 weeks before NDVI/);
+  assert.equal(FM.redEdgeLead, "one to two weeks");
+  // Harvest timing: bare soil, one ready share for cereals and rapeseed, one for the row crops.
+  assert.equal(FM.bareNdvi, BARE_NDVI);
+  for (const id of ["winterCereal", "springCereal", "rapeseed"]) assert.equal(CROP_PROFILES[id].readyShare, FM.readyShare.cereals, id);
+  for (const id of ["corn", "soybean", "sunflower"]) assert.equal(CROP_PROFILES[id].readyShare, FM.readyShare.rowCrops, id);
+  // The condition: weights (adding up to 1, so the formula needs no
+  // division), spans, classes and the two holds.
+  assert.deepEqual(FM.weights, CONDITION_WEIGHTS);
+  assert.ok(Math.abs(FM.weights.plantHealth + FM.weights.water + FM.weights.noStress - 1) < 1e-9);
+  assert.equal(FM.healthSpan, HEALTH_SPAN);
+  assert.equal(FM.waterSpan, WATER_SPAN);
+  assert.deepEqual(FM.classes, CONDITION_CLASSES);
+  assert.equal(FM.stressedMax, STRESSED_CONDITION_MAX);
+  assert.equal(FM.damagedMax, DAMAGED_CONDITION_MAX);
+  // What they make the page say (the brief's words).
+  const classes = FM.classes.map((item) => (Number.isFinite(item.upTo) ? `${item.label} under ${item.upTo.toFixed(2)}` : `${item.label} above`)).join(", ");
+  assert.equal(classes, "Poor under 0.40, Fair under 0.65, Good under 0.85, Very good above");
+  assert.equal(conditionClass(FM.stressedMax).label, "Good", "high stress: never above Good");
+  assert.equal(conditionClass(FM.damagedMax).label, "Fair", "damage: never above Fair");
+  // The page says it as the class each is held under.
+  const above = (score) => FM.classes[FM.classes.findIndex((item) => item.id === conditionClass(score).id) + 1].label;
+  assert.equal(above(FM.stressedMax), "Very good", "high stress: held under Very good");
+  assert.equal(above(FM.damagedMax), "Good", "damage: held under Good");
+  // Finding the fields: the smallest field, the pictures, the overlap measured.
+  assert.equal(Number(gee.match(/\n {2}minHa: ([\d.]+),/)[1]), FM.minFieldHa);
+  for (const lat of [49.7, -34.9, 5]) assert.equal(detectionWindows(lat, "2026-10-01", null).length, FM.edgePictures, `edge pictures at ${lat}°`);
+  const docs = readFileSync(join(root, "docs", "METHODS.md"), "utf8");
+  assert.ok(docs.includes(`mean overlap (IoU) **${FM.outlineIou}**`), "the outline overlap is the docs' measurement");
+  // The harvest's radar check counts for the row crops (the tall ones)
+  // and never for cereals or rapeseed, as the page says.
+  for (const id of ["corn", "soybean", "sunflower"]) assert.equal(CROP_PROFILES[id].tall, true, `${id} is a tall row crop`);
+  for (const id of ["winterCereal", "springCereal", "rapeseed"]) assert.equal(CROP_PROFILES[id].tall, false, `${id} has no radar cut`);
+  assert.match(readFileSync(join(root, "src", "lib", "field", "method.js"), "utf8"), /if \(drop && \(!crop \|\| cropProfile\(crop\)\.id === "other" \|\| isTallCropId\(crop\)\)\)/);
+  // Damage: the radar change, how long it must last (field-gee.js takes the
+  // second-largest season, the Atlas's persistSeasons) and the war rule.
+  assert.equal(FM.radarChangeDb, RADAR_CHANGE_DB);
+  assert.equal(FM.radarSeasons, HEAVY_DAMAGE.persistSeasons);
+  assert.equal(FM.radarSeasons, 2, "field-gee.js radarChangeImage reads the second-largest season");
+  assert.match(gee, /for \(let j = i \+ 1; j < changes\.length; j \+= 1\) second = second\.max\(changes\[i\]\.min\(changes\[j\]\)\);/);
+  assert.equal(FM.damageRadarShare, DAMAGE_RULES.radarShare);
+});
+
 test("Methodology type: no step or score ends on one lone word, and nothing is under 14 px", () => {
   const css = read("pages.css");
   assert.match(css, /\.meth-use ol li \{[^}]*text-wrap: pretty;/);
@@ -754,7 +1191,7 @@ test("the Methodology page says where contact messages are kept, and no stale te
   // are added: "More than 1,000 automated tests."
   assert.match(text, /More than \{formatInt\(testsFloor\)\} automated tests\./);
   assert.match(text, /Math\.floor\(NUMBERS\.automatedTests \/ 100\) \* 100/);
-  assert.ok(NUMBERS.automatedTests >= 1053, "the count is at least the last full run's");
+  assert.ok(NUMBERS.automatedTests >= 1270, "the count is at least the last full run's (3 November 2026, after the review's fixes)");
   assert.doesNotMatch(text, /\b888\b/);
   // The Dataverse deposit is the research package, not "the paper's".
   assert.doesNotMatch(text, /The paper’s data and code/);

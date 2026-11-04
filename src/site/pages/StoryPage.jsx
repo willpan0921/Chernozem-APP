@@ -1,35 +1,66 @@
 // WHAT THIS FILE DOES
 // The website's Story page (chernozem.app/story): where Chernozem comes
-// from, in five parts and nothing else, in this order:
-//   1. the meal: the story told at William's family table (the first
-//      screen, under the page's title);
-//   2. the meeting: Penn, where William met some of his current partners;
-//   3-5. the first, second and third editions of the tool, each with a few
+// from, in two parts and nothing else, in this order:
+//   1. the roots, on the black-soil field (the dark band): the page's
+//      title, "Forged in Three Generations", then the story in five steps
+//      joined by drawn arrows pointing down: the story told at William's
+//      family table; his visit to that land in northeastern China; the
+//      same story in Ukraine; building the tool, for Ukraine and then for
+//      everyone; and Penn, where he met some of his current partners. Each
+//      step is one sentence set large with a smaller description under it.
+//      The title stands above the steps at every width. On a wide screen
+//      the steps start three columns in, on the page's second line of text
+//      (the About page's text starts on the same two lines: the left edge,
+//      or three columns in), so the band is never half empty; the arrows
+//      run down one axis at their left edge. Below 1100 px the steps take
+//      the whole width.
+//   2. the first, second and third editions of the tool, each with a few
 //      plain sentences and its pictures, large.
 // While the editions pass, a bar of the three sticks to the top of the
 // screen: each part fills with sage as the visitor reads through that
 // edition, and a click takes them to any edition (plain links, so it also
 // works without JavaScript).
 //
+// The steps' entrance: the first step fades in under the title as the
+// page opens; each later step rises into place, and each arrow draws
+// itself downwards, the first time it comes on screen. Every part above
+// one that starts is finished at the same moment, so a fast scroll, a jump
+// to an edition or a page opened further down never leaves part of the
+// story half-shown. With reduced motion everything is simply there
+// (pages.css, the "story-roots" rules).
+//
 // Every fact here is the founder's (the website brief); the numbers come
-// from src/site/content/site.js so they are quoted once. Nothing here
-// names who makes the app or asks the visitor to sign up: the page is the
-// story only.
+// from src/site/content/site.js so they are quoted once ("ten ways to rank
+// damaged land" is NUMBERS.paperOperators, written as a word). Nothing
+// here names who makes the app or asks the visitor to sign up: the page is
+// the story only.
+//
+// The page's outer box is "story-page", not "story": the About page's
+// sideways stories (components/scrollstory.css) style ".story", and their
+// rules stay in the browser once the About page has been opened, so they
+// would reach this page too.
 //
 // The Harvard Dataverse deposit is the Recovery Atlas's package (its
 // server, page and tables), so its link sits under the Second edition; the
 // First edition says only that the notebook became the research paper.
+// The Second edition was the first Chernozem Atlas, the one the fourth
+// step names: for Ukraine only, with no Field yet (the founder's words,
+// 2026-11-03; Field came with the third).
 // The old maps' base-map credits were cropped off with their corners, so
 // the page carries them: OpenStreetMap under the First edition's maps
 // (with ACLED for the attacks), OpenFreeMap in the Second edition's caption.
 //
 // WHO EDITS IT
-// The founder, for the words. The pictures are in public/site/story/ and
-// public/site/shots/; the layout is the "story-" block of pages.css.
+// The founder, for the words (the five steps are ROOTS, below). The
+// pictures are in public/site/story/ and public/site/shots/; the layout is
+// the "story-" block of pages.css.
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { LINKS, NUMBERS, formatInt } from "../content/site.js";
 import { useMediaQuery, usePageTitle, useReveal } from "../hooks.js";
+// site.css before the page's own sheet, so it is always in the page first
+// and pages.css's rules win their ties with it, however the page is loaded.
+import "../site.css";
 import "./pages.css";
 
 // The three editions, in order: the address of each part of the page and
@@ -40,9 +71,149 @@ const EDITIONS = [
   { id: "third-edition", word: "Third" },
 ];
 
+// A small count written as a word, the way the story is told ("ten
+// ways"); the count itself comes from site.js. Larger ones stay figures.
+const COUNT_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
+function inWords(n) {
+  return COUNT_WORDS[n] ?? formatInt(n);
+}
+
+// The story, in five steps: the sentence set large ("say") and the smaller
+// description under it ("tell", one paragraph or two). A line never breaks
+// where it should not: "Dr. Bo" has a no-break space (U+00A0, the title
+// stays with the name), and "black‑soil" and "great‑grandparents" have
+// non-breaking hyphens (U+2011, as the Methodology's "Sentinel‑2"). They
+// look like a plain space and hyphen: keep them (site-pages.test.js checks).
+const ROOTS = [
+  {
+    say: "For three generations, one story was told at William’s family table.",
+    tell: [
+      "After the Sino-Japanese War, his great‑grandparents were starving: bombs, landmines and the remnants of war had torn apart the black soil they farmed in northeastern China. They survived, and in time that same soil fed them back to life.",
+    ],
+  },
+  {
+    say: "The summer after his freshman year, William went to see that land.",
+    tell: [
+      "He visited his relatives in northeastern China and walked the black‑soil plains his family once farmed. He saw what floods and droughts had done to their harvests, and met kids his age already working those fields. He wanted to build a tool for them.",
+    ],
+  },
+  {
+    say: "Then he saw the same story on the same black soil, in Ukraine.",
+    tell: [
+      "Drawn to international relations, geopolitics and peace, he watched the same kind of war tear up Ukraine’s farmland. He chose to build for its farmers first, so they would not go through what his great‑grandparents did.",
+    ],
+  },
+  {
+    say: "He built it for Ukraine, then for everyone.",
+    tell: [
+      `He learned the basics of Google Earth Engine, its libraries and how to code. He spent a year researching chernozem rehabilitation with Dr. Bo Zhao of the University of Washington: he compared ${inWords(NUMBERS.paperOperators)} ways to rank damaged land, designed gated aggregation and built the first Chernozem Atlas, bringing experience from an internship at ZBDL Land and Resources in Beijing, where he worked on recovering land after disasters.`,
+      "Over three editions, the same method grew to work for any soil, anywhere on Earth, after any war or natural disaster, and for anyone, even as everyday monitoring. Now the farmers of Ukraine, his family in northeastern China and any farmer anywhere can use it.",
+    ],
+  },
+  {
+    say: "William took that story with him to a business program at the University of Pennsylvania.",
+    tell: [
+      "There he met some of his current partners. They have worked on Chernozem together ever since, with support from people at Penn and in the industry, and have gradually scaled it.",
+    ],
+  },
+];
+
+// A description's last two words share a line: Safari before 26 has no
+// text-wrap: pretty, and a phone then left "it." or "them." alone on the
+// last line (the About page joins its reasons' last words the same way).
+const lastTwoTogether = (text) => text.replace(/ (?=\S*$)/, "\u00a0");
+
 // -0.8 printed with a true minus sign, as in the paper.
 function signed(n) {
   return String(n).replace("-", "−");
+}
+
+// The roots' entrance (see the top of this file). One observer for the
+// band: a step starts once a little of it is on screen, an arrow once most
+// of it is (so it is seen drawing), and every part above the one that
+// starts is finished with it. A part already above the screen when the
+// page opens is finished at once. The parts on the first screen wait for
+// the title and the first step, then come one at a time in reading order
+// (OPENING_MS, then STAGGER_MS apart), so the second step never appears
+// before the first. Without an observer everything is simply there.
+const OPENING_MS = 600;
+const STAGGER_MS = 400;
+
+function useRootsReveal() {
+  const watch = useRef(null);
+  return useCallback((node) => {
+    if (!node) return undefined;
+    if (typeof IntersectionObserver === "undefined") {
+      node.classList.add("is-in");
+      return undefined;
+    }
+    if (!watch.current) {
+      const opened = performance.now();
+      const timers = new Set();
+      let queued = 0;
+      // This part and every part above it.
+      const finish = (target) => {
+        const band = target.closest(".story-roots");
+        const parts = band ? [...band.querySelectorAll("[data-roots]")] : [target];
+        for (const part of parts.slice(0, parts.indexOf(target) + 1)) {
+          part.classList.add("is-in");
+          io.unobserve(part);
+        }
+      };
+      const io = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            const target = entry.target;
+            if (entry.boundingClientRect.bottom < 0) {
+              finish(target);
+              continue;
+            }
+            const need = target.classList.contains("story-roots-next") ? 0.6 : 0.15;
+            if (entry.intersectionRatio < need) continue;
+            if (performance.now() - opened > OPENING_MS) {
+              finish(target);
+              continue;
+            }
+            io.unobserve(target);
+            const timer = window.setTimeout(() => {
+              timers.delete(timer);
+              finish(target);
+            }, OPENING_MS + STAGGER_MS * queued++);
+            timers.add(timer);
+          }
+        },
+        { rootMargin: "0px 0px -8% 0px", threshold: [0, 0.15, 0.6] }
+      );
+      watch.current = {
+        io,
+        stop() {
+          timers.forEach((timer) => window.clearTimeout(timer));
+          timers.clear();
+          queued = 0;
+        },
+      };
+    }
+    const { io, stop } = watch.current;
+    io.observe(node);
+    return () => {
+      io.unobserve(node);
+      stop();
+    };
+  }, []);
+}
+
+// The arrow between two steps, pointing down to the next one: a line and
+// its head, light on the dark band. Decoration only (aria-hidden): the
+// list itself gives the order.
+function DownArrow({ reveal }) {
+  return (
+    <span className="story-roots-next" aria-hidden="true" data-roots="" ref={reveal}>
+      <svg className="story-roots-arrow" viewBox="0 0 20 88" focusable="false">
+        <path className="story-roots-shaft" d="M10 1V86" />
+        <path className="story-roots-tip" d="M2 78l8 8 8-8" />
+      </svg>
+    </span>
+  );
 }
 
 // Follows the reading: which edition is in the middle of the screen, and
@@ -90,48 +261,50 @@ function useEditionProgress() {
 
 export default function StoryPage() {
   usePageTitle("Story");
-  // The entrances of each part (site.css, "Entrances"): one observer
-  // callback, attached to every part's grid.
+  // The entrances of each edition (site.css, "Entrances"): one observer
+  // callback, attached to every edition's grid.
   const reveal = useReveal();
+  const rootsReveal = useRootsReveal();
   const { active, fills } = useEditionProgress();
 
   return (
-    <div className="pg story">
-      {/* 1. The meal: the page's title and the family story, on the black-soil field. */}
-      <section className="pg-sec pg-sec-dark story-meal" aria-labelledby="story-title">
-        <div className="pg-grid story-meal-grid">
-          <div className="story-meal-title">
+    <div className="pg story-page">
+      {/* 1. The roots: the page's title and the story in five steps, on the black-soil field. */}
+      <section className="pg-sec pg-sec-dark story-roots" aria-labelledby="story-title">
+        <div className="pg-grid story-roots-grid">
+          <div className="story-roots-head">
             <div className="pg-mask">
               <h1 className="pg-h1 pg-display" id="story-title">
-                Where Chernozem comes from
+                Forged in Three Generations
               </h1>
             </div>
           </div>
-          <div className="story-meal-text">
-            <p className="story-statement pg-fade">For three generations, one story was told at William’s family table.</p>
-            <p className="pg-fade-2">His great-grandparents farmed black soil in northeastern China. The Sino-Japanese War left their land unusable, and for a while there was nothing to eat.</p>
-          </div>
+          {/* role="list": Safari stops calling a list a list once its markers are styled away */}
+          <ol className="story-roots-steps" role="list">
+            {ROOTS.map(({ say, tell }, n) => {
+              const first = n === 0;
+              return (
+                <li className="story-roots-step" key={say}>
+                  {/* The first step is on the first screen: it fades in with the title; the others rise as they come. */}
+                  <div className="story-roots-words" data-roots={first ? undefined : ""} ref={first ? undefined : rootsReveal}>
+                    <p className={first ? "story-statement pg-fade" : "story-statement"} data-rise={first ? undefined : ""}>
+                      {say}
+                    </p>
+                    {tell.map((text, i) => (
+                      <p className={first ? "story-roots-tell pg-fade-2" : "story-roots-tell"} data-rise={first ? undefined : ""} style={first ? undefined : { "--i": i + 1 }} key={text}>
+                        {lastTwoTogether(text)}
+                      </p>
+                    ))}
+                  </div>
+                  {n < ROOTS.length - 1 ? <DownArrow reveal={rootsReveal} /> : null}
+                </li>
+              );
+            })}
+          </ol>
         </div>
       </section>
 
-      {/* 2. The meeting. */}
-      <section className="pg-sec story-penn" aria-labelledby="story-penn">
-        <div className="pg-grid" ref={reveal}>
-          <h2 className="pg-h2 story-penn-head" id="story-penn" data-rise="">
-            At Penn
-          </h2>
-          <div className="story-penn-text">
-            <p className="story-statement" data-rise="" style={{ "--i": 1 }}>
-              William took that story with him to a business program at the University of Pennsylvania.
-            </p>
-            <p data-rise="" style={{ "--i": 2 }}>
-              There he met some of his current partners. They have worked on Chernozem together since.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* 3-5. The editions, with the bar that follows the reading. */}
+      {/* 2. The editions, with the bar that follows the reading. */}
       <div className="story-editions">
         <nav className="story-mark" aria-label="The three editions">
           <ol className="story-mark-list">
@@ -202,7 +375,7 @@ export default function StoryPage() {
                 Second edition
               </h2>
               <div className="story-ed2-words" data-rise="" style={{ "--i": 1 }}>
-                <p>The Chernozem Recovery Atlas, a web page run on a laptop.</p>
+                <p>The Chernozem Recovery Atlas, a web page run on a laptop. It was the first Chernozem Atlas, for Ukraine only. There was no Field&nbsp;yet.</p>
                 <p>Near-term and postwar readings, sliders for soil value, disturbance and recovery context, about a dozen map layers and a ranked list of oblasts, in English or Chinese.</p>
                 <p className="story-ed-link">
                   <a className="pg-link" href={LINKS.paper} target="_blank" rel="noreferrer">
@@ -239,7 +412,7 @@ export default function StoryPage() {
             </h2>
             <div className="story-ed-text" data-rise="" style={{ "--i": 1 }}>
               <p>This app, at chernozem.app.</p>
-              <p>Field reads a farmer’s own fields on every clear Sentinel-2 pass: plant health, water, stress and harvest timing, against 2019 to 2021.</p>
+              <p>Field reads a farmer’s own fields on every clear Sentinel-2 pass: plant health, water and stress against 2019 to 2021, and harvest timing.</p>
               <p>Atlas scores any country or region square by square for governments, NGOs and corporations, after a war, flood, wildfire or drought.</p>
             </div>
             <figure className="pg-fig story-ed3-pic story-ed3-field" data-settle="" style={{ "--i": 2 }}>

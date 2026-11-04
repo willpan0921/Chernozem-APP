@@ -7,6 +7,8 @@
 // WHO EDITS IT
 // Nobody, normally.
 
+// The site's base rules first, so ./pages.css below wins every tie with them.
+import "../site.css";
 import { Link } from "react-router-dom";
 import { usePageTitle } from "../hooks.js";
 import "./pages.css";

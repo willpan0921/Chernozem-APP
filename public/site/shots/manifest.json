@@ -122,7 +122,7 @@
   {
     "file": "field-settings.webp",
     "title": "Field · Settings",
-    "what": "The Field settings page: the farm card (Demo farm near Kupiansk, Kharkiv region: 12 fields, 553 ha) with its satellite map of the traced fields, the Add a field and Find fields again buttons, and the list of fields below, each with its detected crop in a dropdown, its hectares and a delete button.",
+    "what": "The Field settings page: the farm card (the demo farm near Kupiansk, Kharkiv region, with its area) with its satellite map of the traced fields, the Add a field and Find fields again buttons, and the list of fields below, each with its detected crop in a dropdown, its hectares and a delete button.",
     "width": 1920,
     "height": 1200,
     "bytes": 95302
@@ -302,5 +302,23 @@
     "width": 960,
     "height": 600,
     "bytes": 16134
+  },
+  {
+    "file": "what-field-atlas-600.webp",
+    "title": "Chernozem · Field and Atlas",
+    "what": "The Chernozem pin and name above Field (the demo farm's fields on satellite imagery, Field 12 picked, with its water, plant health, stress and harvest readings) and Atlas (Ukraine's cropland in squares shaded by priority for September 2026, the weights and the top areas): About, What is Chernozem.",
+    "width": 600,
+    "height": 800,
+    "bytes": 50724,
+    "made": "The owner's own picture for What is Chernozem, sent on 3 November 2026 (1728 x 2304 JPEG): the Chernozem pin and name above two screens of the app, Field (Field 12 on the demo farm near Kupiansk, Sentinel-2, Oct 24) and Atlas (Ukraine, September 2026). Scaled and converted to WebP with Chromium's encoder (quality 0.85)."
+  },
+  {
+    "file": "what-field-atlas-1200.webp",
+    "title": "Chernozem · Field and Atlas · sharp copy",
+    "what": "The same picture twice as sharp, for sharp screens (srcset 2x).",
+    "width": 1200,
+    "height": 1600,
+    "bytes": 113108,
+    "made": "The owner's own picture for What is Chernozem, sent on 3 November 2026 (1728 x 2304 JPEG): the Chernozem pin and name above two screens of the app, Field (Field 12 on the demo farm near Kupiansk, Sentinel-2, Oct 24) and Atlas (Ukraine, September 2026). Scaled and converted to WebP with Chromium's encoder (quality 0.8)."
   }
 ]

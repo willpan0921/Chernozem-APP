@@ -1,17 +1,17 @@
 [
   {
     "files": [
-      "karasivka-wheat-600.webp",
-      "karasivka-wheat-768.webp"
+      "shell-casings-field-600.webp",
+      "shell-casings-field-1200.webp"
     ],
-    "title": "Burning field near Karasivka, 2024-07-01 (11)",
-    "what": "Fire on a wheat field near the village Karasivka (Kharkiv region of Ukraine) after Russian shelling on 1 July 2024: a strip of unburnt wheat runs through the blackened field to two firefighters spraying water on the flames.",
-    "author": "Kharkiv Regional State Administration (kharkivoda.gov.ua)",
-    "licence": "CC BY 4.0",
-    "licenceUrl": "https://creativecommons.org/licenses/by/4.0/",
-    "source": "https://commons.wikimedia.org/wiki/File:Burning_field_near_Karasivka,_2024-07-01_(11).jpg",
-    "original": "https://kharkivoda.gov.ua/news/127354",
-    "changes": "Cropped to 768 x 960 from 200 px in on the 1280 x 960 original (the 600 copy is that crop made smaller); converted to WebP.",
+    "title": "Spent artillery shell casings in a field",
+    "what": "Spent artillery shell casings, some rusted, lie in the grass of a field, with dry weeds and trees behind.",
+    "author": "Jose Hernandez, Camera 51 / Shutterstock.com (the editorial credit printed in the article)",
+    "licence": "Shutterstock editorial licence held by the publisher; Chernozem holds no licence of its own (the owner was told on 2026-11-03)",
+    "source": "https://responsiblestatecraft.org/ukraine-soil-contamination/",
+    "article": "\"Ukraine's vaunted 'bread basket' soil is now toxic\", Olena Melnyk and Sera Koulabdara, Responsible Statecraft, 29 February 2024: the article's header photo, printed there as \"Editorial credit: Jose HERNANDEZ Camera 51 / Shutterstock.com\"",
+    "original": "https://responsiblestatecraft.org/media-library/editorial-credit-jose-hernandez-camera-51-shutterstock-com.jpg?id=51578116",
+    "changes": "the owner's crop of the article's header photo (1220 x 1184), trimmed by 14 px at the bottom (a light bar left along its bottom-left edge from the page it was cut from) and 7 px at each side, so it keeps its shape, then converted to WebP: 600 x 582 (Chromium's encoder, quality 0.8) and, for sharp screens, 1200 x 1164 (quality 0.65)",
     "use": "About, Why Chernozem (HomePage.jsx), credited under the picture"
   }
 ]

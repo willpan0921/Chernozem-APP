@@ -22,6 +22,10 @@
 // src/site/content/site.js. A new page of the website goes into
 // src/lazyPages.js (its address and its file) and src/App.jsx.
 
+// site.css first, before the menu's and the footer's sheets, so it is in
+// the page before them however the website is opened (every page module
+// imports it first too).
+import "./site.css";
 import { Suspense, useEffect, useRef } from "react";
 import { useLocation, useOutlet } from "react-router-dom";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
@@ -30,7 +34,6 @@ import Footer from "./components/Footer.jsx";
 import { useScrollTop } from "./hooks.js";
 import { startCursorAssist } from "./cursorAssist.js";
 import { preloadFor } from "../lazyPages.js";
-import "./site.css";
 
 // Starts downloading the page a link leads to (a page of the website, or
 // the app's Field or Atlas overview behind the Demo page's buttons), once

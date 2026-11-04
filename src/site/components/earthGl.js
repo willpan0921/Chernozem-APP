@@ -17,16 +17,34 @@
 // a gentle shade towards the edge, a thin veil of air at the very edge, and
 // a smooth (anti-aliased) rim. Where the picture's two edges meet (180
 // degrees), the program reads it as one piece, so no line shows there.
+// Zoomed in, the Earth is drawn larger than the disc (u_radius, the
+// disc's radius times the zoom) and seen through the disc as through a
+// round lens (u_lens, the disc's own radius): the picture stops at the
+// lens's smooth edge, and the light, the shade and the air are laid over
+// the lens as over the whole Earth, so a zoomed Earth is still a round
+// globe on the page, never a square crop of it.
 //
 //   const earth = createEarthPainter(canvas, { onLost, onRestored })
 //                         null when the browser has no WebGL 2 (or the
 //                         program does not build): the globe then shows
 //                         its drawn Earth
 //   earth.maxTexture      the widest picture the graphics card takes
-//   earth.setPicture(img) puts the picture (an <img> or a canvas) on the
-//                         graphics card; true when it worked
+//   earth.setPicture(source, { restore })  puts the picture (an <img>, an
+//                         ImageBitmap or a canvas) on the graphics card;
+//                         true when it worked. A new picture takes the
+//                         old one's place only once it is whole on the
+//                         card: one the card cannot take (too little
+//                         memory for it) leaves the old one there, so the
+//                         Earth never goes blank. `restore` is what is put
+//                         back after a lost context (the <img> a bitmap
+//                         was made from, so the bitmap can be closed)
+//   earth.uploadMs        how long the last picture took to put on the
+//                         card (the page waits that long: the 6144 copy
+//                         takes up to about 0.1 s, so EarthGlobe.jsx puts
+//                         a larger copy on only while the Earth is still)
 //   earth.ready           a picture is on the card and drawing works
-//   earth.draw(centre, size, dpr)  draws the disc for that turn
+//   earth.draw(centre, size, dpr, zoom)  draws the disc for that turn and
+//                         that zoom (1: the whole Earth)
 //   earth.lost            the browser took the graphics away (the card was
 //                         reset, or too many pages use WebGL); onLost is
 //                         called then, and onRestored once it is back and
@@ -86,7 +104,8 @@ precision highp float;
 
 uniform sampler2D u_picture;
 uniform vec2 u_middle;   // the disc's middle, device pixels from the lower left
-uniform float u_radius;  // the disc's radius, device pixels
+uniform float u_radius;  // the Earth's radius, device pixels (the disc's times the zoom)
+uniform float u_lens;    // the disc's own radius, device pixels: the lens
 uniform vec2 u_tilt;     // sine and cosine of the latitude in the middle
 uniform float u_lng;     // the longitude in the middle, radians
 uniform vec2 u_tone;     // lift, saturation
@@ -101,7 +120,8 @@ const vec3 LIGHT = vec3(-0.4706, 0.5294, 0.7059); // from the upper left, in fro
 
 void main() {
   // The place under this pixel: shaderPlace in earthMath.js, step for step.
-  vec2 p = (gl_FragCoord.xy - u_middle) / u_radius;
+  vec2 q = gl_FragCoord.xy - u_middle;
+  vec2 p = q / u_radius;
   float d2 = dot(p, p);
   float toward = sqrt(max(1.0 - d2, 0.0));
   float x = toward * u_tilt.y - p.y * u_tilt.x;
@@ -121,20 +141,25 @@ void main() {
   vec2 dv = vec2(dFdx(uv.y), dFdy(uv.y));
   vec3 c = textureGrad(u_picture, uv, vec2(du.x, dv.x), vec2(du.y, dv.y)).rgb;
 
-  // The look.
+  // The look, laid over the lens as over a whole Earth (at zoom 1 the lens
+  // is the Earth's own disc, and l is p).
   c = pow(c, vec3(u_tone.x));
   float sea = smoothstep(0.02, 0.12, c.b - max(c.r, c.g));
   c += u_sea * sea;
   float grey = dot(c, vec3(0.2126, 0.7152, 0.0722));
   c = mix(vec3(grey), c, u_tone.y);
-  float sun = dot(vec3(p, toward), LIGHT);
+  vec2 l = q / u_lens;
+  float l2 = dot(l, l);
+  float front = sqrt(max(1.0 - l2, 0.0));
+  float sun = dot(vec3(l, front), LIGHT);
   c *= 1.0 + u_shade.x * (sun - 0.55);
-  float rim = 1.0 - toward;
+  float rim = 1.0 - front;
   c *= 1.0 - u_shade.y * rim * rim;
   c = mix(c, u_air.rgb, u_air.a * rim * rim * rim);
 
-  // A smooth rim: how much of this pixel lies inside the disc.
-  float inside = clamp((1.0 - sqrt(d2)) * u_radius + 0.5, 0.0, 1.0);
+  // A smooth rim: how much of this pixel lies inside the lens (and on the
+  // Earth, which at zoom 1 is the lens itself and zoomed in reaches past it).
+  float inside = min(clamp((1.0 - sqrt(l2)) * u_lens + 0.5, 0.0, 1.0), clamp((1.0 - sqrt(d2)) * u_radius + 0.5, 0.0, 1.0));
   o_colour = vec4(clamp(c, 0.0, 1.0) * inside, inside);
 }
 `;
@@ -164,6 +189,7 @@ export function createEarthPainter(canvas, { onLost, onRestored } = {}) {
     ready: false,
     lost: false,
     maxTexture: 0,
+    uploadMs: 0,
     look: { ...LOOK, sea: [...LOOK.sea], air: [...LOOK.air] },
     error: null,
     setPicture,
@@ -176,6 +202,8 @@ export function createEarthPainter(canvas, { onLost, onRestored } = {}) {
   let vao = null;
   let texture = null;
   let picture = null; // kept, to put back on the card after a lost context
+  let slant = null; // sharper reading at a slant, where the card can (and how much, read once)
+  let slantMost = 1;
 
   // The program, the triangle and the picture's place on the card.
   function build() {
@@ -191,7 +219,7 @@ export function createEarthPainter(canvas, { onLost, onRestored } = {}) {
       throw new Error(`the Earth's program did not link: ${gl.getProgramInfoLog(program)}`);
     }
     where = {};
-    for (const name of ["u_picture", "u_middle", "u_radius", "u_tilt", "u_lng", "u_tone", "u_sea", "u_shade", "u_air"]) {
+    for (const name of ["u_picture", "u_middle", "u_radius", "u_lens", "u_tilt", "u_lng", "u_tone", "u_sea", "u_shade", "u_air"]) {
       where[name] = gl.getUniformLocation(program, name);
     }
     // One triangle twice the canvas's size covers all of it.
@@ -205,39 +233,58 @@ export function createEarthPainter(canvas, { onLost, onRestored } = {}) {
     gl.vertexAttribPointer(corner, 2, gl.FLOAT, false, 0, 0);
     gl.bindVertexArray(null);
     painter.maxTexture = gl.getParameter(gl.MAX_TEXTURE_SIZE) || 0;
+    slant = gl.getExtension("EXT_texture_filter_anisotropic");
+    slantMost = slant ? Math.min(4, gl.getParameter(slant.MAX_TEXTURE_MAX_ANISOTROPY_EXT) || 1) : 1;
   }
 
   // The picture onto the card, with its smaller copies (mipmaps) for the
   // parts seen side-on near the edge, and sharper reading at a slant where
-  // the card can.
-  function upload() {
-    if (!picture) return false;
-    if (texture) gl.deleteTexture(texture);
-    texture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, texture);
+  // the card can. It goes into a new texture, which takes the old one's
+  // place only once it is whole: when the card reports an error (most
+  // likely too little memory for a large picture), the new one is let go
+  // and the old one stays, so the Earth never goes blank or black.
+  function upload(image) {
+    if (!image) return false;
+    for (let i = 0; i < 8 && gl.getError() !== gl.NO_ERROR; i++); // errors left from before are not this picture's
+    const next = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, next);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, picture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
     gl.generateMipmap(gl.TEXTURE_2D);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT); // east of 180 degrees is the picture's west edge again
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    const slant = gl.getExtension("EXT_texture_filter_anisotropic");
-    if (slant) gl.texParameterf(gl.TEXTURE_2D, slant.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(4, gl.getParameter(slant.MAX_TEXTURE_MAX_ANISOTROPY_EXT) || 1));
-    return !gl.isContextLost();
+    if (slant) gl.texParameterf(gl.TEXTURE_2D, slant.TEXTURE_MAX_ANISOTROPY_EXT, slantMost);
+    if (gl.getError() !== gl.NO_ERROR || gl.isContextLost()) {
+      gl.deleteTexture(next);
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      return false;
+    }
+    if (texture) gl.deleteTexture(texture);
+    texture = next;
+    return true;
   }
 
-  function setPicture(image) {
-    picture = image;
-    if (painter.lost) return false;
-    painter.ready = upload();
-    return painter.ready;
+  function setPicture(image, { restore = image } = {}) {
+    if (painter.lost) {
+      picture = restore; // put on the card when the browser gives the graphics back
+      return false;
+    }
+    const started = performance.now();
+    const ok = upload(image);
+    painter.uploadMs = performance.now() - started;
+    if (ok) {
+      picture = restore;
+      painter.ready = true;
+    }
+    return ok;
   }
 
-  function draw(centre, size, dpr) {
+  function draw(centre, size, dpr, zoom = 1) {
     if (!painter.ready || painter.lost || !size) return false;
-    const view = shaderView(centre, size, dpr, canvas.height);
+    const view = shaderView(centre, size, dpr, canvas.height, zoom);
     const look = painter.look;
     gl.viewport(0, 0, canvas.width, canvas.height);
     gl.clearColor(0, 0, 0, 0);
@@ -249,6 +296,7 @@ export function createEarthPainter(canvas, { onLost, onRestored } = {}) {
     gl.uniform1i(where.u_picture, 0);
     gl.uniform2f(where.u_middle, view.middle[0], view.middle[1]);
     gl.uniform1f(where.u_radius, view.radius);
+    gl.uniform1f(where.u_lens, view.lens);
     gl.uniform2f(where.u_tilt, view.tilt[0], view.tilt[1]);
     gl.uniform1f(where.u_lng, view.lng);
     gl.uniform2f(where.u_tone, look.lift, look.saturation);
@@ -274,7 +322,7 @@ export function createEarthPainter(canvas, { onLost, onRestored } = {}) {
     painter.lost = false;
     try {
       build();
-      painter.ready = upload();
+      painter.ready = upload(picture);
     } catch (error) {
       painter.error = String(error?.message || error);
       painter.ready = false;
