@@ -1,0 +1,37 @@
+// WHAT THIS FILE DOES
+// The security rules for the Firestore database in the chernozem-danny
+// Firebase project. They replace the "test mode" rules, which let anyone
+// read and write everything and stopped working after 30 days.
+//
+// The rule: a request is allowed only when it comes from someone signed in
+// with Firebase Authentication (Google, or an e-mail and a password).
+// Everyone else is refused. It covers every collection, including ones
+// added later.
+//
+// What uses Firestore today:
+//   - This app (src/, server/) does not read or write Firestore at all.
+//   - scripts/fetch-ndvi.js and scripts/seed-fields.js write "fields" and
+//     "fields/<id>/readings". They sign in with the service-account key
+//     through firebase-admin, which is not checked by these rules, so they
+//     keep working.
+//   - "notes" holds the notes from the old Notes page.
+//   - William's app shares the project. Any collection it uses is covered
+//     by the same rule, so it works for his signed-in users.
+//
+// Note: anyone can create an account on the Register page, so "signed in"
+// means "has an account", not "is on the team".
+//
+// WHO EDITS IT
+// Danny. Deploy a change with:
+//   npx firebase-tools deploy --only firestore:rules --project chernozem-danny
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Every document, in every collection and subcollection.
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
