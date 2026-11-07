@@ -24,6 +24,8 @@ import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { SITE, SITE_ACTIONS, SITE_PAGES } from "../content/site.js";
 import { leaveDemo } from "../../lib/demoMode.js";
+import { useLanguage, useT } from "../i18n/i18n.js";
+import LanguageSwitch from "./LanguageSwitch.jsx";
 import "./nav.css";
 
 // Who this browser is signed in as: the server's answer, or null.
@@ -65,12 +67,16 @@ export default function Nav() {
   const menuButton = useRef(null);
   const sheet = useRef(null);
   const action = actionFor(useSignedIn(pathname));
+  const t = useT("common");
+  const { lang } = useLanguage();
 
-  // Close the phone menu when the page changes, keep the page from
-  // scrolling behind it while it is open, let Esc close it and keep the
-  // Tab key inside it. While it is open the page's root says so
-  // (<html data-menu="open">): the About page's globe stops drawing then.
-  useEffect(() => setOpen(false), [pathname]);
+  // Close the phone menu when the page changes or the language is switched
+  // (the sheet has its own switch, and in another language the bar folds
+  // at another width: a sheet left open could lose its Close button), keep
+  // the page from scrolling behind it while it is open, let Esc close it
+  // and keep the Tab key inside it. While it is open the page's root says
+  // so (<html data-menu="open">): the About page's globe stops drawing then.
+  useEffect(() => setOpen(false), [pathname, lang]);
   useEffect(() => {
     const html = document.documentElement;
     html.classList.toggle("site-menu-open", open);
@@ -111,7 +117,7 @@ export default function Nav() {
   return (
     <header className={`sn${open ? " is-open" : ""}`}>
       <div className="sn-inner wrap">
-        <Link to="/" className="sn-brand" aria-label={`${SITE.name} home`}>
+        <Link to="/" className="sn-brand" aria-label={t("Chernozem home")}>
           {/* The PNG, not the webp: only the PNG has a transparent background. */}
           <picture>
             <source srcSet="/site/wordmark.webp" type="image/webp" />
@@ -119,10 +125,10 @@ export default function Nav() {
           </picture>
         </Link>
 
-        <nav className="sn-links" aria-label="Website pages">
+        <nav className="sn-links" aria-label={t("Website pages")}>
           {SITE_PAGES.map((page) => (
             <NavLink key={page.path} to={page.path} end={page.path === "/"} className={({ isActive }) => `sn-link${isActive ? " is-active" : ""}`}>
-              {page.label}
+              {t(page.label)}
             </NavLink>
           ))}
         </nav>
@@ -130,25 +136,26 @@ export default function Nav() {
         <div className="sn-right">
           {demoLink && (
             <Link to={SITE_ACTIONS.demo.path} className="sn-link sn-demo">
-              {SITE_ACTIONS.demo.label}
+              {t(SITE_ACTIONS.demo.label)}
             </Link>
           )}
           {!action.signedIn && (
             <Link to={SITE_ACTIONS.signin.path} className="sn-link sn-signin">
-              {SITE_ACTIONS.signin.label}
+              {t(SITE_ACTIONS.signin.label)}
             </Link>
           )}
+          <LanguageSwitch className="sn-lang" />
           <Link to={action.path} className="btn btn-sm sn-register" onClick={onAction}>
-            {action.label}
+            {t(action.label)}
           </Link>
           <button type="button" ref={menuButton} className="sn-menu-button" aria-expanded={open} aria-controls="site-menu" onClick={() => setOpen((value) => !value)}>
-            {open ? "Close" : "Menu"}
+            {open ? t("Close") : t("Menu")}
           </button>
         </div>
       </div>
 
       {open && (
-        <nav id="site-menu" ref={sheet} className="sn-sheet" aria-label="Website pages">
+        <nav id="site-menu" ref={sheet} className="sn-sheet" aria-label={t("Website pages")}>
           <ul className="sn-sheet-list">
             {links.map((page) => (
               <li key={`${page.path} ${page.label}`}>
@@ -161,11 +168,13 @@ export default function Nav() {
                     setOpen(false);
                   }}
                 >
-                  {page.label}
+                  {t(page.label)}
                 </NavLink>
               </li>
             ))}
           </ul>
+          {/* The languages, under the links: the bar's select is hidden on a phone. */}
+          <LanguageSwitch variant="buttons" className="sn-sheet-lang" />
         </nav>
       )}
     </header>

@@ -308,7 +308,7 @@ test("Walkthrough.jsx offers each film's captions as an English track, off until
   assert.match(track, /kind="captions"/);
   assert.match(track, /src=\{files\.captions\}/);
   assert.match(track, /srcLang="en"/);
-  assert.match(track, /label="English"/);
+  assert.match(track, /label=\{t\("English"\)\}/);
   assert.doesNotMatch(track, /\bdefault\b/, "not on by default");
   const video = source.slice(source.indexOf("<video"), source.indexOf("</video>"));
   assert.ok(video.includes(track), "the track is the film's own");

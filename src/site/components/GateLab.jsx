@@ -9,7 +9,8 @@
 // It is a data fragment (its root carries data-ui), so it keeps its own
 // small interface text and its chart's axis lines. The numbers are the
 // app's own formulas (src/lib/atlas/scoring.js); the styles are the
-// ".gl-" block of src/site/pages/pages.css.
+// ".gl-" block of src/site/pages/pages.css. Every word a reader sees goes
+// through t() (useT("labs"), src/site/i18n/).
 //
 // The chart is drawn at the width it really has on the page (measured,
 // and again whenever that width changes), one unit to one pixel, so its
@@ -23,7 +24,8 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { useReducedMotion } from "./motion.jsx";
-import { NUMBERS } from "../content/site.js";
+import { NUMBERS, formatInt } from "../content/site.js";
+import { useT } from "../i18n/i18n.js";
 
 function clamp01(v) {
   return Math.max(0, Math.min(1, v));
@@ -85,6 +87,7 @@ function useBoxWidth(ref, fallback) {
 }
 
 export default function GateLab() {
+  const t = useT("labs");
   const reduced = useReducedMotion();
   const chartRef = useRef(null);
   const W = useBoxWidth(chartRef, FIRST_WIDTH);
@@ -113,68 +116,68 @@ export default function GateLab() {
   const x = (f) => PAD.l + f * (W - PAD.l - PAD.r);
   const y = (s) => H - PAD.b - s * (H - PAD.t - PAD.b);
   const path = curve.map(([f, s], i) => `${i ? "L" : "M"}${x(f).toFixed(1)},${y(s).toFixed(1)}`).join("");
-  const gateWord = gate === 0 ? "Left out" : gate === 1 ? "Open" : `${Math.round(gate * 100)}% open`;
+  const gateWord = gate === 0 ? t("Left out") : gate === 1 ? t("Open") : t("{n}% open", { n: Math.round(gate * 100) });
 
   return (
     <div className="gl" data-ui>
       <div className="gl-controls">
-        <div className="gl-modes" role="group" aria-label="Time frame">
+        <div className="gl-modes" role="group" aria-label={t("Time frame")}>
           <button type="button" aria-pressed={near} onClick={() => setMode("near")}>
-            Near term
+            {t("Near term")}
           </button>
           <button type="button" aria-pressed={!near} onClick={() => setMode("post")}>
-            Post-crisis
+            {t("Post-crisis")}
           </button>
         </div>
         <p className="gl-note">
-          One imagined place with value {Math.round(VALUE * 100)} and damage {Math.round(DAMAGE * 100)}. Move its feasibility and watch what the two time frames do with it.
+          {t("One imagined place with value {value} and damage {damage}. Move its feasibility and watch what the two time frames do with it.", { value: Math.round(VALUE * 100), damage: Math.round(DAMAGE * 100) })}
         </p>
         <div className="gl-control">
           <label htmlFor="gl-feas">
-            Feasibility of this place <b>{Math.round(feas * 100)}</b>
+            {t("Feasibility of this place")} <b>{Math.round(feas * 100)}</b>
           </label>
           <input id="gl-feas" type="range" min="0" max="100" value={Math.round(feas * 100)} onChange={(e) => setFeas(Number(e.target.value) / 100)} />
         </div>
         {near ? (
           <div className="gl-control">
             <label htmlFor="gl-cutoff">
-              Feasibility cutoff <b>{Math.round(cutoff * 100)}</b>
+              {t("Feasibility cutoff")} <b>{Math.round(cutoff * 100)}</b>
             </label>
             <input id="gl-cutoff" type="range" min="0" max="60" value={Math.round(cutoff * 100)} onChange={(e) => setCutoff(Number(e.target.value) / 100)} />
           </div>
         ) : (
           <div className="gl-control">
             <label htmlFor="gl-wf">
-              Feasibility weight <b>{wf}</b>
+              {t("Feasibility weight")} <b>{wf}</b>
             </label>
             <input id="gl-wf" type="range" min="0" max="80" value={wf} onChange={(e) => setWf(Number(e.target.value))} />
           </div>
         )}
         <div className="gl-control">
           <label htmlFor="gl-wv">
-            Value weight <b>{wv}</b>
+            {t("Value weight")} <b>{wv}</b>
           </label>
           <input id="gl-wv" type="range" min="0" max="80" value={wv} onChange={(e) => setWv(Number(e.target.value))} />
         </div>
         <div className="gl-control">
           <label htmlFor="gl-wd">
-            Damage weight <b>{wd}</b>
+            {t("Damage weight")} <b>{wd}</b>
           </label>
           <input id="gl-wd" type="range" min="0" max="80" value={wd} onChange={(e) => setWd(Number(e.target.value))} />
         </div>
         <div className="gl-readout" aria-live="polite">
           <div>
-            <span>Priority</span>
+            <span>{t("Priority")}</span>
             <b>{Math.round(score * 100)}</b>
           </div>
           <div>
-            <span>The gate</span>
-            <b>{near ? gateWord : "Not used"}</b>
+            <span>{t("The gate")}</span>
+            <b>{near ? gateWord : t("Not used")}</b>
           </div>
         </div>
       </div>
       <div className="gl-chart" ref={chartRef}>
-        <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Priority against feasibility for the current settings">
+        <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={t("Priority against feasibility for the current settings")}>
           {near && (
             <>
               <rect x={x(0)} y={PAD.t} width={x(cutoff) - x(0)} height={H - PAD.t - PAD.b} fill="var(--data-war, #c45a3a)" opacity="0.18" />
@@ -195,7 +198,7 @@ export default function GateLab() {
           ))}
           {/* The axis's name on its own line under the numbers, centred under the plot. */}
           <text x={(x(0) + x(1)) / 2} y={H - 10} textAnchor="middle">
-            Feasibility
+            {t("Feasibility")}
           </text>
           {/* Drawn again (key) when the width changes, so a resize moves the curve and the dot at once instead of animating them. */}
           <motion.path key={`curve-${W}`} d={path} fill="none" stroke="var(--accent, #1f4a2a)" strokeWidth="3" strokeLinejoin="round" initial={false} animate={{ d: path }} transition={reduced ? { duration: 0 } : { duration: 0.35, ease: "easeOut" }} />
@@ -204,17 +207,17 @@ export default function GateLab() {
         <div className="gl-legend">
           <span>
             <i style={{ background: "var(--accent, #1f4a2a)" }} />
-            priority of this place, at every feasibility
+            {t("priority of this place, at every feasibility")}
           </span>
           {near && (
             <>
               <span>
                 <i style={{ background: "var(--data-war, #c45a3a)", opacity: 0.6 }} />
-                below the cutoff: left out
+                {t("below the cutoff: left out")}
               </span>
               <span>
                 <i style={{ background: "var(--data-arc, #e3b04b)", opacity: 0.7 }} />
-                the ramp, width {NUMBERS.rampWidth}
+                {t("the ramp, width {width}", { width: formatInt(NUMBERS.rampWidth, t.locale) })}
               </span>
             </>
           )}

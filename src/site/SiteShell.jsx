@@ -31,6 +31,7 @@ import { useLocation, useOutlet } from "react-router-dom";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import Nav from "./components/Nav.jsx";
 import Footer from "./components/Footer.jsx";
+import { LanguageProvider, useT } from "./i18n/i18n.js";
 import { useScrollTop } from "./hooks.js";
 import { startCursorAssist } from "./cursorAssist.js";
 import { preloadFor } from "../lazyPages.js";
@@ -59,10 +60,21 @@ export function startWarming(doc = document, preload = preloadFor) {
   };
 }
 
+// The website is drawn inside its language (src/site/i18n/i18n.js): the
+// provider decides it and holds the page until its dictionary is here.
 export default function SiteShell() {
+  return (
+    <LanguageProvider>
+      <Site />
+    </LanguageProvider>
+  );
+}
+
+function Site() {
   const outlet = useOutlet();
   const { pathname } = useLocation();
   const reduced = useReducedMotion();
+  const t = useT("common");
   useScrollTop();
   // The page only rises in from the second page on: on the first load the
   // page's own entrance (the headline rising from its baseline) plays.
@@ -77,7 +89,7 @@ export default function SiteShell() {
   return (
     <div className="site">
       <a className="skip" href="#main">
-        Skip to content
+        {t("Skip to content")}
       </a>
       <Nav />
       <AnimatePresence mode="popLayout" initial={false}>

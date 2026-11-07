@@ -112,6 +112,11 @@
 //           narrower than the picture (a tablet, a small laptop); fx
 //           when it is not given
 //
+// Languages: title and link.label arrive already in the website's language
+// (HomePage.jsx passes them through t); the steps' words stay English in
+// their constants and are translated here, where they are drawn, as are
+// the story's own words (the hint, "2 of 5", the progress row's name).
+//
 // WHO EDITS IT
 // Whoever works on the About page. The steps' words and pictures are in
 // HomePage.jsx; the look is in scrollstory.css.
@@ -120,6 +125,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { Link } from "react-router-dom";
 import { useMotionValueEvent, useScroll } from "motion/react";
 import { useMediaQuery, useNear } from "../hooks.js";
+import { useT } from "../i18n/i18n.js";
 import { enterDemo } from "../../lib/demoMode.js";
 import { FOLLOW, LEAD, entryTarget, fillAt, followStep, glideAt, glideMs, listStepAt, listTarget, nearlyHeld, pageTarget, rowAt, settleTarget, shareMiddle, spanOf, stepAt } from "./scrollStoryMath.js";
 import "./scrollstory.css";
@@ -227,6 +233,7 @@ function Along() {
 }
 
 export default function ScrollStory({ id, title, link, steps, surface = false }) {
+  const t = useT("home");
   const reduced = useMediaQuery("(prefers-reduced-motion: reduce)");
   const short = useMediaQuery("(max-height: 539px)");
   const held = !reduced && !short;
@@ -740,7 +747,7 @@ export default function ScrollStory({ id, title, link, steps, surface = false })
             </Link>
           </div>
           {held && (
-            <nav className="story-where" aria-label={`${title}, step by step`}>
+            <nav className="story-where" aria-label={t("{title}, step by step", { title })}>
               <ol className="story-progress">
                 {steps.map((step, i) => (
                   <li key={step.shot}>
@@ -753,17 +760,17 @@ export default function ScrollStory({ id, title, link, steps, surface = false })
                           }}
                         />
                       </span>
-                      <span className="story-label">{step.title}</span>
+                      <span className="story-label">{t(step.title)}</span>
                     </button>
                   </li>
                 ))}
               </ol>
               <p className="story-count" aria-hidden="true">
-                {current + 1} of {count}
+                {t("{current} of {count}", { current: current + 1, count })}
               </p>
               {hinted && (
                 <p className="story-hint" aria-hidden="true" ref={hintRef}>
-                  Scroll to move along
+                  {t("Scroll to move along")}
                   <Along />
                 </p>
               )}
@@ -781,14 +788,14 @@ export default function ScrollStory({ id, title, link, steps, surface = false })
                     wordsRefs.current[i] = node;
                   }}
                 >
-                  <h3 className="story-title">{step.title}</h3>
-                  <p className="story-text">{step.text}</p>
+                  <h3 className="story-title">{t(step.title)}</h3>
+                  <p className="story-text">{t(step.text)}</p>
                 </div>
                 <figure className="story-picture" style={{ "--fx": step.fx, "--fy": step.fy, "--tx": step.tx || step.fx }}>
                   <img
                     src={crop(step.shot, 800)}
                     srcSet={`${crop(step.shot, 800)} 1x, ${crop(step.shot, 1600)} 2x`}
-                    alt={step.alt}
+                    alt={t(step.alt)}
                     width="800"
                     height="500"
                     loading={near ? "eager" : "lazy"}

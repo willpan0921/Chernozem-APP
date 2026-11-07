@@ -19,7 +19,13 @@
 //
 //   <Film />                                  the film with its five chapters
 //   <Film chapters={[{ label, t }, ...]} />   other chapters (t in seconds)
-//   <Film caption="..." />                    a caption under it
+//   <Film caption="..." />                    a caption under it (already in
+//                                             the website's language)
+//
+// The words (the title, the chapters' names, which stay English in
+// FILM_CHAPTERS, the download link) go through t() (src/site/i18n/, the
+// "method" namespace). The film's voice is English, so in Chinese and
+// Ukrainian one muted line under the chapters says so.
 //
 // The files are in public/site/film/. Styles: src/site/pages/pages.css
 // (".film").
@@ -32,6 +38,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useReveal } from "../hooks.js";
+import { useT } from "../i18n/i18n.js";
 import { chapterAt } from "./Walkthrough.jsx";
 
 const FILM_SRC = "/site/film/chernozem-2026.mp4";
@@ -54,6 +61,7 @@ function clock(seconds) {
 }
 
 export default function Film({ caption = "", chapters = FILM_CHAPTERS, title = "Chernozem in three minutes", className = "" }) {
+  const t = useT("method");
   // The frame opens when the film scrolls into view (the observer from
   // hooks.js adds "is-in" to the figure), and the poster picture is only
   // fetched once the film is within about a screen of the visitor, since
@@ -131,22 +139,28 @@ export default function Film({ caption = "", chapters = FILM_CHAPTERS, title = "
   };
 
   return (
-    <figure className={`film ${className}`.trim()} ref={reveal} aria-label={title}>
+    <figure className={`film ${className}`.trim()} ref={reveal} aria-label={t(title)}>
       <div className="film-frame" data-open ref={frameRef}>
         <video ref={videoRef} src={src} className="film-video" poster={near ? POSTER_SRC : undefined} preload="none" controls playsInline width="1280" height="720" onTimeUpdate={follow} onSeeked={settled} onPlay={follow}>
-          <a href={FILM_SRC}>Download the film (MP4, 36 MB)</a>
+          <a href={FILM_SRC}>{t("Download the film (MP4, 36 MB)")}</a>
         </video>
       </div>
       {chapters.length > 0 && (
-        <ol className="film-chapters" aria-label={`Chapters of ${title}`} data-rise style={{ "--i": 2 }}>
+        <ol className="film-chapters" aria-label={t("Chapters of {title}", { title: t(title) })} data-rise style={{ "--i": 2 }}>
           {chapters.map((c, i) => (
             <li key={c.label}>
               <button type="button" className="film-chapter" aria-current={i === current ? "true" : undefined} onClick={() => jump(c.t, i)}>
-                {c.label} <span className="film-chapter-time">{clock(c.t)}</span>
+                {t(c.label)} <span className="film-chapter-time">{clock(c.t)}</span>
               </button>
             </li>
           ))}
         </ol>
+      )}
+      {/* The voice is English: said once, in the other languages only. */}
+      {t.lang !== "en" && (
+        <p className="film-caption" data-rise style={{ "--i": 2 }}>
+          {t("The film is narrated in English.")}
+        </p>
       )}
       {caption && (
         <figcaption className="film-caption" data-rise style={{ "--i": 2 }}>

@@ -33,7 +33,12 @@
 //                "chapters": [{ "label": "Fields", "t": 21.4 }, ...] },
 //     "atlas": { ... } }
 //
-//   <Walkthrough product="field" title="The Field walkthrough" />
+//   <Walkthrough product="field" title={t("The Field walkthrough")} />
+//
+// The title arrives in the website's language; the chapters' names (English
+// in walkthroughs.json) and the rest of the words go through t()
+// (src/site/i18n/, the "method" namespace). The narration is English, so in
+// Chinese and Ukrainian one muted line under the chapters says so.
 //
 // Styles: src/site/pages/pages.css (".wk-").
 //
@@ -45,6 +50,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useReveal } from "../hooks.js";
+import { useT } from "../i18n/i18n.js";
 
 export const WALKTHROUGHS_URL = "/site/film/walkthroughs.json";
 
@@ -92,6 +98,7 @@ function clock(seconds) {
 }
 
 export default function Walkthrough({ product, title, className = "" }) {
+  const t = useT("method");
   const files = WALKTHROUGH_FILES[product];
   const reveal = useReveal();
   const frameRef = useRef(null);
@@ -185,20 +192,27 @@ export default function Walkthrough({ product, title, className = "" }) {
         <video ref={videoRef} src={files.src} className="wk-video" poster={near ? files.poster : undefined} preload="none" controls playsInline width="1440" height="900" onTimeUpdate={follow} onSeeked={settled} onPlay={follow}>
           {/* The narration as captions: not "default", so they stay off
               (and unfetched) until the visitor turns them on. */}
-          <track kind="captions" src={files.captions} srcLang="en" label="English" />
-          <a href={files.src}>Download the film (MP4)</a>
+          <track kind="captions" src={files.captions} srcLang="en" label={t("English")} />
+          <a href={files.src}>{t("Download the film (MP4)")}</a>
         </video>
       </div>
       {chapters.length > 0 && (
-        <ol className="wk-chapters" aria-label={`Chapters of ${title}`} data-rise style={{ "--i": 2 }}>
+        <ol className="wk-chapters" aria-label={t("Chapters of {title}", { title })} data-rise style={{ "--i": 2 }}>
           {chapters.map((c, i) => (
             <li key={c.label}>
               <button type="button" className="wk-chapter" aria-current={i === current ? "true" : undefined} onClick={() => jump(c.t, i)}>
-                {c.label} <span className="wk-chapter-time">{clock(c.t)}</span>
+                {t(c.label)} <span className="wk-chapter-time">{clock(c.t)}</span>
               </button>
             </li>
           ))}
         </ol>
+      )}
+      {/* The voice is English: said once, in the other languages only
+          (the muted small line Film.jsx uses for its caption). */}
+      {t.lang !== "en" && (
+        <p className="film-caption" data-rise style={{ "--i": 2 }}>
+          {t("The film is narrated in English.")}
+        </p>
       )}
     </figure>
   );

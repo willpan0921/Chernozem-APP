@@ -34,6 +34,14 @@
 // California still reads "since February 2022"), and country names said the
 // way people say them.
 //
+// The words the globe shows (statusWords, cardText and the dates, kinds and
+// levels they are made of) take `t` from the website's languages
+// (src/site/i18n/, namespace "globe"): every English sentence is a t("...")
+// key with {holes} for what varies; without a t (the tests, the old globe's
+// words) they are plain English. Country names come from the browser in the
+// language of t.locale (i18n/regions.js regionName); the English stays the
+// data's own.
+//
 // Positions are degrees of latitude and longitude. The camera's "altitude"
 // is its distance above the surface in Earth radii (three-globe's unit), and
 // the screen projection uses the same axes as the 3D scene
@@ -42,6 +50,14 @@
 // WHO EDITS IT
 // Whoever changes how the globe is framed, toured or worded. Run the checks
 // with: node --test src/site/components/globeMath.test.js
+
+// i18n namespace: globe
+
+import { regionName } from "../i18n/regions.js";
+
+// English with its holes filled: what the words below use when no t() from
+// the website's languages is handed to them.
+const plain = (key, vars) => (vars ? String(key).replace(/\{(\w+)\}/g, (hole, name) => (vars[name] === undefined || vars[name] === null ? hole : String(vars[name]))) : String(key));
 
 export const FOV = 50; // the camera's vertical field of view, degrees
 const RAD = Math.PI / 180;
@@ -489,31 +505,35 @@ function parts(iso) {
   return { year: Number(m[1]), month, day: Number(m[3]) };
 }
 
+// The month's name in the language: the dictionaries hold the twelve names
+// (used only after a day or after "since", so Ukrainian gives the genitive).
+const monthName = (month, t) => t(MONTHS[month - 1]);
+
 // "February 2022"; "2015" when the list only knows the year (stored as 1 January).
-export function sinceText(iso) {
+export function sinceText(iso, t = plain) {
   const p = parts(iso);
   if (!p) return "";
   if (p.month === 1 && p.day === 1) return String(p.year);
-  return `${MONTHS[p.month - 1]} ${p.year}`;
+  return t("{month} {year}", { month: monthName(p.month, t), year: p.year });
 }
 
 // "22 October 2026"
-export function dayMonthYear(iso) {
+export function dayMonthYear(iso, t = plain) {
   const p = parts(iso);
-  return p ? `${p.day} ${MONTHS[p.month - 1]} ${p.year}` : "";
+  return p ? t("{day} {month} {year}", { day: p.day, month: monthName(p.month, t), year: p.year }) : "";
 }
 
 // Two days as one span: "14 to 25 October 2026", "31 July to 27 September
 // 2026", "21 December 2025 to 29 October 2026"; one day alone when both are
 // the same.
-export function spanText(fromIso, toIso) {
+export function spanText(fromIso, toIso, t = plain) {
   const a = parts(fromIso);
   const b = parts(toIso);
-  if (!a || !b) return dayMonthYear(a ? fromIso : toIso);
-  if (a.year === b.year && a.month === b.month && a.day === b.day) return dayMonthYear(toIso);
-  if (a.year === b.year && a.month === b.month) return `${a.day} to ${b.day} ${MONTHS[b.month - 1]} ${b.year}`;
-  if (a.year === b.year) return `${a.day} ${MONTHS[a.month - 1]} to ${b.day} ${MONTHS[b.month - 1]} ${b.year}`;
-  return `${dayMonthYear(fromIso)} to ${dayMonthYear(toIso)}`;
+  if (!a || !b) return dayMonthYear(a ? fromIso : toIso, t);
+  if (a.year === b.year && a.month === b.month && a.day === b.day) return dayMonthYear(toIso, t);
+  if (a.year === b.year && a.month === b.month) return t("{day} to {day2} {month} {year}", { day: a.day, day2: b.day, month: monthName(b.month, t), year: b.year });
+  if (a.year === b.year) return t("{day} {month} to {day2} {month2} {year}", { day: a.day, month: monthName(a.month, t), day2: b.day, month2: monthName(b.month, t), year: b.year });
+  return t("{from} to {to}", { from: dayMonthYear(fromIso, t), to: dayMonthYear(toIso, t) });
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -548,15 +568,33 @@ export function alertEnded(e, now = Date.now()) {
   return until < Math.floor(ms / DAY_MS) - ALERT_GRACE_DAYS;
 }
 
+// When an alert happened, as a shape the sentences are built from:
+//   { form: "since", date }       still going on, from that day
+//   { form: "span", from, to }    over: it ran from one day to another
+//   { form: "on", date }          over: a one-day event
+//   { form: "overSince", date }   over, GDACS gave no last day
+//   { form: "over" }              over, no dates at all
+//   { form: "none" }              no dates, still going on
+// The dates are ISO days from the feed.
+export function alertTiming(e, now = Date.now()) {
+  const since = parts(e?.since) ? e.since : null;
+  if (!alertEnded(e, now)) return since ? { form: "since", date: since } : { form: "none" };
+  if (!parts(e.until)) return since ? { form: "overSince", date: since } : { form: "over" };
+  if (!since || dayNumber(e.since) >= dayNumber(e.until)) return { form: "on", date: e.until };
+  return { form: "span", from: e.since, to: e.until };
+}
+
 // When an alert happened, in the words of its tile and panel: "since 26
 // October 2026" while it goes on; "from 14 to 25 October 2026", or "on 22
 // October 2026" for a one-day event, once it is over.
 export function alertWhen(e, now = Date.now()) {
-  const since = dayMonthYear(e?.since);
-  if (!alertEnded(e, now)) return since ? `since ${since}` : "";
-  if (!parts(e.until)) return since ? `from ${since}, now over` : "now over";
-  if (!parts(e.since) || dayNumber(e.since) >= dayNumber(e.until)) return `on ${dayMonthYear(e.until)}`;
-  return `from ${spanText(e.since, e.until)}`;
+  const when = alertTiming(e, now);
+  if (when.form === "since") return `since ${dayMonthYear(when.date)}`;
+  if (when.form === "overSince") return `from ${dayMonthYear(when.date)}, now over`;
+  if (when.form === "over") return "now over";
+  if (when.form === "on") return `on ${dayMonthYear(when.date)}`;
+  if (when.form === "span") return `from ${spanText(when.from, when.to)}`;
+  return "";
 }
 
 // Green GDACS alerts: the lowest level, hidden until the visitor asks for
@@ -565,17 +603,68 @@ export function isMinorAlert(e) {
   return !!e && e.kind !== "war" && e.level !== "red" && e.level !== "orange";
 }
 
+// The kinds of event, as the globe names them (English here, translated
+// where they are shown: t(KIND_WORD[kind])).
 const KIND_WORD = { flood: "Flood", drought: "Drought", wildfire: "Wildfires", storm: "Storm", earthquake: "Earthquake", volcano: "Volcano" };
+// GDACS's alert colours, before the word "alert" ("red alert").
+const LEVEL_WORD = { red: "red", orange: "orange", green: "green" };
 
 // The reviewed list holds wars, insurgencies and gang violence alike: it
 // says "War" only when the event's own name does.
-export function kindWord(e) {
-  if (e.kind === "war") return /\bwar\b/i.test(e.name || "") ? "War" : "Armed conflict";
-  return KIND_WORD[e.kind] || "Alert";
+export function kindWord(e, t = plain) {
+  if (e.kind === "war") return /\bwar\b/i.test(e.name || "") ? t("War") : t("Armed conflict");
+  return KIND_WORD[e.kind] ? t(KIND_WORD[e.kind]) : t("Alert");
+}
+
+// "red", in the language, for "{level} alert"; a colour the globe does not
+// know is said as the feed wrote it.
+export function levelName(level, t = plain) {
+  if (!level) return "";
+  return LEVEL_WORD[level] ? t(LEVEL_WORD[level]) : String(level);
 }
 
 function levelWord(level) {
   return level ? `${level[0].toUpperCase()}${level.slice(1)} alert` : "Alert";
+}
+
+// Since when, in a few words, under each event's name in the globe's list:
+// "War since February 2022", "Armed conflict since 2015", "Storm, red alert
+// since 26 October 2026", "Flood, orange alert from 22 to 25 October 2026",
+// "Earthquake, red alert on 22 October 2026". `now` is the feed's own time
+// (an alert that is over is said to be over); `t` the website's language.
+// With `card` the line ends as the card's does: a full stop after a war's
+// (also one the list has no date for: "Armed conflict."), and GDACS named
+// after an alert's ("..., GDACS.").
+// On the globe every alert has a colour (earthEvents keeps the orange and
+// red ones); one without is said like a war, by its kind alone.
+export function statusWords(e, now = Date.now(), t = plain, { card = false } = {}) {
+  const kind = kindWord(e, t);
+  const level = e.kind === "war" ? "" : levelName(e.level, t);
+  if (!level) {
+    const date = e.kind === "war" ? sinceText(e.since, t) : parts(e.since) ? dayMonthYear(e.since, t) : "";
+    if (!date) return card ? t("{kind}.", { kind }) : kind;
+    return card ? t("{kind} since {date}.", { kind, date }) : t("{kind} since {date}", { kind, date });
+  }
+  const when = alertTiming(e, now);
+  const vars = { kind, level };
+  if (when.form === "since") {
+    vars.date = dayMonthYear(when.date, t);
+    return card ? t("{kind}, {level} alert since {date}, GDACS.", vars) : t("{kind}, {level} alert since {date}", vars);
+  }
+  if (when.form === "span") {
+    vars.span = spanText(when.from, when.to, t);
+    return card ? t("{kind}, {level} alert from {span}, GDACS.", vars) : t("{kind}, {level} alert from {span}", vars);
+  }
+  if (when.form === "on") {
+    vars.date = dayMonthYear(when.date, t);
+    return card ? t("{kind}, {level} alert on {date}, GDACS.", vars) : t("{kind}, {level} alert on {date}", vars);
+  }
+  if (when.form === "overSince") {
+    vars.date = dayMonthYear(when.date, t);
+    return card ? t("{kind}, {level} alert from {date}, now over, GDACS.", vars) : t("{kind}, {level} alert from {date}, now over", vars);
+  }
+  if (when.form === "over") return card ? t("{kind}, {level} alert, now over, GDACS.", vars) : t("{kind}, {level} alert, now over", vars);
+  return card ? t("{kind}, {level} alert, GDACS.", vars) : t("{kind}, {level} alert", vars);
 }
 
 // The country file writes formal names ("Moldova, Republic of"); the globe
@@ -598,14 +687,36 @@ export function possessive(name) {
   return /s$/i.test(name) ? `${name}'` : `${name}'s`;
 }
 
-// 1780400 -> "1.78 million", 1204041 -> "1.2 million"
-export function millions(n) {
+// 1780400 -> "1.78 million", 1204041 -> "1.2 million"; in another language
+// (a locale such as "uk-UA") the browser's own long form: 1,78 мільйона,
+// 178万.
+export function millions(n, locale) {
+  if (locale && !/^en(-|$)/i.test(locale) && typeof Intl !== "undefined") {
+    try {
+      return new Intl.NumberFormat(locale, { notation: "compact", compactDisplay: "long", maximumSignificantDigits: 3 }).format(n);
+    } catch {
+      // the English below
+    }
+  }
   const m = n / 1e6;
   return `${m >= 10 ? m.toFixed(0) : m.toFixed(m >= 1.5 ? 2 : 1).replace(/\.?0+$/, "")} million`;
 }
 
 export function percent(share) {
   return Math.round(share * 100);
+}
+
+// "24%", written the way the language writes a percentage ("24 %" in
+// Ukrainian) when a locale is given.
+export function percentText(share, locale) {
+  if (locale && !/^en(-|$)/i.test(locale) && typeof Intl !== "undefined") {
+    try {
+      return new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 0 }).format(share);
+    } catch {
+      // the English below
+    }
+  }
+  return `${percent(share)}%`;
 }
 
 // The share of a buyer's farm and food imports that come from the event's
@@ -618,11 +729,56 @@ export function shareSentence(buyer, from, commonYear) {
   return `${share[0].toUpperCase()}${share.slice(1)} come from ${from}.`;
 }
 
-// Ukraine's own measurement, as one sentence.
-export function measuredSentence(m) {
+// Ukraine's own measurement, as one sentence. The month ("September 2026")
+// is the site's own (content/site.js NUMBERS.ukraineMonth), sent with the
+// feed, and translated like any sentence.
+export function measuredSentence(m, t = plain) {
   if (!m || !finite(m.heavyDamageHa)) return "";
-  const people = finite(m.peopleOnDamagedSoil) ? `, with ${millions(m.peopleOnDamagedSoil)} people on it` : "";
-  return `Chernozem measured ${millions(m.heavyDamageHa)} ha of black soil heavily damaged${people}${m.month ? ` (${m.month})` : ""}.`;
+  const ha = millions(m.heavyDamageHa, t.locale);
+  const people = finite(m.peopleOnDamagedSoil) ? millions(m.peopleOnDamagedSoil, t.locale) : null;
+  const month = m.month ? t(m.month) : null;
+  if (people && month) return t("Chernozem measured {ha} ha of black soil heavily damaged, with {people} people on it ({month}).", { ha, people, month });
+  if (people) return t("Chernozem measured {ha} ha of black soil heavily damaged, with {people} people on it.", { ha, people });
+  if (month) return t("Chernozem measured {ha} ha of black soil heavily damaged ({month}).", { ha, month });
+  return t("Chernozem measured {ha} ha of black soil heavily damaged.", { ha });
+}
+
+// What the globe's card says about an event, in the website's language:
+//   title    the event's name as the feed wrote it (EarthGlobe.jsx shows a
+//            reviewed war's name translated: worldData.js eventName)
+//   meta     since when (an alert: its colour, its dates and GDACS)
+//   note     one line about the land, from the feed (its own words)
+//   measured Chernozem's own measurement (Ukraine), or ""
+//   buyers   [{ iso3, name, share }]: whose food depends on this land,
+//            largest share first, the name in the language (a figure from
+//            another year than the table's own has it in brackets:
+//            "Lebanon (2022)"), the share as the language writes it
+//   buyersAbout  the line under them: what the share is, from which country
+//   link     GDACS's report for an alert, or null
+// `buyers` comes from buyersOf; `commonYear` is the trade table's own year
+// (tradeYear); `now` the feed's time.
+export function cardText(e, { buyers = [], now = Date.now(), commonYear = null } = {}, t = plain) {
+  const all = buyers || [];
+  const from = regionName(e.iso3, e.country || plainName(e.iso3), t.locale) || t("this country");
+  let buyersAbout = "";
+  if (all.length) {
+    buyersAbout = finite(commonYear)
+      ? t("The share of each country's farm and food imports that come from {from}, in {year} unless a year is given.", { from, year: commonYear })
+      : t("The share of each country's farm and food imports that come from {from}.", { from });
+  }
+  return {
+    title: e.name,
+    meta: statusWords(e, now, t, { card: true }),
+    note: e.note || "",
+    measured: e.measured ? measuredSentence(e.measured, t) : "",
+    buyers: all.map((b) => {
+      const name = regionName(b.iso3, b.name, t.locale);
+      const year = finite(b.year) && finite(commonYear) && b.year !== commonYear ? b.year : null;
+      return { iso3: b.iso3, name: year ? t("{name} ({year})", { name, year }) : name, share: percentText(b.share, t.locale) };
+    }),
+    buyersAbout,
+    link: e.kind !== "war" && typeof e.url === "string" && /^https:\/\//.test(e.url) ? e.url : null,
+  };
 }
 
 // The tile beside the marker: the event's name, one line on when it began

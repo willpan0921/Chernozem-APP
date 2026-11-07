@@ -29,19 +29,27 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { pageTitle } from "./content/site.js";
+import { useT } from "./i18n/i18n.js";
 
+// The page passes its part of the title already in the website's language
+// (usePageTitle(t("Story"))); the site's own title is translated here.
 export function usePageTitle(sub) {
+  const t = useT("common");
   useEffect(() => {
-    const title = pageTitle(sub);
+    const title = pageTitle(sub, t);
     document.title = title;
     return () => {
       // Back to the site's own title, unless the next page has already set
       // its own: the pages' changes overlap (the next page can arrive before
       // this one has gone), and putting back the title from before this
-      // page left the tab naming a page the visitor had left.
+      // page left the tab naming a page the visitor had left. The English
+      // title, not the translated one: a page that leaves for good has left
+      // the website for the app, which is English and never sets a title of
+      // its own; within the website the next page (or this one, in the new
+      // language) sets its title right after, in the same commit.
       if (document.title === title) document.title = pageTitle();
     };
-  }, [sub]);
+  }, [sub, t]);
 }
 
 // How long a part the address points at (/method#use) is held in place.

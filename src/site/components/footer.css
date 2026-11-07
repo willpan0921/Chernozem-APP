@@ -41,6 +41,13 @@
   color: var(--ink);
 }
 
+/* The three languages after the page links (components/LanguageSwitch.jsx),
+   set a little apart from them. */
+.site .sf-lang {
+  gap: 0.5rem 16px;
+  margin-left: 8px;
+}
+
 @media (max-width: 760px) {
   .site .sf {
     padding-top: 20svh;

@@ -741,7 +741,7 @@
    phone the four simply wrap. */
 .site .earth-legend {
   display: grid;
-  grid-template-columns: repeat(2, max-content);
+  grid-template-columns: repeat(2, minmax(0, max-content)); /* a long label (Ukrainian) wraps instead of running off a phone */
   gap: 0 18px;
   font-size: 15px;
 }

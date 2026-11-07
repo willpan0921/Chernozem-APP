@@ -26,13 +26,50 @@
 //                    year of its figure and who reported it; older files
 //                    without them still work)
 //
+// The events' names arrive as English text. The reviewed armed conflicts'
+// names (server/world/conflicts.js) are listed here too, WAR_NAMES, so the
+// website's languages (src/site/i18n/) can hold them: eventName(e, t) gives
+// one of them translated, and any other name (a GDACS alert's title, a war
+// added since) as the feed wrote it.
+//
 // WHO EDITS IT
-// Whoever changes where the globe's data comes from.
+// Whoever changes where the globe's data comes from, or reviews the list of
+// conflicts (a renamed or added war goes in WAR_NAMES too, and in the
+// dictionaries; one left out only stays English).
 
 import { useEffect, useState } from "react";
 import { plainName } from "./globeMath.js";
 
 const LEVEL_ORDER = { red: 0, orange: 1, green: 2 };
+
+// The reviewed conflicts' names, exactly as server/world/conflicts.js
+// writes them (globeMath.test.js checks the two lists agree).
+export const WAR_NAMES = [
+  "War in Ukraine",
+  "War in Sudan",
+  "War in Gaza",
+  "Civil war in Myanmar",
+  "Fighting in eastern DR Congo",
+  "Insurgency in the central Sahel",
+  "Conflict in Somalia",
+  "War in Yemen",
+  "Conflict in Syria",
+  "Fighting in Amhara, Ethiopia",
+  "Fighting in South Sudan",
+  "Insurgency and banditry in northern Nigeria",
+  "Insurgency in Cabo Delgado, Mozambique",
+  "Armed gang violence in Haiti",
+  "Insurgency in northwest Pakistan",
+  "Strikes on southern Lebanon",
+  "Armed groups in Colombia",
+];
+
+// An event's name in the website's language: a reviewed war's through t,
+// any other as the feed wrote it.
+export function eventName(e, t) {
+  const name = e?.name || "";
+  return t && WAR_NAMES.includes(name) ? t(name) : name;
+}
 
 async function getJson(url) {
   const res = await fetch(url, { headers: { accept: "application/json" } });

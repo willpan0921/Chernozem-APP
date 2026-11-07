@@ -29,6 +29,11 @@
 // site.js, pages.css ".dm-door"): pictures of Field and Atlas. They are
 // links only for the owner; before that they show what the sign-in opens.
 //
+// Every sentence goes through t() (src/site/i18n, namespace "owner"), so
+// the page reads in Chinese and Ukrainian too. The error messages are kept
+// as English constants and looked up where they are shown, so a change of
+// language changes a message already on the screen.
+//
 // WHO EDITS IT
 // The owner, rarely. Nothing on the website links here on purpose. Who
 // counts as the owner is set on the server (OWNER_EMAILS on Render).
@@ -42,6 +47,7 @@ import { loadFirebaseAuth } from "../../lib/firebase.js";
 import { leaveDemo } from "../../lib/demoMode.js";
 import { DEMO_DOORS } from "../content/site.js";
 import { usePageTitle, useReveal } from "../hooks.js";
+import { useT } from "../i18n/i18n.js";
 import "./pages.css";
 
 // While this page is open, search engines are asked not to list it.
@@ -65,8 +71,10 @@ function stageOf(status) {
   return "out";
 }
 
-// Firebase's and our server's errors, in plain words.
+// Firebase's and our server's errors, in plain words (English; the page
+// says them in the visitor's language through t() where they are shown).
 const NOT_SET_UP = "This server does not take Google sign-ins yet.";
+const OFFLINE = "Could not reach the server. Check your connection and try again.";
 const PROBLEMS = {
   "auth/popup-closed-by-user": "The Google window was closed before you signed in. Try again.",
   "auth/cancelled-popup-request": "The Google window was closed before you signed in. Try again.",
@@ -81,18 +89,22 @@ const PROBLEMS = {
   bad_token: "Our server could not check the sign-in. Try again.",
 };
 
+// What to say about a failure: the English sentence (a key of the "owner"
+// dictionary) and, for an unknown Firebase error, its reason to fill in.
 function problemOf(error) {
   const code = error?.code || "";
-  if (PROBLEMS[code]) return PROBLEMS[code];
-  if (error?.status === 503) return NOT_SET_UP;
-  if (code === "offline" || error?.status === 0) return error?.message || "Could not reach the server. Check your connection and try again.";
-  return `Something went wrong${code ? ` (${code.replace(/^auth\//, "")})` : ""}. Try again.`;
+  if (PROBLEMS[code]) return { key: PROBLEMS[code] };
+  if (error?.status === 503) return { key: NOT_SET_UP };
+  if (code === "offline" || error?.status === 0) return { key: OFFLINE };
+  const reason = code.replace(/^auth\//, "");
+  return reason ? { key: "Something went wrong ({reason}). Try again.", vars: { reason } } : { key: "Something went wrong. Try again." };
 }
 
 const LOADING = "The sign-in is still loading. Try again in a moment.";
 
 export default function OwnerPage() {
-  usePageTitle("Owner sign-in");
+  const t = useT("owner");
+  usePageTitle(t("Owner sign-in"));
   useNoIndex();
   // The entrances of the doors (site.css, "Entrances").
   const reveal = useReveal();
@@ -100,7 +112,8 @@ export default function OwnerPage() {
   const [stage, setStage] = useState("wait");
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  // What went wrong, as problemOf gives it ({ key, vars }), or null.
+  const [error, setError] = useState(null);
   const [fb, setFb] = useState(null);
   const alive = useRef(true);
 
@@ -148,7 +161,7 @@ export default function OwnerPage() {
   async function signIn() {
     if (busy) return;
     setBusy(true);
-    setError("");
+    setError(null);
     try {
       const module = fb || (await loadFirebaseAuth().catch(() => null));
       if (!module) throw Object.assign(new Error(LOADING), { code: "loading" });
@@ -158,7 +171,7 @@ export default function OwnerPage() {
       const status = await getStatus();
       if (alive.current) show(status);
     } catch (err) {
-      if (alive.current) setError(err?.code === "loading" ? LOADING : problemOf(err));
+      if (alive.current) setError(err?.code === "loading" ? { key: LOADING } : problemOf(err));
     } finally {
       if (alive.current) setBusy(false);
     }
@@ -180,7 +193,7 @@ export default function OwnerPage() {
     }
     if (!alive.current) return;
     setEmail("");
-    setError("");
+    setError(null);
     setBusy(false);
     setStage("out");
   }
@@ -194,48 +207,42 @@ export default function OwnerPage() {
           <div className="ow-open-text">
             <div className="pg-mask">
               <h1 className="pg-h1 pg-display" id="ow-title">
-                Owner sign-in
+                {t("Owner sign-in")}
               </h1>
             </div>
-            <p className="pg-lead pg-fade">Sign in with the Chernozem Google account to change the Ukraine demo. Everyone else can only look at it.</p>
+            <p className="pg-lead pg-fade">{t("Sign in with the Chernozem Google account to change the Ukraine demo. Everyone else can only look at it.")}</p>
 
             <div className="ow-act pg-fade-2" aria-live="polite" aria-busy={stage === "wait" ? "true" : undefined}>
               {stage === "out" && (
                 <button type="button" className="pg-btn" onClick={signIn} disabled={busy}>
-                  {busy ? "Signing in…" : "Sign in with the Chernozem Google account"}
+                  {busy ? t("Signing in…") : t("Sign in with the Chernozem Google account")}
                 </button>
               )}
 
               {stage === "owner" && (
                 <>
-                  <p>
-                    Signed in as {email ? <strong>{email}</strong> : "the owner"}. The demo can be changed from this browser.
-                  </p>
+                  <p>{t("Signed in as {who}. The demo can be changed from this browser.", { who: email ? <strong>{email}</strong> : t("the owner") })}</p>
                   <button type="button" className="pg-textbtn" onClick={signOut} disabled={busy}>
-                    Sign out
+                    {t("Sign out")}
                   </button>
                 </>
               )}
 
-              {stage === "open" && <p>This computer needs no sign-in: the demo can be changed from here.</p>}
+              {stage === "open" && <p>{t("This computer needs no sign-in: the demo can be changed from here.")}</p>}
 
               {stage === "other" && (
                 <>
-                  <p className="ow-refused">This Google account is not the owner’s.</p>
-                  {email && (
-                    <p>
-                      Signed in as <strong>{email}</strong>.
-                    </p>
-                  )}
+                  <p className="ow-refused">{t("This Google account is not the owner’s.")}</p>
+                  {email && <p>{t("Signed in as {email}.", { email: <strong>{email}</strong> })}</p>}
                   <button type="button" className="pg-btn" onClick={signOut} disabled={busy}>
-                    {busy ? "Signing out…" : "Sign out"}
+                    {busy ? t("Signing out…") : t("Sign out")}
                   </button>
                 </>
               )}
 
               {error && (
                 <p className="pg-error" role="alert">
-                  {error}
+                  {t(error.key, error.vars)}
                 </p>
               )}
             </div>
@@ -256,12 +263,12 @@ export default function OwnerPage() {
               return canEdit ? (
                 <Link key={door.key} className={`dm-door dm-door-${door.key}`} to={door.to} onClick={leaveDemo} data-rise="" style={{ "--i": index }}>
                   {pictures}
-                  <span className="dm-door-label">{door.label}</span>
+                  <span className="dm-door-label">{t(door.label)}</span>
                 </Link>
               ) : (
                 <div key={door.key} className={`dm-door dm-door-${door.key} is-still`} data-rise="" style={{ "--i": index }}>
                   {pictures}
-                  <span className="dm-door-caption">{door.caption}</span>
+                  <span className="dm-door-caption">{t(door.caption)}</span>
                 </div>
               );
             })}

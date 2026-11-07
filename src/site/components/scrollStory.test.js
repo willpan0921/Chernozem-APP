@@ -392,10 +392,10 @@ test("the component draws the row from one followed value, never drawing the pag
 test("the progress row: every step, the current one marked, each a button that glides there and gives the focus back", () => {
   const story = read("ScrollStory.jsx");
   const css = read("scrollstory.css");
-  assert.match(story, /\{held && \(\s*<nav className="story-where" aria-label=\{`\$\{title\}, step by step`\}>/);
+  assert.match(story, /\{held && \(\s*<nav className="story-where" aria-label=\{t\("\{title\}, step by step", \{ title \}\)\}>/);
   assert.match(story, /<button type="button" className="story-dot" aria-current=\{i === current \? "step" : undefined\} onClick=\{\(event\) => choose\(event, i\)\}>/);
-  assert.match(story, /<span className="story-label">\{step\.title\}<\/span>/);
-  assert.match(story, /<p className="story-count" aria-hidden="true">\s*\{current \+ 1\} of \{count\}\s*<\/p>/);
+  assert.match(story, /<span className="story-label">\{t\(step\.title\)\}<\/span>/);
+  assert.match(story, /<p className="story-count" aria-hidden="true">\s*\{t\("\{current\} of \{count\}", \{ current: current \+ 1, count \}\)\}\s*<\/p>/);
   // The steps themselves: an ordered list a screen reader calls a list, in Safari too (role="list": Safari
   // stops calling one a list once site.css styles its markers away).
   assert.match(story, /<ol className="story-track" role="list" ref=\{trackRef\}>/);
@@ -442,7 +442,7 @@ test("the hint says scrolling moves the story along, on whichever step the visit
   const css = read("scrollstory.css");
   // In the progress row (not in a step), so it is there on whichever step the visitor lands.
   const where = story.slice(story.indexOf('<nav className="story-where"'), story.indexOf("</nav>"));
-  assert.match(where, /\{hinted && \(\s*<p className="story-hint" aria-hidden="true" ref=\{hintRef\}>\s*Scroll to move along\s*<Along \/>/);
+  assert.match(where, /\{hinted && \(\s*<p className="story-hint" aria-hidden="true" ref=\{hintRef\}>\s*\{t\("Scroll to move along"\)\}\s*<Along \/>/);
   assert.doesNotMatch(story.slice(story.indexOf('<ol className="story-track"')), /story-hint/, "no hint in the steps");
   // The step the visitor arrives on (a whole step, so at rest the hint is all there or gone); it fades as the
   // row moves from there and goes once the row has moved half a step (in either story).

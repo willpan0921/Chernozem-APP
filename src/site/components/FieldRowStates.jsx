@@ -15,17 +15,19 @@
 // whole (CSS zoom, --row-zoom) to fill the columns it sits in, at most
 // twice its size, like a close-up. The numbers are the demo farm's real
 // Field 11 (src/site/content/site.js, DEMO).
+// Languages: the row's words go through t() (src/site/i18n/, namespace
+// "home"); the demo farm's own words (the field's name, its crop, its
+// dates, "near normal") come from site.js and are translated in common.
 // Styles: src/site/pages/home.css (.showcase, .frow).
 //
 // WHO EDITS IT
 // Whoever changes the showcase. Keep the numbers true to the demo farm.
 
 import { useEffect, useRef, useState } from "react";
-import { DEMO } from "../content/site.js";
+import { DEMO, formatInt } from "../content/site.js";
 import { useMediaQuery } from "../hooks.js";
+import { useT } from "../i18n/i18n.js";
 
-const FIELD = `${DEMO.field11.name} · ${DEMO.field11.crop}`;
-const PASS = `New pass · Sentinel-2 · ${DEMO.field11.latestPass} · clear sky`;
 const STATES = [
   { id: "arrives", word: "Arrives" },
   { id: "read", word: "Read" },
@@ -36,20 +38,22 @@ const AUTO_MS = 1200;
 const ROW_WIDTH = 640; // the row's true width (home.css, .frow)
 
 function Row({ state, reading, onRead }) {
+  const t = useT("home");
+  const field = `${t(DEMO.field11.name)} · ${t(DEMO.field11.crop)}`;
   if (state === "answered") {
     return (
       <div className="frow is-done" data-ui>
         <span className="frow-mark is-good" aria-hidden="true" />
         <div className="frow-main">
-          <strong className="frow-name">{FIELD}</strong>
+          <strong className="frow-name">{field}</strong>
           <span className="frow-meta">
-            Plant health {DEMO.field11.plantHealth} · Stress {DEMO.field11.stress} · Water {DEMO.field11.water}
+            {t("Plant health {plantHealth} · Stress {stress} · Water {water}", { plantHealth: formatInt(DEMO.field11.plantHealth), stress: t(DEMO.field11.stress), water: t(DEMO.field11.water) })}
           </span>
-          <span className="frow-answer">Past peak; greenest on {DEMO.field11.peakDate}</span>
+          <span className="frow-answer">{t("Past peak; greenest on {date}", { date: t(DEMO.field11.peakDate) })}</span>
         </div>
-        <span className="frow-chip is-good">Growing well</span>
+        <span className="frow-chip is-good">{t("Growing well")}</span>
         <button type="button" className="frow-button is-quiet" onClick={onRead}>
-          Read it again
+          {t("Read it again")}
         </button>
       </div>
     );
@@ -59,25 +63,26 @@ function Row({ state, reading, onRead }) {
     <div className={`frow${hovered ? " is-hover" : ""}`} data-ui>
       <span className="frow-mark is-reading" aria-hidden="true" />
       <div className="frow-main">
-        <strong className="frow-name">{FIELD}</strong>
-        <span className="frow-meta">{PASS}</span>
+        <strong className="frow-name">{field}</strong>
+        <span className="frow-meta">{t("New pass · Sentinel-2 · {date} · clear sky", { date: t(DEMO.field11.latestPass) })}</span>
       </div>
       {reading ? (
         <span className="frow-chip" role="status">
-          Reading
+          {t("Reading")}
         </span>
       ) : hovered ? (
         <button type="button" className="frow-button" onClick={onRead}>
-          Read this pass
+          {t("Read this pass")}
         </button>
       ) : (
-        <span className="frow-chip">New pass</span>
+        <span className="frow-chip">{t("New pass")}</span>
       )}
     </div>
   );
 }
 
 export default function FieldRowStates() {
+  const t = useT("home");
   const reduced = useMediaQuery("(prefers-reduced-motion: reduce)");
   const [state, setState] = useState(() => (typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "read" : "arrives"));
   const [reading, setReading] = useState(false);
@@ -154,10 +159,10 @@ export default function FieldRowStates() {
 
   return (
     <div className="showcase-rows">
-      <div className="showcase-states" role="group" aria-label="The row's state" data-slide>
+      <div className="showcase-states" role="group" aria-label={t("The row's state")} data-slide>
         {STATES.map(({ id, word }) => (
           <button type="button" key={id} className={`showcase-word${state === id ? " is-on" : ""}`} aria-pressed={state === id} onClick={() => choose(id)}>
-            {word}
+            {t(word)}
           </button>
         ))}
       </div>

@@ -24,15 +24,20 @@
 //        score   the field's condition (method.js fieldCondition: a field
 //                with high stress is held under "Very good")
 //        held    true when that hold lowered it
-//        classId, label }   its class
+//        classId, label }   its class (label is the English name from
+//                site.js; ConditionLab.jsx translates it where it is shown,
+//                so no words for a reader are made here)
 //   classOf(score)  the class a condition falls in (method.js conditionClass)
 //   SLIDERS     each slider's range and starting value, in hundredths of
 //               the index (a range input steps in whole numbers) or in
 //               per cent: from a little past the reading's whole span
 //               below normal (score 0) to 0.10 above it (score 1)
-//   shownScore(score)  the condition with two decimals, never a number
-//               that belongs to the next class (0.8496 is "Good": 0.84)
-//   signed(n)   "−0.10", "0.00", "+0.05" (a true minus sign)
+//   shownScore(score, locale)  the condition with two decimals, never a
+//               number that belongs to the next class (0.8496 is "Good":
+//               0.84), with the language's decimal mark (site.js
+//               formatFixed: "0,84" in Ukrainian)
+//   signed(n, digits, locale)  "−0.10", "0.00", "+0.05" (a true minus
+//               sign; "−0,10" in Ukrainian)
 //
 // An imagined field has a crop and no damage: the app gives a field with
 // no crop no condition at all, and holds a damaged one under "Good"; the
@@ -43,7 +48,7 @@
 // src/lib/field/method.js; when they change, change FIELD_METHOD in
 // site.js (the tests say which value).
 
-import { FIELD_METHOD } from "../content/site.js";
+import { FIELD_METHOD, formatFixed } from "../content/site.js";
 
 const M = FIELD_METHOD;
 
@@ -102,17 +107,19 @@ export function labReading({ healthDelta = 0, waterDelta = 0, stressShare = 0 } 
 // boundaries are written (0.40, 0.65, 0.85). Rounded, except just under a
 // boundary, where rounding up would print the next class's number beside
 // this class's name: 0.8496 is "Good" (under 0.85), so it reads 0.84.
-export function shownScore(score) {
+// Written with the language's decimal mark (the website's, unless a locale
+// is given).
+export function shownScore(score, locale) {
   if (!Number.isFinite(score)) return "";
   const rounded = Math.round(score * 100) / 100;
   const same = classOf(rounded)?.id === classOf(score)?.id;
-  return (same ? rounded : Math.floor(score * 100) / 100).toFixed(2);
+  return formatFixed(same ? rounded : Math.floor(score * 100) / 100, 2, locale);
 }
 
 // "−0.10", "0.00", "+0.05": signed, with a true minus sign, and never
-// "−0.00" for a value that rounds to nothing.
-export function signed(n, digits = 2) {
+// "−0.00" for a value that rounds to nothing; the language's decimal mark.
+export function signed(n, digits = 2, locale) {
   const text = Math.abs(n).toFixed(digits);
-  if (Number(text) === 0) return (0).toFixed(digits);
-  return `${n < 0 ? "−" : "+"}${text}`;
+  if (Number(text) === 0) return formatFixed(0, digits, locale);
+  return `${n < 0 ? "−" : "+"}${formatFixed(Number(text), digits, locale)}`;
 }

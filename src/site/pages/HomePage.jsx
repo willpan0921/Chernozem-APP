@@ -47,6 +47,11 @@
 // first, before anything else here, so its rules always sit before home.css
 // and the components' sheets, and those win every tie with it, whichever
 // of this page and the site's frame arrives first (a test checks it).
+// Languages: every sentence a visitor reads goes through t() (src/site/
+// i18n/, namespace "home"), the English sentence being the key; the step
+// lists and the reasons stay English in their constants and are translated
+// where they are drawn. Anything that varies, or any name joined with
+// no-break spaces, is a {hole} filled where the sentence is drawn.
 //
 // WHO EDITS IT
 // Whoever works on the About page.
@@ -60,6 +65,7 @@ import FieldRowStates from "../components/FieldRowStates.jsx";
 import ProofTable from "../components/ProofTable.jsx";
 import { NUMBERS, SITE, formatInt } from "../content/site.js";
 import { useNear, usePageTitle, useReveal } from "../hooks.js";
+import { useT } from "../i18n/i18n.js";
 import "./home.css";
 
 // The Ukraine demo (components/DemoRanking.jsx, not edited) is downloaded
@@ -74,16 +80,17 @@ const EARTH_ENGINE = `Google${NBSP}Earth${NBSP}Engine`;
 // Why Chernozem: the owner's eight reasons (his list of 31 October 2026,
 // asked for again as bullets), each a short bold claim and one line, shown
 // as a bulleted list. The wording stays honest: "most tools", never "all
-// competitors", and no claim to be the most of anything; the one number is
-// read from site.js.
+// competitors", and no claim to be the most of anything. The one number
+// ({seconds}, from site.js) and the joined name ({earthEngine}) are holes,
+// filled where the list is drawn, so each sentence is one dictionary key.
 const WHY = [
   {
     claim: "No hardware, only software.",
     text: "Nothing to install on the land. In a disaster that matters most: equipment there is costly, and often impossible to bring in.",
   },
   {
-    claim: `Free satellite data, read on ${EARTH_ENGINE}.`,
-    text: `Open data anyone can use: the public Sentinel satellites, read for you on ${EARTH_ENGINE}.`,
+    claim: "Free satellite data, read on {earthEngine}.",
+    text: "Open data anyone can use: the public Sentinel satellites, read for you on {earthEngine}.",
   },
   {
     claim: "Recovery, not only monitoring.",
@@ -103,7 +110,7 @@ const WHY = [
   },
   {
     claim: "A few clicks, start to finish.",
-    text: `Finding the right satellite images and analysing them happens for you: a ten-field farm is read in about${NBSP}${NUMBERS.tenFieldsSeconds}${NBSP}seconds.`,
+    text: "Finding the right satellite images and analysing them happens for you: a ten-field farm is read in about {seconds} seconds.",
   },
   {
     claim: "All you need is a place.",
@@ -115,6 +122,11 @@ const WHY = [
 // a no-break one), so none ends on a word alone where the browser cannot
 // even out a paragraph's last line (text-wrap: pretty; Safari before 26).
 const lastTwoTogether = (text) => text.replace(/ (?=[^ ]*$)/, NBSP);
+
+// A number and the words on either side of it share a line too ("about 20
+// seconds"), in every language: the plain spaces beside a digit become
+// no-break ones.
+const digitsTogether = (text) => text.replace(/ (?=\d)|(?<=\d) /g, NBSP);
 
 // The two stories. Each step: a short title, one or two plain sentences,
 // a picture of the app (crops/<shot>-800.webp and -1600.webp) with what it
@@ -231,17 +243,24 @@ const ATLAS_STEPS = [
 // article gives no place or date, so the caption names none
 // (public/site/photos/manifest.json). Two copies, 600 x 582 and one twice
 // as sharp for sharp screens (srcSet); it is never shown wider than the
-// first (home.css .why-photo).
+// first (home.css .why-photo). The credit and the publication's name are
+// names, the same in every language: the caption takes them as holes.
 const PHOTO = {
   small: "/site/photos/shell-casings-field-600.webp",
   large: "/site/photos/shell-casings-field-1200.webp",
   alt: "Spent artillery shell casings, some rusted, lie in the grass of a field, with dry weeds and trees behind.",
+  credit: `Jose Hernandez, Camera${NBSP}51 / Shutterstock.com`,
+  publication: "Responsible Statecraft",
   article: "https://responsiblestatecraft.org/ukraine-soil-contamination/",
 };
 
 export default function HomePage() {
   usePageTitle();
+  const t = useT("home");
   const reveal = useReveal();
+  // What fills the reasons' holes: the joined name and the number, written
+  // in the website's language.
+  const whyVars = { earthEngine: EARTH_ENGINE, seconds: formatInt(NUMBERS.tenFieldsSeconds) };
   // The page's last four parts (the field row, the record, the demo and the
   // close) play their entrances together, and the demo is built, once the
   // field row is within 2,400 px of the screen, rather than each as it
@@ -281,28 +300,28 @@ export default function HomePage() {
             <h1 id="hero-title" className="hero-title lines">
               <span className="line">
                 <span data-line style={{ "--i": 0 }}>
-                  Drop your pin,
+                  {t("Drop your pin,")}
                 </span>
               </span>
               <span className="line">
                 <span data-line style={{ "--i": 1 }}>
-                  know your land.
+                  {t("know your land.")}
                 </span>
               </span>
             </h1>
             {/* The problem, then, in bold, what Chernozem does about it (the owner's words) */}
             <p className="hero-lead" data-load style={{ "--d": "420ms" }}>
-              As geopolitical and environmental tensions rise, wars and climate disasters strike more often. They hit hardest the people noticed least: the farmers who depend on their land to survive.
+              {t("As geopolitical and environmental tensions rise, wars and climate disasters strike more often. They hit hardest the people noticed least: the farmers who depend on their land to survive.")}
             </p>
             <p className="hero-solves" data-load style={{ "--d": "450ms" }}>
-              Chernozem solves the problem of that harm going unseen.
+              {t("Chernozem solves the problem of that harm going unseen.")}
             </p>
             <div className="hero-actions" data-load style={{ "--d": "480ms" }}>
               <Link to={SITE.registerPath} className="btn">
-                Register for Chernozem
+                {t("Register for Chernozem")}
               </Link>
               <Link to={SITE.demoPath} className="link link-under">
-                Try the demo
+                {t("Try the demo")}
               </Link>
             </div>
           </div>
@@ -319,14 +338,14 @@ export default function HomePage() {
         <div className="wrap grid">
           <div className="what-words">
             <h2 id="what-title" className="head" data-rise>
-              What is Chernozem
+              {t("What is Chernozem")}
             </h2>
             <p className="lead what-lead" data-rise style={{ "--i": 1 }}>
-              <strong>Chernozem is satellite farmland monitoring: free satellite data over farmland, read and put into plain words for people who are not scientists.</strong> Field watches a farmer’s own fields; Atlas scores a whole region for governments, NGOs and corporations. The name is the black soil of Ukraine and northeast China, where its story began.
+              <strong>{t("Chernozem is satellite farmland monitoring: free satellite data over farmland, read and put into plain words for people who are not scientists.")}</strong> {t("Field watches a farmer’s own fields; Atlas scores a whole region for governments, NGOs and corporations. The name is the black soil of Ukraine and northeast China, where its story began.")}
             </p>
             <p className="what-link" data-rise style={{ "--i": 2 }}>
               <Link to="/story" className="link link-under">
-                How it started
+                {t("How it started")}
               </Link>
             </p>
           </div>
@@ -335,7 +354,7 @@ export default function HomePage() {
               <img
                 src="/site/shots/what-field-atlas-600.webp"
                 srcSet="/site/shots/what-field-atlas-600.webp 1x, /site/shots/what-field-atlas-1200.webp 2x"
-                alt="Chernozem’s pin and name above two screens of the app: Field, with the demo farm’s fields outlined on satellite imagery and Field 12’s water, plant health, stress and harvest readings beside them; and Atlas, with Ukraine’s cropland in squares shaded by priority for September 2026, the weights on the left and the top areas on the right."
+                alt={t("Chernozem’s pin and name above two screens of the app: Field, with the demo farm’s fields outlined on satellite imagery and Field 12’s water, plant health, stress and harvest readings beside them; and Atlas, with Ukraine’s cropland in squares shaded by priority for September 2026, the weights on the left and the top areas on the right.")}
                 width="600"
                 height="800"
                 loading="lazy"
@@ -343,9 +362,9 @@ export default function HomePage() {
               />
             </figure>
             <p className="window-caption muted">
-              Field, above, on the demo farm near Kupiansk; Atlas, below, across Ukraine.{" "}
+              {t("Field, above, on the demo farm near Kupiansk; Atlas, below, across Ukraine.")}{" "}
               <Link to={SITE.demoPath} className="link link-under">
-                Open the demo
+                {t("Open the demo")}
               </Link>
             </p>
           </div>
@@ -356,38 +375,41 @@ export default function HomePage() {
       <section className="why section" aria-labelledby="why-title" ref={reveal}>
         <div className="wrap grid">
           <h2 id="why-title" className="head why-head" data-rise>
-            Why Chernozem
+            {t("Why Chernozem")}
           </h2>
           {/* role="list": Safari stops calling a list a list once its markers are styled away */}
           <ul className="why-list" role="list">
             {WHY.map((item, i) => (
               <li className="why-item" key={item.claim} data-rise style={{ "--i": i + 1 }}>
-                <strong className="why-claim">{item.claim}</strong> {lastTwoTogether(item.text)}
+                <strong className="why-claim">{t(item.claim, whyVars)}</strong> {lastTwoTogether(digitsTogether(t(item.text, whyVars)))}
               </li>
             ))}
           </ul>
           <figure className="why-photo" data-rise style={{ "--i": 1 }}>
-            <img src={PHOTO.small} srcSet={`${PHOTO.small} 1x, ${PHOTO.large} 2x`} alt={PHOTO.alt} width="600" height="582" loading="lazy" decoding="async" />
+            <img src={PHOTO.small} srcSet={`${PHOTO.small} 1x, ${PHOTO.large} 2x`} alt={t(PHOTO.alt)} width="600" height="582" loading="lazy" decoding="async" />
             <figcaption className="window-caption muted">
-              Spent artillery shell casings left in a field. Photo: Jose Hernandez, Camera{NBSP}51 / Shutterstock.com, as published in{" "}
-              <a href={PHOTO.article} className="link link-under" target="_blank" rel="noreferrer">
-                Responsible Statecraft
-              </a>
-              .
+              {t("Spent artillery shell casings left in a field. Photo: {credit}, as published in {article}.", {
+                credit: PHOTO.credit,
+                article: (
+                  <a href={PHOTO.article} className="link link-under" target="_blank" rel="noreferrer">
+                    {PHOTO.publication}
+                  </a>
+                ),
+              })}
             </figcaption>
           </figure>
         </div>
       </section>
 
       {/* 4. Field and 5. Atlas: the held, sideways stories */}
-      <ScrollStory id="field-story" title="Field, for one farm" link={{ to: "/field", label: "Open Field in the demo" }} steps={FIELD_STEPS} />
-      <ScrollStory id="atlas-story" title="Atlas, for a whole region" link={{ to: "/atlas", label: "Open Atlas in the demo" }} steps={ATLAS_STEPS} surface />
+      <ScrollStory id="field-story" title={t("Field, for one farm")} link={{ to: "/field", label: t("Open Field in the demo") }} steps={FIELD_STEPS} />
+      <ScrollStory id="atlas-story" title={t("Atlas, for a whole region")} link={{ to: "/atlas", label: t("Open Atlas in the demo") }} steps={ATLAS_STEPS} surface />
 
       {/* 6. One field, one pass, one answer */}
       <section className={`showcase section${tail}`} aria-labelledby="showcase-title" ref={showcaseRef}>
         <div className="wrap grid">
           <h2 id="showcase-title" className="head showcase-head" data-rise>
-            One field, one pass, one answer
+            {t("One field, one pass, one answer")}
           </h2>
           <FieldRowStates />
         </div>
@@ -399,12 +421,12 @@ export default function HomePage() {
           <h2 id="proof-title" className="display proof-head lines">
             <span className="line">
               <span data-rise style={{ "--i": 0 }}>
-                Checked against
+                {t("Checked against")}
               </span>
             </span>{" "}
             <span className="line proof-head-step">
               <span data-rise style={{ "--i": 1 }}>
-                the record
+                {t("the record")}
               </span>
             </span>
           </h2>
@@ -419,14 +441,14 @@ export default function HomePage() {
         <div className="wrap grid">
           <div className="demo-copy">
             <h2 id="demo-title" className="head" data-rise>
-              The demo is Ukraine
+              {t("The demo is Ukraine")}
             </h2>
             <p className="lead demo-statement" data-rise style={{ "--i": 1 }}>
-              Chernozem started there. This is the real {NUMBERS.ukraineMonth} reading of {formatInt(NUMBERS.ukraineSquares)} squares, rolled up to oblasts. The same app works anywhere.
+              {t("Chernozem started there. This is the real {month} reading of {squares} squares, rolled up to oblasts. The same app works anywhere.", { month: t(NUMBERS.ukraineMonth), squares: formatInt(NUMBERS.ukraineSquares) })}
             </p>
             <div data-rise style={{ "--i": 2 }}>
               <Link to={SITE.demoPath} className="btn">
-                Try the demo
+                {t("Try the demo")}
               </Link>
             </div>
           </div>
@@ -445,29 +467,29 @@ export default function HomePage() {
         <div className="close-row frame">
           <div className="close-tile close-tile-main on-accent" data-rise style={{ "--i": 0 }}>
             <h2 id="close-title" className="close-head">
-              See your land from space
+              {t("See your land from space")}
             </h2>
-            <p className="close-text">Register, drop your pin or choose a region, and read what the satellites saw.</p>
+            <p className="close-text">{t("Register, drop your pin or choose a region, and read what the satellites saw.")}</p>
             <div className="close-actions">
               <Link to={SITE.registerPath} className="btn btn-light">
-                Register for Chernozem
+                {t("Register for Chernozem")}
               </Link>
               <Link to={SITE.demoPath} className="link">
-                Try the demo
+                {t("Try the demo")}
               </Link>
             </div>
           </div>
           <div className="close-tile close-tile-photo" data-slide="right" style={{ "--i": 1 }}>
-            <img src="/site/shots/crops/atlas-map-satellite-sea.webp" alt="Satellite view of southern Ukraine, Crimea and the Black Sea, as Atlas shows it." width="730" height="520" loading="lazy" decoding="async" />
+            <img src="/site/shots/crops/atlas-map-satellite-sea.webp" alt={t("Satellite view of southern Ukraine, Crimea and the Black Sea, as Atlas shows it.")} width="730" height="520" loading="lazy" decoding="async" />
           </div>
         </div>
         <div className="wrap small-print-wrap">
           {/* What the readings are and are not (the owner's request): a readable size, above the small print */}
           <p className="caveat">
-            <strong>A detection framework.</strong> Chernozem reads farmland from space. It cannot take soil samples in a disaster zone, and it has no hardware on the ground to confirm what it sees. In our tests its readings were roughly {NUMBERS.testAccuracyPercent}% accurate: close, for a tool of its kind, but not 100%. Use them as a guide, check on the ground before acting, and know that Chernozem is not responsible for decisions made from them.
+            <strong>{t("A detection framework.")}</strong> {t("Chernozem reads farmland from space. It cannot take soil samples in a disaster zone, and it has no hardware on the ground to confirm what it sees. In our tests its readings were roughly {percent}% accurate: close, for a tool of its kind, but not 100%. Use them as a guide, check on the ground before acting, and know that Chernozem is not responsible for decisions made from them.", { percent: NUMBERS.testAccuracyPercent })}
           </p>
           <p className="small-print">
-            The maps in the pictures of the app: Esri World Imagery (Esri, Maxar, Earthstar Geographics) and Esri’s light grey canvas (Esri, HERE, Garmin, © OpenStreetMap contributors). The satellite view above: Esri World Imagery.
+            {t("The maps in the pictures of the app: Esri World Imagery (Esri, Maxar, Earthstar Geographics) and Esri’s light grey canvas (Esri, HERE, Garmin, © OpenStreetMap contributors). The satellite view above: Esri World Imagery.")}
           </p>
         </div>
       </section>

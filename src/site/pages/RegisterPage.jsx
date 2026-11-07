@@ -45,6 +45,12 @@
 // The Sign in page (SignInPage.jsx) uses three parts exported here: the
 // labelled field, the password field and the pictures.
 //
+// Every word a visitor reads goes through t() (src/site/i18n, namespace
+// "register"; the dictionaries are zh/register.js and uk/register.js, keyed
+// by the English). The words of the checks and of Firebase stay English in
+// src/lib/registration.js and are translated here, where they are shown
+// (sayProblem); the pictures' alt texts and captions likewise.
+//
 // WHO EDITS IT
 // Whoever changes how people register. The words of the checks and the
 // list of pictures live in src/lib/registration.js; the look in register.css.
@@ -54,6 +60,7 @@ import "../site.css";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { usePageTitle } from "../hooks.js";
+import { useT } from "../i18n/i18n.js";
 import { SITE_ACTIONS } from "../content/site.js";
 import { getAccount, getStatus, logoutEverywhere, postFirebaseToken, putAccount } from "../../api/accountApi.js";
 import { loadFirebaseAuth } from "../../lib/firebase.js";
@@ -86,6 +93,37 @@ const describedBy = (...ids) => ids.filter(Boolean).join(" ") || undefined;
 const LOADING = "The sign-in is still loading. Try again in a moment.";
 const NOT_LOADED = "The sign-in could not be downloaded. Check your connection and reload the page.";
 
+// What the checks say when an answer is too short or too long
+// (src/lib/registration.js) has the limit written into the sentence. Each
+// is paired here with the same sentence holding {n}, so one dictionary
+// entry serves whatever the limit is.
+const WITH_LIMIT = {
+  [`Use ${LIMITS.password.min} characters or more.`]: ["Use {n} characters or more.", LIMITS.password.min],
+  [`Keep the password to ${LIMITS.password.max} characters or fewer.`]: ["Keep the password to {n} characters or fewer.", LIMITS.password.max],
+  [`Keep the e-mail to ${LIMITS.email} characters or fewer.`]: ["Keep the e-mail to {n} characters or fewer.", LIMITS.email],
+  [`Keep your name to ${LIMITS.name} characters or fewer.`]: ["Keep your name to {n} characters or fewer.", LIMITS.name],
+  [`Keep the organisation to ${LIMITS.organization} characters or fewer.`]: ["Keep the organisation to {n} characters or fewer.", LIMITS.organization],
+};
+
+// A message of the checks, of Firebase or of our server (registration.js,
+// LOADING and NOT_LOADED above), said in the visitor's language: looked up
+// by its English where it is shown, so a change of language changes it
+// too. A sentence with a limit in it goes through WITH_LIMIT; an unknown
+// Firebase code ("Something went wrong (code). Try again.") is one generic
+// sentence with the code kept; anything else is looked up as it stands. A
+// sentence the dictionary does not have is our server's own words when
+// saving failed (save): an English reader sees them as they are, anyone
+// else one generic sentence, since the page cannot translate them.
+export function sayProblem(t, message) {
+  if (!message) return message;
+  const limited = WITH_LIMIT[message];
+  if (limited) return t(limited[0], { n: limited[1] });
+  const unknown = message.match(/^Something went wrong(?: \((.+)\))?\. Try again\.$/);
+  if (unknown) return unknown[1] ? t("Something went wrong ({code}). Try again.", { code: unknown[1] }) : t("Something went wrong. Try again.");
+  if (t.lang !== "en" && !t.has(message)) return t("Could not save. Try again.");
+  return t(message);
+}
+
 // The pictures sit under the form in windows this narrow (register.css),
 // below the first screen: there they load late and never hold up the form.
 const PICTURES_BELOW = "(max-width: 1000px)";
@@ -103,13 +141,14 @@ const picturesBelow = () => {
 // both tied to the input for screen readers. children replaces the plain
 // input (the password field brings its own).
 export function AuthField({ id, label, hint, error, after, optional, delay, children, ...input }) {
+  const t = useT("register");
   const ids = describedBy(hint && `${id}-hint`, error && `${id}-error`);
   return (
     <div className={`reg-field${error ? " is-wrong" : ""}`} data-arrive={delay === undefined ? undefined : ""} style={rise(delay)}>
       <div className="reg-field-head">
         <label htmlFor={id}>
           {label}
-          {optional && <span className="reg-opt"> (optional)</span>}
+          {optional && <span className="reg-opt"> {t("(optional)")}</span>}
         </label>
         {hint && (
           <span id={`${id}-hint`} className="reg-hint">
@@ -130,9 +169,10 @@ export function AuthField({ id, label, hint, error, after, optional, delay, chil
 
 // The one password field, with "Show" to read what was typed.
 export function PasswordField({ id, hint, error, after, delay, autoComplete, value, onChange }) {
+  const t = useT("register");
   const [shown, setShown] = useState(false);
   return (
-    <AuthField id={id} label="Password" hint={hint} error={error} after={after} delay={delay}>
+    <AuthField id={id} label={t("Password")} hint={hint} error={error} after={after} delay={delay}>
       <div className="reg-pass">
         <input
           id={id}
@@ -148,8 +188,8 @@ export function PasswordField({ id, hint, error, after, delay, autoComplete, val
           aria-describedby={describedBy(hint && `${id}-hint`, error && `${id}-error`)}
           aria-invalid={error ? true : undefined}
         />
-        <button type="button" className="reg-show" aria-controls={id} aria-label={shown ? "Hide password" : "Show password"} onClick={() => setShown((value) => !value)}>
-          {shown ? "Hide" : "Show"}
+        <button type="button" className="reg-show" aria-controls={id} aria-label={shown ? t("Hide password") : t("Show password")} onClick={() => setShown((value) => !value)}>
+          {shown ? t("Hide") : t("Show")}
         </button>
       </div>
     </AuthField>
@@ -165,6 +205,7 @@ export function PasswordField({ id, hint, error, after, delay, autoComplete, val
 // with it). Under the form (narrow windows) the large one waits until the
 // visitor scrolls near, and a phone never shows the small ones.
 export function ShotSet({ set, delay = 320 }) {
+  const t = useT("register");
   const [below] = useState(picturesBelow);
   // When the large picture arrived, in milliseconds after this set
   // appeared (null before): the small ones keep their places in the
@@ -179,7 +220,7 @@ export function ShotSet({ set, delay = 320 }) {
       <figure className="reg-shot is-big">
         <img
           src={big.src}
-          alt={big.alt}
+          alt={t(big.alt)}
           width={big.width}
           height={big.height}
           loading={below ? "lazy" : "eager"}
@@ -191,16 +232,16 @@ export function ShotSet({ set, delay = 320 }) {
           style={rise(delay)}
         />
         <figcaption data-arrive style={rise(delay + 80)}>
-          {big.caption}
+          {t(big.caption)}
         </figcaption>
       </figure>
       {bigDone !== null && (
         <div className="reg-shot-row">
           {small.map((shot, index) => (
             <figure key={shot.src} className={`reg-shot${shot.tall ? " is-tall" : ""}`}>
-              <img src={shot.src} alt={shot.alt} width={shot.width} height={shot.height} loading="lazy" decoding="async" data-arrive style={rise(smallDelay(index))} />
+              <img src={shot.src} alt={t(shot.alt)} width={shot.width} height={shot.height} loading="lazy" decoding="async" data-arrive style={rise(smallDelay(index))} />
               <figcaption data-arrive style={rise(smallDelay(index, 80))}>
-                {shot.caption}
+                {t(shot.caption)}
               </figcaption>
             </figure>
           ))}
@@ -213,9 +254,10 @@ export function ShotSet({ set, delay = 320 }) {
 // Field or Atlas: two radio buttons dressed as one compact switch. A
 // screen reader hears "Field, for my farm"; the arrow keys move between them.
 function ProductChoice({ value, onChange }) {
+  const t = useT("register");
   return (
     <fieldset className="reg-choice">
-      <legend className="reg-sr-only">Choose Field or Atlas</legend>
+      <legend className="reg-sr-only">{t("Choose Field or Atlas")}</legend>
       {Object.entries(PRODUCTS).map(([key, item], index) => (
         <label key={key} className="reg-choice-item" data-arrive style={rise(170 + 40 * index)}>
           <input
@@ -226,10 +268,10 @@ function ProductChoice({ value, onChange }) {
             value={key}
             checked={value === key}
             onChange={() => onChange(key)}
-            aria-label={`${item.name}, ${item.tagline}`}
+            aria-label={`${item.name}, ${t(item.tagline)}`}
           />
           <span className="reg-choice-name">{item.name}</span>
-          <span className="reg-choice-tag">{item.tagline}</span>
+          <span className="reg-choice-tag">{t(item.tagline)}</span>
         </label>
       ))}
     </fieldset>
@@ -240,6 +282,7 @@ function ProductChoice({ value, onChange }) {
 // choices (ORG_KINDS) with none chosen at first. Enter in the organisation
 // moves on to the kind rather than sending the form.
 function OrganisationFields({ organization, onOrganization, kind, onKind, errors, delay }) {
+  const t = useT("register");
   function next(event) {
     if (event.key !== "Enter") return;
     event.preventDefault();
@@ -249,7 +292,7 @@ function OrganisationFields({ organization, onOrganization, kind, onKind, errors
     <>
       <AuthField
         id="reg-organization"
-        label="Organisation"
+        label={t("Organisation")}
         type="text"
         name="organization"
         autoComplete="organization"
@@ -257,22 +300,22 @@ function OrganisationFields({ organization, onOrganization, kind, onKind, errors
         value={organization}
         onChange={onOrganization}
         onKeyDown={next}
-        error={errors.organization}
+        error={sayProblem(t, errors.organization)}
         delay={delay}
       />
       <fieldset className={`reg-kinds${errors.kind ? " is-wrong" : ""}`} data-arrive style={rise(delay + 40)} aria-describedby={errors.kind ? "reg-kind-error" : undefined}>
-        <legend>Kind of organisation</legend>
+        <legend>{t("Kind of organisation")}</legend>
         <div className="reg-kind-row">
           {ORG_KINDS.map((item) => (
             <label key={item.role} className="reg-kind">
               <input id={`reg-kind-${item.role}`} className="reg-sr-only" type="radio" name="kind" value={item.role} checked={kind === item.role} onChange={() => onKind(item.role)} />
-              <span>{item.label}</span>
+              <span>{t(item.label)}</span>
             </label>
           ))}
         </div>
         {errors.kind && (
           <span id="reg-kind-error" className="reg-error" role="alert">
-            {errors.kind}
+            {sayProblem(t, errors.kind)}
           </span>
         )}
       </fieldset>
@@ -281,7 +324,10 @@ function OrganisationFields({ organization, onOrganization, kind, onKind, errors
 }
 
 export default function RegisterPage() {
-  usePageTitle("Register");
+  const t = useT("register");
+  usePageTitle(t("Register"));
+  // A message beside an answer, in the visitor's language.
+  const say = (message) => sayProblem(t, message);
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const product = productFromParam(params.get("product"));
@@ -452,7 +498,9 @@ export default function RegisterPage() {
   }
 
   // Saves the answers and goes in. When saving fails the person is signed
-  // in already, so the page shows only what is left to do.
+  // in already, so the page shows only what is left to do, with the
+  // server's own words (English: sayProblem gives anyone not reading
+  // English one generic sentence instead).
   async function save(fields) {
     try {
       await putAccount(profileForServer(fields));
@@ -528,10 +576,11 @@ export default function RegisterPage() {
   // A message, with "Sign in instead" when the e-mail already has an account.
   function errorText(spot) {
     if (!errors[spot]) return null;
-    if (errors.takenAt !== spot) return errors[spot];
+    const message = say(errors[spot]);
+    if (errors.takenAt !== spot) return message;
     return (
       <>
-        {errors[spot]} <Link to={SITE_ACTIONS.signin.path}>Sign in instead</Link>
+        {message} <Link to={SITE_ACTIONS.signin.path}>{t("Sign in instead")}</Link>
       </>
     );
   }
@@ -681,39 +730,37 @@ export default function RegisterPage() {
         <div className="reg-main">
           <h1 id="reg-title" className="reg-title">
             <span className="reg-line">
-              <span className="reg-line-in">Register</span>
+              <span className="reg-line-in">{t("Register")}</span>
             </span>
           </h1>
           <p className="reg-lead" data-arrive style={rise(120)}>
-            An account is free and takes one step.
+            {t("An account is free and takes one step.")}
           </p>
 
           {stage === "wait" && <div className="reg-wait" aria-busy="true" />}
 
           {stage === "closed" && (
             <div className="reg-panel" data-arrive style={rise(160)}>
-              <h2 className="reg-panel-title">Registration is not open yet.</h2>
-              <p>Try the demo, or write to us.</p>
+              <h2 className="reg-panel-title">{t("Registration is not open yet.")}</h2>
+              <p>{t("Try the demo, or write to us.")}</p>
               <div className="reg-actions">
                 <Link className="reg-btn reg-btn-primary" to={SITE_ACTIONS.demo.path}>
-                  Try the demo
+                  {t("Try the demo")}
                 </Link>
-                <Link to="/contact">Write to us</Link>
+                <Link to="/contact">{t("Write to us")}</Link>
               </div>
             </div>
           )}
 
           {stage === "signed" && (
             <div className="reg-panel" data-arrive style={rise(160)}>
-              <p>
-                Signed in as <strong>{signedInAs}</strong>.
-              </p>
+              <p>{t("Signed in as {who}.", { who: <strong>{signedInAs}</strong> })}</p>
               <div className="reg-actions">
                 <Link className="reg-btn reg-btn-primary" to={item.path} onClick={leaveDemo}>
-                  Open {item.name}
+                  {t("Open {product}", { product: item.name })}
                 </Link>
                 <button type="button" className="reg-textbtn" onClick={signOutAll} disabled={Boolean(busy)}>
-                  Not you? Sign out
+                  {t("Not you? Sign out")}
                 </button>
               </div>
             </div>
@@ -721,18 +768,16 @@ export default function RegisterPage() {
 
           {stage === "owner" && (
             <div className="reg-panel" data-arrive style={rise(160)}>
-              <p>
-                Signed in as <strong>{signedInAs || "the owner"}</strong>, the owner.
-              </p>
+              <p>{t("Signed in as {who}, the owner.", { who: <strong>{signedInAs || t("the owner")}</strong> })}</p>
               <div className="reg-actions">
                 <Link className="reg-btn reg-btn-primary" to={PRODUCTS.field.path} onClick={leaveDemo}>
-                  Open Field
+                  {t("Open Field")}
                 </Link>
                 <Link className="reg-btn reg-btn-second" to={PRODUCTS.atlas.path} onClick={leaveDemo}>
-                  Open Atlas
+                  {t("Open Atlas")}
                 </Link>
                 <button type="button" className="reg-textbtn" onClick={signOutAll} disabled={Boolean(busy)}>
-                  Sign out
+                  {t("Sign out")}
                 </button>
               </div>
             </div>
@@ -742,9 +787,9 @@ export default function RegisterPage() {
             <>
               {stage === "finish" && (
                 <p className="reg-who" data-arrive style={rise(160)}>
-                  Signed in as <strong>{signedInAs || "you"}</strong>.{" "}
+                  {t("Signed in as {who}.", { who: <strong>{signedInAs || t("you")}</strong> })}{" "}
                   <button type="button" className="reg-textbtn" onClick={signOutAll} disabled={Boolean(busy)}>
-                    Not you? Sign out
+                    {t("Not you? Sign out")}
                   </button>
                 </p>
               )}
@@ -753,18 +798,16 @@ export default function RegisterPage() {
           )}
 
           {stage === "form" && (
-            <form className="reg-form" onSubmit={createAccount} noValidate aria-label="Register">
+            <form className="reg-form" onSubmit={createAccount} noValidate aria-label={t("Register")}>
               {fbUser && !busy && (
                 <div className="reg-known">
-                  <p>
-                    This browser is signed in as <strong>{fbUser.email}</strong>.
-                  </p>
+                  <p>{t("This browser is signed in as {email}.", { email: <strong>{fbUser.email}</strong> })}</p>
                   <div className="reg-actions">
                     <button type="button" className="reg-btn reg-btn-second" onClick={continueAs}>
-                      Continue as {fbUser.email}
+                      {t("Continue as {email}", { email: fbUser.email })}
                     </button>
                     <button type="button" className="reg-textbtn" onClick={signOutAll}>
-                      Not you? Sign out
+                      {t("Not you? Sign out")}
                     </button>
                   </div>
                 </div>
@@ -785,7 +828,7 @@ export default function RegisterPage() {
                 />
               )}
               <button id="reg-google" type="button" className="reg-btn reg-btn-primary reg-btn-wide" onClick={continueWithGoogle} disabled={Boolean(busy)} data-arrive style={rise(late(260 + after))}>
-                {busy === "google" ? `Opening ${PRODUCTS[product].name}…` : "Continue with Google"}
+                {busy === "google" ? t("Opening {product}…", { product: PRODUCTS[product].name }) : t("Continue with Google")}
               </button>
               {errors.google && (
                 <p className="reg-error" role="alert">
@@ -793,23 +836,23 @@ export default function RegisterPage() {
                 </p>
               )}
               <p className="reg-or" aria-hidden="true" data-arrive style={rise(late(290 + after))}>
-                or
+                {t("or")}
               </p>
               <AuthField
                 id="reg-name"
-                label="Name"
+                label={t("Name")}
                 type="text"
                 name="name"
                 autoComplete="name"
                 maxLength={LIMITS.name}
                 value={name}
                 onChange={edit(setName, "name")}
-                error={errors.name}
+                error={say(errors.name)}
                 delay={late(320 + after)}
               />
               <AuthField
                 id="reg-email"
-                label="E-mail"
+                label={t("E-mail")}
                 type="email"
                 name="email"
                 autoComplete="email"
@@ -824,29 +867,29 @@ export default function RegisterPage() {
               />
               <PasswordField
                 id="reg-password"
-                hint={`${LIMITS.password.min} characters or more`}
+                hint={t("{n} characters or more", { n: LIMITS.password.min })}
                 autoComplete="new-password"
                 value={password}
                 onChange={edit(setPassword, "password")}
-                error={errors.password}
+                error={say(errors.password)}
                 delay={late(380 + after)}
               />
               {errors.form && (
                 <p className="reg-error" role="alert">
-                  {errors.form}
+                  {say(errors.form)}
                 </p>
               )}
               <button type="submit" className="reg-btn reg-btn-second reg-btn-wide" disabled={Boolean(busy)} data-arrive style={rise(late(410 + after))}>
-                {busy === "email" ? "Making your account…" : "Create account"}
+                {busy === "email" ? t("Making your account…") : t("Create account")}
               </button>
               <p className="reg-aside" data-arrive style={rise(late(440 + after))}>
-                Already have an account? <Link to={SITE_ACTIONS.signin.path}>Sign in</Link>
+                {t("Already have an account?")} <Link to={SITE_ACTIONS.signin.path}>{t("Sign in")}</Link>
               </p>
             </form>
           )}
 
           {stage === "finish" && (
-            <form className="reg-form" onSubmit={finish} noValidate aria-label="Finish registering">
+            <form className="reg-form" onSubmit={finish} noValidate aria-label={t("Finish registering")}>
               {atlas && (
                 <OrganisationFields
                   organization={organization}
@@ -859,23 +902,23 @@ export default function RegisterPage() {
               )}
               <AuthField
                 id="reg-name"
-                label="Name"
+                label={t("Name")}
                 type="text"
                 name="name"
                 autoComplete="name"
                 maxLength={LIMITS.name}
                 value={name}
                 onChange={edit(setName, "name")}
-                error={errors.name}
+                error={say(errors.name)}
                 delay={late(260 + after)}
               />
               {errors.form && (
                 <p className="reg-error" role="alert">
-                  {errors.form}
+                  {say(errors.form)}
                 </p>
               )}
               <button type="submit" className="reg-btn reg-btn-primary reg-btn-wide" disabled={Boolean(busy)} data-arrive style={rise(late(300 + after))}>
-                {busy === "finish" ? "Opening…" : `Open ${PRODUCTS[product].name}`}
+                {busy === "finish" ? t("Opening…") : t("Open {product}", { product: PRODUCTS[product].name })}
               </button>
             </form>
           )}

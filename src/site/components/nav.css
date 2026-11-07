@@ -126,6 +126,47 @@ html.site-menu-open {
   overflow: hidden;
 }
 
+/* The language switch (components/LanguageSwitch.jsx): in the bar, one
+   word that is a select, dressed as the links beside it, with no arrow;
+   in the sheet, the three names in a row under the links. */
+.site .sn-lang {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 10px 8px;
+  margin: -10px -8px;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 0.25em;
+  text-decoration-thickness: 0.09em;
+  transition: text-decoration-color var(--t-hover) ease;
+  cursor: inherit;
+}
+
+.site .sn-lang[data-near],
+.site .sn-lang:focus-visible {
+  text-decoration-color: currentColor;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .site .sn-lang:hover {
+    text-decoration-color: currentColor;
+  }
+}
+
+.site .sn-sheet-lang {
+  margin-top: 2rem;
+  gap: 0.5rem 1.5rem;
+  font-size: var(--step-lead);
+}
+
 @media (max-width: 860px) {
   .site .sn-inner {
     min-height: 60px;
@@ -137,7 +178,8 @@ html.site-menu-open {
 
   .site .sn-links,
   .site .sn-demo,
-  .site .sn-signin {
+  .site .sn-signin,
+  .site .sn-lang {
     display: none;
   }
 
@@ -158,5 +200,34 @@ html.site-menu-open {
 @media (max-width: 380px) {
   .site .sn-brand img {
     width: 108px;
+  }
+}
+
+/* Ukrainian words are longer: in Ukrainian the bar's links fold into the
+   sheet from 1000 px down instead of 860 px (at 900 px "Про нас" broke in
+   two and the button ran off the edge). */
+@media (max-width: 1000px) {
+  html:lang(uk) .site .sn-links,
+  html:lang(uk) .site .sn-demo,
+  html:lang(uk) .site .sn-signin,
+  html:lang(uk) .site .sn-lang {
+    display: none;
+  }
+
+  html:lang(uk) .site .sn-menu-button {
+    display: inline-flex;
+    align-items: center;
+  }
+}
+
+/* On a narrow phone the Ukrainian button ("Зареєструватися") needs the room
+   the logo can give: the smaller wordmark from 480 px down, not 380. */
+@media (max-width: 480px) {
+  html:lang(uk) .site .sn-brand img {
+    width: 108px;
+  }
+
+  html:lang(uk) .site .sn-right {
+    gap: 0.75rem;
   }
 }

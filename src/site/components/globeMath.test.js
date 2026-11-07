@@ -30,6 +30,7 @@ import {
   buyerYearNote,
   buyersOf,
   captionFor,
+  cardText,
   dayMonthYear,
   destination,
   flightMs,
@@ -47,6 +48,7 @@ import {
   sinceText,
   spanText,
   sphereRadiusPx,
+  statusWords,
   textureSize,
   tourStops,
   tradeSource,
@@ -57,6 +59,7 @@ import {
   ZOOM_LIMIT_SLACK,
 } from "./globeMath.js";
 import { globeZoomFactor, globeZoomLimits } from "../../lib/wheelZoom.js";
+import { WAR_NAMES, eventName } from "./worldData.js";
 import { WORLD_CONFLICTS } from "../../../server/world/conflicts.js";
 
 // The dates must not depend on the visitor's clock (the checks also pass in
@@ -463,6 +466,59 @@ test("the list and the panel word each event in plain sentences, never in string
   for (const text of [panelMeta(UKRAINE, { reviewed: "2026-10-28" }), panelMeta(flood, { now: NOW }), optionText(flood, NOW), measuredSentence({ heavyDamageHa: 1, peopleOnDamagedSoil: 1, month: "May" })]) {
     assert.ok(!text.includes("·"), `"${text}" has no middle dot`);
   }
+});
+
+test("the globe's words are English without a language and pass every word through t() with one (since 6 November 2026)", () => {
+  // The list's line and the card's, in English, exactly as before the languages.
+  const RED = { id: "tc-1", kind: "storm", level: "red", name: "Tropical cyclone Arnab", country: "India", iso3: "IND", since: "2026-10-26", until: "2026-10-28", url: "https://www.gdacs.org/report.aspx?eventid=1" };
+  const FLOOD = { kind: "flood", level: "orange", name: "Flood in Chad", country: "Chad", iso3: "TCD", since: "2026-10-22", until: "2026-10-25" };
+  assert.equal(statusWords(UKRAINE), "War since February 2022");
+  assert.equal(statusWords(UKRAINE, NOW, undefined, { card: true }), "War since February 2022.");
+  assert.equal(statusWords(WARS.find((e) => e.id === "war-sahel")), "Armed conflict since 2015");
+  const UNDATED = { kind: "war", name: "Armed groups in Colombia", country: "Colombia", iso3: "COL" };
+  assert.equal(statusWords(UNDATED), "Armed conflict");
+  assert.equal(statusWords(UNDATED, NOW, undefined, { card: true }), "Armed conflict.", "a war the list has no date for still ends the card's line with a full stop");
+  assert.equal(statusWords(RED, NOW), "Storm, red alert since 26 October 2026");
+  assert.equal(statusWords(RED, NOW, undefined, { card: true }), "Storm, red alert since 26 October 2026, GDACS.");
+  assert.equal(statusWords(FLOOD, NOW), "Flood, orange alert from 22 to 25 October 2026");
+  assert.equal(statusWords({ kind: "earthquake", level: "red", since: "2026-10-22", until: "2026-10-22" }, NOW, undefined, { card: true }), "Earthquake, red alert on 22 October 2026, GDACS.");
+  assert.equal(statusWords({ kind: "wildfire", level: "orange", since: "2026-10-01", current: false }, NOW), "Wildfires, orange alert from 1 October 2026, now over");
+  const measured = { heavyDamageHa: 1780400, peopleOnDamagedSoil: 1204041, month: "September 2026" };
+  const buyers = buyersOf(UKRAINE, UKRAINE_TRADE, COUNTRIES);
+  const words = cardText({ ...UKRAINE, measured }, { buyers, commonYear: 2023, now: NOW });
+  assert.equal(words.meta, "War since February 2022.");
+  assert.equal(words.measured, "Chernozem measured 1.78 million ha of black soil heavily damaged, with 1.2 million people on it (September 2026).");
+  assert.deepEqual(
+    words.buyers.map((b) => `${b.name} ${b.share}`),
+    ["Moldova 24%", "Türkiye 13%", "Egypt 12%", "Tunisia 10%", "Lebanon (2022) 9%", "Bulgaria 7%", "Hungary 6%"],
+    "largest first, a figure from another year than the table's in brackets, Belarus's 2021 figure left out"
+  );
+  assert.equal(words.buyersAbout, "The share of each country's farm and food imports that come from Ukraine, in 2023 unless a year is given.");
+  assert.equal(cardText(RED, { now: NOW }).link, RED.url);
+  // With a language: a t that marks every key it is asked for, so a word that
+  // skipped it would show bare; numbers, the feed's own text and country names
+  // (the browser's, in the language) pass through as they are.
+  const t = (key, vars) => `[${String(key).replace(/\{(\w+)\}/g, (hole, name) => (vars && vars[name] !== undefined ? String(vars[name]) : hole))}]`;
+  t.locale = "uk-UA";
+  assert.equal(statusWords(RED, NOW, t), "[[Storm], [red] alert since [26 [October] 2026]]");
+  assert.equal(statusWords(FLOOD, NOW, t, { card: true }), "[[Flood], [orange] alert from [22 to 25 [October] 2026], GDACS.]");
+  assert.equal(statusWords(UKRAINE, NOW, t), "[[War] since [[February] 2022]]");
+  assert.equal(statusWords(UNDATED, NOW, t, { card: true }), "[[Armed conflict].]");
+  const spoken = cardText({ ...UKRAINE, measured }, { buyers, commonYear: 2023, now: NOW }, t);
+  assert.equal(spoken.buyers[0].name, "Молдова", "the country's name in the language, from the browser");
+  assert.equal(spoken.buyers[4].name, "[Ліван (2022)]");
+  assert.match(spoken.measured, /^\[Chernozem measured 1,78 мільйона ha of black soil heavily damaged, with 1,2 мільйона people on it \(\[September 2026\]\)\.\]$/);
+  assert.match(spoken.buyersAbout, /come from Україна, in 2023 unless/);
+  assert.equal(spoken.note, UKRAINE.note, "the feed's line stays as the feed wrote it");
+  // The reviewed wars' names, listed for the dictionaries, are the server's own.
+  assert.deepEqual(
+    WAR_NAMES,
+    WORLD_CONFLICTS.map((w) => w.name),
+    "worldData.js WAR_NAMES matches server/world/conflicts.js"
+  );
+  assert.equal(eventName(UKRAINE, t), "[War in Ukraine]");
+  assert.equal(eventName(RED, t), "Tropical cyclone Arnab", "a GDACS title stays as the feed wrote it");
+  assert.equal(eventName(UKRAINE), "War in Ukraine");
 });
 
 test("the caption sits right of its marker, flips left near the edge and never covers another tile", () => {

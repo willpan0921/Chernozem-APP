@@ -26,10 +26,12 @@ import { Link } from "react-router-dom";
 import { enterDemo } from "../../lib/demoMode.js";
 import { DEMO_DOORS, SITE_ACTIONS } from "../content/site.js";
 import { usePageTitle, useReveal } from "../hooks.js";
+import { useT } from "../i18n/i18n.js";
 import "./pages.css";
 
 export default function DemoPage() {
-  usePageTitle("Demo");
+  const t = useT("demo");
+  usePageTitle(t("Demo"));
   // The entrances (site.css, "Entrances"): the doors and the close rise in
   // when they are on screen.
   const reveal = useReveal();
@@ -41,10 +43,10 @@ export default function DemoPage() {
           <div className="dm-open-text">
             <div className="pg-mask">
               <h1 className="pg-h1 pg-display" id="dm-title">
-                Try the demo
+                {t("Try the demo")}
               </h1>
             </div>
-            <p className="pg-lead pg-fade">The demo is Ukraine, where Chernozem started: a farm near Kupiansk in Field, and the whole country in Atlas.</p>
+            <p className="pg-lead pg-fade">{t("The demo is Ukraine, where Chernozem started: a farm near Kupiansk in Field, and the whole country in Atlas.")}</p>
           </div>
 
           <div className="dm-doors" ref={reveal}>
@@ -58,7 +60,7 @@ export default function DemoPage() {
                     <img src={door.phone.src} width={door.phone.width} height={door.phone.height} alt="" loading="eager" decoding="async" />
                   </span>
                 </span>
-                <span className="dm-door-label">{door.label}</span>
+                <span className="dm-door-label">{t(door.label)}</span>
               </Link>
             ))}
           </div>
@@ -68,10 +70,10 @@ export default function DemoPage() {
       <section className="pg-sec pg-sec-sage dm-close" aria-labelledby="dm-register">
         <div className="dm-close-row" ref={reveal}>
           <h2 className="dm-close-line" id="dm-register" data-rise="">
-            Want your own fields or region? Register, it’s free.
+            {t("Want your own fields or region? Register, it’s free.")}
           </h2>
           <Link className="pg-btn dm-close-btn" to={SITE_ACTIONS.register.path} data-rise="" style={{ "--i": 1 }}>
-            {SITE_ACTIONS.register.label}
+            {t(SITE_ACTIONS.register.label)}
           </Link>
         </div>
       </section>

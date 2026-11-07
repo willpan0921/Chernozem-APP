@@ -14,7 +14,8 @@
 //     control (never the system's hand), and the website (never the app)
 //     starts the click assist;
 //   - the menu offers "Sign in" and the signed-in visitor's own button, the
-//     footer has no middle-dot strings and says "Data and code";
+//     footer has no middle-dot strings and no longer links GitHub or
+//     "Data and code" (removed at the owner's request, 6 November 2026);
 //   - page changes are quick (a short fade, the next page's code fetched
 //     when its link is pointed at);
 //   - the About page, in the owner's order: the slogan "Drop your pin,
@@ -240,8 +241,9 @@ function at(text, part) {
 
 // The About page's words as a visitor reads them: its no-break spaces
 // (NBSP and EARTH_ENGINE in HomePage.jsx: "Google Earth Engine", "about 20
-// seconds", "Camera 51") as plain ones, its template strings as quoted ones.
-const spoken = (source) => source.replaceAll("${EARTH_ENGINE}", "Google Earth Engine").replaceAll("${NBSP}", " ").replaceAll("{NBSP}", " ").replace(/`/g, '"');
+// seconds", "Camera 51") as plain ones, its {earthEngine} hole filled, its
+// template strings as quoted ones.
+const spoken = (source) => source.replaceAll("${EARTH_ENGINE}", "Google Earth Engine").replaceAll("{earthEngine}", "Google Earth Engine").replaceAll("${NBSP}", " ").replaceAll("{NBSP}", " ").replace(/`/g, '"');
 
 test("the About page runs in the owner's order: the slogan and the Earth, what it is, why, the two stories, the field row, the record, the demo, the close, the disclaimer", () => {
   const home = read("pages", "HomePage.jsx");
@@ -251,8 +253,8 @@ test("the About page runs in the owner's order: the slogan and the Earth, what i
   // The slogan is the page's one title, bold, in two set lines.
   assert.equal((text.match(/<h1\b/g) || []).length, 1, "one h1");
   const h1 = text.slice(at(text, "<h1"), at(text, "</h1>"));
-  assert.match(h1, />\s*Drop your pin,\s*</);
-  assert.match(h1, />\s*know your land\.\s*</);
+  assert.match(h1, />\s*\{t\("Drop your pin,"\)\}\s*</);
+  assert.match(h1, />\s*\{t\("know your land\."\)\}\s*</);
   const css = read("pages", "home.css");
   assert.match(css, /\.site \.hero-title \{[^}]*font-weight: 800/);
   // Beside it, the Earth (components/EarthGlobe.jsx), and the slot beside it where the Earth opens a dot's card.
@@ -261,13 +263,13 @@ test("the About page runs in the owner's order: the slogan and the Earth, what i
   assert.match(home, /<div className="hero-side" ref=\{side\} \/>\s*<div className="hero-earth">\s*<EarthGlobe side=\{side\} \/>/);
   // Under the slogan, the problem; then, in bold, its own line, a step larger, what Chernozem does about it.
   const hero = text.slice(at(text, 'className="hero-words"'), at(text, 'className="hero-side"')).replace(/\s+/g, " ");
-  assert.match(hero, /<p className="hero-lead"[^>]*> As geopolitical and environmental tensions rise, wars and climate disasters strike more often\. They hit hardest the people noticed least: the farmers who depend on their land to survive\. <\/p>/);
-  assert.match(hero, /<\/p> <p className="hero-solves"[^>]*> Chernozem solves the problem of that harm going unseen\. <\/p> <div className="hero-actions"/);
+  assert.match(hero, /<p className="hero-lead"[^>]*> \{t\("As geopolitical and environmental tensions rise, wars and climate disasters strike more often\. They hit hardest the people noticed least: the farmers who depend on their land to survive\."\)\} <\/p>/);
+  assert.match(hero, /<\/p> <p className="hero-solves"[^>]*> \{t\("Chernozem solves the problem of that harm going unseen\."\)\} <\/p> <div className="hero-actions"/);
   assert.match(css, /\.site \.hero-solves \{[^}]*font-size: var\(--step-lead\);[^}]*font-weight: 600;[^}]*color: var\(--ink\);/);
   // The section names.
-  for (const name of ["What is Chernozem", "Why Chernozem", "One field, one pass, one answer", "The demo is Ukraine", "See your land from space"]) assert.match(text, new RegExp(`>\\s*${name}\\s*<`), name);
-  assert.match(text, /title="Field, for one farm"/);
-  assert.match(text, /title="Atlas, for a whole region"/);
+  for (const name of ["What is Chernozem", "Why Chernozem", "One field, one pass, one answer", "The demo is Ukraine", "See your land from space"]) assert.match(text, new RegExp(`>\\s*\\{t\\("${name}"\\)\\}\\s*<`), name);
+  assert.match(text, /title=\{t\("Field, for one farm"\)\}/);
+  assert.match(text, /title=\{t\("Atlas, for a whole region"\)\}/);
   // The owner's eight reasons, each a short bold claim and one line, in honest words, as a bulleted list.
   const said = spoken(text);
   const claims = ["No hardware, only software.", "Free satellite data, read on Google Earth Engine.", "Recovery, not only monitoring.", "For every stakeholder.", "You choose what matters.", "Drop the pin, see the field.", "A few clicks, start to finish.", "All you need is a place."];
@@ -280,7 +282,7 @@ test("the About page runs in the owner's order: the slogan and the Earth, what i
   assert.doesNotMatch(text, /most accessible/i);
   assert.ok(said.includes('text: "Individuals and organizations alike: Field for a farmer’s own fields, Atlas for governments, NGOs and corporations."'), "the fourth reason's line");
   assert.match(text, /NUMBERS\.tenFieldsSeconds/);
-  assert.match(text, /<ul className="why-list" role="list">\s*\{WHY\.map\(\(item, i\) => \(\s*<li className="why-item"[^>]*>\s*<strong className="why-claim">\{item\.claim\}<\/strong> \{lastTwoTogether\(item\.text\)\}\s*<\/li>/);
+  assert.match(text, /<ul className="why-list" role="list">\s*\{WHY\.map\(\(item, i\) => \(\s*<li className="why-item"[^>]*>\s*<strong className="why-claim">\{t\(item\.claim, whyVars\)\}<\/strong> \{lastTwoTogether\(digitsTogether\(t\(item\.text, whyVars\)\)\)\}\s*<\/li>/);
   assert.match(css, /\.site \.why-item::before \{[^}]*content: "";[^}]*width: 0\.5em;[^}]*height: 0\.5em;[^}]*background: var\(--accent\);/, "each bullet marked with a small accent square");
 });
 
@@ -289,12 +291,12 @@ test("What is Chernozem is back right after the hero, as on 1 November 2026: wha
   const text = words(home).replace(/\s+/g, " ");
   assert.ok(at(text, 'id="what-title"') > at(text, "<EarthGlobe") && at(text, 'id="what-title"') < at(text, 'id="why-title"'), "right after the hero");
   assert.match(text, /<section className="what section" aria-labelledby="what-title" ref=\{reveal\}>/);
-  assert.match(text, /<h2 id="what-title" className="head" data-rise> What is Chernozem <\/h2>/);
+  assert.match(text, /<h2 id="what-title" className="head" data-rise> \{t\("What is Chernozem"\)\} <\/h2>/);
   assert.ok(
-    text.includes("<strong>Chernozem is satellite farmland monitoring: free satellite data over farmland, read and put into plain words for people who are not scientists.</strong> Field watches a farmer’s own fields; Atlas scores a whole region for governments, NGOs and corporations. The name is the black soil of Ukraine and northeast China, where its story began."),
+    text.includes('<strong>{t("Chernozem is satellite farmland monitoring: free satellite data over farmland, read and put into plain words for people who are not scientists.")}</strong> {t("Field watches a farmer’s own fields; Atlas scores a whole region for governments, NGOs and corporations. The name is the black soil of Ukraine and northeast China, where its story began.")}'),
     "what it is, in bold, then one phrase each for Field and Atlas, and the name"
   );
-  assert.match(text, /<Link to="\/story" className="link link-under"> How it started <\/Link>/);
+  assert.match(text, /<Link to="\/story" className="link link-under"> \{t\("How it started"\)\} <\/Link>/);
   // The picture: the owner's (3 November 2026), the logo above Field and Atlas (3:4), with a copy twice as sharp
   // for sharp screens, both in the shots' manifest as they are.
   assert.match(text, /<figure className="what-picture"> <img src="\/site\/shots\/what-field-atlas-600\.webp" srcSet="\/site\/shots\/what-field-atlas-600\.webp 1x, \/site\/shots\/what-field-atlas-1200\.webp 2x"/);
@@ -312,7 +314,7 @@ test("What is Chernozem is back right after the hero, as on 1 November 2026: wha
   assert.doesNotMatch(home, /field-fields-map|what-window|enterDemo/);
   for (const file of ["field-fields-map-864.webp", "field-fields-map-1728.webp"]) assert.ok(!existsSync(join(shots, "crops", file)), `${file} is gone`);
   // Its caption says which is which, and opens the demo's page (both products are in the picture).
-  assert.match(text, /Field, above, on the demo farm near Kupiansk; Atlas, below, across Ukraine\.\{" "\} <Link to=\{SITE\.demoPath\} className="link link-under"> Open the demo <\/Link>/);
+  assert.match(text, /\{t\("Field, above, on the demo farm near Kupiansk; Atlas, below, across Ukraine\."\)\}\{" "\} <Link to=\{SITE\.demoPath\} className="link link-under"> \{t\("Open the demo"\)\} <\/Link>/);
   // The look: the words in the left half, set at the picture's middle; the picture in the right half, whole, never
   // wider than 560 px (so it stays within a laptop's screen).
   const css = read("pages", "home.css");
@@ -324,7 +326,7 @@ test("What is Chernozem is back right after the hero, as on 1 November 2026: wha
 
 test("every way to register says Register for Chernozem and goes to /register (never Register for Field or for Atlas)", () => {
   const home = read("pages", "HomePage.jsx");
-  const buttons = [...home.matchAll(/<Link to=\{([^}]+)\} className="btn[^"]*">\s*Register for Chernozem\s*<\/Link>/g)];
+  const buttons = [...home.matchAll(/<Link to=\{([^}]+)\} className="btn[^"]*">\s*\{t\("Register for Chernozem"\)\}\s*<\/Link>/g)];
   assert.equal(buttons.length, 2, "the hero's and the close's");
   for (const [, to] of buttons) assert.equal(to, "SITE.registerPath");
   assert.match(read("content", "site.js"), /registerPath: "\/register",/);
@@ -377,7 +379,7 @@ test("the two stories are held and move sideways with the scroll, 4 to 6 steps e
   assert.match(story, /useScroll\(\{ target: ref, offset: \["start start", "end end"\] \}\)/);
   assert.match(read("components", "scrollStoryMath.js"), /Math\.floor\(p \* spanOf\(count\) - LEAD\)/, "each step an equal share of the hold, after the lead-in");
   assert.match(story, /import \{ FOLLOW, LEAD, entryTarget, fillAt, followStep, glideAt, glideMs, listStepAt, listTarget, nearlyHeld, pageTarget, rowAt, settleTarget, shareMiddle, spanOf, stepAt \} from "\.\/scrollStoryMath\.js";/);
-  assert.match(story, /\{current \+ 1\} of \{count\}/, "a plain count, step n of m, where the titles do not fit");
+  assert.match(story, /\{t\("\{current\} of \{count\}", \{ current: current \+ 1, count \}\)\}/, "a plain count, step n of m, where the titles do not fit");
   // Reduced motion (and a screen too short to hold a step): the plain list, nothing held or moved.
   assert.match(story, /useMediaQuery\("\(prefers-reduced-motion: reduce\)"\)/);
   assert.match(story, /const held = !reduced && !short;/);
@@ -630,8 +632,10 @@ test("the photograph beside Why Chernozem exists in two small copies, is never s
   assert.doesNotMatch(css, /\.why-photo \.window-caption \{[^}]*flex:/, "the credit is no longer docked beside the photograph's foot");
   // What it shows, and the credit the article prints, with a link to the article (no place or date: it gives none).
   assert.match(home, /alt: "Spent artillery shell casings, some rusted, lie in the grass of a field, with dry weeds and trees behind\."/);
-  assert.match(home, /alt=\{PHOTO\.alt\}/);
-  assert.match(text, /<figcaption className="window-caption muted"> Spent artillery shell casings left in a field\. Photo: Jose Hernandez, Camera\{NBSP\}51 \/ Shutterstock\.com, as published in\{" "\} <a href=\{PHOTO\.article\} className="link link-under" target="_blank" rel="noreferrer"> Responsible Statecraft <\/a> \. <\/figcaption>/);
+  assert.match(home, /alt=\{t\(PHOTO\.alt\)\}/);
+  // The credit and the publication's name are names, the same in every language: the caption's two holes.
+  assert.match(home, /publication: "Responsible Statecraft",/);
+  assert.match(text, /<figcaption className="window-caption muted"> \{t\("Spent artillery shell casings left in a field\. Photo: \{credit\}, as published in \{article\}\.", \{ credit: PHOTO\.credit, article: \( <a href=\{PHOTO\.article\} className="link link-under" target="_blank" rel="noreferrer"> \{PHOTO\.publication\} <\/a> \), \}\)\} <\/figcaption>/);
   assert.match(home, /article: "https:\/\/responsiblestatecraft\.org\/ukraine-soil-contamination\/"/);
   assert.doesNotMatch(text, /BBC/, "not the BBC picture");
   // The photographs' manifest: where it came from, who took it, its licence, what was changed.
@@ -643,7 +647,9 @@ test("the photograph beside Why Chernozem exists in two small copies, is never s
   assert.match(entry.original, /^https:\/\/responsiblestatecraft\.org\/media-library\//);
   assert.match(entry.licence, /Chernozem holds no licence of its own/);
   assert.match(entry.changes, /converted to WebP/);
-  assert.ok(spoken(text).includes(`Photo: ${entry.author.replace(/ \(.*\)$/, "")}, as published in`), "the caption credits the author the manifest names");
+  const credit = home.match(/^  credit: (`[^`\n]+`),$/m);
+  assert.ok(credit, "the credit is the PHOTO constant's");
+  assert.equal(spoken(credit[1]).slice(1, -1), entry.author.replace(/ \(.*\)$/, ""), "the caption credits the author the manifest names");
   // Every file in the folder is one the manifest explains (the earlier pictures are gone).
   for (const file of readdirSync(photos).filter((f) => f !== "manifest.json")) assert.ok(manifest.some((e) => e.files.includes(file)), `${file} is in the manifest`);
   for (const e of manifest) for (const file of e.files) assert.ok(existsSync(join(photos, file)), `${file} exists`);
@@ -658,10 +664,18 @@ test("words that belong together never part at a line's end on the About page: G
   assert.match(home, /^const NBSP = "\\u00a0";$/m);
   assert.ok(!home.includes(NB), "no invisible no-break space typed into the page");
   assert.match(home, /^const EARTH_ENGINE = `Google\$\{NBSP\}Earth\$\{NBSP\}Engine`;$/m);
-  assert.equal((home.match(/\$\{EARTH_ENGINE\}/g) || []).length, 2, "in the second reason's claim and its line");
+  // (Since the website has languages, the joined name is a hole, {earthEngine}, filled with EARTH_ENGINE where
+  // the reasons are drawn, so each reason is one dictionary key.)
+  assert.equal((words(home).match(/\{earthEngine\}/g) || []).length, 2, "in the second reason's claim and its line");
+  assert.match(home, /earthEngine: EARTH_ENGINE/, "the hole filled with the joined name");
   assert.doesNotMatch(words(home), /Google Earth Engine/, "never with plain spaces");
-  assert.match(home, /read in about\$\{NBSP\}\$\{NUMBERS\.tenFieldsSeconds\}\$\{NBSP\}seconds\./, "a number and its unit, and the about before them");
-  assert.match(home, /Photo: Jose Hernandez, Camera\{NBSP\}51 \//);
+  // The number is a hole too, and the plain spaces beside a digit become no-break ones where the reasons are drawn.
+  assert.match(home, /read in about \{seconds\} seconds\./, "the about before the number, its unit after it");
+  assert.match(home, /seconds: formatInt\(NUMBERS\.tenFieldsSeconds\)/);
+  const digits = home.match(/^const digitsTogether = \(text\) => text\.replace\(\/(.+)\/g, NBSP\);$/m);
+  assert.ok(digits, "the digits rule is there");
+  assert.equal("read in about 20 seconds.".replace(new RegExp(digits[1], "g"), NB), `read in about${NB}20${NB}seconds.`, "a number and its unit, and the about before them");
+  assert.match(home, /credit: `Jose Hernandez, Camera\$\{NBSP\}51 \//);
   // A reason's last two words share a line: its last plain space becomes a no-break one (Safari before 26 has no text-wrap: pretty).
   const rule = home.match(/^const lastTwoTogether = \(text\) => text\.replace\(\/(.+)\/, NBSP\);$/m);
   assert.ok(rule, "the rule is there");
@@ -718,7 +732,7 @@ test("under the close, the disclaimer: a detection framework, as accurate as the
   assert.ok(at(text, 'id="close-title"') < at(text, 'className="caveat"') && at(text, 'className="caveat"') < at(text, 'className="small-print"'), "after the close's tile, before the small print");
   assert.ok(
     text.includes(
-      '<p className="caveat"> <strong>A detection framework.</strong> Chernozem reads farmland from space. It cannot take soil samples in a disaster zone, and it has no hardware on the ground to confirm what it sees. In our tests its readings were roughly {NUMBERS.testAccuracyPercent}% accurate: close, for a tool of its kind, but not 100%. Use them as a guide, check on the ground before acting, and know that Chernozem is not responsible for decisions made from them. </p>'
+      '<p className="caveat"> <strong>{t("A detection framework.")}</strong> {t("Chernozem reads farmland from space. It cannot take soil samples in a disaster zone, and it has no hardware on the ground to confirm what it sees. In our tests its readings were roughly {percent}% accurate: close, for a tool of its kind, but not 100%. Use them as a guide, check on the ground before acting, and know that Chernozem is not responsible for decisions made from them.", { percent: NUMBERS.testAccuracyPercent })} </p>'
     ),
     "the owner's disclaimer, word for word"
   );
@@ -780,11 +794,12 @@ test("the menu offers Sign in, and a signed-in visitor's own button, asked once 
   assert.match(read("components", "nav.css"), /\.sn-signin/);
 });
 
-test("the footer has no middle-dot strings and calls the Dataverse package Data and code", () => {
+test("the footer has no middle-dot strings and no GitHub or Data and code link (removed 6 November 2026)", () => {
   const footer = words(read("components", "Footer.jsx"));
   assert.ok(!footer.includes("·"), "no middle dot");
-  assert.match(footer, />\s*Data and code\s*</);
-  assert.doesNotMatch(footer, />\s*Paper\s*</);
+  assert.doesNotMatch(footer, />\s*GitHub\s*<|>\s*Data and code\s*<|>\s*Paper\s*</);
+  assert.doesNotMatch(footer, /LINKS\./, "the footer links only the four pages");
+  assert.match(footer, /SITE_PAGES\.map/);
 });
 
 test("page changes are quick: a short fade out, and a page's code fetched when its link is pointed at", () => {

@@ -23,15 +23,23 @@
 // Authentication is not switched on, the page says registration is not
 // open yet.
 //
+// Every word a visitor reads goes through t() (src/site/i18n, namespace
+// "signin"; the dictionaries are zh/signin.js and uk/signin.js, keyed by
+// the English). The sentences of the checks and of Firebase stay English
+// in src/lib/registration.js and in this page's state; each is said
+// through t() where it is shown (useSaid below), so a change of language
+// changes it too.
+//
 // WHO EDITS IT
 // Whoever changes how people sign in. The fields and the pictures are the
 // Register page's (RegisterPage.jsx); the look is in register.css.
 
 // The site's base rules first, so ./register.css below wins every tie with them.
 import "../site.css";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { usePageTitle } from "../hooks.js";
+import { useT } from "../i18n/i18n.js";
 import { SITE_ACTIONS } from "../content/site.js";
 import { getStatus, logoutEverywhere, postFirebaseToken } from "../../api/accountApi.js";
 import { loadFirebaseAuth } from "../../lib/firebase.js";
@@ -43,11 +51,61 @@ import "./register.css";
 // When a part of the page arrives (its entrance, register.css "Motion").
 const rise = (ms) => ({ "--d": `${ms}ms` });
 
+// The page's own sentences, kept in English like registration.js's and
+// said through t() where they are shown (useSaid).
 const LOADING = "The sign-in is still loading. Try again in a moment.";
 const NOT_LOADED = "The sign-in could not be downloaded. Check your connection and reload the page.";
+const NO_PASSWORD = "Enter your password.";
+const EMAIL_FIRST = "Enter your e-mail first; the link goes there.";
+
+// What the page can say beside a field or under a button, in the visitor's
+// language. The checks, Firebase's codes and our server's answers become
+// English sentences in src/lib/registration.js (emailProblem,
+// firebaseProblem, SIGN_IN_ENDED) or above; the page keeps that English in
+// its state and says it through this where it is shown. Every sentence the
+// page can show is written out here once more as a plain t("...") key:
+// the dictionaries are keyed by the sentence, and the language tests read
+// this file, not registration.js. A sentence not listed stays English.
+// The one with a limit in it carries the number as {n}, so one entry
+// serves whatever the limit is; an unknown Firebase code
+// ("Something went wrong (code). Try again.") keeps its code.
+function useSaid() {
+  const t = useT("signin");
+  return useMemo(() => {
+    const said = {
+      [LOADING]: t("The sign-in is still loading. Try again in a moment."),
+      [NOT_LOADED]: t("The sign-in could not be downloaded. Check your connection and reload the page."),
+      [NO_PASSWORD]: t("Enter your password."),
+      [EMAIL_FIRST]: t("Enter your e-mail first; the link goes there."),
+      [SIGN_IN_ENDED]: t("That sign-in has ended. Sign in again with Google or your e-mail."),
+      "Enter your e-mail address.": t("Enter your e-mail address."),
+      "That e-mail address does not look right.": t("That e-mail address does not look right."),
+      [`Keep the e-mail to ${LIMITS.email} characters or fewer.`]: t("Keep the e-mail to {n} characters or fewer.", { n: LIMITS.email }),
+      "That e-mail and password do not match.": t("That e-mail and password do not match."),
+      "That e-mail already has an account.": t("That e-mail already has an account."),
+      "This account has been switched off. Write to us if that is a mistake.": t("This account has been switched off. Write to us if that is a mistake."),
+      "Too many attempts. Wait a few minutes and try again.": t("Too many attempts. Wait a few minutes and try again."),
+      "The Google window was closed before you signed in. Try again.": t("The Google window was closed before you signed in. Try again."),
+      "The browser blocked the Google window. Allow pop-ups for this site and try again.": t("The browser blocked the Google window. Allow pop-ups for this site and try again."),
+      "Could not reach Google to sign in. Check your connection and try again.": t("Could not reach Google to sign in. Check your connection and try again."),
+      "Google sign-in is not switched on for this address yet. Use an e-mail and a password instead.": t("Google sign-in is not switched on for this address yet. Use an e-mail and a password instead."),
+      "The sign-in could not be checked by our server. Try again.": t("The sign-in could not be checked by our server. Try again."),
+      "Could not reach the server. Check your connection and try again.": t("Could not reach the server. Check your connection and try again."),
+    };
+    return (message) => {
+      if (!message) return message;
+      if (said[message]) return said[message];
+      const unknown = /^Something went wrong(?: \((.+)\))?\. Try again\.$/.exec(message);
+      if (!unknown) return message;
+      return unknown[1] ? t("Something went wrong ({code}). Try again.", { code: unknown[1] }) : t("Something went wrong. Try again.");
+    };
+  }, [t]);
+}
 
 export default function SignInPage() {
-  usePageTitle("Sign in");
+  const t = useT("signin");
+  const said = useSaid();
+  usePageTitle(t("Sign in"));
   const navigate = useNavigate();
 
   // "wait" (asking the server), "form", "signed" (an account with a
@@ -60,9 +118,12 @@ export default function SignInPage() {
   const [fbFailed, setFbFailed] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  // Messages beside the fields: google, known, email, password, form.
+  // Messages beside the fields: google, known, email, password, form. In
+  // English (registration.js's sentences); said in the visitor's language
+  // where they are shown.
   const [errors, setErrors] = useState({});
-  const [note, setNote] = useState("");
+  // The address the reset link went to; the sentence is said where shown.
+  const [sentTo, setSentTo] = useState("");
   const [busy, setBusy] = useState(false);
 
   const alive = useRef(true);
@@ -173,7 +234,7 @@ export default function SignInPage() {
     if (busy || !needFirebase("google")) return;
     setBusy(true);
     setErrors({});
-    setNote("");
+    setSentTo("");
     try {
       const credential = await fb.signInWithPopup(fb.auth, fb.googleProvider());
       await afterFirebase(credential.user);
@@ -190,7 +251,7 @@ export default function SignInPage() {
     const problems = {};
     const emailWrong = emailProblem(email);
     if (emailWrong) problems.email = emailWrong;
-    if (!password) problems.password = "Enter your password.";
+    if (!password) problems.password = NO_PASSWORD;
     if (Object.keys(problems).length) {
       setErrors(problems);
       document.getElementById(problems.email ? "sgn-email" : "sgn-password")?.focus();
@@ -199,7 +260,7 @@ export default function SignInPage() {
     if (!needFirebase("form")) return;
     setBusy(true);
     setErrors({});
-    setNote("");
+    setSentTo("");
     try {
       const credential = await fb.signInWithEmailAndPassword(fb.auth, email.trim(), password);
       await afterFirebase(credential.user);
@@ -243,21 +304,21 @@ export default function SignInPage() {
     if (busy) return;
     const emailWrong = emailProblem(email);
     if (emailWrong) {
-      setErrors({ email: emailWrong === "Enter your e-mail address." ? "Enter your e-mail first; the link goes there." : emailWrong });
-      setNote("");
+      setErrors({ email: emailWrong === "Enter your e-mail address." ? EMAIL_FIRST : emailWrong });
+      setSentTo("");
       document.getElementById("sgn-email")?.focus();
       return;
     }
     if (!needFirebase("form")) return;
     setBusy(true);
     setErrors({});
-    const sent = `If ${email.trim()} has an account, a link to choose a new password is on its way.`;
+    const address = email.trim();
     try {
-      await fb.sendPasswordResetEmail(fb.auth, email.trim());
-      if (alive.current) setNote(sent);
+      await fb.sendPasswordResetEmail(fb.auth, address);
+      if (alive.current) setSentTo(address);
     } catch (error) {
       if (!alive.current) return;
-      if (error?.code === "auth/user-not-found") setNote(sent);
+      if (error?.code === "auth/user-not-found") setSentTo(address);
       else showProblem(error, "email");
     } finally {
       if (alive.current) setBusy(false);
@@ -282,7 +343,7 @@ export default function SignInPage() {
     setAccount(null);
     setFbUser(null);
     setErrors({});
-    setNote("");
+    setSentTo("");
     setPassword("");
     setBusy(false);
     setStage("form");
@@ -297,39 +358,37 @@ export default function SignInPage() {
         <div className="reg-main">
           <h1 id="sgn-title" className="reg-title">
             <span className="reg-line">
-              <span className="reg-line-in">Sign in</span>
+              <span className="reg-line-in">{t("Sign in")}</span>
             </span>
           </h1>
           <p className="reg-lead" data-arrive style={rise(120)}>
-            Your fields or your region, as you left them.
+            {t("Your fields or your region, as you left them.")}
           </p>
 
           {stage === "wait" && <div className="reg-wait" aria-busy="true" />}
 
           {stage === "closed" && (
             <div className="reg-panel" data-arrive style={rise(160)}>
-              <h2 className="reg-panel-title">Registration is not open yet.</h2>
-              <p>Try the demo, or write to us.</p>
+              <h2 className="reg-panel-title">{t("Registration is not open yet.")}</h2>
+              <p>{t("Try the demo, or write to us.")}</p>
               <div className="reg-actions">
                 <Link className="reg-btn reg-btn-primary" to={SITE_ACTIONS.demo.path}>
-                  Try the demo
+                  {t("Try the demo")}
                 </Link>
-                <Link to="/contact">Write to us</Link>
+                <Link to="/contact">{t("Write to us")}</Link>
               </div>
             </div>
           )}
 
           {stage === "signed" && (
             <div className="reg-panel" data-arrive style={rise(160)}>
-              <p>
-                Signed in as <strong>{account.email}</strong>.
-              </p>
+              <p>{t("Signed in as {email}.", { email: <strong>{account.email}</strong> })}</p>
               <div className="reg-actions">
                 <Link className="reg-btn reg-btn-primary" to={PRODUCTS[product].path} onClick={leaveDemo}>
-                  Open {PRODUCTS[product].name}
+                  {t("Open {product}", { product: PRODUCTS[product].name })}
                 </Link>
                 <button type="button" className="reg-textbtn" onClick={signOutAll} disabled={busy}>
-                  Sign out
+                  {t("Sign out")}
                 </button>
               </div>
             </div>
@@ -337,18 +396,16 @@ export default function SignInPage() {
 
           {stage === "owner" && (
             <div className="reg-panel" data-arrive style={rise(160)}>
-              <p>
-                Signed in as <strong>{account?.email || "the owner"}</strong>, the owner.
-              </p>
+              <p>{t("Signed in as {email}, the owner.", { email: <strong>{account?.email || t("the owner")}</strong> })}</p>
               <div className="reg-actions">
                 <Link className="reg-btn reg-btn-primary" to={PRODUCTS.field.path} onClick={leaveDemo}>
-                  Open Field
+                  {t("Open Field")}
                 </Link>
                 <Link className="reg-btn reg-btn-second" to={PRODUCTS.atlas.path} onClick={leaveDemo}>
-                  Open Atlas
+                  {t("Open Atlas")}
                 </Link>
                 <button type="button" className="reg-textbtn" onClick={signOutAll} disabled={busy}>
-                  Sign out
+                  {t("Sign out")}
                 </button>
               </div>
             </div>
@@ -356,56 +413,52 @@ export default function SignInPage() {
 
           {stage === "unfinished" && (
             <div className="reg-panel" data-arrive style={rise(160)}>
-              <p>
-                Signed in as <strong>{account.email}</strong>. Registering is not finished yet.
-              </p>
+              <p>{t("Signed in as {email}. Registering is not finished yet.", { email: <strong>{account.email}</strong> })}</p>
               <div className="reg-actions">
                 <Link className="reg-btn reg-btn-primary" to={destinationFor(account)}>
-                  Finish registering
+                  {t("Finish registering")}
                 </Link>
                 <button type="button" className="reg-textbtn" onClick={signOutAll} disabled={busy}>
-                  Sign out
+                  {t("Sign out")}
                 </button>
               </div>
             </div>
           )}
 
           {stage === "form" && (
-            <form className="reg-form" onSubmit={signIn} noValidate aria-label="Sign in">
+            <form className="reg-form" onSubmit={signIn} noValidate aria-label={t("Sign in")}>
               {fbUser && !busy && (
                 <div className="reg-known">
-                  <p>
-                    This browser is signed in as <strong>{fbUser.email}</strong>.
-                  </p>
+                  <p>{t("This browser is signed in as {email}.", { email: <strong>{fbUser.email}</strong> })}</p>
                   <div className="reg-actions">
                     <button type="button" className="reg-btn reg-btn-second" onClick={continueAs}>
-                      Continue as {fbUser.email}
+                      {t("Continue as {email}", { email: fbUser.email })}
                     </button>
                     <button type="button" className="reg-textbtn" onClick={signOutAll}>
-                      Not you? Sign out
+                      {t("Not you? Sign out")}
                     </button>
                   </div>
                 </div>
               )}
               {errors.known && (
                 <p className="reg-error" role="alert">
-                  {errors.known}
+                  {said(errors.known)}
                 </p>
               )}
               <button id="sgn-google" type="button" className="reg-btn reg-btn-primary reg-btn-wide" onClick={continueWithGoogle} disabled={busy} data-arrive style={rise(200)}>
-                Continue with Google
+                {t("Continue with Google")}
               </button>
               {errors.google && (
                 <p className="reg-error" role="alert">
-                  {errors.google}
+                  {said(errors.google)}
                 </p>
               )}
               <p className="reg-or" aria-hidden="true" data-arrive style={rise(240)}>
-                or
+                {t("or")}
               </p>
               <AuthField
                 id="sgn-email"
-                label="E-mail"
+                label={t("E-mail")}
                 type="email"
                 name="email"
                 autoComplete="email"
@@ -415,7 +468,7 @@ export default function SignInPage() {
                 maxLength={LIMITS.email}
                 value={email}
                 onChange={edit(setEmail, "email")}
-                error={errors.email}
+                error={said(errors.email)}
                 delay={280}
               />
               <PasswordField
@@ -423,29 +476,29 @@ export default function SignInPage() {
                 autoComplete="current-password"
                 value={password}
                 onChange={edit(setPassword, "password")}
-                error={errors.password}
+                error={said(errors.password)}
                 delay={320}
                 after={
                   <button type="button" className="reg-textbtn reg-forgot" onClick={forgot} disabled={busy}>
-                    Forgot it?
+                    {t("Forgot it?")}
                   </button>
                 }
               />
-              {note && (
+              {sentTo && (
                 <p className="reg-note" role="alert">
-                  {note}
+                  {t("If {email} has an account, a link to choose a new password is on its way.", { email: sentTo })}
                 </p>
               )}
               {errors.form && (
                 <p className="reg-error" role="alert">
-                  {errors.form}
+                  {said(errors.form)}
                 </p>
               )}
               <button type="submit" className="reg-btn reg-btn-second reg-btn-wide" disabled={busy} data-arrive style={rise(360)}>
-                {busy ? "Signing in…" : "Sign in"}
+                {busy ? t("Signing in…") : t("Sign in")}
               </button>
               <p className="reg-aside" data-arrive style={rise(400)}>
-                New here? <Link to={SITE_ACTIONS.register.path}>Register</Link>
+                {t("New here? {register}", { register: <Link to={SITE_ACTIONS.register.path}>{t("Register")}</Link> })}
               </p>
             </form>
           )}

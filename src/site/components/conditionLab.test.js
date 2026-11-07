@@ -150,6 +150,11 @@ test("the sliders reach past each reading's span, start inside the scale, and pr
   assert.equal(signed(0.05), "+0.05");
   assert.equal(signed(0), "0.00");
   assert.equal(signed(-0.001), "0.00", "never −0.00");
+  // The marks follow the language: Ukrainian writes a decimal comma.
+  assert.equal(signed(-0.1, 2, "uk-UA"), "−0,10");
+  assert.equal(signed(0, 2, "uk-UA"), "0,00");
+  assert.equal(shownScore(0.757333, "uk-UA"), "0,76");
+  assert.equal(shownScore(0.757333, "zh-CN"), "0.76");
 });
 
 test("the laboratory keeps the gate laboratory's look and says in words what it draws", () => {
@@ -168,9 +173,9 @@ test("the laboratory keeps the gate laboratory's look and says in words what it 
   // The page's names: the sliders move NDVI and NDWI against their normal
   // (a difference, not the score), and the written sum names the 0-to-1
   // parts as the page's formula does (the health score, the water score).
-  assert.match(source, /<label htmlFor="cl-health">\s*NDVI against normal <b>/);
-  assert.match(source, /<label htmlFor="cl-water">\s*NDWI against normal <b>/);
-  assert.match(source, /<label htmlFor="cl-stress">\s*Stressed share <b>/);
+  assert.match(source, /<label htmlFor="cl-health">\s*\{t\("NDVI against normal"\)\} <b>/);
+  assert.match(source, /<label htmlFor="cl-water">\s*\{t\("NDWI against normal"\)\} <b>/);
+  assert.match(source, /<label htmlFor="cl-stress">\s*\{t\("Stressed share"\)\} <b>/);
   assert.match(source, /health: \{ name: "Health score",/);
   assert.match(source, /water: \{ name: "Water score",/);
   assert.match(source, /noStress: \{ name: "Not stressed",/);
@@ -181,7 +186,7 @@ test("the laboratory keeps the gate laboratory's look and says in words what it 
   assert.match(source, /<ul className="cl-parts">/);
   // The classes come from site.js (FIELD_METHOD), never typed here; and
   // neither file loads the app's method into the website (site.js says why).
-  assert.match(source, /import \{ FIELD_METHOD \} from "\.\.\/content\/site\.js";/);
+  assert.match(source, /import \{ FIELD_METHOD(?:, \w+)* \} from "\.\.\/content\/site\.js";/);
   const code = source.replace(/^\s*\/\/.*$/gm, "");
   assert.doesNotMatch(code, /0\.4\b|0\.65|0\.85|0\.84/, "no class boundary typed into the component");
   for (const file of ["ConditionLab.jsx", "conditionLab.js"]) {

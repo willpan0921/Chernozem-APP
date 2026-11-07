@@ -871,3 +871,50 @@ body:has(> #root > .site) {
 .site .demo-tab.is-on {
   background: var(--accent);
 }
+
+/* ---- The website in Chinese and Ukrainian (src/site/i18n/) ----
+   Schibsted Grotesk has no Chinese and no Cyrillic letters. In Chinese the
+   Latin stays Schibsted and the characters come from Noto Sans SC (loaded
+   only then) or the system's own Chinese face; characters are never
+   tracked, so every negative letter-spacing is lifted, and the lines are a
+   little taller. In Ukrainian the whole website is set in Inter, the app's
+   face, which has Cyrillic: a Ukrainian line with Latin words in it
+   (Chernozem, Field, Atlas) would otherwise change face mid-sentence. */
+html:lang(zh-Hans) .site {
+  --font: "Schibsted Grotesk", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  line-height: 1.6;
+}
+
+/* !important so the lift beats every tracking rule in the sheets loaded
+   after this one, whatever their specificity: pages.css's .meth-eq and
+   earth.css's side-card title are three and four classes deep. */
+html:lang(zh-Hans) .site * {
+  letter-spacing: 0 !important;
+}
+
+html:lang(uk) .site {
+  --font: "Inter", "Helvetica Neue", Arial, sans-serif;
+}
+
+/* The language switch as three names in a row (components/LanguageSwitch.jsx),
+   each a button that looks like the links beside it, the current one underlined. */
+.site .lang-buttons {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 16px;
+}
+
+.site .lang-button {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  cursor: inherit;
+}
+
+.site .lang-button.is-current {
+  text-decoration-color: currentColor;
+}

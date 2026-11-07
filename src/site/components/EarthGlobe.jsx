@@ -186,7 +186,15 @@
 // needs nothing from the page but its box, and the place beside it for
 // the card (`side`, a ref to an element; without one, or while that
 // element is not shown, the card goes under the globe). Words and
-// arithmetic: earthMath.js and globeMath.js (both tested). Look: earth.css
+// arithmetic: earthMath.js and globeMath.js (both tested). Every word a
+// visitor reads goes through t() from the website's languages
+// (src/site/i18n/, namespace "globe"): the legend, the buttons, the lines
+// about loading and sources, and what the globe composes about an event
+// (globeMath.js statusWords, cardText: kinds, alert colours, dates); a
+// reviewed war's name is translated too (worldData.js eventName), while a
+// GDACS alert's title and the feed's line about the land stay as the feed
+// wrote them. Country names come from the browser in the language
+// (i18n/regions.js). Look: earth.css
 // (the canvas reads its colours from there) and LOOK in earthGl.js.
 // Checks: with ?earth-debug=1 in the address, window.__earth gives the
 // browser tests its state (state(): the turn, the zoom, the lines and the
@@ -212,15 +220,14 @@ import { Link } from "react-router-dom";
 import { geoGraticule10, geoInterpolate, geoOrthographic, geoPath } from "d3-geo";
 import { feature } from "topojson-client";
 import { useMediaQuery } from "../hooks.js";
-import { useWorldData } from "./worldData.js";
-import { buyersOf, clamp, dayMonthYear, normLng, tradeYear } from "./globeMath.js";
+import { useT } from "../i18n/i18n.js";
+import { eventName, useWorldData } from "./worldData.js";
+import { buyersOf, cardText, clamp, dayMonthYear, normLng, statusWords, tradeYear } from "./globeMath.js";
 import { createEarthPainter } from "./earthGl.js";
 import {
   arcDegrees,
   arrowHead,
-  cardWords,
   clampZoom,
-  countWords,
   discRadius,
   dragFollow,
   dragTo,
@@ -228,7 +235,6 @@ import {
   earthEvents,
   earthPicture,
   ease,
-  eventLine,
   fadeStops,
   fitView,
   flyAt,
@@ -249,7 +255,6 @@ import {
   spin,
   SPIN_DEG_PER_S,
   START,
-  statusLine,
   tipPlace,
   wheelRoom,
   wheelZoomFactor,
@@ -975,6 +980,7 @@ function inWindow(el) {
 }
 
 export default function EarthGlobe({ className = "", side = null }) {
+  const t = useT("globe");
   const world = useWorldData();
   const shapes = useShapes();
   const reduced = useMediaQuery("(prefers-reduced-motion: reduce)");
@@ -1034,7 +1040,7 @@ export default function EarthGlobe({ className = "", side = null }) {
   const commonYear = tradeYear(world.trade);
   const selected = selectedId ? byId.get(selectedId) || null : null;
   const buyers = useMemo(() => (selected ? buyersOf(selected, world.trade, world.countries) : []), [selected, world.trade, world.countries]);
-  const words = selected ? cardWords(selected, { buyers, now, commonYear }) : null;
+  const words = selected ? cardText(selected, { buyers, now, commonYear }, t) : null;
   // The card: beside the globe in the place the page keeps for it while
   // that place is shown, else under the globe. Under a globe 520 px or
   // wider it has two columns.
@@ -2109,7 +2115,7 @@ export default function EarthGlobe({ className = "", side = null }) {
     const hadFocus = document.activeElement === event.currentTarget;
     g.api?.zoomTo(ZOOM_MIN);
     g.api?.engage();
-    if (hadFocus) zoomBarRef.current?.querySelector('[aria-label="Zoom in"]')?.focus({ preventScroll: true });
+    if (hadFocus) zoomBarRef.current?.querySelector('[data-zoom="in"]')?.focus({ preventScroll: true });
   };
 
   // ----- For the browser checks (?earth-debug=1) -----
@@ -2242,9 +2248,9 @@ export default function EarthGlobe({ className = "", side = null }) {
     };
   }, [g]);
 
-  const reviewed = world.status === "ok" && world.reviewed ? dayMonthYear(world.reviewed) : "";
+  const reviewed = world.status === "ok" && world.reviewed ? dayMonthYear(world.reviewed, t) : "";
   const years = Array.isArray(world.trade?.years) && world.trade.years.length === 2 ? world.trade.years : null;
-  const span = years ? (years[0] === years[1] ? ` (${years[0]})` : ` (${years[0]}–${years[1]})`) : "";
+  const span = years ? (years[0] === years[1] ? String(years[0]) : `${years[0]}–${years[1]}`) : "";
   // While the feed is on its way, the words it brings to the sources line
   // (the day the list was reviewed, the trade table's years) are held by
   // hidden stand-ins of their usual length, so the line does not grow by a
@@ -2260,12 +2266,22 @@ export default function EarthGlobe({ className = "", side = null }) {
   const wars = events.filter((e) => e.kind === "war");
   const alerts = events.filter((e) => e.kind !== "war");
   const groups = [
-    { kind: "war", label: countWords(wars.length, "armed conflict", "armed conflicts"), events: wars },
-    { kind: "alert", label: countWords(alerts.length, "disaster alert", "disaster alerts"), events: alerts },
+    { kind: "war", label: wars.length === 1 ? t("1 armed conflict") : t("{n} armed conflicts", { n: wars.length }), events: wars },
+    { kind: "alert", label: alerts.length === 1 ? t("1 disaster alert") : t("{n} disaster alerts", { n: alerts.length }), events: alerts },
   ].filter((group) => group.events.length);
-  const picture = `The real Earth seen from space, turning slowly.${
-    soilOn ? " The world's black-soil belts are outlined in dark brown." : ""
-  } Today's armed conflicts are terracotta dots and disaster alerts amber ones; thin lines run from each one to the countries whose food depends on its land. The list under the globe names each one.`;
+  // What a screen reader says the picture is (three sentences, the middle
+  // one while the black soil is drawn).
+  const picture = [
+    t("The real Earth seen from space, turning slowly."),
+    soilOn ? t("The world's black-soil belts are outlined in dark brown.") : "",
+    t("Today's armed conflicts are terracotta dots and disaster alerts amber ones; thin lines run from each one to the countries whose food depends on its land. The list under the globe names each one."),
+  ]
+    .filter(Boolean)
+    .join(" ");
+  // An event in one line for screen readers ("War in Ukraine: War since
+  // February 2022."), its two parts in the language, the punctuation plain.
+  // One sentence for screen readers, so each language joins the name and the status its own way.
+  const lineOf = (e) => t("{name}: {status}.", { name: eventName(e, t), status: statusWords(e, now, t) });
   const closeIcon = (
     <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
       <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
@@ -2285,11 +2301,11 @@ export default function EarthGlobe({ className = "", side = null }) {
               className="earth-pick"
               data-kind={kindOf(e)}
               aria-current={e.id === selectedId ? "true" : undefined}
-              aria-label={eventLine(e, now)}
+              aria-label={lineOf(e)}
               onClick={(event) => pick(event, e.id)}
             >
-              <span className="earth-pick-name">{e.name}</span>
-              <span className="earth-pick-when">{statusLine(e, now)}</span>
+              <span className="earth-pick-name">{eventName(e, t)}</span>
+              <span className="earth-pick-when">{statusWords(e, now, t)}</span>
             </button>
           </li>
         ))}
@@ -2299,6 +2315,7 @@ export default function EarthGlobe({ className = "", side = null }) {
 
   // The card: what is going on at the picked event. Beside the globe (in
   // the page's place for it) or under it, never over it.
+  const title = selected ? eventName(selected, t) : "";
   const card =
     selected && words ? (
       <div
@@ -2329,8 +2346,8 @@ export default function EarthGlobe({ className = "", side = null }) {
         }}
       >
         <div className="earth-card-about">
-          <h2 id={cardTitleId} ref={cardTitleRef} className="earth-card-title" tabIndex={-1} data-long={words.title.length > LONG_TITLE ? "" : undefined}>
-            {words.title}
+          <h2 id={cardTitleId} ref={cardTitleRef} className="earth-card-title" tabIndex={-1} data-long={title.length > LONG_TITLE ? "" : undefined}>
+            {title}
           </h2>
           <p className="earth-card-meta">
             <span className="earth-card-dot" aria-hidden="true" />
@@ -2341,39 +2358,35 @@ export default function EarthGlobe({ className = "", side = null }) {
             <p className="earth-card-measured">
               {words.measured}{" "}
               <Link className="link link-under" to="/demo">
-                See it in the demo
+                {t("See it in the demo")}
               </Link>
             </p>
           )}
           {words.link && (
             <p className="earth-card-link">
               <a {...out} href={words.link}>
-                GDACS report
+                {t("GDACS report")}
               </a>
             </p>
           )}
         </div>
         {words.buyers.length > 0 && (
           <div className="earth-card-buyers">
-            <h3 className="earth-card-sub">Whose food depends on it</h3>
+            <h3 className="earth-card-sub">{t("Whose food depends on it")}</h3>
             <ul className="earth-buyers">
               {words.buyers.map((b) => (
                 <li key={b.iso3}>
-                  <span>
-                    {b.name}
-                    {b.year}
-                  </span>
+                  <span>{b.name}</span>
                   <span className="earth-buyer-share">{b.share}</span>
                 </li>
               ))}
             </ul>
-            {words.more && <p className="earth-card-more">{words.more}</p>}
             <p className="earth-card-source">{words.buyersAbout}</p>
           </div>
         )}
         {/* Last in the card, so Tab reaches it after the card's words and
             links; it shows in the top right corner. */}
-        <button type="button" className="earth-close" aria-label="Close" onClick={() => close({ restore: true })}>
+        <button type="button" className="earth-close" aria-label={t("Close")} onClick={() => close({ restore: true })}>
           {closeIcon}
         </button>
       </div>
@@ -2382,7 +2395,7 @@ export default function EarthGlobe({ className = "", side = null }) {
   return (
     <figure ref={rootRef} className={`earth ${className}`.trim()} aria-labelledby={titleId} data-picked={selectedId ? "" : undefined}>
       <p id={titleId} className="sr-only">
-        The Earth today: where the black soil lies, today's armed conflicts and disaster alerts, and whose food depends on their land
+        {t("The Earth today: where the black soil lies, today's armed conflicts and disaster alerts, and whose food depends on their land")}
       </p>
       <div className="earth-stage" data-card={place === "under" ? "under" : undefined} data-bar={bar}>
         <div ref={boxRef} className="earth-box">
@@ -2406,7 +2419,7 @@ export default function EarthGlobe({ className = "", side = null }) {
                   onClick={(event) => onMarkerClick(event, e.id)}
                 >
                   <span className="earth-dot" />
-                  <span className="earth-tip">{e.name}</span>
+                  <span className="earth-tip">{eventName(e, t)}</span>
                 </button>
               ))}
             </div>
@@ -2417,7 +2430,7 @@ export default function EarthGlobe({ className = "", side = null }) {
               under it (the stage's data-bar, earth.css), never on it. */}
           <div ref={zoomBarRef} className="earth-zoom" hidden={listOver}>
             {zoomed && (
-              <button type="button" className="earth-zoom-btn" aria-label="Show the whole Earth" title="Whole Earth" onClick={zoomWhole}>
+              <button type="button" className="earth-zoom-btn" aria-label={t("Show the whole Earth")} title={t("Whole Earth")} onClick={zoomWhole}>
                 <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true" focusable="false">
                   <circle cx="9" cy="9" r="6.6" fill="none" stroke="currentColor" strokeWidth="1.5" />
                   <ellipse cx="9" cy="9" rx="2.9" ry="6.6" fill="none" stroke="currentColor" strokeWidth="1.3" />
@@ -2425,12 +2438,12 @@ export default function EarthGlobe({ className = "", side = null }) {
                 </svg>
               </button>
             )}
-            <button type="button" className="earth-zoom-btn" aria-label="Zoom in" title="Zoom in" aria-disabled={atClosest || undefined} onClick={() => zoomStep(1)}>
+            <button type="button" className="earth-zoom-btn" data-zoom="in" aria-label={t("Zoom in")} title={t("Zoom in")} aria-disabled={atClosest || undefined} onClick={() => zoomStep(1)}>
               <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
                 <path d="M8 2.5v11M2.5 8h11" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
               </svg>
             </button>
-            <button type="button" className="earth-zoom-btn" aria-label="Zoom out" title="Zoom out" aria-disabled={!zoomed || undefined} onClick={() => zoomStep(-1)}>
+            <button type="button" className="earth-zoom-btn" data-zoom="out" aria-label={t("Zoom out")} title={t("Zoom out")} aria-disabled={!zoomed || undefined} onClick={() => zoomStep(-1)}>
               <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
                 <path d="M2.5 8h11" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
               </svg>
@@ -2441,16 +2454,16 @@ export default function EarthGlobe({ className = "", side = null }) {
               phone: a quiet line on the globe for a moment. */}
           {(engaged && fine && !listOver) || touchNote ? (
             <p className="earth-hint" aria-hidden="true">
-              {touchNote ? "Two fingers move the zoomed Earth." : "Scroll to zoom. Esc to let the page scroll."}
+              {touchNote ? t("Two fingers move the zoomed Earth.") : t("Scroll to zoom. Esc to let the page scroll.")}
             </p>
           ) : null}
 
           {overlay && (
-            <div ref={listRef} id={listId} className="earth-panel" role="dialog" aria-modal="false" aria-label="Today's armed conflicts and disaster alerts" hidden={!listOpen}>
+            <div ref={listRef} id={listId} className="earth-panel" role="dialog" aria-modal="false" aria-label={t("Today's armed conflicts and disaster alerts")} hidden={!listOpen}>
               {listBody}
               {/* Last for the keyboard, first on the screen: it stays in the
                   panel's top right corner while the list scrolls (earth.css). */}
-              <button type="button" className="earth-close" aria-label="Close the list" onClick={() => closeList({ restore: true })}>
+              <button type="button" className="earth-close" aria-label={t("Close the list")} onClick={() => closeList({ restore: true })}>
                 {closeIcon}
               </button>
             </div>
@@ -2464,20 +2477,20 @@ export default function EarthGlobe({ className = "", side = null }) {
       <div className="earth-foot">
         <div className="earth-key-row">
           {/* Two rows: the dots, then what is drawn on the Earth. */}
-          <ul className="earth-legend" aria-label="What the colours show">
+          <ul className="earth-legend" aria-label={t("What the colours show")}>
             <li>
               <span className="earth-key earth-key-war" aria-hidden="true" />
-              Armed conflicts
+              {t("Armed conflicts")}
             </li>
             <li>
               <span className="earth-key earth-key-alert" aria-hidden="true" />
-              Disaster alerts
+              {t("Disaster alerts")}
             </li>
             <li>
               {/* The black soil can be taken off the Earth and put back. */}
               <button type="button" className="earth-switch" aria-pressed={soilOn} onClick={() => setSoilOn((on) => !on)}>
                 <span className="earth-key earth-key-soil" aria-hidden="true" />
-                Black soil
+                {t("Black soil")}
               </button>
             </li>
             <li>
@@ -2485,7 +2498,7 @@ export default function EarthGlobe({ className = "", side = null }) {
                 <path d="M1.5 6h14.5" strokeWidth="1.6" strokeLinecap="round" />
                 <path d="M15 2.2L21.5 6 15 9.8z" />
               </svg>
-              Whose food depends on it
+              {t("Whose food depends on it")}
             </li>
           </ul>
           <button
@@ -2497,45 +2510,74 @@ export default function EarthGlobe({ className = "", side = null }) {
             disabled={!events.length}
             onClick={toggleList}
           >
-            {listOpen ? "Hide the list" : "See them all as a list"}
+            {listOpen ? t("Hide the list") : t("See them all as a list")}
           </button>
         </div>
-        {world.status === "failed" && <p className="earth-note">Today's conflicts and alerts could not be loaded.</p>}
+        {world.status === "failed" && <p className="earth-note">{t("Today's conflicts and alerts could not be loaded.")}</p>}
         {!overlay && (
           <div ref={listRef} id={listId} className="earth-list" hidden={!listOpen}>
             {listBody}
           </div>
         )}
         <p className="earth-sources">
-          Earth:{" "}
           {/* NASA's page for the Blue Marble pictures (Visible Earth's old
               record for this one, images/73776, now opens the Earth
               Observatory's front page; where the files are now:
               earthMath.js PICTURE_WIDTHS). */}
-          <a {...out} href="https://svs.gsfc.nasa.gov/3539">
-            NASA Blue Marble
-          </a>
-          , public domain. Land and borders:{" "}
-          <a {...out} href="https://www.naturalearthdata.com/">
-            Natural Earth
-          </a>
-          . Black soil:{" "}
-          <a {...out} href="https://doi.org/10.5281/zenodo.1476844">
-            OpenLandMap USDA great groups
-          </a>{" "}
-          (Hengl and Nauman, 2018),{" "}
-          <a {...out} href="https://creativecommons.org/licenses/by-sa/4.0/">
-            CC BY-SA 4.0
-          </a>
-          , modified. Disaster alerts:{" "}
-          <a {...out} href="https://www.gdacs.org/">
-            GDACS
-          </a>
-          , live. Armed conflicts: a list reviewed by hand{reviewed ? ` on ${reviewed}` : loading ? standIn(" on 28 September 2026") : ""}. Who buys whose food: World Bank{" "}
-          <a {...out} href="https://wits.worldbank.org/">
-            WITS
-          </a>
-          , the latest year each country reported{span || (loading ? standIn(" (2021–2023)") : "")}.
+          {t("Earth: {link}, public domain.", {
+            link: (
+              <a {...out} href="https://svs.gsfc.nasa.gov/3539">
+                {t("NASA Blue Marble")}
+              </a>
+            ),
+          })}{" "}
+          {t("Land and borders: {link}.", {
+            link: (
+              <a {...out} href="https://www.naturalearthdata.com/">
+                {t("Natural Earth")}
+              </a>
+            ),
+          })}{" "}
+          {t("Black soil: {link} (Hengl and Nauman, 2018), {licence}, modified.", {
+            link: (
+              <a {...out} href="https://doi.org/10.5281/zenodo.1476844">
+                {t("OpenLandMap USDA great groups")}
+              </a>
+            ),
+            licence: (
+              <a {...out} href="https://creativecommons.org/licenses/by-sa/4.0/">
+                CC BY-SA 4.0
+              </a>
+            ),
+          })}{" "}
+          {t("Disaster alerts: {link}, live.", {
+            link: (
+              <a {...out} href="https://www.gdacs.org/">
+                GDACS
+              </a>
+            ),
+          })}{" "}
+          {reviewed ? t("Armed conflicts: a list reviewed by hand on {date}.", { date: reviewed }) : t("Armed conflicts: a list reviewed by hand.")}
+          {/* While the feed is on its way, a hidden date of the usual length
+              holds the line's width (and so does a span of years below). */}
+          {!reviewed && loading ? standIn(<> {t("on {date}", { date: dayMonthYear("2026-09-28", t) })}</>) : null}{" "}
+          {span
+            ? t("Who buys whose food: World Bank {link}, the latest year each country reported ({years}).", {
+                link: (
+                  <a {...out} href="https://wits.worldbank.org/">
+                    WITS
+                  </a>
+                ),
+                years: span,
+              })
+            : t("Who buys whose food: World Bank {link}, the latest year each country reported.", {
+                link: (
+                  <a {...out} href="https://wits.worldbank.org/">
+                    WITS
+                  </a>
+                ),
+              })}
+          {!span && loading ? standIn(" (2021–2023)") : null}
         </p>
       </div>
     </figure>

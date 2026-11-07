@@ -50,6 +50,13 @@
 // the page carries them: OpenStreetMap under the First edition's maps
 // (with ACLED for the attacks), OpenFreeMap in the Second edition's caption.
 //
+// Every word a visitor reads goes through t() (src/site/i18n/, namespace
+// "story"), the English sentence being the dictionary key: the five steps
+// stay English in ROOTS and are translated where they are rendered; the
+// credits' names (OpenStreetMap, OpenFreeMap, OpenMapTiles, ACLED) stay as
+// they are in every language. "Ten ways" is a word in English and a figure
+// in the other languages, unless their dictionary writes the word itself.
+//
 // WHO EDITS IT
 // The founder, for the words (the five steps are ROOTS, below). The
 // pictures are in public/site/story/ and public/site/shots/; the layout is
@@ -58,17 +65,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LINKS, NUMBERS, formatInt } from "../content/site.js";
 import { useMediaQuery, usePageTitle, useReveal } from "../hooks.js";
+import { useT } from "../i18n/i18n.js";
 // site.css before the page's own sheet, so it is always in the page first
 // and pages.css's rules win their ties with it, however the page is loaded.
 import "../site.css";
 import "./pages.css";
 
-// The three editions, in order: the address of each part of the page and
-// the word the bar shows ("First" + " edition").
+// The three editions, in order: the address of each part of the page, the
+// word the bar shows ("First" + " edition") and the whole name it reads out
+// (the edition's heading, so the two are translated alike).
 const EDITIONS = [
-  { id: "first-edition", word: "First" },
-  { id: "second-edition", word: "Second" },
-  { id: "third-edition", word: "Third" },
+  { id: "first-edition", word: "First", label: "First edition" },
+  { id: "second-edition", word: "Second", label: "Second edition" },
+  { id: "third-edition", word: "Third", label: "Third edition" },
 ];
 
 // A small count written as a word, the way the story is told ("ten
@@ -84,6 +93,8 @@ function inWords(n) {
 // stays with the name), and "black‑soil" and "great‑grandparents" have
 // non-breaking hyphens (U+2011, as the Methodology's "Sentinel‑2"). They
 // look like a plain space and hyphen: keep them (site-pages.test.js checks).
+// The fourth step's "{ways}" is filled where the step is rendered (the
+// count of ways compared, from site.js); the texts are the dictionary keys.
 const ROOTS = [
   {
     say: "For three generations, one story was told at William’s family table.",
@@ -106,7 +117,7 @@ const ROOTS = [
   {
     say: "He built it for Ukraine, then for everyone.",
     tell: [
-      `He learned the basics of Google Earth Engine, its libraries and how to code. He spent a year researching chernozem rehabilitation with Dr. Bo Zhao of the University of Washington: he compared ${inWords(NUMBERS.paperOperators)} ways to rank damaged land, designed gated aggregation and built the first Chernozem Atlas, bringing experience from an internship at ZBDL Land and Resources in Beijing, where he worked on recovering land after disasters.`,
+      "He learned the basics of Google Earth Engine, its libraries and how to code. He spent a year researching chernozem rehabilitation with Dr. Bo Zhao of the University of Washington: he compared {ways} ways to rank damaged land, designed gated aggregation and built the first Chernozem Atlas, bringing experience from an internship at ZBDL Land and Resources in Beijing, where he worked on recovering land after disasters.",
       "Over three editions, the same method grew to work for any soil, anywhere on Earth, after any war or natural disaster, and for anyone, even as everyday monitoring. Now the farmers of Ukraine, his family in northeastern China and any farmer anywhere can use it.",
     ],
   },
@@ -260,12 +271,18 @@ function useEditionProgress() {
 }
 
 export default function StoryPage() {
-  usePageTitle("Story");
+  const t = useT("story");
+  usePageTitle(t("Story"));
   // The entrances of each edition (site.css, "Entrances"): one observer
   // callback, attached to every edition's grid.
   const reveal = useReveal();
   const rootsReveal = useRootsReveal();
   const { active, fills } = useEditionProgress();
+  // The one hole in the steps (the fourth step's "{ways}"): the count of
+  // ways compared, as the story tells it, a word in English ("ten"); a
+  // figure in the other languages, whose dictionaries may write the word
+  // themselves (an entry that is a function is handed the count too).
+  const steps = { ways: t.lang === "en" ? inWords(NUMBERS.paperOperators) : formatInt(NUMBERS.paperOperators), count: NUMBERS.paperOperators };
 
   return (
     <div className="pg story-page">
@@ -275,7 +292,7 @@ export default function StoryPage() {
           <div className="story-roots-head">
             <div className="pg-mask">
               <h1 className="pg-h1 pg-display" id="story-title">
-                Forged in Three Generations
+                {t("Forged in Three Generations")}
               </h1>
             </div>
           </div>
@@ -288,11 +305,11 @@ export default function StoryPage() {
                   {/* The first step is on the first screen: it fades in with the title; the others rise as they come. */}
                   <div className="story-roots-words" data-roots={first ? undefined : ""} ref={first ? undefined : rootsReveal}>
                     <p className={first ? "story-statement pg-fade" : "story-statement"} data-rise={first ? undefined : ""}>
-                      {say}
+                      {t(say)}
                     </p>
                     {tell.map((text, i) => (
                       <p className={first ? "story-roots-tell pg-fade-2" : "story-roots-tell"} data-rise={first ? undefined : ""} style={first ? undefined : { "--i": i + 1 }} key={text}>
-                        {lastTwoTogether(text)}
+                        {lastTwoTogether(t(text, steps))}
                       </p>
                     ))}
                   </div>
@@ -306,11 +323,11 @@ export default function StoryPage() {
 
       {/* 2. The editions, with the bar that follows the reading. */}
       <div className="story-editions">
-        <nav className="story-mark" aria-label="The three editions">
+        <nav className="story-mark" aria-label={t("The three editions")}>
           <ol className="story-mark-list">
-            {EDITIONS.map(({ id, word }) => (
+            {EDITIONS.map(({ id, word, label }) => (
               <li key={id}>
-                <a className="story-mark-link" href={`#${id}`} aria-label={`${word} edition`} aria-current={active === id ? "true" : undefined}>
+                <a className="story-mark-link" href={`#${id}`} aria-label={t(label)} aria-current={active === id ? "true" : undefined}>
                   <span
                     className="story-mark-fill"
                     aria-hidden="true"
@@ -318,9 +335,10 @@ export default function StoryPage() {
                       fills.current[id] = node;
                     }}
                   />
+                  {/* The space before "edition" is inside its sentence: Chinese writes none. */}
                   <span className="story-mark-label">
-                    {word}
-                    <span className="story-mark-rest"> edition</span>
+                    {t(word)}
+                    <span className="story-mark-rest">{t(" edition")}</span>
                   </span>
                 </a>
               </li>
@@ -331,39 +349,47 @@ export default function StoryPage() {
         <section className="pg-sec story-ed story-ed-1" id="first-edition" aria-labelledby="first-edition-title">
           <div className="pg-grid" ref={reveal}>
             <h2 className="pg-h2 story-ed-head" id="first-edition-title" data-rise="">
-              First edition
+              {t("First edition")}
             </h2>
             <div className="story-ed-text" data-rise="" style={{ "--i": 1 }}>
-              <p>A Google Colab notebook on Google Earth Engine that mapped Ukraine’s black soil, oblast by oblast, and the disturbance on it.</p>
+              <p>{t("A Google Colab notebook on Google Earth Engine that mapped Ukraine’s black soil, oblast by oblast, and the disturbance on it.")}</p>
               <p>
-                Checked against {formatInt(NUMBERS.acledEvents)} recorded explosion and remote-violence events from ACLED (rank correlation {NUMBERS.acledCorrelation}) and against the change in harvests (r = {signed(NUMBERS.harvestCorrelation)}), it became a research paper ranking {NUMBERS.paperOblasts} oblasts.
+                {t("Checked against {events} recorded explosion and remote-violence events from ACLED (rank correlation {rho}) and against the change in harvests (r = {r}), it became a research paper ranking {oblasts} oblasts.", {
+                  events: formatInt(NUMBERS.acledEvents),
+                  rho: NUMBERS.acledCorrelation,
+                  r: signed(NUMBERS.harvestCorrelation),
+                  oblasts: NUMBERS.paperOblasts,
+                })}
               </p>
             </div>
             <figure className="pg-fig story-ed1-main" data-settle="" style={{ "--i": 2 }}>
-              <img className="pg-pic" src="/site/story/edition-1-colab.webp" width="1340" height="892" alt="The first edition's map: Ukraine's black soil shaded green, oblast by oblast, on a plain base map" loading="lazy" decoding="async" />
-              <figcaption>Ukraine’s black soil in green, oblast by oblast.</figcaption>
+              <img className="pg-pic" src="/site/story/edition-1-colab.webp" width="1340" height="892" alt={t("The first edition's map: Ukraine's black soil shaded green, oblast by oblast, on a plain base map")} loading="lazy" decoding="async" />
+              <figcaption>{t("Ukraine’s black soil in green, oblast by oblast.")}</figcaption>
             </figure>
             <div className="story-ed1-side">
               <figure className="pg-fig" data-settle="" style={{ "--i": 3 }}>
-                <img className="pg-pic story-crop" src="/site/story/disturbance-map.webp" width="1600" height="964" alt="The disturbance layer: unusual change on Ukraine's land in orange and red, heaviest in the east and the south" loading="lazy" decoding="async" />
-                <figcaption>The disturbance layer: unusual change on the land in orange and red.</figcaption>
+                <img className="pg-pic story-crop" src="/site/story/disturbance-map.webp" width="1600" height="964" alt={t("The disturbance layer: unusual change on Ukraine's land in orange and red, heaviest in the east and the south")} loading="lazy" decoding="async" />
+                <figcaption>{t("The disturbance layer: unusual change on the land in orange and red.")}</figcaption>
               </figure>
               <figure className="pg-fig" data-settle="" style={{ "--i": 4 }}>
-                <img className="pg-pic story-crop" src="/site/story/acled-events.webp" width="1324" height="942" alt="ACLED's recorded attacks across Ukraine as orange and red dots, crowded along the front line in the east and the south" loading="lazy" decoding="async" />
-                <figcaption>The check: ACLED’s recorded attacks, as orange and red dots.</figcaption>
+                <img className="pg-pic story-crop" src="/site/story/acled-events.webp" width="1324" height="942" alt={t("ACLED's recorded attacks across Ukraine as orange and red dots, crowded along the front line in the east and the south")} loading="lazy" decoding="async" />
+                <figcaption>{t("The check: ACLED’s recorded attacks, as orange and red dots.")}</figcaption>
               </figure>
             </div>
             {/* The credit the maps' own corners do not carry (cropped away). */}
             <p className="story-credit" data-rise="" style={{ "--i": 5 }}>
-              Base maps ©{" "}
-              <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
-                OpenStreetMap
-              </a>{" "}
-              contributors. Attacks:{" "}
-              <a href="https://acleddata.com/" target="_blank" rel="noreferrer">
-                ACLED
-              </a>
-              .
+              {t("Base maps © {osm} contributors. Attacks: {acled}.", {
+                osm: (
+                  <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
+                    OpenStreetMap
+                  </a>
+                ),
+                acled: (
+                  <a href="https://acleddata.com/" target="_blank" rel="noreferrer">
+                    ACLED
+                  </a>
+                ),
+              })}
             </p>
           </div>
         </section>
@@ -372,34 +398,40 @@ export default function StoryPage() {
           <div className="pg-grid" ref={reveal}>
             <div className="story-ed2-text">
               <h2 className="pg-h2 story-ed-head" id="second-edition-title" data-rise="">
-                Second edition
+                {t("Second edition")}
               </h2>
               <div className="story-ed2-words" data-rise="" style={{ "--i": 1 }}>
-                <p>The Chernozem Recovery Atlas, a web page run on a laptop. It was the first Chernozem Atlas, for Ukraine only. There was no Field&nbsp;yet.</p>
-                <p>Near-term and postwar readings, sliders for soil value, disturbance and recovery context, about a dozen map layers and a ranked list of oblasts, in English or Chinese.</p>
+                {/* "Field yet" shares a line: a no-break space (U+00A0) inside the sentence. */}
+                <p>{t("The Chernozem Recovery Atlas, a web page run on a laptop. It was the first Chernozem Atlas, for Ukraine only. There was no Field yet.")}</p>
+                <p>{t("Near-term and postwar readings, sliders for soil value, disturbance and recovery context, about a dozen map layers and a ranked list of oblasts, in English or Chinese.")}</p>
                 <p className="story-ed-link">
                   <a className="pg-link" href={LINKS.paper} target="_blank" rel="noreferrer">
-                    Its data and code are on Harvard Dataverse
+                    {t("Its data and code are on Harvard Dataverse")}
                   </a>
                 </p>
               </div>
             </div>
             <figure className="pg-fig story-ed2-pic" data-settle="" style={{ "--i": 2 }}>
-              <img className="pg-pic" src="/site/story/edition-2-atlas.webp" width="1497" height="1280" alt="The second edition, the Chernozem Recovery Atlas in a browser on localhost: the weights and map layers on the left, Ukraine's oblasts coloured by priority, the top oblasts on the right" loading="lazy" decoding="async" />
+              <img className="pg-pic" src="/site/story/edition-2-atlas.webp" width="1497" height="1280" alt={t("The second edition, the Chernozem Recovery Atlas in a browser on localhost: the weights and map layers on the left, Ukraine's oblasts coloured by priority, the top oblasts on the right")} loading="lazy" decoding="async" />
               <figcaption>
-                The Recovery Atlas on localhost: the weights and map layers on the left, the top oblasts on the right. Base map:{" "}
-                <a href="https://openfreemap.org/" target="_blank" rel="noreferrer">
-                  OpenFreeMap
-                </a>
-                , ©{" "}
-                <a href="https://www.openmaptiles.org/" target="_blank" rel="noreferrer">
-                  OpenMapTiles
-                </a>
-                , ©{" "}
-                <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
-                  OpenStreetMap
-                </a>{" "}
-                contributors.
+                {t("The Recovery Atlas on localhost: the weights and map layers on the left, the top oblasts on the right.")}{" "}
+                {t("Base map: {openFreeMap}, © {openMapTiles}, © {osm} contributors.", {
+                  openFreeMap: (
+                    <a href="https://openfreemap.org/" target="_blank" rel="noreferrer">
+                      OpenFreeMap
+                    </a>
+                  ),
+                  openMapTiles: (
+                    <a href="https://www.openmaptiles.org/" target="_blank" rel="noreferrer">
+                      OpenMapTiles
+                    </a>
+                  ),
+                  osm: (
+                    <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
+                      OpenStreetMap
+                    </a>
+                  ),
+                })}
               </figcaption>
             </figure>
           </div>
@@ -408,20 +440,20 @@ export default function StoryPage() {
         <section className="pg-sec story-ed story-ed-3" id="third-edition" aria-labelledby="third-edition-title">
           <div className="pg-grid" ref={reveal}>
             <h2 className="pg-h2 story-ed-head" id="third-edition-title" data-rise="">
-              Third edition
+              {t("Third edition")}
             </h2>
             <div className="story-ed-text" data-rise="" style={{ "--i": 1 }}>
-              <p>This app, at chernozem.app.</p>
-              <p>Field reads a farmer’s own fields on every clear Sentinel-2 pass: plant health, water and stress against 2019 to 2021, and harvest timing.</p>
-              <p>Atlas scores any country or region square by square for governments, NGOs and corporations, after a war, flood, wildfire or drought.</p>
+              <p>{t("This app, at chernozem.app.")}</p>
+              <p>{t("Field reads a farmer’s own fields on every clear Sentinel-2 pass: plant health, water and stress against 2019 to 2021, and harvest timing.")}</p>
+              <p>{t("Atlas scores any country or region square by square for governments, NGOs and corporations, after a war, flood, wildfire or drought.")}</p>
             </div>
             <figure className="pg-fig story-ed3-pic story-ed3-field" data-settle="" style={{ "--i": 2 }}>
-              <img className="pg-pic story-crop story-crop-field" src="/site/shots/field-fields-detail.webp" width="1920" height="1369" alt="Field: the demo farm near Kupiansk on satellite imagery, Field 11 selected with its water, plant health, stress and harvest readings" loading="lazy" decoding="async" />
-              <figcaption>Field: Field 11 on the demo farm near Kupiansk, with its four readings.</figcaption>
+              <img className="pg-pic story-crop story-crop-field" src="/site/shots/field-fields-detail.webp" width="1920" height="1369" alt={t("Field: the demo farm near Kupiansk on satellite imagery, Field 11 selected with its water, plant health, stress and harvest readings")} loading="lazy" decoding="async" />
+              <figcaption>{t("Field: Field 11 on the demo farm near Kupiansk, with its four readings.")}</figcaption>
             </figure>
             <figure className="pg-fig story-ed3-pic story-ed3-atlas" data-settle="" style={{ "--i": 3 }}>
-              <img className="pg-pic story-crop story-crop-atlas" src="/site/shots/atlas-overview.webp" width="1920" height="1200" alt="Atlas: the overview of Ukraine for September 2026, with the cropland analysed, the damage, and the map of where to start" loading="lazy" decoding="async" />
-              <figcaption>Atlas: Ukraine in September 2026, with the places to start.</figcaption>
+              <img className="pg-pic story-crop story-crop-atlas" src="/site/shots/atlas-overview.webp" width="1920" height="1200" alt={t("Atlas: the overview of Ukraine for September 2026, with the cropland analysed, the damage, and the map of where to start")} loading="lazy" decoding="async" />
+              <figcaption>{t("Atlas: Ukraine in September 2026, with the places to start.")}</figcaption>
             </figure>
           </div>
         </section>

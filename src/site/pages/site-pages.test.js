@@ -180,7 +180,7 @@ test("every page carries the file header, a tab title and one h1", () => {
     const source = read(name);
     assert.ok(source.startsWith("// WHAT THIS FILE DOES"), `${name} starts with WHAT THIS FILE DOES`);
     assert.ok(source.includes("// WHO EDITS IT"), `${name} says who edits it`);
-    assert.ok(/usePageTitle\("[^"]+"\)/.test(source), `${name} sets its title`);
+    assert.ok(/usePageTitle\(t\("[^"]+"\)\)/.test(source), `${name} sets its title`);
     assert.equal((source.match(/<h1\b/g) || []).length, 1, `${name} has exactly one h1`);
     assert.ok(source.includes('import "./pages.css"'), `${name} loads pages.css`);
   }
@@ -192,7 +192,8 @@ test("a page that leaves puts the site's title back only if the next page has no
   // tab naming a page the visitor had left (19 of 40 moves through the menu).
   const hooks = readFileSync(join(here, "..", "hooks.js"), "utf8");
   const hook = between(hooks, "export function usePageTitle", "\n}\n");
-  assert.match(hook, /const title = pageTitle\(sub\);\s*document\.title = title;/);
+  // (pageTitle takes t, the website's language, since 6 November 2026.)
+  assert.match(hook, /const title = pageTitle\(sub, t\);\s*document\.title = title;/);
   assert.match(hook, /if \(document\.title === title\) document\.title = pageTitle\(\);/);
   assert.doesNotMatch(hook, /const before = document\.title/);
 });
@@ -242,11 +243,11 @@ test("the Story is its title, the five steps of the roots and the three editions
   const list = headings("StoryPage.jsx");
   assert.deepEqual(
     list.map((h) => h.text),
-    ["Forged in Three Generations", "First edition", "Second edition", "Third edition"],
+    ['{t("Forged in Three Generations")}', '{t("First edition")}', '{t("Second edition")}', '{t("Third edition")}'],
   );
   assert.equal(list[0].tag, "h1");
-  // The browser tab still says Story.
-  assert.match(read("StoryPage.jsx"), /usePageTitle\("Story"\)/);
+  // The browser tab still says Story (in the website's language).
+  assert.match(read("StoryPage.jsx"), /usePageTitle\(t\("Story"\)\)/);
   const text = words("StoryPage.jsx");
   // The five steps, in the owner's order: the table, the visit, Ukraine,
   // building it, Penn (the last step now; no "At Penn" section).
@@ -283,7 +284,8 @@ test("the Story is its title, the five steps of the roots and the three editions
   assert.doesNotMatch(text, /Dr\. Bo|great-grandparents|black-soil/, "no line breaks inside a name or a compound");
   // "ten ways" is NUMBERS.paperOperators, written as a word, never typed.
   assert.equal(NUMBERS.paperOperators, 10);
-  assert.match(text, /he compared \$\{inWords\(NUMBERS\.paperOperators\)\} ways to rank damaged land/);
+  assert.match(text, /he compared \{ways\} ways to rank damaged land/);
+  assert.match(text, /ways: t\.lang === "en" \? inWords\(NUMBERS\.paperOperators\)/);
   assert.doesNotMatch(text, /compared (ten|10) ways/);
   // What the owner asked to take out.
   for (const gone of ["Who makes it", "What it stands for", "Try it on your own land", "The soil", "Film", "Register", "Polytechnic", "Pasadena"]) {
@@ -305,7 +307,7 @@ test("the Story's five steps are an ordered list on the dark band, joined by fou
   assert.match(band, /"story-roots-tell pg-fade-2" : "story-roots-tell"/);
   // A description's last two words share a line (Safari before 26 has no
   // text-wrap: pretty; a phone left "it." alone), as on the About page.
-  assert.match(band, /\{lastTwoTogether\(text\)\}/);
+  assert.match(band, /\{lastTwoTogether\(t\(text, steps\)\)\}/);
   const join = vm.runInNewContext(text.match(/const lastTwoTogether = (\(text\) => [^\n]+);\n/)[1]);
   assert.equal(join("and have gradually scaled it."), `and have gradually scaled${String.fromCharCode(0xa0)}it.`);
   // An arrow after every step but the last: four, pointing down.
@@ -402,13 +404,15 @@ test("the Story's edition bar links to each edition, and each edition has its pi
 test("the Story counts ACLED's events as events, and links the Dataverse deposit under the Second edition", () => {
   const source = words("StoryPage.jsx");
   // ACLED counts events (one event can hold many explosions).
-  assert.match(source, /\{formatInt\(NUMBERS\.acledEvents\)\} recorded explosion and remote-violence events from ACLED/);
+  assert.match(source, /\{events\} recorded explosion and remote-violence events from ACLED/);
+  assert.match(source, /events: formatInt\(NUMBERS\.acledEvents\)/);
   assert.doesNotMatch(source, /explosions and remote attacks/);
   // The deposit is the Recovery Atlas's package: its link sits in the
   // Second edition; the First edition only says it became the paper.
   const first = between(source, 'id="first-edition"', 'id="second-edition"');
   const second = between(source, 'id="second-edition"', 'id="third-edition"');
-  assert.match(first, /it became a research paper ranking \{NUMBERS\.paperOblasts\} oblasts/);
+  assert.match(first, /it became a research paper ranking \{oblasts\} oblasts/);
+  assert.match(first, /oblasts: NUMBERS\.paperOblasts/);
   assert.doesNotMatch(first, /LINKS\.paper|Dataverse/);
   assert.match(second, /href=\{LINKS\.paper\}/);
   assert.match(second, /Its data and code are on Harvard Dataverse/);
@@ -424,9 +428,10 @@ test("the Story's Second edition is the first Chernozem Atlas the fourth step na
   const second = between(source, 'id="second-edition"', 'id="third-edition"');
   const third = between(source, 'id="third-edition"', "</section>");
   assert.ok(source.includes("designed gated aggregation and built the first Chernozem Atlas"));
-  assert.match(second, /<p>The Chernozem Recovery Atlas, a web page run on a laptop\. It was the first Chernozem Atlas, for Ukraine only\. There was no Field&nbsp;yet\.<\/p>/);
+  // ("Field yet" with the no-break space, U+00A0, inside the sentence t() is given.)
+  assert.match(second, /<p>\{t\("The Chernozem Recovery Atlas, a web page run on a laptop\. It was the first Chernozem Atlas, for Ukraine only\. There was no Field yet\."\)\}<\/p>/);
   assert.doesNotMatch(first, /\bField\b/, "the First edition had no Field");
-  assert.match(third, /<p>Field reads a farmer’s own fields/, "Field arrives with the Third edition");
+  assert.match(third, /<p>\{t\("Field reads a farmer’s own fields/, "Field arrives with the Third edition");
 });
 
 test("a page title's mask leaves room for the tails of g, p and y, and nothing after the title moves", () => {
@@ -472,14 +477,14 @@ test("the Story's Third edition sets plant health, water and stress against 2019
   // never from the normal years (src/lib/field/method.js harvestStage and
   // combineHarvestEstimate); the About page and the Methodology say so too.
   const third = between(words("StoryPage.jsx"), 'id="third-edition"', "</section>");
-  assert.match(third, /<p>Field reads a farmer’s own fields on every clear Sentinel-2 pass: plant health, water and stress against 2019 to 2021, and harvest timing\.<\/p>/);
+  assert.match(third, /<p>\{t\("Field reads a farmer’s own fields on every clear Sentinel-2 pass: plant health, water and stress against 2019 to 2021, and harvest timing\."\)\}<\/p>/);
   assert.doesNotMatch(third, /harvest timing, against/);
 });
 
 test("the Demo page is the two doors and the Register line, and nothing about a code", () => {
   const source = read("DemoPage.jsx");
   const text = words("DemoPage.jsx");
-  assert.equal(headings("DemoPage.jsx")[0].text, "Try the demo");
+  assert.equal(headings("DemoPage.jsx")[0].text, '{t("Try the demo")}');
   assert.ok(text.includes("The demo is Ukraine, where Chernozem started: a farm near Kupiansk in Field, and the whole country in Atlas."));
   assert.match(source, /import \{ enterDemo \} from "\.\.\/\.\.\/lib\/demoMode\.js"/);
   assert.match(text, /onClick=\{enterDemo\}/, "a door switches the tab to the demo before the app opens");
@@ -526,7 +531,8 @@ test("the Contact page says where messages go and keeps only the form", () => {
   assert.equal(CONTACT_EMAIL, "chernozem.app@gmail.com");
   // The owner's sentence, the address a mailto link: "Messages go to
   // chernozem.app@gmail.com. Feel free to email us directly as well."
-  assert.match(text, /Messages go to <a href=\{`mailto:\$\{CONTACT_EMAIL\}`\}>\{CONTACT_EMAIL\}<\/a>\. Feel free to email us directly as well\.\s*<\/p>/);
+  // (Through t() since 6 November 2026, the link in the {email} hole.)
+  assert.match(text, /\{t\("Messages go to \{email\}\. Feel free to email us directly as well\.", \{ email: <a href=\{`mailto:\$\{CONTACT_EMAIL\}`\}>\{CONTACT_EMAIL\}<\/a> \}\)\}\s*<\/p>/);
   for (const gone of ["What to write about", "Elsewhere", "Saved privately", "No mailing list", "LINKS.github", "demo code"]) {
     assert.ok(!text.includes(gone), `the Contact page no longer has "${gone}"`);
   }
@@ -590,8 +596,13 @@ test("after sending, Contact says the message was received and moves the keyboar
   assert.match(text, /getElementById\("ct-name"\)\?\.focus\(\)/);
   assert.match(text, /<input id="ct-name"/);
   // The server's own words for a refusal, with the address made a link
-  // (the "busy" answer asks the visitor to write to it).
-  assert.match(text, /\{withMailLink\(error\)\}/);
+  // (the "busy" answer asks the visitor to write to it); in Chinese or
+  // Ukrainian, since 6 November 2026, a sentence of the page's own for what
+  // the server said (the error's code), the generic one with the address a
+  // link as well.
+  assert.match(text, /<p className="pg-error" role="alert">\s*\{sayRefusal\(t, error\)\}/);
+  assert.match(text, /if \(t\.lang === "en"\) return withMailLink\(error\.message\);/);
+  assert.match(text, /return t\("The message could not be sent\. Try again in a moment, or write to \{email\}\.", \{ email: <a href=\{`mailto:\$\{CONTACT_EMAIL\}`\}>\{CONTACT_EMAIL\}<\/a> \}\);/);
   assert.match(text, /\.split\(CONTACT_EMAIL\)/);
 });
 
@@ -609,7 +620,7 @@ test("the Contact page calls its hooks at the top, never inside a branch", () =>
 test("the Owner page is unlisted and signs in with the Chernozem Google account, never a code", () => {
   const source = read("OwnerPage.jsx");
   const text = words("OwnerPage.jsx");
-  assert.match(source, /usePageTitle\("Owner sign-in"\)/);
+  assert.match(source, /usePageTitle\(t\("Owner sign-in"\)\)/);
   assert.match(text, /meta\.name = "robots"/);
   assert.match(text, /meta\.content = "noindex, nofollow"/);
   assert.match(text, /return \(\) => meta\.remove\(\)/, "the noindex line leaves with the page");
@@ -671,7 +682,7 @@ test("the Methodology page is two parts, Field and Atlas, each with its film, th
   const list = headings("MethodPage.jsx");
   assert.deepEqual(
     list.map((h) => h.text),
-    ["How Chernozem works", "Field", "Atlas", "Behind it", "Chernozem in three minutes", "Run it on your own land"],
+    ['{t("How Chernozem works")}', "Field", "Atlas", '{t("Behind it")}', '{t("Chernozem in three minutes")}', '{t("Run it on your own land")}'],
   );
   assert.equal(list[0].tag, "h1");
   assert.equal((source.match(/<h3\b/g) || []).length, 0, "no sub-sub-headings");
@@ -704,7 +715,7 @@ test("the Methodology page is two parts, Field and Atlas, each with its film, th
   // Next to each name, what it is, plainly (the owner: "describe what it
   // is clearly", no paragraph of features). Atlas names whom it is for and
   // keeps Ukraine as the demo, where Chernozem started.
-  const what = (part) => part.match(/<p className="pg-lead meth-what">([^<]+)<\/p>/)[1];
+  const what = (part) => part.match(/<p className="pg-lead meth-what">\{t\("([^"]+)"\)\}<\/p>/)[1];
   assert.equal(what(field), "Field is Chernozem for one farm: you mark your fields once, and after every clear satellite pass it tells you how each one is doing and what needs doing.");
   assert.equal(what(atlas), "Atlas is Chernozem for a whole region, for governments, NGOs and corporations: it scores every square of farmland and ranks where recovery should start. Ukraine is the demo because that is where Chernozem started.");
   for (const part of [field, atlas]) {
@@ -717,7 +728,7 @@ test("the Methodology page is two parts, Field and Atlas, each with its film, th
   // heading, with the film's own five chapters; it is no longer the About page's.
   assert.match(source, /import Film from "\.\.\/components\/Film\.jsx"/);
   assert.match(source, /<section className="pg-sec pg-sec-surface" id="film" aria-labelledby="meth-film-title">/);
-  assert.match(film, /<h2 className="pg-h2" id="meth-film-title">\s*Chernozem in three minutes\s*<\/h2>[\s\S]*<div className="meth-film">\s*<Film \/>\s*<\/div>/);
+  assert.match(film, /<h2 className="pg-h2" id="meth-film-title">\s*\{t\("Chernozem in three minutes"\)\}\s*<\/h2>[\s\S]*<div className="meth-film">\s*<Film \/>\s*<\/div>/);
   assert.ok(source.indexOf("<Film />") > source.indexOf('id="meth-behind"'), "the film comes after Behind it");
   assert.ok(source.indexOf("<Film />") < source.indexOf('id="meth-close"'), "and before the close");
   assert.equal((source.match(/<Film\b/g) || []).length, 1, "the film once");
@@ -727,14 +738,14 @@ test("the Methodology page is two parts, Field and Atlas, each with its film, th
   // The owner's favourite parts stay: the scores, the gate with its
   // sliders and the two time frames, the ranking as the app shows it
   // (untouched, a piece of the product), the checks and the limits.
-  for (const kept of ["<dt>Value</dt>", "<dt>Damage</dt>", "<dt>Feasibility</dt>", "<GateLab />", "Near term:", "Post-crisis:", "<ProofTable />", "What it cannot do."]) {
+  for (const kept of ['<dt>{t("Value")}</dt>', '<dt>{t("Damage")}</dt>', '<dt>{t("Feasibility")}</dt>', "<GateLab />", "Near term:", "Post-crisis:", "<ProofTable />", "What it cannot do."]) {
     assert.ok(atlas.includes(kept), `the Atlas part keeps ${kept}`);
   }
   assert.match(atlas, /<div data-ui>\s*<DemoRanking \/>/);
   assert.doesNotMatch(source, /DemoRanking\s+[a-z]+=/, "DemoRanking takes no props");
   // Behind it: the datasets in one line, the stack in one line, the links.
-  assert.match(behind, /listOf\(DATASETS\.map\(\(item\) => item\.name\)\)/);
-  assert.match(behind, /listOf\(STACK\.map\(\(item\) => item\.name\)\)/);
+  assert.match(behind, /listOf\(DATASETS\.map\(\(item\) => item\.name\), t\)/);
+  assert.match(behind, /listOf\(STACK\.map\(\(item\) => item\.name\), t\)/);
   assert.match(behind, /href=\{LINKS\.github\}/);
   assert.match(behind, /href=\{LINKS\.paper\}/);
   assert.match(words("MethodPage.jsx"), /The demo is open to everyone and read-only\./);
@@ -931,7 +942,7 @@ test("the three-minute film's chapters are marked like the walkthroughs': the sa
   const jump = source.slice(source.indexOf("const jump = (t, index) =>"));
   assert.match(jump.slice(0, jump.indexOf("video.currentTime = t;")), /pressed\.current = t;\s*setCurrent\(index\);/);
   // Its list is named for screen readers, apart from the walkthroughs' two.
-  assert.match(source, /aria-label=\{`Chapters of \$\{title\}`\}/);
+  assert.match(source, /aria-label=\{t\("Chapters of \{title\}", \{ title: t\(title\) \}\)\}/);
   assert.match(source, /title = "Chernozem in three minutes"/);
 });
 
@@ -1004,24 +1015,25 @@ test("Field's technical part: the four readings, the condition beside its labora
   assert.match(source, /import ConditionLab from "\.\.\/components\/ConditionLab\.jsx";/);
   // The four readings, a formula and one sentence under each name.
   const readings = between(field, 'className="meth-scores meth-readings"', "</Stagger>");
-  assert.deepEqual([...readings.matchAll(/<dt>([^<]+)<\/dt>/g)].map((m) => m[1]), ["Plant health", "Water", "Stress", "Harvest timing"]);
+  assert.deepEqual([...readings.matchAll(/<dt>\{t\("([^"]+)"\)\}<\/dt>/g)].map((m) => m[1]), ["Plant health", "Water", "Stress", "Harvest timing"]);
   assert.equal((readings.match(/<dd className="meth-eq">/g) || []).length, 4, "a formula under each name");
-  for (const formula of ["NDVI = <span className=\"meth-whole\">(B8 − B4) / (B8 + B4)</span>", "NDWI = <span className=\"meth-whole\">(B8 − B11) / (B8 + B11)</span>", "NDRE = <span className=\"meth-whole\">(B8A − B5) / (B8A + B5)</span>", "ready = <span className=\"meth-whole\">{FM.bareNdvi} + share·(peak − {FM.bareNdvi})</span>"]) {
+  for (const formula of ["NDVI = <span className=\"meth-whole\">(B8 − B4) / (B8 + B4)</span>", "NDWI = <span className=\"meth-whole\">(B8 − B11) / (B8 + B11)</span>", "NDRE = <span className=\"meth-whole\">(B8A − B5) / (B8A + B5)</span>", "{t(\"ready\")} = <span className=\"meth-whole\">{t(\"{bare} + share·(peak − {bare})\", { bare: decimal(FM.bareNdvi, t) })}</span>"]) {
     assert.ok(readings.includes(formula), `the readings show ${formula}`);
   }
   // As calm as Atlas's scores: one sentence a reading (the review, 3
-  // November 2026: Field's part was 3.6 times Atlas's words).
-  const sentences = [...readings.matchAll(/<dd>\s*([\s\S]*?)\s*<\/dd>/g)].map((m) => m[1].replace(/\s+/g, " "));
+  // November 2026: Field's part was 3.6 times Atlas's words). The sentence
+  // is the t("...") key: the English, with its no-break spaces.
+  const sentences = [...readings.matchAll(/<dd>\s*\{t\("((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]);
   assert.equal(sentences.length, 4);
   for (const sentence of sentences) assert.equal(sentence.split(/[.;:]\s+(?=[A-Z])/).length, 1, `one sentence: "${sentence.slice(0, 40)}…"`);
   // Its last two words share a line (Safari before 26 has no text-wrap:
   // pretty, which keeps a last word from standing alone elsewhere), as on
   // the About page.
-  for (const sentence of sentences) assert.match(sentence, /&nbsp;\S+$/, `"…${sentence.slice(-24)}" keeps its last two words together`);
-  assert.match(readings, /\{FM\.redEdgeLead\} before&nbsp;NDVI/);
-  assert.match(readings, /\(share \{FM\.readyShare\.cereals\} for cereals and rapeseed, \{FM\.readyShare\.rowCrops\} for row crops\)/);
+  for (const sentence of sentences) assert.match(sentence, / \S+$/, `"…${sentence.slice(-24)}" keeps its last two words together`);
+  assert.match(readings, /\{lead\} before NDVI\.", \{ lead: t\(FM\.redEdgeLead\) \}/);
+  assert.match(readings, /\(share \{cereals\} for cereals and rapeseed, \{rowCrops\} for row crops\)[^"]*", \{ cereals: decimal\(FM\.readyShare\.cereals, t\), rowCrops: decimal\(FM\.readyShare\.rowCrops, t\) \}/);
   // The radar cut counts only for row crops (corn, soybean, sunflower; never cereals or rapeseed).
-  assert.match(readings, /checked by heat units and, for row crops, radar through&nbsp;cloud\./);
+  assert.match(readings, /checked by heat units and, for row crops, radar through cloud\./);
   // The clouds, the 30 days and the normal years, as the code works them
   // out: the readings are the median of every clear pixel of the last 30
   // days; the scores and both stress rules use, per pixel, the middle of
@@ -1029,9 +1041,10 @@ test("Field's technical part: the four readings, the condition beside its labora
   // Below and Above normal; the half-clear rule only picks the season's
   // passes, which harvest timing reads.
   const intro = between(field, 'id="readings"', "</Reveal>");
-  assert.match(intro, /Cloud Score\+ removes clouds pixel by pixel \(clear at \{FM\.clearPixelScore\} or more\)/);
-  assert.match(intro, /Plant health, water and stress use the median of the last \{FM\.latestDays\} days’ clear pixels, against the same weeks of \{FM\.baseline\.label\}: per pixel, the middle of the \{FIELD_RULES\.normalYears\} years \(the app’s Below and Above normal use their range\)\./);
-  assert.match(intro, /Harvest timing follows the passes \{FIELD_RULES\.clearShare\}&nbsp;clear\./);
+  assert.match(intro, /Cloud Score\+ removes clouds pixel by pixel \(clear at \{score\} or more\)/);
+  assert.match(intro, /Plant health, water and stress use the median of the last \{days\} days’ clear pixels, against the same weeks of \{years\}: per pixel, the middle of the \{count\} years \(the app’s Below and Above normal use their range\)\./);
+  assert.match(intro, /Harvest timing follows the passes \{share\} clear\./);
+  assert.match(intro, /\{ score: decimal\(FM\.clearPixelScore, t\), days: FM\.latestDays, years: t\(FM\.baseline\.label\), count: rules\.normalYears, share: rules\.clearShare \}/, "the holes come from site.js and the rules");
   assert.doesNotMatch(intro, /the normal is a range|a pass counts|from every clear pass/, "no rule wider than the code's");
   // The condition: three formulas (the scores, held between 0 and 1, have
   // their own names; the stress rule's thresholds have a line of their
@@ -1039,20 +1052,22 @@ test("Field's technical part: the four readings, the condition beside its labora
   // site.js's FIELD_METHOD.
   const condition = between(field, 'id="condition"', "<ConditionLab />");
   assert.equal((condition.match(/className="meth-formula"/g) || []).length, 3);
-  assert.match(condition, /condition = <span className="meth-whole">\{FM\.weights\.plantHealth\}·health score<\/span> <span className="meth-whole">\+ \{FM\.weights\.water\}·water score<\/span> <span className="meth-whole">\+ \{FM\.weights\.noStress\}·\(1 − stressed share\)<\/span>/);
-  assert.match(condition, /health score = <span className="meth-whole">1 \+ \(NDVI − normal\) \/ \{FM\.healthSpan\}<\/span>\s*<br \/>\s*water score = <span className="meth-whole">1 \+ \(NDWI − normal\) \/ \{FM\.waterSpan\}<\/span>\s*<br \/>\s*each held between 0 and 1/);
-  assert.match(condition, /stressed = <span className="meth-whole">NDVI &lt; field median − \{two\(FM\.stressNdvi\.belowFieldMedian\)\}<\/span> <span className="meth-whole">and &lt; normal − \{two\(FM\.stressNdvi\.belowNormal\)\},<\/span> <span className="meth-whole">or NDRE &lt; field median − \{two\(FM\.stressRedEdge\.belowFieldMedian\)\}<\/span> <span className="meth-whole">and &lt; normal − \{two\(FM\.stressRedEdge\.belowNormal\)\}<\/span>/);
+  assert.match(condition, /\{t\("condition"\)\} = <span className="meth-whole">\{t\("\{w\}·health score", \{ w: decimal\(FM\.weights\.plantHealth, t\) \}\)\}<\/span> <span className="meth-whole">\{t\("\+ \{w\}·water score", \{ w: decimal\(FM\.weights\.water, t\) \}\)\}<\/span> <span className="meth-whole">\{t\("\+ \{w\}·\(1 − stressed share\)", \{ w: decimal\(FM\.weights\.noStress, t\) \}\)\}<\/span>/);
+  assert.match(condition, /\{t\("health score"\)\} = <span className="meth-whole">\{t\("1 \+ \(NDVI − normal\) \/ \{span\}", \{ span: decimal\(FM\.healthSpan, t\) \}\)\}<\/span>\s*<br \/>\s*\{t\("water score"\)\} = <span className="meth-whole">\{t\("1 \+ \(NDWI − normal\) \/ \{span\}", \{ span: decimal\(FM\.waterSpan, t\) \}\)\}<\/span>\s*<br \/>\s*\{t\("each held between 0 and 1"\)\}/);
+  assert.match(condition, /\{t\("stressed"\)\} = <span className="meth-whole">\{t\("NDVI < field median − \{d\}", \{ d: two\(FM\.stressNdvi\.belowFieldMedian, t\) \}\)\}<\/span> <span className="meth-whole">\{t\("and < normal − \{d\},", \{ d: two\(FM\.stressNdvi\.belowNormal, t\) \}\)\}<\/span> <span className="meth-whole">\{t\("or NDRE < field median − \{d\}", \{ d: two\(FM\.stressRedEdge\.belowFieldMedian, t\) \}\)\}<\/span> <span className="meth-whole">\{t\("and < normal − \{d\}", \{ d: two\(FM\.stressRedEdge\.belowNormal, t\) \}\)\}<\/span>/);
   assert.doesNotMatch(condition, /plant health =|·plant health|·water \+|kept between/, "one name for the 0-to-1 parts");
-  assert.match(condition, /which colours it on the map: \{FIELD_RULES\.classes\}\./);
-  assert.match(condition, /High stress \(\{FIELD_RULES\.highStress\}% of the field or more\) holds it under \{FIELD_RULES\.stressedUnder\}, damage under \{FIELD_RULES\.damagedUnder\}, and a field with no crop has no&nbsp;condition\./);
+  assert.match(condition, /which colours it on the map: \{classes\}\./);
+  assert.match(condition, /High stress \(\{highStress\}% of the field or more\) holds it under \{stressedUnder\}, damage under \{damagedUnder\}, and a field with no crop has no condition\.", \{ classes: rules\.classes, highStress: rules\.highStress, stressedUnder: rules\.stressedUnder, damagedUnder: rules\.damagedUnder \}/);
   // How fields, crop and damage are found, two sentences each; what it cannot see.
+  // (A note's words are its t("...") keys: the sentence, then any piece in a hole.)
   const how = between(field, 'className="meth-scores meth-how"', "</Stagger>");
-  assert.deepEqual([...how.matchAll(/<dt>([^<]+)<\/dt>/g)].map((m) => m[1]), ["Finding the fields", "The crop", "Damage on a field"]);
-  for (const [, note] of how.matchAll(/<dd>\s*([\s\S]*?)\s*<\/dd>/g)) {
-    assert.ok(note.replace(/\s+/g, " ").split(/(?<=[.;”])\s+(?=[A-Z])/).length <= 2, `about two sentences: "${note.trim().slice(0, 40)}…"`);
-    assert.match(note.trim(), /&nbsp;\S+$/, `"…${note.trim().slice(-24)}" keeps its last two words together`);
+  assert.deepEqual([...how.matchAll(/<dt>\{t\("([^"]+)"\)\}<\/dt>/g)].map((m) => m[1]), ["Finding the fields", "The crop", "Damage on a field"]);
+  for (const [, block] of how.matchAll(/<dd>\s*([\s\S]*?)\s*<\/dd>/g)) {
+    const note = [...block.matchAll(/\bt\("((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]).join(" ");
+    assert.ok(note.split(/(?<=[.;”])\s+(?=[A-Z])/).length <= 2, `about two sentences: "${note.slice(0, 40)}…"`);
+    assert.match(note, / \S+$/, `"…${note.slice(-24)}" keeps its last two words together`);
   }
-  for (const quoted of ["{inWords(FM.edgePictures)} Sentinel‑2 pictures", "{FM.minFieldHa} ha", "{FM.outlineIou}", "{NUMBERS.cropHeldOutPercent}%", "{NUMBERS.cropLikelyPercent}%", "{FM.radarChangeDb} dB", "in at least {inWords(FM.radarSeasons)} growing seasons", "{FIELD_RULES.damageShare}%"]) {
+  for (const quoted of ["{pictures} Sentinel‑2 pictures", "pictures: inWords(FM.edgePictures, t)", "{minHa} ha", "minHa: decimal(FM.minFieldHa, t)", "{iou}", "iou: decimal(FM.outlineIou, t)", "{heldOut}%", "heldOut: decimal(NUMBERS.cropHeldOutPercent, t)", "{likely}%", "likely: decimal(NUMBERS.cropLikelyPercent, t)", "{db} dB", "db: FM.radarChangeDb", "in at least {seasons} growing seasons", "seasons: inWords(FM.radarSeasons, t)", "{share}%", "share: rules.damageShare"]) {
     assert.ok(how.includes(quoted), `the notes quote ${quoted}`);
   }
   // Fire is "unusual" against a normal year; the note no longer ties it to
@@ -1170,7 +1185,7 @@ test("the gate chart is drawn at its real width, the numbers under the axis and 
   const H = Number(source.match(/const H = (\d+);/)[1]);
   const PAD = vm.runInNewContext(`(${source.match(/const PAD = (\{[^}]*\});/)[1]})`);
   assert.match(source, /<text key=\{`x\$\{t\}`\} x=\{x\(t\)\} y=\{y\(0\) \+ 20\} textAnchor="middle">/);
-  assert.match(source, /<text x=\{\(x\(0\) \+ x\(1\)\) \/ 2\} y=\{H - 10\} textAnchor="middle">\s*Feasibility\s*<\/text>/);
+  assert.match(source, /<text x=\{\(x\(0\) \+ x\(1\)\) \/ 2\} y=\{H - 10\} textAnchor="middle">\s*\{t\("Feasibility"\)\}\s*<\/text>/);
   const SIZE = 14; // var(--step-small) on the Methodology
   const axis = H - PAD.b;
   const numbers = axis + 20;
@@ -1186,10 +1201,10 @@ test("the gate chart is drawn at its real width, the numbers under the axis and 
 test("the Methodology page says where contact messages are kept, and no stale test count", () => {
   const text = words("MethodPage.jsx");
   // server/messages.js saves every message before it is e-mailed.
-  assert.match(text, /messages from the contact page are kept on our server and e‑mailed to \{CONTACT_EMAIL\}/);
+  assert.match(text, /messages from the contact page are kept on our server and e‑mailed to \{email\}\.[^"]*", \{ email: CONTACT_EMAIL \}/);
   // The count is rounded down to the hundred, so it stays true as tests
   // are added: "More than 1,000 automated tests."
-  assert.match(text, /More than \{formatInt\(testsFloor\)\} automated tests\./);
+  assert.match(text, /More than \{tests\} automated tests\.[^"]*", \{[^}]*tests: formatInt\(testsFloor\) \}/);
   assert.match(text, /Math\.floor\(NUMBERS\.automatedTests \/ 100\) \* 100/);
   assert.ok(NUMBERS.automatedTests >= 1270, "the count is at least the last full run's (3 November 2026, after the review's fixes)");
   assert.doesNotMatch(text, /\b888\b/);

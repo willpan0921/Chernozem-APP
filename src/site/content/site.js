@@ -79,7 +79,7 @@ export const NUMBERS = {
   // count), every test passing. The Methodology page prints it rounded down
   // to the hundred ("More than 1,200"), so it stays true while tests are
   // added; set the new count here after a merge.
-  automatedTests: 1272, // npm test on the website branch, 2026-11-03 (round 6, final): 1,272 of 1,272 passed
+  automatedTests: 1323, // npm test on the website branch, 2026-11-06 (the languages): 1,323 of 1,323 passed
   // The research paper (Harvard Dataverse).
   paperOperators: 10, // aggregation operators compared on identical inputs
   paperOblasts: 24, // first-level units ranked
@@ -228,17 +228,39 @@ export const STACK = [
   { name: "Vite", what: "Builds the app into a few small files." },
 ];
 
-// The pages' titles in the browser tab.
-export function pageTitle(sub) {
-  return sub ? `${sub} · Chernozem` : "Chernozem, satellite farmland monitoring";
+// The pages' titles in the browser tab. The page passes its part already in
+// the website's language; t (src/site/i18n/) translates the default.
+// i18n namespace: common
+export function pageTitle(sub, t = (text) => text) {
+  return sub ? `${sub} · Chernozem` : t("Chernozem, satellite farmland monitoring");
 }
 
-export function formatInt(n) {
-  return new Intl.NumberFormat("en-US").format(n);
+// Numbers are written the way the website's language writes them: 1,780,400
+// in English and Chinese, 1 780 400 in Ukrainian. The language provider
+// (src/site/i18n/i18n.js) sets the locale; outside the website it is
+// English.
+let numberLocale = "en-US";
+export function setNumberLocale(locale) {
+  numberLocale = locale || "en-US";
 }
 
-// 1780400 -> "1.78M", 12151 -> "12,151"
-export function compactHa(n) {
-  if (n >= 1e6) return `${(n / 1e6).toFixed(2).replace(/\.?0+$/, "")}M`;
-  return formatInt(n);
+export function formatInt(n, locale = numberLocale) {
+  return new Intl.NumberFormat(locale).format(n);
+}
+
+// A number with a fixed count of decimals, written with the language's
+// decimal mark: formatFixed(0.4, 2) is "0.40" in English and Chinese,
+// "0,40" in Ukrainian. The Methodology page's formulas and its two
+// laboratories use it, so a page never mixes the two marks.
+export function formatFixed(n, digits, locale = numberLocale) {
+  return new Intl.NumberFormat(locale, { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(n);
+}
+
+// 1780400 -> "1.78M", 12151 -> "12,151" (in Ukrainian "1,78 млн", in Chinese "178万")
+export function compactHa(n, locale = numberLocale) {
+  if (n >= 1e6) {
+    if (locale.startsWith("en")) return `${(n / 1e6).toFixed(2).replace(/\.?0+$/, "")}M`;
+    return new Intl.NumberFormat(locale, { notation: "compact", maximumSignificantDigits: 3 }).format(n);
+  }
+  return formatInt(n, locale);
 }

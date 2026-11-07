@@ -6,6 +6,9 @@
 // list slides into its new order; hovering or tapping an oblast shows its
 // three scores. The numbers are the app's own, for the month named in the
 // data (public/site/ukraine-demo.json, built by scripts/site-demo-data.js).
+// Every sentence a visitor reads goes through t() (namespace "ranking",
+// src/site/i18n/); the oblast names, the month and Crimea's note come from
+// the data file in English and are translated the same way.
 //
 // WHO EDITS IT
 // Whoever works on the home page. Rebuild the data file after a new month
@@ -15,6 +18,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { useReducedMotion } from "./motion.jsx";
 import { compactHa, formatInt } from "../content/site.js";
+import { useT } from "../i18n/i18n.js";
 import "./demo.css";
 
 const DATA_URL = "/site/ukraine-demo.json";
@@ -41,6 +45,12 @@ function pathFor(rings, project) {
   return rings.map((ring) => `M${ring.map((p) => project.point(p).join(",")).join("L")}Z`).join("");
 }
 
+// Names in a row, separated the way the language does it ("a, b, c" in
+// English and Ukrainian, "a、b、c" in Chinese).
+function listOf(locale, items) {
+  return new Intl.ListFormat(locale, { style: "narrow", type: "conjunction" }).format(items);
+}
+
 // The shade of an oblast: by its rank among the ranked ones (darkest fifth
 // first); left out or unranked gets the lightest.
 function shadeFor(unit, frame, ranked) {
@@ -57,6 +67,7 @@ export default function DemoRanking() {
   const [frame, setFrame] = useState("nearTerm");
   const [picked, setPicked] = useState(null);
   const reduced = useReducedMotion();
+  const t = useT("ranking");
 
   useEffect(() => {
     let alive = true;
@@ -95,7 +106,7 @@ export default function DemoRanking() {
   if (error) {
     return (
       <div className="demo demo-empty">
-        <p className="muted">The demo data is not available right now. Open the app to see the live ranking.</p>
+        <p className="muted">{t("The demo data is not available right now. Open the app to see the live ranking.")}</p>
       </div>
     );
   }
@@ -103,30 +114,37 @@ export default function DemoRanking() {
   return (
     <div className={`demo${data ? "" : " is-loading"}`}>
       <div className="demo-head">
-        <div className="demo-switch" role="tablist" aria-label="Time frame">
+        <div className="demo-switch" role="tablist" aria-label={t("Time frame")}>
           {[
             ["nearTerm", "Near term"],
             ["postCrisis", "Post-crisis"],
           ].map(([key, label]) => (
             <button key={key} type="button" role="tab" aria-selected={frame === key} className={`demo-tab${frame === key ? " is-on" : ""}`} onClick={() => setFrame(key)}>
               {frame === key && <motion.span layoutId="demo-tab-pill" className="demo-tab-pill" transition={{ type: "spring", stiffness: 400, damping: 32 }} />}
-              <span>{label}</span>
+              <span>{t(label)}</span>
             </button>
           ))}
         </div>
         <p className="demo-note">
           {frame === "nearTerm"
-            ? `The gate: the least feasible ${data?.settings?.cutoffPercent ?? 30}% of black soil is left out for now${returning.length ? ` (${returning.length} oblasts, hatched)` : ""}, then value and damage set the order.`
+            ? returning.length
+              ? t("The gate: the least feasible {percent}% of black soil is left out for now ({count} oblasts, hatched), then value and damage set the order.", { percent: data?.settings?.cutoffPercent ?? 30, count: returning.length })
+              : t("The gate: the least feasible {percent}% of black soil is left out for now, then value and damage set the order.", { percent: data?.settings?.cutoffPercent ?? 30 })
             : returning.length
-              ? `No gate: all three scores are blended, so the land left out comes back: ${returning.map((unit) => `${unit.name} #${unit.postCrisis.rank}`).join(", ")}.`
-              : "No gate: value, damage and feasibility are blended."}
+              ? t("No gate: all three scores are blended, so the land left out comes back: {list}.", {
+                  list: listOf(
+                    t.locale,
+                    returning.map((unit) => t("{name} #{rank}", { name: t(unit.name), rank: unit.postCrisis.rank })),
+                  ),
+                })
+              : t("No gate: value, damage and feasibility are blended.")}
         </p>
       </div>
 
       <div className="demo-body">
         <div className="demo-map">
           {data && (
-            <svg viewBox={`0 0 ${project.width} ${project.height}`} role="img" aria-label={`Map of Ukraine's oblasts coloured by ${frame === "nearTerm" ? "near-term" : "post-crisis"} priority`}>
+            <svg viewBox={`0 0 ${project.width} ${project.height}`} role="img" aria-label={frame === "nearTerm" ? t("Map of Ukraine's oblasts coloured by near-term priority") : t("Map of Ukraine's oblasts coloured by post-crisis priority")}>
               <defs>
                 <pattern id="demo-hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
                   <line x1="0" y1="0" x2="0" y2="8" stroke="#8c877a" strokeWidth="1.4" />
@@ -161,43 +179,49 @@ export default function DemoRanking() {
           <AnimatePresence>
             {current && (
               <motion.div className="demo-tip" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 6 }} transition={{ duration: 0.2 }}>
-                <strong>{current.name}</strong>
+                <strong>{t(current.name)}</strong>
                 <span className="demo-tip-rank">
                   {current.excluded
-                    ? current.note
+                    ? current.note && t(current.note)
                     : current[frame]?.leftOut
-                    ? "Left out for now: among the least feasible"
+                    ? t("Left out for now: among the least feasible")
                     : current[frame]?.rank != null
-                      ? `#${current[frame].rank} ${frame === "nearTerm" ? "near term" : "post-crisis"}`
-                      : "Not ranked"}
+                      ? frame === "nearTerm"
+                        ? t("#{rank} near term", { rank: current[frame].rank })
+                        : t("#{rank} post-crisis", { rank: current[frame].rank })
+                      : t("Not ranked")}
                 </span>
                 {current.scores && (
                   <dl>
-                    <dt>Value</dt>
+                    <dt>{t("Value")}</dt>
                     <dd>{Math.round(current.scores.value * 100)}</dd>
-                    <dt>Damage</dt>
+                    <dt>{t("Damage")}</dt>
                     <dd>{Math.round(current.scores.damage * 100)}</dd>
-                    <dt>Feasibility</dt>
+                    <dt>{t("Feasibility")}</dt>
                     <dd>{Math.round(current.scores.access * 100)}</dd>
                   </dl>
                 )}
                 <span className="demo-tip-ha">
-                  {compactHa(current.heavyDamageHa)} ha heavily damaged · {formatInt(current.peopleOnDamagedSoil)} people living on damaged black soil
+                  {t("{ha} ha heavily damaged · {people} people living on damaged black soil", {
+                    ha: compactHa(current.heavyDamageHa),
+                    people: formatInt(current.peopleOnDamagedSoil),
+                    peopleCount: current.peopleOnDamagedSoil,
+                  })}
                 </span>
               </motion.div>
             )}
           </AnimatePresence>
           <div className="demo-key" aria-hidden="true">
-            <span>Lower priority</span>
+            <span>{t("Lower priority")}</span>
             <i style={{ background: `linear-gradient(90deg, ${SHADES.join(",")})` }} />
-            <span>Start here</span>
+            <span>{t("Start here")}</span>
           </div>
         </div>
 
         <div className="demo-list">
           <div className="demo-list-head">
-            <span>Top {TOP} of {data ? data.timeframes.postCrisis.ranked : "…"} oblasts</span>
-            <span className="muted">{data?.area?.monthLabel}</span>
+            <span>{t("Top {top} of {total} oblasts", { top: TOP, total: data ? data.timeframes.postCrisis.ranked : "…" })}</span>
+            <span className="muted">{data?.area?.monthLabel && t(data.area.monthLabel)}</span>
           </div>
           <ol>
             <AnimatePresence initial={false} mode="popLayout">
@@ -216,18 +240,20 @@ export default function DemoRanking() {
                     onMouseLeave={() => setPicked(null)}
                   >
                     <span className="demo-row-rank">{unit[frame].rank}</span>
-                    <span className="demo-row-name">{unit.name}</span>
+                    <span className="demo-row-name">{t(unit.name)}</span>
                     <span className="demo-row-bar">
                       <i style={{ width: `${Math.max(4, Math.round(unit[frame].priority * 100))}%`, background: shadeFor(unit, frame, ranked) }} />
                     </span>
                     <span className="demo-row-score mono">{Math.round(unit[frame].priority * 100)}</span>
                     {frame === "postCrisis" && typeof change === "number" && change !== 0 && (
-                      <span className={`demo-row-change ${change > 0 ? "is-up" : "is-down"}`} title="Change from the near-term rank">
+                      <span className={`demo-row-change ${change > 0 ? "is-up" : "is-down"}`} title={t("Change from the near-term rank")}>
                         {change > 0 ? "▲" : "▼"} {Math.abs(change)}
                       </span>
                     )}
                     {frame === "nearTerm" && unit.postCrisis && unit.postCrisis.rank != null && unit.postCrisis.rank - unit.nearTerm.rank !== 0 && (
-                      <span className="demo-row-change is-quiet" title="Its post-crisis rank">→ #{unit.postCrisis.rank}</span>
+                      <span className="demo-row-change is-quiet" title={t("Its post-crisis rank")}>
+                        {t("→ #{rank}", { rank: unit.postCrisis.rank })}
+                      </span>
                     )}
                   </motion.li>
                 );
@@ -236,9 +262,13 @@ export default function DemoRanking() {
           </ol>
           {data && (
             <p className="demo-foot muted">
-              {frame === "nearTerm" && data.timeframes.nearTerm.leftOutCount > 0 && `${data.timeframes.nearTerm.leftOutCount} oblasts are left out of the near-term ranking for now. `}
-              {excludedUnits.length > 0 && `${excludedUnits.map((unit) => unit.name).join(", ")} is not ranked, as in the research paper (occupied since 2014). `}
-              Default weights {data.settings.weights.soil}/{data.settings.weights.damage}/{data.settings.weights.access}; the app lets you change them.
+              {[
+                frame === "nearTerm" && data.timeframes.nearTerm.leftOutCount > 0 && t("{count} oblasts are left out of the near-term ranking for now.", { count: data.timeframes.nearTerm.leftOutCount }),
+                excludedUnits.length > 0 && t("{names} is not ranked, as in the research paper (occupied since 2014).", { names: listOf(t.locale, excludedUnits.map((unit) => t(unit.name))) }),
+                t("Default weights {soil}/{damage}/{access}; the app lets you change them.", { soil: data.settings.weights.soil, damage: data.settings.weights.damage, access: data.settings.weights.access }),
+              ]
+                .filter(Boolean)
+                .join(" ")}
             </p>
           )}
         </div>

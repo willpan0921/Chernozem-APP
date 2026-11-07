@@ -31,6 +31,13 @@
 // with sound never play over each other (useOneFilmAtATime below).
 // The old addresses (/product, /guide, /technology, /design) still land
 // on the matching part: those ids stay on the blocks (src/App.jsx).
+// Every sentence goes through t() (src/site/i18n/): the English is written
+// here and is the key to the Chinese and Ukrainian dictionaries
+// (i18n/zh/method.js, i18n/uk/method.js); a number or an element inside a
+// sentence is a {hole}. Lists ("Sentinel-1, Sentinel-2 and FIRMS") are
+// joined the way the language joins them (listOf below), and a decimal is
+// written with the language's decimal mark (0.40; 0,40 in Ukrainian: two
+// and decimal below).
 //
 // WHO EDITS IT
 // The founder, for the words. Atlas's formulas match
@@ -58,23 +65,43 @@ import Walkthrough from "../components/Walkthrough.jsx";
 import { Reveal, Stagger, StaggerItem } from "../components/motion.jsx";
 import { CONTACT_EMAIL, DATASETS, FIELD_METHOD, LINKS, NUMBERS, SITE_ACTIONS, STACK, formatInt } from "../content/site.js";
 import { usePageTitle } from "../hooks.js";
+import { useT } from "../i18n/i18n.js";
 import "./pages.css";
 
-const FIELD_STEPS = ["Register and choose Field.", "Find your farm: search a village, type coordinates, or draw.", "Check the crops the app detected, and set your own.", `Read the first pass; a ten-field farm takes about ${NUMBERS.tenFieldsSeconds === 20 ? "twenty" : NUMBERS.tenFieldsSeconds} seconds.`, "Come back after each pass, report what happened, or ask the assistant."];
+// The five steps, in English; each is translated where it is shown
+// ({t(step)}). The fourth has a hole for how long the first pass takes.
+const FIELD_STEPS = ["Register and choose Field.", "Find your farm: search a village, type coordinates, or draw.", "Check the crops the app detected, and set your own.", "Read the first pass; a ten-field farm takes about {seconds} seconds.", "Come back after each pass, report what happened, or ask the assistant."];
 
-// "Sentinel-1, Sentinel-2, FIRMS, ..., and ACLED"
-function listOf(names) {
-  return names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+// "Sentinel-1, Sentinel-2, FIRMS, ..., and ACLED": in English as the site
+// writes a list (no comma before "and"; no "and" at all when told so), in
+// another language as that language lists things (Intl.ListFormat: 、 in
+// Chinese, і in Ukrainian).
+function listOf(names, t, { and = true } = {}) {
+  // Chinese lists Latin names with 、 alone (the narrow conjunction, "A、B、C"):
+  // 和 would sit against them with no space. Not the "unit" type: in Chinese
+  // it joins with nothing at all (it is for compound units, 3小时20分).
+  if (t.lang !== "en") return new Intl.ListFormat(t.locale, t.lang === "zh" ? { type: "conjunction", style: "narrow" } : { type: "conjunction" }).format(names);
+  if (names.length < 2 || !and) return names.join(", ");
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
-// Small whole numbers in words, as the site writes them ("six pictures").
+// Small whole numbers in words, as the site writes them in English ("six
+// pictures", "twenty seconds"); in another language the number itself, for
+// its sentence to write as that language does (a dictionary entry may be a
+// function of it).
 const WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
-function inWords(n) {
-  return Number.isInteger(n) && n >= 0 && n < WORDS.length ? WORDS[n] : formatInt(n);
+function inWords(n, t) {
+  if (t.lang !== "en") return n;
+  if (Number.isInteger(n) && n >= 0 && n < WORDS.length) return WORDS[n];
+  return n === 20 ? "twenty" : formatInt(n);
 }
 
-// A threshold as the method writes it: two decimals (0.10, 0.08).
-const two = (n) => n.toFixed(2);
+// A threshold as the method writes it: two decimals (0.10, 0.08), with the
+// language's decimal mark (0,10 in Ukrainian); and any other decimal the
+// method writes (0.6, 0.805, 71.8), as it is, with that mark (formatInt
+// keeps up to three decimals, which is all the method's numbers have).
+const two = (n, t) => new Intl.NumberFormat(t.locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+const decimal = (n, t) => formatInt(n, t.locale);
 
 // A class's name never splits across two lines ("Very / good"): its
 // spaces become no-break spaces.
@@ -82,14 +109,16 @@ const unbroken = (name) => name.replace(/ /g, "\u00a0");
 
 // The class just above the one a score falls in: a field held at 0.84 is
 // "held under Very good" (the condition laboratory says it the same way).
-function classAbove(score) {
+// The class's name is site.js's, translated with the rest of site.js.
+function classAbove(score, t) {
   const at = FIELD_METHOD.classes.indexOf(classOf(score));
-  return unbroken(FIELD_METHOD.classes[at + 1]?.label ?? "");
+  const label = FIELD_METHOD.classes[at + 1]?.label;
+  return label ? unbroken(t(label)) : "";
 }
 
 // What the Field part's technical words say, worked out from FIELD_METHOD
 // (site.js; the rules themselves: src/lib/field/method.js and crops.js,
-// line numbers as of 3 November 2026):
+// line numbers as of 3 November 2026), in the website's language (t):
 //   classes        "Poor under 0.40, ..., Very good above" (CONDITION_CLASSES, method.js:100)
 //   stressedUnder  the class a field with high stress is held under
 //                  (STRESSED_CONDITION_MAX 0.84, method.js:296 and :309): Very good
@@ -101,15 +130,18 @@ function classAbove(score) {
 //   damageShare    10 (per cent; DAMAGE_RULES.radarShare, method.js:1009)
 // FM is FIELD_METHOD, short, for the words below.
 const FM = FIELD_METHOD;
-const FIELD_RULES = {
-  classes: FM.classes.map((item) => (Number.isFinite(item.upTo) ? `${unbroken(item.label)} under ${two(item.upTo)}` : `${unbroken(item.label)} above`)).join(", "),
-  stressedUnder: classAbove(FM.stressedMax),
-  damagedUnder: classAbove(FM.damagedMax),
-  clearShare: FM.minClearShare === 0.5 ? "at least half" : `at least ${Math.round(FM.minClearShare * 100)}%`,
-  normalYears: inWords(FM.baseline.to - FM.baseline.from + 1),
-  highStress: Math.round(FM.stressHighShare * 100),
-  damageShare: Math.round(FM.damageRadarShare * 100),
-};
+function fieldRules(t) {
+  const classes = FM.classes.map((item) => (Number.isFinite(item.upTo) ? t("{label} under {upTo}", { label: unbroken(t(item.label)), upTo: two(item.upTo, t) }) : t("{label} above", { label: unbroken(t(item.label)) })));
+  return {
+    classes: listOf(classes, t, { and: false }),
+    stressedUnder: classAbove(FM.stressedMax, t),
+    damagedUnder: classAbove(FM.damagedMax, t),
+    clearShare: FM.minClearShare === 0.5 ? t("at least half") : t("at least {percent}%", { percent: Math.round(FM.minClearShare * 100) }),
+    normalYears: inWords(FM.baseline.to - FM.baseline.from + 1, t),
+    highStress: Math.round(FM.stressHighShare * 100),
+    damageShare: Math.round(FM.damageRadarShare * 100),
+  };
+}
 
 // One film at a time: the page has three films (the two walkthroughs, with
 // their narration and music, and the three-minute film with its own sound);
@@ -131,14 +163,20 @@ function useOneFilmAtATime() {
 }
 
 export default function MethodPage() {
-  usePageTitle("Methodology");
+  const t = useT("method");
+  usePageTitle(t("Methodology"));
   useOneFilmAtATime();
+  const rules = fieldRules(t);
   const w = NUMBERS.postWeights;
   // Near term uses value and damage only, their weights re-shared (30/40 -> 0.43/0.57), as the app does.
-  const nearShares = { value: (w.value / (w.value + w.damage)).toFixed(2), damage: (w.damage / (w.value + w.damage)).toFixed(2) };
+  const nearShares = { value: two(w.value / (w.value + w.damage), t), damage: two(w.damage / (w.value + w.damage), t) };
   // The test count rounded down to the hundred ("More than 1,000"), so the
   // sentence stays true while tests are added between updates of site.js.
   const testsFloor = Math.floor(NUMBERS.automatedTests / 100) * 100;
+  // The gate's formulas' exponents, elements inside their sentences (the
+  // half with the language's decimal mark, like the weights beside it).
+  const half = <sup>{decimal(0.5, t)}</sup>;
+  const squared = <sup>2</sup>;
   // "meth": on this page the small size never drops under 14 px (pages.css).
   return (
     <div className="pg meth">
@@ -147,14 +185,14 @@ export default function MethodPage() {
           <div className="meth-open-text">
             <div className="pg-mask">
               <h1 className="pg-h1" id="meth-title">
-                How Chernozem works
+                {t("How Chernozem works")}
               </h1>
             </div>
-            <p className="pg-lead pg-fade">Free satellite data, read over farmland and turned into a plain answer: Field for one farm, Atlas for a whole region.</p>
+            <p className="pg-lead pg-fade">{t("Free satellite data, read over farmland and turned into a plain answer: Field for one farm, Atlas for a whole region.")}</p>
           </div>
           <figure className="pg-fig meth-open-pic pg-fade-2">
-            <img className="pg-pic" src="/site/shots/atlas-map-near-micro.webp" width="1920" height="1200" alt="The Atlas map of Ukraine by priority, square by square, with the weights on the left and the top ten areas on the right" loading="eager" decoding="async" />
-            <figcaption>Ukraine, {NUMBERS.ukraineMonth}, square by square: the weights on the left, the top ten on the right.</figcaption>
+            <img className="pg-pic" src="/site/shots/atlas-map-near-micro.webp" width="1920" height="1200" alt={t("The Atlas map of Ukraine by priority, square by square, with the weights on the left and the top ten areas on the right")} loading="eager" decoding="async" />
+            <figcaption>{t("Ukraine, {month}, square by square: the weights on the left, the top ten on the right.", { month: t(NUMBERS.ukraineMonth) })}</figcaption>
           </figure>
         </div>
       </section>
@@ -167,10 +205,10 @@ export default function MethodPage() {
             </h2>
           </Reveal>
           <Reveal className="meth-body" delay={0.08}>
-            <p className="pg-lead meth-what">Field is Chernozem for one farm: you mark your fields once, and after every clear satellite pass it tells you how each one is doing and what needs doing.</p>
+            <p className="pg-lead meth-what">{t("Field is Chernozem for one farm: you mark your fields once, and after every clear satellite pass it tells you how each one is doing and what needs doing.")}</p>
           </Reveal>
           <Reveal className="meth-film" delay={0.1} y={30}>
-            <Walkthrough product="field" title="The Field walkthrough" />
+            <Walkthrough product="field" title={t("The Field walkthrough")} />
           </Reveal>
           {/* The steps, the phone and "What it reads" in one block of their
               own: on a wide screen the phone stands beside both texts, which
@@ -179,20 +217,20 @@ export default function MethodPage() {
           <div className="meth-use-row">
             <Reveal className="meth-use" id="use">
               <p>
-                <strong>How to use it.</strong>
+                <strong>{t("How to use it.")}</strong>
               </p>
               <ol>
                 {FIELD_STEPS.map((step) => (
-                  <li key={step}>{step}</li>
+                  <li key={step}>{t(step, { seconds: inWords(NUMBERS.tenFieldsSeconds, t) })}</li>
                 ))}
               </ol>
             </Reveal>
             <Reveal className="meth-use-phone" delay={0.16} y={36}>
-              <img className="pg-pic" src="/site/shots/phone-field-fields.webp" width="780" height="1688" alt="The Fields page on a phone: the satellite map with the field outlines, the condition key and the selected field's details below" loading="lazy" decoding="async" />
+              <img className="pg-pic" src="/site/shots/phone-field-fields.webp" width="780" height="1688" alt={t("The Fields page on a phone: the satellite map with the field outlines, the condition key and the selected field's details below")} loading="lazy" decoding="async" />
             </Reveal>
             <Reveal className="meth-reads" delay={0.08}>
               <p>
-                <strong>What it reads.</strong> Every clear Sentinel-2 pass at ten metres, radar from Sentinel-1 for lasting change in the ground, the local forecast, and the same weeks of 2019 to 2021 as the normal to compare with.
+                <strong>{t("What it reads.")}</strong> {t("Every clear Sentinel-2 pass at ten metres, radar from Sentinel-1 for lasting change in the ground, the local forecast, and the same weeks of 2019 to 2021 as the normal to compare with.")}
               </p>
             </Reveal>
           </div>
@@ -216,7 +254,7 @@ export default function MethodPage() {
               the indices, field-gee.js:461-463 (method.js:11-20). */}
           <Reveal className="meth-scores-intro" id="readings">
             <p>
-              <strong>Four readings.</strong> Google’s Cloud Score+ removes clouds pixel by pixel (clear at {FM.clearPixelScore} or more). Plant health, water and stress use the median of the last {FM.latestDays} days’ clear pixels, against the same weeks of {FM.baseline.label}: per pixel, the middle of the {FIELD_RULES.normalYears} years (the app’s Below and Above normal use their range). Harvest timing follows the passes {FIELD_RULES.clearShare}&nbsp;clear.
+              <strong>{t("Four readings.")}</strong> {t("Google’s Cloud Score+ removes clouds pixel by pixel (clear at {score} or more). Plant health, water and stress use the median of the last {days} days’ clear pixels, against the same weeks of {years}: per pixel, the middle of the {count} years (the app’s Below and Above normal use their range). Harvest timing follows the passes {share} clear.", { score: decimal(FM.clearPixelScore, t), days: FM.latestDays, years: t(FM.baseline.label), count: rules.normalYears, share: rules.clearShare })}
             </p>
           </Reveal>
           {/* Stress: STRESS_RULES method.js:61 and isStressed :80-83,
@@ -231,34 +269,32 @@ export default function MethodPage() {
               :919-931). */}
           <Stagger as="dl" className="meth-scores meth-readings">
             <StaggerItem>
-              <dt>Plant health</dt>
+              <dt>{t("Plant health")}</dt>
               <dd className="meth-eq">
                 NDVI = <span className="meth-whole">(B8 − B4) / (B8 + B4)</span>
               </dd>
-              <dd>Near-infrared against red: how green the crop&nbsp;is.</dd>
+              <dd>{t("Near-infrared against red: how green the crop is.")}</dd>
             </StaggerItem>
             <StaggerItem>
-              <dt>Water</dt>
+              <dt>{t("Water")}</dt>
               <dd className="meth-eq">
                 NDWI = <span className="meth-whole">(B8 − B11) / (B8 + B11)</span>
               </dd>
-              <dd>Near-infrared against short-wave infrared: the water held in the&nbsp;leaves.</dd>
+              <dd>{t("Near-infrared against short-wave infrared: the water held in the leaves.")}</dd>
             </StaggerItem>
             <StaggerItem>
-              <dt>Stress</dt>
+              <dt>{t("Stress")}</dt>
               <dd className="meth-eq">
                 NDRE = <span className="meth-whole">(B8A − B5) / (B8A + B5)</span>
               </dd>
-              <dd>The share of the field weaker than the rest and than normal; the red edge reacts {FM.redEdgeLead} before&nbsp;NDVI.</dd>
+              <dd>{t("The share of the field weaker than the rest and than normal; the red edge reacts {lead} before NDVI.", { lead: t(FM.redEdgeLead) })}</dd>
             </StaggerItem>
             <StaggerItem>
-              <dt>Harvest timing</dt>
+              <dt>{t("Harvest timing")}</dt>
               <dd className="meth-eq">
-                ready = <span className="meth-whole">{FM.bareNdvi} + share·(peak − {FM.bareNdvi})</span>
+                {t("ready")} = <span className="meth-whole">{t("{bare} + share·(peak − {bare})", { bare: decimal(FM.bareNdvi, t) })}</span>
               </dd>
-              <dd>
-                Ready when NDVI falls back to this level (share {FM.readyShare.cereals} for cereals and rapeseed, {FM.readyShare.rowCrops} for row crops), checked by heat units and, for row crops, radar through&nbsp;cloud.
-              </dd>
+              <dd>{t("Ready when NDVI falls back to this level (share {cereals} for cereals and rapeseed, {rowCrops} for row crops), checked by heat units and, for row crops, radar through cloud.", { cereals: decimal(FM.readyShare.cereals, t), rowCrops: decimal(FM.readyShare.rowCrops, t) })}</dd>
             </StaggerItem>
           </Stagger>
 
@@ -272,22 +308,22 @@ export default function MethodPage() {
           <div className="meth-gate-text" id="condition">
             <Reveal>
               <p>
-                <strong>The condition.</strong> One number from 0 to 1 for each field in crop, which colours it on the map: {FIELD_RULES.classes}. High stress ({FIELD_RULES.highStress}% of the field or more) holds it under {FIELD_RULES.stressedUnder}, damage under {FIELD_RULES.damagedUnder}, and a field with no crop has no&nbsp;condition.
+                <strong>{t("The condition.")}</strong> {t("One number from 0 to 1 for each field in crop, which colours it on the map: {classes}. High stress ({highStress}% of the field or more) holds it under {stressedUnder}, damage under {damagedUnder}, and a field with no crop has no condition.", { classes: rules.classes, highStress: rules.highStress, stressedUnder: rules.stressedUnder, damagedUnder: rules.damagedUnder })}
               </p>
             </Reveal>
             <Reveal delay={0.12}>
               <p className="meth-formula">
-                condition = <span className="meth-whole">{FM.weights.plantHealth}·health score</span> <span className="meth-whole">+ {FM.weights.water}·water score</span> <span className="meth-whole">+ {FM.weights.noStress}·(1 − stressed share)</span>
+                {t("condition")} = <span className="meth-whole">{t("{w}·health score", { w: decimal(FM.weights.plantHealth, t) })}</span> <span className="meth-whole">{t("+ {w}·water score", { w: decimal(FM.weights.water, t) })}</span> <span className="meth-whole">{t("+ {w}·(1 − stressed share)", { w: decimal(FM.weights.noStress, t) })}</span>
               </p>
               <p className="meth-formula">
-                health score = <span className="meth-whole">1 + (NDVI − normal) / {FM.healthSpan}</span>
+                {t("health score")} = <span className="meth-whole">{t("1 + (NDVI − normal) / {span}", { span: decimal(FM.healthSpan, t) })}</span>
                 <br />
-                water score = <span className="meth-whole">1 + (NDWI − normal) / {FM.waterSpan}</span>
+                {t("water score")} = <span className="meth-whole">{t("1 + (NDWI − normal) / {span}", { span: decimal(FM.waterSpan, t) })}</span>
                 <br />
-                each held between 0 and 1
+                {t("each held between 0 and 1")}
               </p>
               <p className="meth-formula">
-                stressed = <span className="meth-whole">NDVI &lt; field median − {two(FM.stressNdvi.belowFieldMedian)}</span> <span className="meth-whole">and &lt; normal − {two(FM.stressNdvi.belowNormal)},</span> <span className="meth-whole">or NDRE &lt; field median − {two(FM.stressRedEdge.belowFieldMedian)}</span> <span className="meth-whole">and &lt; normal − {two(FM.stressRedEdge.belowNormal)}</span>
+                {t("stressed")} = <span className="meth-whole">{t("NDVI < field median − {d}", { d: two(FM.stressNdvi.belowFieldMedian, t) })}</span> <span className="meth-whole">{t("and < normal − {d},", { d: two(FM.stressNdvi.belowNormal, t) })}</span> <span className="meth-whole">{t("or NDRE < field median − {d}", { d: two(FM.stressRedEdge.belowFieldMedian, t) })}</span> <span className="meth-whole">{t("and < normal − {d}", { d: two(FM.stressRedEdge.belowNormal, t) })}</span>
               </p>
             </Reveal>
           </div>
@@ -311,27 +347,21 @@ export default function MethodPage() {
               method.js:1008-1013 and damageDetected :1050-1059. */}
           <Stagger as="dl" className="meth-scores meth-how">
             <StaggerItem>
-              <dt>Finding the fields</dt>
-              <dd>
-                Canny edges in {inWords(FM.edgePictures)} Sentinel‑2 pictures of the last two seasons split ESA WorldCover’s cropland into fields from {FM.minFieldHa} ha. On the demo farm they overlap hand‑drawn outlines by {FM.outlineIou} <span className="meth-whole">(shared area ÷ combined&nbsp;area)</span>.
-              </dd>
+              <dt>{t("Finding the fields")}</dt>
+              <dd>{t("Canny edges in {pictures} Sentinel‑2 pictures of the last two seasons split ESA WorldCover’s cropland into fields from {minHa} ha. On the demo farm they overlap hand‑drawn outlines by {iou} {note}.", { pictures: inWords(FM.edgePictures, t), minHa: decimal(FM.minFieldHa, t), iou: decimal(FM.outlineIou, t), note: <span className="meth-whole">{t("(shared area ÷ combined area)")}</span> })}</dd>
             </StaggerItem>
             <StaggerItem>
-              <dt>The crop</dt>
-              <dd>
-                A phenology classifier, helped by radar and the red‑edge gap; your own choice wins. Against the USDA crop layer it named {NUMBERS.cropHeldOutPercent}% of held‑out fields right, and {NUMBERS.cropLikelyPercent}% when it said&nbsp;“likely”.
-              </dd>
+              <dt>{t("The crop")}</dt>
+              <dd>{t("A phenology classifier, helped by radar and the red‑edge gap; your own choice wins. Against the USDA crop layer it named {heldOut}% of held‑out fields right, and {likely}% when it said “likely”.", { heldOut: decimal(NUMBERS.cropHeldOutPercent, t), likely: decimal(NUMBERS.cropLikelyPercent, t) })}</dd>
             </StaggerItem>
             <StaggerItem>
-              <dt>Damage on a field</dt>
-              <dd>
-                Radar change of {FM.radarChangeDb} dB or more in at least {inWords(FM.radarSeasons)} growing seasons, and unusual fire (NASA FIRMS). In a war, radar change on {FIELD_RULES.damageShare}% of the field is enough; elsewhere, both are&nbsp;needed.
-              </dd>
+              <dt>{t("Damage on a field")}</dt>
+              <dd>{t("Radar change of {db} dB or more in at least {seasons} growing seasons, and unusual fire (NASA FIRMS). In a war, radar change on {share}% of the field is enough; elsewhere, both are needed.", { db: FM.radarChangeDb, seasons: inWords(FM.radarSeasons, t), share: rules.damageShare })}</dd>
             </StaggerItem>
           </Stagger>
           <Reveal className="meth-limits-text" delay={0.12}>
             <p>
-              <strong>What it cannot see.</strong> Which pest or disease is at work; mines and unexploded ordnance (a field with no damage found is not a safe field); a line between look‑alike&nbsp;fields.
+              <strong>{t("What it cannot see.")}</strong> {t("Which pest or disease is at work; mines and unexploded ordnance (a field with no damage found is not a safe field); a line between look‑alike fields.")}
             </p>
           </Reveal>
         </div>
@@ -345,48 +375,40 @@ export default function MethodPage() {
             </h2>
           </Reveal>
           <Reveal className="meth-body" delay={0.08}>
-            <p className="pg-lead meth-what">Atlas is Chernozem for a whole region, for governments, NGOs and corporations: it scores every square of farmland and ranks where recovery should start. Ukraine is the demo because that is where Chernozem started.</p>
+            <p className="pg-lead meth-what">{t("Atlas is Chernozem for a whole region, for governments, NGOs and corporations: it scores every square of farmland and ranks where recovery should start. Ukraine is the demo because that is where Chernozem started.")}</p>
           </Reveal>
           <Reveal className="meth-film" delay={0.1} y={30}>
-            <Walkthrough product="atlas" title="The Atlas walkthrough" />
+            <Walkthrough product="atlas" title={t("The Atlas walkthrough")} />
           </Reveal>
 
           <Reveal className="meth-scores-intro" id="scores">
-            <p>
-              <strong>Three scores</strong>, each from 0 to 100. Value and damage make the priority; feasibility decides whether a square is ranked now or later.
-            </p>
+            <p>{t("{scores}, each from 0 to 100. Value and damage make the priority; feasibility decides whether a square is ranked now or later.", { scores: <strong>{t("Three scores")}</strong> })}</p>
           </Reveal>
           <Stagger as="dl" className="meth-scores">
             <StaggerItem>
-              <dt>Value</dt>
-              <dd>How likely the soil is black soil, and how much of the square is cropland.</dd>
+              <dt>{t("Value")}</dt>
+              <dd>{t("How likely the soil is black soil, and how much of the square is cropland.")}</dd>
             </StaggerItem>
             <StaggerItem>
-              <dt>Damage</dt>
-              <dd>Unusual fire and lasting radar change since the crisis began, against the same seasons in 2019 to 2021.</dd>
+              <dt>{t("Damage")}</dt>
+              <dd>{t("Unusual fire and lasting radar change since the crisis began, against the same seasons in 2019 to 2021.")}</dd>
             </StaggerItem>
             <StaggerItem>
-              <dt>Feasibility</dt>
-              <dd>Distance to recorded fighting; 100 km or more counts as fully feasible.</dd>
+              <dt>{t("Feasibility")}</dt>
+              <dd>{t("Distance to recorded fighting; 100 km or more counts as fully feasible.")}</dd>
             </StaggerItem>
           </Stagger>
 
           <div className="meth-gate-text" id="gate">
             <Reveal>
               <p>
-                <strong>The gate.</strong> Near term: the least feasible {NUMBERS.gatePercentile}% of squares are left out, with a soft edge of {NUMBERS.rampWidth}, and the rest are ranked by value and damage.
+                <strong>{t("The gate.")}</strong> {t("Near term: the least feasible {percentile}% of squares are left out, with a soft edge of {ramp}, and the rest are ranked by value and damage.", { percentile: NUMBERS.gatePercentile, ramp: decimal(NUMBERS.rampWidth, t) })}
               </p>
-              <p>
-                Post-crisis: feasibility becomes a pace factor. The three scores are combined in a weighted power mean with weights {w.value * 100} / {w.damage * 100} / {w.feasibility * 100} and exponent {NUMBERS.postExponent}. Move the sliders and watch what the two time frames do with one place.
-              </p>
+              <p>{t("Post-crisis: feasibility becomes a pace factor. The three scores are combined in a weighted power mean with weights {value} / {damage} / {feasibility} and exponent {exponent}. Move the sliders and watch what the two time frames do with one place.", { value: w.value * 100, damage: w.damage * 100, feasibility: w.feasibility * 100, exponent: decimal(NUMBERS.postExponent, t) })}</p>
             </Reveal>
             <Reveal delay={0.12}>
-              <p className="meth-formula">
-                Near term: priority = ({nearShares.value}·value<sup>0.5</sup> + {nearShares.damage}·damage<sup>0.5</sup>)<sup>2</sup>, faded in over the {NUMBERS.rampWidth} ramp above the cutoff; below it, left out
-              </p>
-              <p className="meth-formula">
-                Post-crisis: priority = ({w.value}·value<sup>0.5</sup> + {w.damage}·damage<sup>0.5</sup> + {w.feasibility}·feasibility<sup>0.5</sup>)<sup>2</sup>
-              </p>
+              <p className="meth-formula">{t("Near term: priority = ({v}·value{half} + {d}·damage{half}){squared}, faded in over the {ramp} ramp above the cutoff; below it, left out", { v: nearShares.value, d: nearShares.damage, half, squared, ramp: decimal(NUMBERS.rampWidth, t) })}</p>
+              <p className="meth-formula">{t("Post-crisis: priority = ({v}·value{half} + {d}·damage{half} + {f}·feasibility{half}){squared}", { v: decimal(w.value, t), d: decimal(w.damage, t), f: decimal(w.feasibility, t), half, squared })}</p>
             </Reveal>
           </div>
           <Reveal className="meth-gate-lab" delay={0.12} y={36}>
@@ -395,7 +417,7 @@ export default function MethodPage() {
 
           <Reveal className="meth-demo-head" id="demo">
             <p>
-              <strong>Ukraine, ranked.</strong> The real {NUMBERS.ukraineMonth} reading of {formatInt(NUMBERS.ukraineSquares)} squares, as the app shows it: the top of the list for each time frame, and the whole country on the map.
+              <strong>{t("Ukraine, ranked.")}</strong> {t("The real {month} reading of {n} squares, as the app shows it: the top of the list for each time frame, and the whole country on the map.", { month: t(NUMBERS.ukraineMonth), n: formatInt(NUMBERS.ukraineSquares) })}
             </p>
           </Reveal>
           <Reveal className="meth-demo-stage" delay={0.12} y={36}>
@@ -406,13 +428,13 @@ export default function MethodPage() {
           </Reveal>
           <Reveal className="meth-demo-link" delay={0.16}>
             <Link className="pg-btn pg-btn-light" to={SITE_ACTIONS.demo.path}>
-              Open the demo
+              {t("Open the demo")}
             </Link>
           </Reveal>
 
           <Reveal className="meth-checks-intro" id="checks">
             <p>
-              <strong>Checked against independent records.</strong> The app’s readings beside Copernicus’s maps of three disasters and the USDA crop layer, and the paper’s damage score beside ACLED’s record of fighting.
+              <strong>{t("Checked against independent records.")}</strong> {t("The app’s readings beside Copernicus’s maps of three disasters and the USDA crop layer, and the paper’s damage score beside ACLED’s record of fighting.")}
             </p>
           </Reveal>
           <Reveal className="meth-checks-table" delay={0.08} y={24}>
@@ -420,7 +442,7 @@ export default function MethodPage() {
           </Reveal>
           <Reveal className="meth-limits-text" delay={0.12}>
             <p>
-              <strong>What it cannot do.</strong> A screen, not a survey. Ten-metre pixels miss small fields; clouds delay optical readings; radar change is less reliable where 2019 to 2021 were not calm; and it never declares land safe.
+              <strong>{t("What it cannot do.")}</strong> {t("A screen, not a survey. Ten-metre pixels miss small fields; clouds delay optical readings; radar change is less reliable where 2019 to 2021 were not calm; and it never declares land safe.")}
             </p>
           </Reveal>
         </div>
@@ -430,31 +452,35 @@ export default function MethodPage() {
         <div className="pg-grid">
           <Reveal className="meth-head">
             <h2 className="pg-h2" id="meth-behind">
-              Behind it
+              {t("Behind it")}
             </h2>
           </Reveal>
           <div className="meth-tech-body">
             <Reveal delay={0.08}>
               <p>
-                <strong>What it reads:</strong> {listOf(DATASETS.map((item) => item.name))}, {DATASETS.length} open datasets, each read against its own normal years.
+                <strong>{t("What it reads:")}</strong> {t("{list}, {count} open datasets, each read against its own normal years.", { list: listOf(DATASETS.map((item) => item.name), t), count: DATASETS.length })}
               </p>
             </Reveal>
             <Reveal delay={0.12}>
               <p id="design">
-                <strong>Built with:</strong> {listOf(STACK.map((item) => item.name))}. More than {formatInt(testsFloor)} automated tests. Drawn as a mockup first, then built.
+                <strong>{t("Built with:")}</strong> {t("{list}. More than {tests} automated tests. Drawn as a mockup first, then built.", { list: listOf(STACK.map((item) => item.name), t), tests: formatInt(testsFloor) })}
               </p>
             </Reveal>
             <Reveal className="meth-accounts" delay={0.16}>
-              <p>Accounts run on Firebase (Google, or e‑mail and password); your fields, readings and reports are kept on our own server and never sold, and messages from the contact page are kept on our server and e‑mailed to {CONTACT_EMAIL}. When you ask the assistant, your question and your fields’ readings go to Anthropic’s Claude to be answered; the satellite maths runs on Google Earth Engine.</p>
+              <p>{t("Accounts run on Firebase (Google, or e‑mail and password); your fields, readings and reports are kept on our own server and never sold, and messages from the contact page are kept on our server and e‑mailed to {email}. When you ask the assistant, your question and your fields’ readings go to Anthropic’s Claude to be answered; the satellite maths runs on Google Earth Engine.", { email: CONTACT_EMAIL })}</p>
               <p>
-                <a className="pg-link" href={LINKS.github} target="_blank" rel="noreferrer">
-                  The code is public on GitHub
-                </a>
-                , and{" "}
-                <a className="pg-link" href={LINKS.paper} target="_blank" rel="noreferrer">
-                  the research data and code are on Harvard Dataverse
-                </a>
-                .
+                {t("{code}, and {data}.", {
+                  code: (
+                    <a className="pg-link" href={LINKS.github} target="_blank" rel="noreferrer">
+                      {t("The code is public on GitHub")}
+                    </a>
+                  ),
+                  data: (
+                    <a className="pg-link" href={LINKS.paper} target="_blank" rel="noreferrer">
+                      {t("the research data and code are on Harvard Dataverse")}
+                    </a>
+                  ),
+                })}
               </p>
             </Reveal>
           </div>
@@ -470,7 +496,7 @@ export default function MethodPage() {
         <div className="pg-grid">
           <Reveal className="meth-film-head">
             <h2 className="pg-h2" id="meth-film-title">
-              Chernozem in three minutes
+              {t("Chernozem in three minutes")}
             </h2>
           </Reveal>
           <div className="meth-film">
@@ -483,17 +509,17 @@ export default function MethodPage() {
         <div className="pg-grid">
           <Reveal className="meth-close-head">
             <h2 className="pg-h2" id="meth-close">
-              Run it on your own land
+              {t("Run it on your own land")}
             </h2>
           </Reveal>
           <Reveal className="meth-close-act" delay={0.1}>
-            <p>Register for Chernozem and read the first pass yourself. The demo is open to everyone and read-only.</p>
+            <p>{t("Register for Chernozem and read the first pass yourself. The demo is open to everyone and read-only.")}</p>
             <div className="pg-actions">
               <Link className="pg-btn" to={SITE_ACTIONS.register.path}>
-                Register
+                {t("Register")}
               </Link>
               <Link className="pg-link" to={SITE_ACTIONS.demo.path}>
-                Try the demo
+                {t("Try the demo")}
               </Link>
             </div>
           </Reveal>

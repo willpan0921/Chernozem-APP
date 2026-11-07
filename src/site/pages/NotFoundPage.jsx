@@ -11,23 +11,26 @@
 import "../site.css";
 import { Link } from "react-router-dom";
 import { usePageTitle } from "../hooks.js";
+import { useT } from "../i18n/i18n.js";
 import "./pages.css";
 
 export default function NotFoundPage() {
-  usePageTitle("Page not found");
+  // The same namespace as the Demo page: two small pages, one dictionary file.
+  const t = useT("demo");
+  usePageTitle(t("Page not found"));
   return (
     <div className="pg">
       <section className="pg-sec nf" aria-labelledby="nf-title">
         <div className="pg-frame nf-text">
           <div className="pg-mask">
             <h1 className="pg-h1" id="nf-title">
-              There is no page here
+              {t("There is no page here")}
             </h1>
           </div>
           <p className="pg-lead pg-fade">
-            That address does not exist.{" "}
+            {t("That address does not exist.")}{" "}
             <Link className="pg-link" to="/">
-              Back to the About page
+              {t("Back to the About page")}
             </Link>
           </p>
         </div>
