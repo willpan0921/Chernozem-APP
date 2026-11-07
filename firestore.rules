@@ -3,26 +3,31 @@
 // Firebase project. They replace the "test mode" rules, which let anyone
 // read and write everything and stopped working after 30 days.
 //
-// The rule: a request is allowed only when it comes from someone signed in
-// with Firebase Authentication (Google, or an e-mail and a password).
-// Everyone else is refused. It covers every collection, including ones
-// added later.
+// The rule: no request from a browser or a phone is allowed, signed in or
+// not. Nothing in a browser uses Firestore, so closing it to every client
+// takes nothing away and leaves nothing to attack.
 //
-// What uses Firestore today:
+// Why not "anyone signed in": anyone can create an account on the
+// Register page, and the web config is public by design, so "signed in"
+// would only mean "has an account". Any stranger with an account could
+// then read, change or delete every field, reading and note.
+//
+// What uses Firestore today, and why it keeps working:
 //   - This app (src/, server/) does not read or write Firestore at all.
+//     Accounts use Firebase Authentication, which these rules do not touch.
 //   - scripts/fetch-ndvi.js and scripts/seed-fields.js write "fields" and
 //     "fields/<id>/readings". They sign in with the service-account key
-//     through firebase-admin, which is not checked by these rules, so they
-//     keep working.
-//   - "notes" holds the notes from the old Notes page.
-//   - William's app shares the project. Any collection it uses is covered
-//     by the same rule, so it works for his signed-in users.
+//     through firebase-admin, which skips these rules, so they keep
+//     working.
+//   - "notes" holds the notes from the old Notes page. Nothing reads it
+//     from a browser any more.
 //
-// Note: anyone can create an account on the Register page, so "signed in"
-// means "has an account", not "is on the team".
+// If a page ever needs Firestore from the browser, open only that
+// collection, and only as far as it needs (for example each person's own
+// document: request.auth.uid == userId), never every document.
 //
 // WHO EDITS IT
-// Danny. Deploy a change with:
+// Danny or William. Deploy a change with:
 //   npx firebase-tools deploy --only firestore:rules --project chernozem-danny
 
 rules_version = '2';
@@ -31,7 +36,7 @@ service cloud.firestore {
   match /databases/{database}/documents {
     // Every document, in every collection and subcollection.
     match /{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if false;
     }
   }
 }
